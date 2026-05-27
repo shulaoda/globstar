@@ -1,0 +1,300 @@
+# ============================================================================
+# corpus-class.txt — character class `[...]` semantics
+# (GLOB_SPEC.md §6 — class basics, §6.2 segment-local, §6.3 dispatch table,
+#  §6.5 POSIX first-`]` rule, §9.1 escape)
+#
+# Class is the trickiest piece of glob syntax — many overlapping rules:
+#   - POSIX first-`]` literal-member rule
+#   - `-` is literal at first/last position, range separator otherwise
+#   - `\X` lenient escape (any byte literal, including `]`/`-`/`^`/`!`)
+#   - `/` always parse error (segment-local)
+#   - Brace metachars decay to literals inside class
+#   - Negation by leading `!` or `^`
+#   - Interaction with surrounding `{}`, `()` and other class instances
+#
+# Each section below pins one rule; cross-section rows pin the interactions.
+#
+# Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+# (Use `err:VariantName` in the EXPECTED column for parse-error assertions.)
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Range vs literal dash — the user's main concern
+# ----------------------------------------------------------------------------
+
+## class.range_basic
+[a-c]	a	match
+[a-c]	b	match
+[a-c]	c	match
+[a-c]	d	no-match
+[a-c]	-	no-match
+[0-9]	5	match
+[0-9]	a	no-match
+[A-Z]	Q	match
+[A-Z]	q	no-match
+
+## class.dash_escape_breaks_range
+# `\-` is escaped — items become {a, -, c}, NOT a range. `b` must NOT match.
+[a\-c]	a	match
+[a\-c]	-	match
+[a\-c]	c	match
+[a\-c]	b	no-match
+[a\-c]	d	no-match
+# Same form with explicit escape on dash
+[\-a]	-	match
+[\-a]	a	match
+[\-a]	b	no-match
+
+## class.dash_position_literal
+# `-` at first or last position is literal (POSIX-style, no escape needed).
+[-abc]	-	match
+[-abc]	a	match
+[-abc]	d	no-match
+[abc-]	-	match
+[abc-]	c	match
+[abc-]	d	no-match
+# But mid-position `-` between two letters IS a range separator.
+[a-z]	m	match
+[a-z]	A	no-match
+# Negated form: `[!-a]` after `!`, `-` is at items[0] (first position) → literal
+[!-a]	-	no-match
+[!-a]	a	no-match
+[!-a]	b	match
+[!-a]	z	match
+
+## class.dash_with_other_metachars
+# `\-` after a letter — items {a, -, *}, NOT range a-* (would be byte 97-42 = invalid)
+[a\-*]	a	match
+[a\-*]	-	match
+[a\-*]	*	match
+[a\-*]	b	no-match
+
+# ----------------------------------------------------------------------------
+# POSIX first-`]` rule (§6.5)
+# ----------------------------------------------------------------------------
+
+## class.posix_first_bracket_literal
+# `]` at first member position is literal, not a closer.
+[]]	]	match
+[]]	a	no-match
+[]a]	]	match
+[]a]	a	match
+[]a]	b	no-match
+# Negated form
+[!]]	]	no-match
+[!]]	a	match
+[!]abc]	]	no-match
+[!]abc]	a	no-match
+[!]abc]	z	match
+[^]]	]	no-match
+[^]]	a	match
+# Combined with `-` at end
+[]-]	]	match
+[]-]	-	match
+[]-]	a	no-match
+
+## class.empty_or_negation_only_invalid
+# After POSIX first-`]` rule, `[]` / `[!]` / `[^]` decay to "literal `]`
+# + no closer" → UnterminatedClass.
+[]	-	err:UnterminatedClass
+[!]	-	err:UnterminatedClass
+[^]	-	err:UnterminatedClass
+
+# ----------------------------------------------------------------------------
+# Escaped metachars in class (§6.3 lenient escape)
+# ----------------------------------------------------------------------------
+
+## class.escape_meta_in_class
+[\*]	*	match
+[\*]	a	no-match
+[\?]	?	match
+[\[]	[	match
+[\]]	]	match
+[\]]	a	no-match
+[\!]	!	match
+[\!]	a	no-match
+[\^]	^	match
+[\^]	a	no-match
+[\{]	{	match
+[\}]	}	match
+[\(]	(	match
+[\)]	)	match
+[\\\\]	\\	match
+[\\\\]	a	no-match
+
+## class.escape_extends_closer
+# `[\]X]` — `\]` is escaped literal `]`, then `X`, then closing `]`. Class {], X}.
+[\]X]	]	match
+[\]X]	X	match
+[\]X]	a	no-match
+[\]abc]	]	match
+[\]abc]	a	match
+[\]abc]	d	no-match
+
+## class.escape_lenient_letters
+# `\X` for non-meta letters: `\a` ≡ `a` (lenient escape).
+[\a\b\c]	a	match
+[\a\b\c]	b	match
+[\a\b\c]	d	no-match
+
+# ----------------------------------------------------------------------------
+# Class metachars decay to literals (§6.3 dispatch table)
+# ----------------------------------------------------------------------------
+
+## class.brace_paren_metachars_decay
+[{}]	{	match
+[{}]	}	match
+[{}]	a	no-match
+[()]	(	match
+[()]	)	match
+[(){}]	{	match
+[(){}]	(	match
+[(){}]	}	match
+[(){}]	)	match
+[(){}]	[	no-match
+[*?+@!]	*	match
+[*?+@!]	?	match
+[*?+@!]	+	match
+[*?+@!]	@	match
+# `!` is at items[4] (NOT first position) → literal member.
+[*?+@!]	!	match
+# `!` at first position would be a negation marker. To force literal `!` at
+# first position, use the lenient escape `\!`.
+[\!*?+@]	!	match
+[\!*?+@]	*	match
+
+# ----------------------------------------------------------------------------
+# Negation forms (`[!...]` / `[^...]`)
+# ----------------------------------------------------------------------------
+
+## class.negation_basic
+[!abc]	a	no-match
+[!abc]	b	no-match
+[!abc]	d	match
+[^abc]	a	no-match
+[^abc]	d	match
+# Both forms equivalent
+[!a-z]	A	match
+[^a-z]	A	match
+[!a-z]	q	no-match
+
+## class.negation_segment_local
+# Negated class never matches segment separator `/`.
+[^abc]	/	no-match
+[!abc]	/	no-match
+# Class is segment-local even when `/` isn't in items.
+
+# ----------------------------------------------------------------------------
+# Interaction with brace `{...}` and raw parens
+# ----------------------------------------------------------------------------
+
+## class.brace_around_class
+# Brace branches can contain classes.
+{[abc],[xyz]}	a	match
+{[abc],[xyz]}	z	match
+{[abc],[xyz]}	m	no-match
+# Class can include brace metachars as literals.
+{a,[{}]b}	{b	match
+{a,[{}]b}	}b	match
+{a,[{}]b}	a	match
+{a,[{}]b}	xb	no-match
+
+# ----------------------------------------------------------------------------
+# The user's bracket-vs-brace puzzle examples
+# ----------------------------------------------------------------------------
+
+## class.bracket_brace_combinations
+# `[{}]` — class containing `{` and `}` as literals. Matches `{` or `}`.
+[{}]	{	match
+[{}]	}	match
+[{}]	a	no-match
+# `[{]}` — class `[{]` (containing `{`), then literal `}`. Pattern `{}`.
+[{]}	{}	match
+[{]}	{	no-match
+[{]}	}	no-match
+# `{[}]` — `{` opens brace, `[}]` is class containing `}`, then end of input
+# → brace never closes → UnterminatedBrace.
+{[}]	-	err:UnterminatedBrace
+# `{[]}` — `{` opens brace, `[` opens class, POSIX first-`]` makes the `]`
+# literal, no closing `]` before `}` → UnterminatedClass.
+{[]}	-	err:UnterminatedClass
+
+## class.bracket_paren_combinations
+# Mirror tests with parens — `(` and `)` are literal bytes in this
+# grammar (no bash extglob trigger), so these are straightforward.
+[(]	(	match
+[(]	)	no-match
+[)]	)	match
+# `[(]` is class containing `(`. Then `)` after class is stray-loose literal (§9.1).
+[(])	()	match
+# `(...)` is just literal parens around a class.
+([a])	(a)	match
+([a])	a	no-match
+
+# ----------------------------------------------------------------------------
+# Class containing the spec separator `/` is always invalid (§6.2)
+# ----------------------------------------------------------------------------
+
+## class.slash_always_invalid
+[/]	-	err:UnterminatedClass
+[a/]	-	err:UnterminatedClass
+[/a]	-	err:UnterminatedClass
+[^/]	-	err:UnterminatedClass
+foo[/]bar	-	err:UnterminatedClass
+# Even via escape — `\/` resolves to literal `/`, still invalid.
+[\/]	-	err:UnterminatedClass
+[a\/b]	-	err:UnterminatedClass
+
+# ----------------------------------------------------------------------------
+# Range validity is byte-level (case-insensitivity does NOT relax it)
+# ----------------------------------------------------------------------------
+
+## class.range_validity_byte_level
+[z-a]	-	err:InvalidRange
+[Z-A]	-	err:InvalidRange
+[9-0]	-	err:InvalidRange
+# Same patterns under case_insensitive — STILL invalid.
+[z-a]	-	err:InvalidRange	case_insensitive=true
+[Z-A]	-	err:InvalidRange	case_insensitive=true
+# Cross-case ranges that happen to be valid byte-wise — accepted.
+[A-z]	M	match
+[A-z]	m	match
+[A-z]	0	no-match
+
+# ----------------------------------------------------------------------------
+# Complex multi-item classes (sanity)
+# ----------------------------------------------------------------------------
+
+## class.complex_combinations
+[a-zA-Z0-9_]	x	match
+[a-zA-Z0-9_]	5	match
+[a-zA-Z0-9_]	_	match
+[a-zA-Z0-9_]	-	no-match
+[A-F0-9]	D	match
+[A-F0-9]	G	no-match
+[A-F0-9]	5	match
+[!a-zA-Z0-9_]	-	match
+[!a-zA-Z0-9_]	5	no-match
+# Class as part of a longer pattern
+src/[a-z]*.{ts,rs}	src/main.ts	match
+src/[a-z]*.{ts,rs}	src/Main.ts	no-match
+src/[a-z]*.{ts,rs}	src/main.txt	no-match
+# Negated class explicitly excluding `.` — first char of `.hidden` is `.`,
+# class doesn't match, no-match regardless of dot flag.
+[^.]*	main.rs	match	dot=false
+[^.]*	.hidden	no-match	dot=false
+[^.]*	.hidden	no-match	dot=true
+
+# ----------------------------------------------------------------------------
+# Edge: explicit closer in escape vs POSIX first-`]`
+# ----------------------------------------------------------------------------
+
+## class.bracket_escape_corner
+# `[\]` — `\]` consumes the `]` as literal, no closer left → UnterminatedClass.
+[\]	-	err:UnterminatedClass
+# `[\]]` — `\]` is literal `]`, then second `]` closes. Class `{]}`.
+[\]]	]	match
+[\]]	a	no-match
+# `[\\\\]` (after TSV unescape: `[\\]`) — class with literal `\`. Platform-dep.
+[\\\\]	a	no-match
+[\\\\]	/	no-match

@@ -1,0 +1,77 @@
+# ============================================================================
+# corpus-err.txt — Parse error 黄金测试语料
+# Format: PATTERN<TAB>ERROR_KIND
+# ERROR_KIND 对应 GlobError 枚举变体名(见 spec §10)
+# 每条 pattern 必须在编译期报出对应错误
+# ============================================================================
+
+## empty
+	Empty
+
+## trailing.backslash
+foo\	TrailingBackslash
+\	TrailingBackslash
+a/b/c\	TrailingBackslash
+
+## unterminated.class
+[	UnterminatedClass
+[abc	UnterminatedClass
+foo[abc	UnterminatedClass
+[a-	UnterminatedClass
+
+## class.separator.means.unterminated
+# §6.2: `/` is the pattern-level segment separator. A `/` inside `[…]`
+# terminates the segment, so the class is considered never closed —
+# same error as running off the end of input. Applies to both raw `/`
+# and `\/` (escape resolving to `/`).
+#
+# `\` is NOT rejected here — it's a pattern-level escape character, not
+# a separator. `[\\b]` (class with literal `\` and `b`) compiles fine;
+# runtime `CharClass::matches` short-circuits any `Seps` member (§12.3),
+# so the `\` member is dead on Windows (`\` ∈ Seps) but active on Unix
+# (`\` is a regular byte there). See §6.2 for the polarity-uniform rule.
+[/]	UnterminatedClass
+[a/]	UnterminatedClass
+[/a]	UnterminatedClass
+[^/]	UnterminatedClass
+foo[/]bar	UnterminatedClass
+[\/]	UnterminatedClass
+
+## posix.first_bracket_literal_unterminated
+# POSIX first-`]` rule (§6.5): leading `]` after `[` (or `[!`/`[^`) is a
+# literal class member, so `[]`, `[!]`, `[^]` decay to "literal `]` + no
+# closer" → UnterminatedClass.
+[]	UnterminatedClass
+foo[]	UnterminatedClass
+[!]	UnterminatedClass
+[^]	UnterminatedClass
+# fast-glob divergence: fast-glob tolerates `[]` as literal text (line 25
+# upstream: the "webpack" pattern). We reject at parse via POSIX first-`]`.
+\\\\/$^+?.()=!|{},[].*	UnterminatedClass
+
+## unterminated.brace
+{	UnterminatedBrace
+{a	UnterminatedBrace
+{a,b	UnterminatedBrace
+{a,{b,c}	UnterminatedBrace
+foo{a,b	UnterminatedBrace
+# fast-glob divergence: fast-glob tolerates unterminated braces as literal
+# text (lines 1253–1256 upstream). We reject at parse time. Also covers
+# the negated `!{a,b` variant (same structure after outer `!` strip).
+!{a,b	UnterminatedBrace
+
+## invalid.range
+[z-a]	InvalidRange
+[9-0]	InvalidRange
+
+## too.deep.nesting
+# Brace nesting > 32 levels
+{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	BraceNestingTooDeep
+
+## too.long
+# pattern > 64KB (cannot represent inline; test harness generates)
+
+## valid.patterns.must.not.err
+# Sanity checks — these should NOT error
+# (test harness inverts the expectation for lines in this group)
+# (not included here to keep format uniform)

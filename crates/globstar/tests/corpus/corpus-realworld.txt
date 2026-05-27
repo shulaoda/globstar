@@ -1,0 +1,119 @@
+# Real-world glob patterns from .gitignore, .eslintignore, tsconfig,
+# rollup/webpack configs, Rust / Node.js / Python project structures.
+#
+# Format: same as corpus.txt — three tab-separated fields (pattern, path,
+# expected = "match" or "no-match"). Lines starting with `#` are comments.
+
+## realworld.rust.gitignore
+# Typical Rust project ignore rules.
+target	target	match
+target/**	target/debug/build/foo-abc123/build-script-build	match
+target/**	target/debug/deps/my_crate-abc.rlib	match
+target/**	src/main.rs	no-match
+**/*.rs.bk	src/main.rs.bk	match
+**/*.rs.bk	src/cli/commands/run.rs.bk	match
+**/*.rs.bk	src/main.rs	no-match
+Cargo.lock	Cargo.lock	match
+Cargo.lock	Cargo.toml	no-match
+Cargo.lock	my-crate/Cargo.lock	no-match
+**/Cargo.lock	my-crate/Cargo.lock	match
+**/*.pdb	target/debug/my_crate.pdb	match
+
+## realworld.node.gitignore
+node_modules	node_modules	match
+node_modules/**	node_modules/react/index.js	match
+node_modules/**	node_modules/@babel/core/lib/index.js	match
+**/node_modules/**	packages/foo/node_modules/bar/index.js	match
+dist	dist	match
+dist/**	dist/bundle.js	match
+dist/**	dist/assets/logo.svg	match
+**/*.d.ts	types/index.d.ts	match
+**/*.d.ts	node_modules/@types/react/index.d.ts	match
+**/*.d.ts	src/index.ts	no-match
+**/*.map	dist/bundle.js.map	match
+**/*.map	dist/bundle.css.map	match
+**/*.min.js	dist/bundle.min.js	match
+**/*.min.js	dist/bundle.js	no-match
+**/*.min.js	vendor/jquery.min.js	match
+.pnp.cjs	.pnp.cjs	match
+.yarn/**	.yarn/cache/foo.zip	match
+yarn.lock	yarn.lock	match
+package-lock.json	package-lock.json	match
+
+## realworld.python.gitignore
+__pycache__	__pycache__	match
+**/__pycache__/**	src/__pycache__/foo.cpython-311.pyc	match
+**/__pycache__/**	src/module/__pycache__/foo.pyc	match
+**/*.pyc	src/main.pyc	match
+**/*.pyc	src/pkg/sub/mod.pyc	match
+**/*.pyc	src/main.py	no-match
+**/*.pyo	legacy/old.pyo	match
+.venv	.venv	match
+.venv/**	.venv/bin/python	match
+.venv/**	.venv/lib/python3.11/site-packages/pip/__init__.py	match
+venv/**	venv/Scripts/activate	match
+build	build	match
+build/**	build/lib/mypackage/__init__.py	match
+*.egg-info	my_pkg.egg-info	match
+**/*.egg-info/**	my_pkg.egg-info/PKG-INFO	match
+
+## realworld.web.assets
+**/*.{png,jpg,jpeg,gif,svg,webp}	src/assets/logo.png	match
+**/*.{png,jpg,jpeg,gif,svg,webp}	public/images/hero.jpg	match
+**/*.{png,jpg,jpeg,gif,svg,webp}	src/components/Button.tsx	no-match
+**/*.{woff,woff2,ttf,otf,eot}	assets/fonts/roboto.woff2	match
+**/*.{woff,woff2,ttf,otf,eot}	assets/images/logo.png	no-match
+**/*.css	src/styles/main.css	match
+**/*.{css,scss,sass,less}	src/styles/main.scss	match
+**/*.{css,scss,sass,less}	src/styles/_variables.sass	match
+**/*.{css,scss,sass,less}	src/main.ts	no-match
+
+## realworld.typescript
+src/**/*.{ts,tsx}	src/components/Button.tsx	match
+src/**/*.{ts,tsx}	src/utils/math.ts	match
+src/**/*.{ts,tsx}	src/index.js	no-match
+src/**/*.{ts,tsx}	tests/Button.test.tsx	no-match
+**/*.test.{ts,tsx}	src/components/Button.test.tsx	match
+**/*.test.{ts,tsx}	tests/utils/math.test.ts	match
+**/*.test.{ts,tsx}	src/components/Button.tsx	no-match
+**/*.spec.ts	src/api/auth.spec.ts	match
+**/*.stories.{ts,tsx}	src/components/Button.stories.tsx	match
+
+## realworld.editor
+.vscode	.vscode	match
+.vscode/**	.vscode/settings.json	match
+.idea/**	.idea/workspace.xml	match
+**/.DS_Store	.DS_Store	match
+**/.DS_Store	src/.DS_Store	match
+**/.DS_Store	src/main.rs	no-match
+**/Thumbs.db	assets/Thumbs.db	match
+*.swp	src/main.rs.swp	no-match
+**/*.swp	src/main.rs.swp	match
+
+## realworld.build.artifacts
+**/*.o	build/main.o	match
+**/*.a	target/release/libfoo.a	match
+**/*.so	target/release/libfoo.so	match
+**/*.dylib	target/release/libfoo.dylib	match
+**/*.dll	target/release/foo.dll	match
+coverage/**	coverage/lcov.info	match
+coverage/**	coverage/html/index.html	match
+.nyc_output/**	.nyc_output/coverage-summary.json	match
+
+## realworld.logs.and.caches
+**/*.log	logs/app.log	match
+**/*.log	tmp/errors.2024-01-01.log	match
+*.log	app.log	match
+*.log	logs/app.log	no-match
+.cache	.cache	match
+.cache/**	.cache/webpack/0.json	match
+.next/**	.next/build-manifest.json	match
+
+## realworld.ripgrep.common
+# Patterns you'd pass to rg --glob
+!node_modules	src/main.rs	match
+!node_modules	node_modules	no-match
+!*.min.js	main.js	match
+!*.min.js	main.min.js	no-match
+**/vendor/**	src/vendor/lib.js	match
+**/vendor/**	src/main.js	no-match

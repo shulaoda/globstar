@@ -1,0 +1,1649 @@
+# ============================================================================
+# corpus-comprehensive.txt — exhaustive coverage of every syntax feature and
+# every meaningful combination, including dot/case_insensitive interactions.
+#
+# Default flags: dot=true (CompileOptions::default()), case sensitive.
+# Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+# Escape rules per README: `\\` literal `\`, `\t` tab, `\n` newline.
+#
+# This file is *additive* to the existing corpus files — rows are chosen to
+# avoid duplicating existing assertions. Every pattern carries at least one
+# `match` and one `no-match` row to catch over- and under-matching.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# literal — ASCII, escapes, special bytes, multi-segment, leading/trailing /
+# ----------------------------------------------------------------------------
+
+## literal.ascii_basic
+abc	abc	match
+abc	abcd	no-match
+abc	xabc	no-match
+abc	ab	no-match
+abc		no-match
+hello-world	hello-world	match
+hello-world	helloXworld	no-match
+0123	0123	match
+0123	0124	no-match
+A	A	match
+A	a	no-match
+
+## literal.long_segment
+a_long_segment_with_underscores	a_long_segment_with_underscores	match
+a_long_segment_with_underscores	a_long_segment_with_underscore	no-match
+SCREAMING_SNAKE_CASE	SCREAMING_SNAKE_CASE	match
+SCREAMING_SNAKE_CASE	screaming_snake_case	no-match
+
+## literal.special_bytes
+a.b	a.b	match
+a.b	axb	no-match
+a+b	a+b	match
+a+b	ab	no-match
+a@b	a@b	match
+a@b	ab	no-match
+a=b	a=b	match
+a=b	axb	no-match
+foo:bar	foo:bar	match
+foo:bar	foobar	no-match
+hash#mark	hash#mark	match
+hash#mark	hashmark	no-match
+~tilde	~tilde	match
+~tilde	tilde	no-match
+percent%sign	percent%sign	match
+percent%sign	percentsign	no-match
+
+## literal.embedded_space
+my file.txt	my file.txt	match
+my file.txt	myfile.txt	no-match
+my file.txt	my  file.txt	no-match
+two  spaces	two  spaces	match
+two  spaces	two spaces	no-match
+
+## literal.multi_segment
+a/b/c	a/b/c	match
+a/b/c	a/b/d	no-match
+a/b/c	a/b	no-match
+a/b/c	a/b/c/d	no-match
+a/b/c	x/b/c	no-match
+deep/nested/path/file.rs	deep/nested/path/file.rs	match
+deep/nested/path/file.rs	deep/nested/path	no-match
+deep/nested/path/file.rs	deep/nested/path/file.rss	no-match
+
+## literal.leading_slash
+/foo	/foo	match
+/foo	foo	no-match
+/foo	/foo/bar	no-match
+/foo/bar	/foo/bar	match
+/foo/bar	foo/bar	no-match
+
+## literal.trailing_slash
+foo/	foo/	match
+foo/	foo	no-match
+foo/	foo/bar	no-match
+src/	src/	match
+src/	src	no-match
+
+## literal.escape_in_pattern
+\a\b\c	abc	match
+\a\b\c	xabc	no-match
+\a\b\c	ab	no-match
+\1\2\3	123	match
+\1\2\3	124	no-match
+
+# ----------------------------------------------------------------------------
+# wildcard.star — `*` alone, at boundaries, multiple `*` in one segment
+# ----------------------------------------------------------------------------
+
+## wildcard.star.at_segment_boundary
+*	x	match
+*	xy	match
+*	xyz	match
+*	a/b	no-match
+/*	/x	match
+/*	/x/y	no-match
+/*	x	no-match
+*/	x/	match
+*/	x	no-match
+*/	x/y	no-match
+
+## wildcard.star.literals_both_sides
+foo*bar	foobar	match
+foo*bar	fooXbar	match
+foo*bar	fooXYZbar	match
+foo*bar	foo	no-match
+foo*bar	bar	no-match
+foo*bar	fobar	no-match
+foo*bar	foobaz	no-match
+foo*bar	foo/bar	no-match
+prefix*suffix	prefixsuffix	match
+prefix*suffix	prefix__suffix	match
+prefix*suffix	prefisuffix	no-match
+
+## wildcard.star.multiple_in_segment
+*a*	a	match
+*a*	xax	match
+*a*	xa	match
+*a*	ax	match
+*a*	xyz	no-match
+*a*	a/b	no-match
+*a*b*	axxb	match
+*a*b*	xayybxx	match
+*a*b*	axxxxb	match
+*a*b*	bba	no-match
+*a*b*	abc	match
+*x*y*z*	xyz	match
+*x*y*z*	axbycz	match
+*x*y*z*	zyx	no-match
+
+## wildcard.star.empty_match
+a*	a	match
+a*	ab	match
+a*b	ab	match
+a*b*c	abc	match
+a*b*c	axbyc	match
+
+## wildcard.star.with_dot_in_path
+*.config.json	tsconfig.config.json	match
+*.config.json	tsconfig.json	no-match
+*.config.json	a.b.config.json	match
+.*.swp	.foo.swp	match
+.*.swp	foo.swp	no-match
+
+## wildcard.star.runs_of_stars
+**a	a	match
+**a	xxa	match
+**a	axx	no-match
+a**	a	match
+# `a**` is degenerate `a*` (the trailing `**` is not segment-occupying):
+# `a*` does not cross `/` so a path with a trailing `/` does not match.
+a**	a/	no-match
+a**	axx	match
+
+# ----------------------------------------------------------------------------
+# wildcard.anychar — `?` alone, boundaries, with `*`, runs of `???`
+# ----------------------------------------------------------------------------
+
+## wildcard.anychar.alone
+?	x	match
+?	0	match
+?	.	match
+?	?	match
+?		no-match
+?	xy	no-match
+?	/	no-match
+
+## wildcard.anychar.at_boundary
+?abc	xabc	match
+?abc	abc	no-match
+?abc	yabc	match
+?abc	xxabc	no-match
+abc?	abcx	match
+abc?	abcd	match
+abc?	abc	no-match
+abc?	abcde	no-match
+
+## wildcard.anychar.with_star
+?*	a	match
+?*	abc	match
+?*		no-match
+?*	/	no-match
+*?	a	match
+*?	ab	match
+*?		no-match
+?*?	ab	match
+?*?	abc	match
+?*?	a	no-match
+
+## wildcard.anychar.runs
+???	abc	match
+???	xyz	match
+???	ab	no-match
+???	abcd	no-match
+???	a/c	no-match
+????	abcd	match
+????	abc	no-match
+?????	hello	match
+?????	hell	no-match
+
+## wildcard.anychar.mid_segment
+a?c	abc	match
+a?c	a-c	match
+a?c	a.c	match
+a?c	a/c	no-match
+a??d	abcd	match
+a??d	abccd	no-match
+a??d	abd	no-match
+
+# ----------------------------------------------------------------------------
+# class.positive — sets, ranges, single-element, escaped class chars
+# ----------------------------------------------------------------------------
+
+## class.positive.single_element
+[a]	a	match
+[a]	b	no-match
+[a]		no-match
+[Z]	Z	match
+[Z]	z	no-match
+[5]	5	match
+[5]	4	no-match
+
+## class.positive.set
+[abcde]	a	match
+[abcde]	c	match
+[abcde]	e	match
+[abcde]	f	no-match
+[abcde]		no-match
+[abcde]	ab	no-match
+[xY9]	x	match
+[xY9]	Y	match
+[xY9]	9	match
+[xY9]	y	no-match
+
+## class.positive.range
+[a-a]	a	match
+[a-a]	b	no-match
+[a-b]	a	match
+[a-b]	b	match
+[a-b]	c	no-match
+[c-e]	c	match
+[c-e]	d	match
+[c-e]	e	match
+[c-e]	b	no-match
+[c-e]	f	no-match
+[0-3]	0	match
+[0-3]	2	match
+[0-3]	3	match
+[0-3]	4	no-match
+[0-3]	/	no-match
+
+## class.positive.alphanumeric
+[a-zA-Z0-9_]	a	match
+[a-zA-Z0-9_]	M	match
+[a-zA-Z0-9_]	7	match
+[a-zA-Z0-9_]	_	match
+[a-zA-Z0-9_]	-	no-match
+[a-zA-Z0-9_]	.	no-match
+[a-zA-Z0-9_]	/	no-match
+[A-Fa-f0-9]	0	match
+[A-Fa-f0-9]	a	match
+[A-Fa-f0-9]	F	match
+[A-Fa-f0-9]	g	no-match
+[A-Fa-f0-9]	G	no-match
+
+## class.positive.boundary_ranges
+# Note: ranges that include `/` are parse errors (§6.2). Use ranges that
+# stay strictly above (`0`–`~`) or below (`!`–`.`) `/` to test punctuation
+# coverage.
+[0-~]	0	match
+[0-~]	A	match
+[0-~]	z	match
+[0-~]	~	match
+[0-~]	 	no-match
+[0-~]	.	no-match
+# Path-side `/` cannot match because class is segment-local, even when range covers it.
+[0-~]	/	no-match
+[\ -\.]	 	match
+[\ -\.]	#	match
+[\ -\.]	.	match
+[\ -\.]	0	no-match
+[\ -\.]	a	no-match
+
+## class.positive.escaped_meta
+[\*\?]	*	match
+[\*\?]	?	match
+[\*\?]	a	no-match
+[\[\]]	[	match
+[\[\]]	]	match
+[\[\]]	a	no-match
+[\{\}]	{	match
+[\{\}]	}	match
+[\{\}]	a	no-match
+
+## class.positive.in_pattern_context
+file[abc].txt	filea.txt	match
+file[abc].txt	fileb.txt	match
+file[abc].txt	filed.txt	no-match
+file[abc].txt	file.txt	no-match
+v[0-9].[0-9]	v1.2	match
+v[0-9].[0-9]	v9.0	match
+v[0-9].[0-9]	vA.2	no-match
+v[0-9].[0-9]	v10.2	no-match
+
+# ----------------------------------------------------------------------------
+# class.negated — `[!...]`, `[^...]`, dot protection
+# ----------------------------------------------------------------------------
+
+## class.negated.basic
+[!xyz]	a	match
+[!xyz]	x	no-match
+[!xyz]	z	no-match
+[!xyz]	Z	match
+[!xyz]	0	match
+[^xyz]	a	match
+[^xyz]	x	no-match
+[^xyz]	0	match
+[!a-c]	d	match
+[!a-c]	z	match
+[!a-c]	a	no-match
+[!a-c]	b	no-match
+[!a-c]	c	no-match
+
+## class.negated.never_matches_separator
+[!a]	/	no-match
+[^a]	/	no-match
+[!abc]	/	no-match
+
+## class.negated.in_pattern
+src/[!_]*.rs	src/main.rs	match
+src/[!_]*.rs	src/_internal.rs	no-match
+src/[!_]*.rs	src/lib.rs	match
+file[!0-9].txt	fileA.txt	match
+file[!0-9].txt	file5.txt	no-match
+file[!0-9].txt	file_.txt	match
+
+## class.negated.dot_protection_at_segment_start
+# dot=false: `[^x]` cannot match leading `.` (segment-start protection §12.4)
+[^x]	.	no-match	dot=false
+[^x]	a	match	dot=false
+[^x]	.	match	dot=true
+[^x]*	.hidden	no-match	dot=false
+[^x]*	visible	match	dot=false
+[^x]*	.hidden	match	dot=true
+**/[^x]*	a/.hidden	no-match	dot=false
+**/[^x]*	a/visible	match	dot=false
+**/[^x]*	a/.hidden	match	dot=true
+
+# ----------------------------------------------------------------------------
+# class.posix-first-bracket — `]` as first element (and after `[!`/`[^`)
+# ----------------------------------------------------------------------------
+
+## class.posix_first_bracket_set
+[]abc]	]	match
+[]abc]	a	match
+[]abc]	b	match
+[]abc]	c	match
+[]abc]	d	no-match
+[]xyz]	]	match
+[]xyz]	x	match
+[]xyz]	a	no-match
+
+## class.posix_first_bracket_negated
+[!]abc]	d	match
+[!]abc]	]	no-match
+[!]abc]	a	no-match
+[^]abc]	d	match
+[^]abc]	]	no-match
+[^]abc]	a	no-match
+[!]xy]	z	match
+[!]xy]	]	no-match
+
+## class.posix_first_bracket_with_range
+[]a-c]	]	match
+[]a-c]	a	match
+[]a-c]	b	match
+[]a-c]	c	match
+[]a-c]	d	no-match
+[]0-9]	]	match
+[]0-9]	5	match
+[]0-9]	a	no-match
+
+# ----------------------------------------------------------------------------
+# class.edge — single-char ranges, ranges across letter/digit/symbol
+# ----------------------------------------------------------------------------
+
+## class.edge.single_char_range
+[a-a]	a	match
+[a-a]	b	no-match
+[5-5]	5	match
+[5-5]	6	no-match
+[!a-a]	a	no-match
+[!a-a]	b	match
+
+## class.edge.multi_range_decomposition
+[a-cx-z]	a	match
+[a-cx-z]	c	match
+[a-cx-z]	x	match
+[a-cx-z]	z	match
+[a-cx-z]	d	no-match
+[a-cx-z]	w	no-match
+[0-26-9]	0	match
+[0-26-9]	2	match
+[0-26-9]	6	match
+[0-26-9]	9	match
+[0-26-9]	3	no-match
+[0-26-9]	5	no-match
+
+## class.edge.boundary_dash_caret_bang
+[abc^]	a	match
+[abc^]	^	match
+[abc^]	d	no-match
+[!^a]	b	match
+[!^a]	^	no-match
+[!^a]	a	no-match
+[a^b]	^	match
+[a^b]	a	match
+[a^b]	c	no-match
+
+## class.edge.spaces_in_class
+[ ]	 	match
+[ ]	a	no-match
+[ \t]	 	match
+[ \t]	\t	match
+[ \t]	a	no-match
+
+# ----------------------------------------------------------------------------
+# globstar.leading — `**/foo`, `**/foo/bar`, `**/.config`
+# ----------------------------------------------------------------------------
+
+## globstar.leading.simple
+**/main.rs	main.rs	match
+**/main.rs	src/main.rs	match
+**/main.rs	a/b/c/main.rs	match
+**/main.rs	main	no-match
+**/main.rs	main.rs.bak	no-match
+**/main.rs	src/main	no-match
+
+## globstar.leading.multi_segment
+**/foo/bar	foo/bar	match
+**/foo/bar	a/foo/bar	match
+**/foo/bar	a/b/foo/bar	match
+**/foo/bar	foo/bar/baz	no-match
+**/foo/bar	foo/x/bar	no-match
+**/foo/bar	foo	no-match
+
+## globstar.leading.dotfile
+**/.config	.config	match
+**/.config	a/.config	match
+**/.config	a/b/.config	match
+**/.config	.config/a	no-match
+**/.config	config	no-match
+**/.gitignore	.gitignore	match
+**/.gitignore	src/.gitignore	match
+**/.gitignore	gitignore	no-match
+
+## globstar.leading.with_class
+**/[Rr]eadme	Readme	match
+**/[Rr]eadme	readme	match
+**/[Rr]eadme	a/Readme	match
+**/[Rr]eadme	docs/readme	match
+**/[Rr]eadme	README	no-match
+
+# ----------------------------------------------------------------------------
+# globstar.middle — `a/**/b`, `a/**/b/**/c`
+# ----------------------------------------------------------------------------
+
+## globstar.middle.simple
+a/**/b	a/b	match
+a/**/b	a/x/b	match
+a/**/b	a/x/y/b	match
+a/**/b	a/x/y/z/b	match
+a/**/b	a/b/x	no-match
+a/**/b	x/a/b	no-match
+a/**/b	ax/b	no-match
+a/**/b	a/bx	no-match
+
+## globstar.middle.two_globstars
+a/**/b/**/c	a/b/c	match
+a/**/b/**/c	a/x/b/c	match
+a/**/b/**/c	a/b/x/c	match
+a/**/b/**/c	a/x/b/y/c	match
+a/**/b/**/c	a/x/y/b/m/n/c	match
+a/**/b/**/c	a/x/y/c	no-match
+a/**/b/**/c	a/c	no-match
+
+## globstar.middle.realistic
+src/**/tests/**/*.rs	src/tests/foo.rs	match
+src/**/tests/**/*.rs	src/a/tests/foo.rs	match
+src/**/tests/**/*.rs	src/tests/a/foo.rs	match
+src/**/tests/**/*.rs	src/a/tests/b/foo.rs	match
+src/**/tests/**/*.rs	src/a/foo.rs	no-match
+src/**/tests/**/*.rs	src/tests/foo.ts	no-match
+
+## globstar.middle.between_braces
+{a,b}/**/{x,y}	a/x	match
+{a,b}/**/{x,y}	b/y	match
+{a,b}/**/{x,y}	a/m/n/x	match
+{a,b}/**/{x,y}	c/x	no-match
+{a,b}/**/{x,y}	a/z	no-match
+
+# ----------------------------------------------------------------------------
+# globstar.trailing — `a/**` D-003: does NOT match `a` alone
+# ----------------------------------------------------------------------------
+
+## globstar.trailing.d003
+foo/**	foo	no-match
+foo/**	foo/	match
+foo/**	foo/bar	match
+foo/**	foo/bar/baz	match
+foo/**	foox	no-match
+foo/**	other/foo/bar	no-match
+docs/**	docs	no-match
+docs/**	docs/	match
+docs/**	docs/intro.md	match
+docs/**	docs/api/v1/page.md	match
+
+## globstar.trailing.with_brace_prefix
+{src,lib}/**	src	no-match
+{src,lib}/**	src/	match
+{src,lib}/**	lib/	match
+{src,lib}/**	src/main.rs	match
+{src,lib}/**	lib/foo/bar.rs	match
+{src,lib}/**	other	no-match
+
+# ----------------------------------------------------------------------------
+# globstar.alone — `**` matches everything visible / hidden under dot
+# ----------------------------------------------------------------------------
+
+## globstar.alone.matches_everything
+**	x	match
+**	x/y/z	match
+**	a/.hidden	match
+**	.hidden	match
+**		match
+**	/	match
+**	/a	match
+**	a/	match
+
+## globstar.alone.dot_false_protects
+# `**` itself is `.*` — but each NEW segment-start is dot-protected when dot=false.
+**	.hidden	no-match	dot=false
+**	a/.hidden	no-match	dot=false
+**	visible	match	dot=false
+**	a/visible	match	dot=false
+**	./	no-match	dot=false
+
+# ----------------------------------------------------------------------------
+# globstar.adjacent — `**/**`, `**/**/foo` collapse to `**` / `**/foo`
+# ----------------------------------------------------------------------------
+
+## globstar.adjacent.collapse
+**/**	a	match
+**/**	a/b	match
+**/**	a/b/c/d	match
+**/**	/a	match
+**/**/**	a/b/c/d/e	match
+**/**/foo	foo	match
+**/**/foo	a/b/foo	match
+**/**/foo	a/b/foo/c	no-match
+**/**/foo/**	foo	no-match
+**/**/foo/**	foo/x	match
+**/**/foo/**	a/foo/x	match
+
+## globstar.adjacent.long_chain
+**/**/**/**	a/b/c/d/e	match
+a/**/**/**/b	a/b	match
+a/**/**/**/b	a/x/y/z/b	match
+a/**/**/**/b	a/b/x	no-match
+
+# ----------------------------------------------------------------------------
+# brace.flat — `{a,b}`, `{ts,tsx,js,jsx}`, single-branch `{x}` literal
+# ----------------------------------------------------------------------------
+
+## brace.flat.basic
+{x,y}	x	match
+{x,y}	y	match
+{x,y}	z	no-match
+{x,y,z}	x	match
+{x,y,z}	z	match
+{x,y,z}	w	no-match
+{ts,tsx,js,jsx}	ts	match
+{ts,tsx,js,jsx}	tsx	match
+{ts,tsx,js,jsx}	js	match
+{ts,tsx,js,jsx}	jsx	match
+{ts,tsx,js,jsx}	rs	no-match
+{ts,tsx,js,jsx}	tx	no-match
+
+## brace.flat.many_branches
+{a,b,c,d,e,f,g}	a	match
+{a,b,c,d,e,f,g}	g	match
+{a,b,c,d,e,f,g}	h	no-match
+{red,green,blue,yellow,purple}	red	match
+{red,green,blue,yellow,purple}	purple	match
+{red,green,blue,yellow,purple}	orange	no-match
+
+## brace.flat.single_branch_is_literal
+{x}	{x}	match
+{x}	x	no-match
+{ts}	{ts}	match
+{ts}	ts	no-match
+{abc}	{abc}	match
+{abc}	abc	no-match
+
+## brace.flat.with_literal_around
+prefix-{a,b}	prefix-a	match
+prefix-{a,b}	prefix-b	match
+prefix-{a,b}	prefix-c	no-match
+prefix-{a,b}	prefix-	no-match
+{a,b}-suffix	a-suffix	match
+{a,b}-suffix	b-suffix	match
+{a,b}-suffix	c-suffix	no-match
+v{1,2,3}.0	v1.0	match
+v{1,2,3}.0	v3.0	match
+v{1,2,3}.0	v4.0	no-match
+
+# ----------------------------------------------------------------------------
+# brace.with-separator — `{src,tests}/`, `/{a,b}/`
+# ----------------------------------------------------------------------------
+
+## brace.separator.suffix
+{src,tests}/	src/	match
+{src,tests}/	tests/	match
+{src,tests}/	src	no-match
+{src,tests}/	docs/	no-match
+{src,tests}/	src/file	no-match
+
+## brace.separator.surrounding
+/{a,b}/	/a/	match
+/{a,b}/	/b/	match
+/{a,b}/	/c/	no-match
+/{a,b}/	a/	no-match
+/{a,b}/	/a	no-match
+
+## brace.separator.with_globstar_inside
+{src/**,lib/**}	src/	match
+{src/**,lib/**}	src/a/b	match
+{src/**,lib/**}	lib/a	match
+{src/**,lib/**}	lib/	match
+{src/**,lib/**}	src	no-match
+{src/**,lib/**}	docs/x	no-match
+{src/**,lib/**}	other	no-match
+
+# ----------------------------------------------------------------------------
+# brace.nested — `{a,{b,c}}`, `{{a,b},c}`, deep nesting
+# ----------------------------------------------------------------------------
+
+## brace.nested.simple
+{a,{b,c}}	a	match
+{a,{b,c}}	b	match
+{a,{b,c}}	c	match
+{a,{b,c}}	d	no-match
+{{a,b},c}	a	match
+{{a,b},c}	b	match
+{{a,b},c}	c	match
+{{a,b},c}	d	no-match
+
+## brace.nested.deep
+{a,{b,{c,{d,e}}}}	a	match
+{a,{b,{c,{d,e}}}}	b	match
+{a,{b,{c,{d,e}}}}	c	match
+{a,{b,{c,{d,e}}}}	d	match
+{a,{b,{c,{d,e}}}}	e	match
+{a,{b,{c,{d,e}}}}	f	no-match
+
+## brace.nested.with_wildcards
+{a*,{b?,c[0-9]}}	abc	match
+{a*,{b?,c[0-9]}}	bx	match
+{a*,{b?,c[0-9]}}	c5	match
+{a*,{b?,c[0-9]}}	bxy	no-match
+{a*,{b?,c[0-9]}}	cA	no-match
+{a*,{b?,c[0-9]}}	xyz	no-match
+
+## brace.nested.realistic
+{src,{lib,tests}}/main.rs	src/main.rs	match
+{src,{lib,tests}}/main.rs	lib/main.rs	match
+{src,{lib,tests}}/main.rs	tests/main.rs	match
+{src,{lib,tests}}/main.rs	docs/main.rs	no-match
+{src,{lib,tests}}/main.rs	src/lib.rs	no-match
+
+# ----------------------------------------------------------------------------
+# brace.empty-branch — `{,a}`, `{a,}`, `{a,,b}`
+# ----------------------------------------------------------------------------
+
+## brace.empty.leading
+{,foo}	foo	match
+{,foo}		match
+{,foo}	bar	no-match
+prefix{,-suffix}	prefix	match
+prefix{,-suffix}	prefix-suffix	match
+prefix{,-suffix}	prefix-	no-match
+
+## brace.empty.trailing
+{foo,}	foo	match
+{foo,}		match
+{foo,}	bar	no-match
+file{,.bak}	file	match
+file{,.bak}	file.bak	match
+file{,.bak}	file.txt	no-match
+
+## brace.empty.middle
+{a,,b}	a	match
+{a,,b}		match
+{a,,b}	b	match
+{a,,b}	c	no-match
+{a,,b,}	a	match
+{a,,b,}	b	match
+{a,,b,}		match
+
+## brace.empty.with_globstar
+# `{a,}/**` lowers to alternation of `a/**` and `/**`. `a/**` requires
+# leading `a/`; `/**` requires a leading `/`. Bare relative paths like
+# `x` don't match either branch.
+{a,}/**	a/x	match
+{a,}/**	a/	match
+{a,}/**	/x	match
+{a,}/**	/x/y	match
+{a,}/**	a	no-match
+{a,}/**	x	no-match
+
+# ----------------------------------------------------------------------------
+# brace.cartesian — `{a,b}{c,d}`, `*.{ts,tsx}`
+# ----------------------------------------------------------------------------
+
+## brace.cartesian.flat
+{a,b}{c,d}{e,f}	ace	match
+{a,b}{c,d}{e,f}	bdf	match
+{a,b}{c,d}{e,f}	bce	match
+{a,b}{c,d}{e,f}	xce	no-match
+{a,b}{c,d}{e,f}	abce	no-match
+{a,b}{c,d}{e,f}	bd	no-match
+
+## brace.cartesian.suffix_combo
+*.{ts,tsx}	main.ts	match
+*.{ts,tsx}	main.tsx	match
+*.{ts,tsx}	main.js	no-match
+*.{ts,tsx}	main	no-match
+*.{ts,tsx,d.ts}	main.d.ts	match
+*.{ts,tsx,d.ts}	main.tsx	match
+*.{ts,tsx,d.ts}	main.js	no-match
+
+## brace.cartesian.prefix_and_suffix
+{src,lib}/{main,lib}.{rs,ts}	src/main.rs	match
+{src,lib}/{main,lib}.{rs,ts}	lib/lib.ts	match
+{src,lib}/{main,lib}.{rs,ts}	src/main.ts	match
+{src,lib}/{main,lib}.{rs,ts}	tests/main.rs	no-match
+{src,lib}/{main,lib}.{rs,ts}	src/foo.rs	no-match
+{src,lib}/{main,lib}.{rs,ts}	src/main.js	no-match
+
+# ----------------------------------------------------------------------------
+# brace.with-globstar — `{src,tests}/**/*.ts`, `**/{a,b}/c`
+# ----------------------------------------------------------------------------
+
+## brace.with_globstar.prefix
+{src,tests}/**/*.ts	src/main.ts	match
+{src,tests}/**/*.ts	tests/util.ts	match
+{src,tests}/**/*.ts	src/a/b/c.ts	match
+{src,tests}/**/*.ts	tests/a/b.ts	match
+{src,tests}/**/*.ts	docs/a.ts	no-match
+{src,tests}/**/*.ts	src/main.rs	no-match
+
+## brace.with_globstar.middle
+**/{a,b}/c	a/c	match
+**/{a,b}/c	b/c	match
+**/{a,b}/c	x/a/c	match
+**/{a,b}/c	x/y/b/c	match
+**/{a,b}/c	x/d/c	no-match
+**/{a,b}/c	a/d	no-match
+
+## brace.with_globstar.middle_brace_inside
+src/**/{x,y,z}/file.ts	src/x/file.ts	match
+src/**/{x,y,z}/file.ts	src/a/y/file.ts	match
+src/**/{x,y,z}/file.ts	src/a/b/z/file.ts	match
+src/**/{x,y,z}/file.ts	src/a/w/file.ts	no-match
+src/**/{x,y,z}/file.ts	other/x/file.ts	no-match
+
+## brace.with_globstar.adjacent_branches
+{**/foo,**/bar}	foo	match
+{**/foo,**/bar}	bar	match
+{**/foo,**/bar}	a/foo	match
+{**/foo,**/bar}	x/y/bar	match
+{**/foo,**/bar}	baz	no-match
+{**/foo,**/bar}	x/baz	no-match
+
+# ----------------------------------------------------------------------------
+# escape — every metachar via backslash
+# ----------------------------------------------------------------------------
+
+## escape.metachars_each
+\,	,	match
+\,	a	no-match
+foo\,bar	foo,bar	match
+foo\,bar	foobar	no-match
+\(	(	match
+\(	a	no-match
+\)	)	match
+\)	a	no-match
+\|	|	match
+\|	a	no-match
+
+## escape.full_pattern_literal
+\*\?\[\]\{\}	*?[]{}	match
+\*\?\[\]\{\}	*?[]{	no-match
+\*\*	**	match
+\*\*	a	no-match
+\*\*	*	no-match
+
+## escape.intermixed_with_wildcards
+\**	*foo	match
+\**	*	match
+\**	foo	no-match
+*\*	abc*	match
+*\*	abc	no-match
+\*?	*x	match
+\*?	*	no-match
+\*?	xx	no-match
+
+## escape.brace_in_path
+\{a\}	{a}	match
+\{a\}	a	no-match
+\{a,b\}	{a,b}	match
+\{a,b\}	a	no-match
+\{a,b\}	b	no-match
+
+## escape.bracket_in_path
+\[abc\]	[abc]	match
+\[abc\]	a	no-match
+\[\]	[]	match
+\[\]	a	no-match
+
+# ----------------------------------------------------------------------------
+# separator.strict — strict semantics on both sides: each `/` in pattern
+# becomes its own `Sep`, consuming exactly one separator byte from the
+# path. Pattern `a//b` requires exactly two separator bytes; pattern
+# `a/b` rejects `a//b`. Aligned with picomatch / globset / fast-glob /
+# bash on simple-separator patterns.
+# ----------------------------------------------------------------------------
+
+## separator.strict.runs_no_collapse
+# Plain `/` in pattern is strict (exactly one sep byte) — aligned
+# with picomatch / globset / bash on simple-separator patterns.
+a/b/c	a//b/c	no-match
+a/b/c	a/b//c	no-match
+a/b/c	a//b//c	no-match
+a/b/c	a///b///c	no-match
+a/b/c	a////b////c	no-match
+src/main.rs	src///main.rs	no-match
+src/main.rs	src/main.rs///	no-match
+
+## separator.lenient.through_globstar
+# `**`-derived ops (`OptSegmentsSlash`, `SlashAnything`, `LeadingSeps`)
+# are deliberately lenient on the separator runs they cross — they
+# represent "any path traversal" and shouldn't choke on `//` produced
+# by user-side path concatenation. Same as picomatch.
+**/foo	a//foo	match
+**/foo	a///foo	match
+a/**/b	a//x/b	match
+# `a/**/b` against `a//b`: OSS lenient sep absorbs run, then Star=empty.
+a/**/b	a//b	match
+a/**/b	a/x//y/b	match
+
+# ----------------------------------------------------------------------------
+# dot.protection.true — dot=true (default) — `*` matches `.hidden`
+# ----------------------------------------------------------------------------
+
+## dot.true.star_matches_hidden
+*	.hidden	match
+*	.gitignore	match
+*	.x	match
+*.txt	.txt	match
+*.txt	.config.txt	match
+?	.	match
+**/*	a/.b	match
+**/*	a/.b/.c	match
+src/*	src/.env	match
+src/*.ts	src/.hidden.ts	match
+
+## dot.true.with_class_in_brace
+{*,.[!.]*}	main.rs	match
+# Under default dot=true, `*` already matches `.hidden`; brace branches don't change that.
+{*,.[!.]*}	.hidden	match
+
+# ----------------------------------------------------------------------------
+# dot.protection.false — dot=false explicit
+# ----------------------------------------------------------------------------
+
+## dot.false.star_blocked
+*	.hidden	no-match	dot=false
+*	.x	no-match	dot=false
+*	visible	match	dot=false
+*.txt	.txt	no-match	dot=false
+*.txt	a.txt	match	dot=false
+?	.	no-match	dot=false
+?	a	match	dot=false
+
+## dot.false.deep_segments
+**/*	a/.b	no-match	dot=false
+**/*	a/.b/c	no-match	dot=false
+**/*	a/b/c	match	dot=false
+**/*	a/b/.c	no-match	dot=false
+**/*	.a/b	no-match	dot=false
+src/*	src/.env	no-match	dot=false
+src/*	src/main.rs	match	dot=false
+src/**/*.ts	src/main.ts	match	dot=false
+src/**/*.ts	src/.hidden/main.ts	no-match	dot=false
+src/**/*.ts	src/sub/.hidden.ts	no-match	dot=false
+
+## dot.false.literal_dot_works
+.gitignore	.gitignore	match	dot=false
+.hidden	.hidden	match	dot=false
+.config/main	.config/main	match	dot=false
+**/.git	.git	match	dot=false
+**/.git	a/.git	match	dot=false
+
+## dot.false.class_negated_dot_protection
+[^.]*	.hidden	no-match	dot=false
+[^.]*	visible	match	dot=false
+[^.]*	.hidden	no-match	dot=true
+[^a]	.	no-match	dot=false
+[^a]	.	match	dot=true
+[^abc]	.x	no-match	dot=false
+
+## dot.false.bracket_dot_explicit
+[.]	.	match	dot=false
+[.]hidden	.hidden	match	dot=false
+[.]hidden	hidden	no-match	dot=false
+
+# ----------------------------------------------------------------------------
+# case.sensitive — default — `Foo` ≠ `foo`
+# ----------------------------------------------------------------------------
+
+## case.sensitive.default_literal
+Foo	Foo	match
+Foo	foo	no-match
+Foo	FOO	no-match
+README	README	match
+README	readme	no-match
+src/Main.rs	src/Main.rs	match
+src/Main.rs	src/main.rs	no-match
+SCREAM.TXT	SCREAM.TXT	match
+SCREAM.TXT	scream.txt	no-match
+
+## case.sensitive.default_class
+[A-Z]	A	match
+[A-Z]	a	no-match
+[A-Z]	Z	match
+[a-z]	A	no-match
+[a-z]	a	match
+[A-Za-z]	a	match
+[A-Za-z]	Z	match
+[A-Za-z]	0	no-match
+
+## case.sensitive.default_brace
+{Foo,Bar}	Foo	match
+{Foo,Bar}	foo	no-match
+{Foo,Bar}	BAR	no-match
+{Foo,Bar}	Bar	match
+
+# ----------------------------------------------------------------------------
+# case.insensitive — case_insensitive=true — letter compare folds, classes
+# expand to both cases (ASCII-only)
+# ----------------------------------------------------------------------------
+
+## case.insensitive.literal
+Foo	foo	match	case_insensitive=true
+Foo	FOO	match	case_insensitive=true
+Foo	fOo	match	case_insensitive=true
+Foo	bar	no-match	case_insensitive=true
+abc	ABC	match	case_insensitive=true
+abc	aBC	match	case_insensitive=true
+abc	xyz	no-match	case_insensitive=true
+
+## case.insensitive.class_letter_range_expansion
+[a-z]	A	match	case_insensitive=true
+[a-z]	Z	match	case_insensitive=true
+[a-z]	M	match	case_insensitive=true
+[a-z]	5	no-match	case_insensitive=true
+[A-Z]	a	match	case_insensitive=true
+[A-Z]	z	match	case_insensitive=true
+[d-f]	D	match	case_insensitive=true
+[d-f]	F	match	case_insensitive=true
+[d-f]	A	no-match	case_insensitive=true
+[d-f]	a	no-match	case_insensitive=true
+
+## case.insensitive.class_negated
+[!a-z]	A	no-match	case_insensitive=true
+[!a-z]	Z	no-match	case_insensitive=true
+[!a-z]	5	match	case_insensitive=true
+[^a-z]	A	no-match	case_insensitive=true
+[^a-z]	5	match	case_insensitive=true
+
+## case.insensitive.with_globstar_brace
+src/**/*.{TS,JS}	src/main.ts	match	case_insensitive=true
+src/**/*.{TS,JS}	src/sub/main.JS	match	case_insensitive=true
+src/**/*.{TS,JS}	src/main.rs	no-match	case_insensitive=true
+{README,LICENSE}	readme	match	case_insensitive=true
+{README,LICENSE}	License	match	case_insensitive=true
+{README,LICENSE}	OTHER	no-match	case_insensitive=true
+
+## case.insensitive.preserves_meta
+\*	*	match	case_insensitive=true
+\*	a	no-match	case_insensitive=true
+\?	?	match	case_insensitive=true
+\?	a	no-match	case_insensitive=true
+
+## case.insensitive.path_segments
+SRC/MAIN	src/main	match	case_insensitive=true
+SRC/MAIN	src/Main	match	case_insensitive=true
+src/main	SRC/MAIN	match	case_insensitive=true
+src/main	src/other	no-match	case_insensitive=true
+
+# ----------------------------------------------------------------------------
+# negation.outer — leading `!` flips result; embedded `!` is literal
+# ----------------------------------------------------------------------------
+
+## negation.outer.simple
+!*.log	main.rs	match
+!*.log	debug.log	no-match
+!src/**	docs/main.rs	match
+!src/**	src/main.rs	no-match
+!{a,b}	c	match
+!{a,b}	a	no-match
+!{a,b}	b	no-match
+
+## negation.outer.with_globstar
+!**/node_modules/**	src/main.rs	match
+!**/node_modules/**	node_modules/foo	no-match
+!**/node_modules/**	a/node_modules/b/c	no-match
+!**/*.{ts,tsx}	src/main.rs	match
+!**/*.{ts,tsx}	src/main.ts	no-match
+!**/*.{ts,tsx}	src/Component.tsx	no-match
+
+## negation.outer.double_triple
+!!foo	foo	match
+!!foo	bar	no-match
+!!!foo	foo	no-match
+!!!foo	bar	match
+!!!!foo	foo	match
+!!!!foo	bar	no-match
+!!!!!foo	foo	no-match
+!!!!!foo	bar	match
+
+## negation.embedded_is_literal
+foo!bar	foo!bar	match
+foo!bar	foobar	no-match
+a!b!c	a!b!c	match
+a!b!c	abc	no-match
+{a,b!c}	a	match
+{a,b!c}	b!c	match
+{a,b!c}	bc	no-match
+
+# ----------------------------------------------------------------------------
+# realistic.combos — monorepo / vite-style / tsconfig-style patterns
+# ----------------------------------------------------------------------------
+
+## realistic.monorepo_packages
+packages/*/src/**/*.ts	packages/foo/src/main.ts	match
+packages/*/src/**/*.ts	packages/bar/src/a/b.ts	match
+packages/*/src/**/*.ts	packages/foo/src	no-match
+packages/*/src/**/*.ts	packages/foo/dist/main.ts	no-match
+packages/*/src/**/*.ts	src/main.ts	no-match
+packages/*/{src,tests}/**/*.{ts,tsx}	packages/foo/src/main.ts	match
+packages/*/{src,tests}/**/*.{ts,tsx}	packages/foo/tests/spec.tsx	match
+packages/*/{src,tests}/**/*.{ts,tsx}	packages/foo/dist/main.ts	no-match
+
+## realistic.vite_style_assets
+src/assets/**/*.{png,jpg,svg,webp}	src/assets/logo.png	match
+src/assets/**/*.{png,jpg,svg,webp}	src/assets/icons/foo.svg	match
+src/assets/**/*.{png,jpg,svg,webp}	src/assets/photos/raw/x.webp	match
+src/assets/**/*.{png,jpg,svg,webp}	src/assets/data.json	no-match
+src/assets/**/*.{png,jpg,svg,webp}	assets/logo.png	no-match
+
+## realistic.eslint_ignore
+**/dist/**	dist/index.js	match
+**/dist/**	a/dist/index.js	match
+**/dist/**	a/b/dist/c/d.js	match
+**/dist/**	src/index.js	no-match
+{node_modules,dist,coverage,build}/**	node_modules/foo	match
+{node_modules,dist,coverage,build}/**	dist/x	match
+{node_modules,dist,coverage,build}/**	coverage/lcov.info	match
+{node_modules,dist,coverage,build}/**	build/output	match
+{node_modules,dist,coverage,build}/**	src/main	no-match
+
+## realistic.tsconfig_includes
+src/**/*	src/main.ts	match
+src/**/*	src/sub/lib.ts	match
+src/**/*	src	no-match
+src/**/*	dist/main.ts	no-match
+src/**/*.{ts,tsx,d.ts}	src/types/index.d.ts	match
+src/**/*.{ts,tsx,d.ts}	src/main.ts	match
+src/**/*.{ts,tsx,d.ts}	src/main.js	no-match
+
+## realistic.gitignore_lockfiles
+{package-lock.json,yarn.lock,pnpm-lock.yaml}	package-lock.json	match
+{package-lock.json,yarn.lock,pnpm-lock.yaml}	yarn.lock	match
+{package-lock.json,yarn.lock,pnpm-lock.yaml}	pnpm-lock.yaml	match
+{package-lock.json,yarn.lock,pnpm-lock.yaml}	bun.lockb	no-match
+**/Cargo.{toml,lock}	Cargo.toml	match
+**/Cargo.{toml,lock}	Cargo.lock	match
+**/Cargo.{toml,lock}	a/b/Cargo.toml	match
+**/Cargo.{toml,lock}	cargo.toml	no-match
+
+## realistic.spec_test_files
+**/*.{test,spec}.{ts,tsx,js,jsx}	src/foo.test.ts	match
+**/*.{test,spec}.{ts,tsx,js,jsx}	tests/bar.spec.tsx	match
+**/*.{test,spec}.{ts,tsx,js,jsx}	a/b/x.test.js	match
+**/*.{test,spec}.{ts,tsx,js,jsx}	x.testing.ts	no-match
+**/*.{test,spec}.{ts,tsx,js,jsx}	x.ts	no-match
+
+## realistic.docs_changelog
+**/{CHANGELOG,HISTORY,RELEASES}.md	CHANGELOG.md	match
+**/{CHANGELOG,HISTORY,RELEASES}.md	a/b/HISTORY.md	match
+**/{CHANGELOG,HISTORY,RELEASES}.md	docs/RELEASES.md	match
+**/{CHANGELOG,HISTORY,RELEASES}.md	NEWS.md	no-match
+
+## realistic.dotfiles
+.{bash,zsh,fish}rc	.bashrc	match
+.{bash,zsh,fish}rc	.zshrc	match
+.{bash,zsh,fish}rc	.fishrc	match
+.{bash,zsh,fish}rc	.bashrcc	no-match
+.{bash,zsh,fish}rc	bashrc	no-match
+**/.env{,.local,.production}	.env	match
+**/.env{,.local,.production}	.env.local	match
+**/.env{,.local,.production}	.env.production	match
+**/.env{,.local,.production}	.env.dev	no-match
+
+# ----------------------------------------------------------------------------
+# edge.empty — empty paths, empty branches, edge-of-segment combos
+# ----------------------------------------------------------------------------
+
+## edge.empty_path
+foo		no-match
+*		match
+**		match
+?		no-match
+{a,b}		no-match
+{a,b,}		match
+{,a,b}		match
+*/		no-match
+**/		match
+[abc]		no-match
+\*		no-match
+
+## edge.single_byte_paths
+*	x	match
+?	x	match
+[x]	x	match
+{x,y}	x	match
+**	x	match
+foo	x	no-match
+
+## edge.literal_only_meta_path
+\?	?	match
+\?	a	no-match
+\*	*	match
+\[	[	match
+\]	]	match
+{x,\*}	*	match
+{x,\*}	x	match
+
+## edge.tab_in_pattern_and_path
+foo\tbar	foo\tbar	match
+foo\tbar	foobar	no-match
+foo\tbar	foo bar	no-match
+
+## edge.newline_in_pattern_and_path
+foo\nbar	foo\nbar	match
+foo\nbar	foobar	no-match
+foo\nbar	foo/bar	no-match
+
+# ----------------------------------------------------------------------------
+# combos — interactions between multiple features in single patterns
+# ----------------------------------------------------------------------------
+
+## combos.class_inside_brace_branches
+{[a-c],[x-z]}	a	match
+{[a-c],[x-z]}	c	match
+{[a-c],[x-z]}	x	match
+{[a-c],[x-z]}	z	match
+{[a-c],[x-z]}	d	no-match
+{[a-c],[x-z]}	w	no-match
+
+## combos.class_with_globstar
+[a-z]/**/[0-9].txt	a/x/5.txt	match
+[a-z]/**/[0-9].txt	z/foo/bar/0.txt	match
+[a-z]/**/[0-9].txt	A/x/5.txt	no-match
+[a-z]/**/[0-9].txt	a/x/A.txt	no-match
+
+## combos.brace_class_globstar
+{src,lib}/**/[A-Z]*.rs	src/Main.rs	match
+{src,lib}/**/[A-Z]*.rs	lib/sub/Util.rs	match
+{src,lib}/**/[A-Z]*.rs	src/main.rs	no-match
+{src,lib}/**/[A-Z]*.rs	docs/Main.rs	no-match
+
+## combos.escaped_inside_brace
+{\*,\?,\[}	*	match
+{\*,\?,\[}	?	match
+{\*,\?,\[}	[	match
+{\*,\?,\[}	a	no-match
+
+## combos.brace_with_question_and_class
+v?.{[0-9],[A-F]}	v1.5	match
+v?.{[0-9],[A-F]}	v2.A	match
+v?.{[0-9],[A-F]}	v3.G	no-match
+v?.{[0-9],[A-F]}	v.5	no-match
+
+## combos.deeply_nested_braces_with_globstar
+{a,{b,{c,d}}}/**/{x,y,{z,w}}.{ts,rs}	a/foo/x.ts	match
+{a,{b,{c,d}}}/**/{x,y,{z,w}}.{ts,rs}	c/foo/bar/w.rs	match
+{a,{b,{c,d}}}/**/{x,y,{z,w}}.{ts,rs}	d/z.ts	match
+{a,{b,{c,d}}}/**/{x,y,{z,w}}.{ts,rs}	e/foo/x.ts	no-match
+{a,{b,{c,d}}}/**/{x,y,{z,w}}.{ts,rs}	a/foo/q.ts	no-match
+{a,{b,{c,d}}}/**/{x,y,{z,w}}.{ts,rs}	a/foo/x.js	no-match
+
+## combos.dot_protection_with_brace
+{*,.[!.]*}	visible	match	dot=false
+{*,.[!.]*}	.hidden	match	dot=false
+{*,.[!.]*}	..	no-match	dot=false
+{*,.[!.]*}	.	no-match	dot=false
+
+## combos.case_insensitive_with_class_inside_brace
+{*.{TS,RS},[A-Z]*}	main.ts	match	case_insensitive=true
+{*.{TS,RS},[A-Z]*}	Main.RS	match	case_insensitive=true
+{*.{TS,RS},[A-Z]*}	HELLO	match	case_insensitive=true
+{*.{TS,RS},[A-Z]*}	hello	match	case_insensitive=true
+{*.{TS,RS},[A-Z]*}	123	no-match	case_insensitive=true
+
+## combos.negation_with_brace_globstar
+!{src,lib}/**/*.rs	docs/main.rs	match
+!{src,lib}/**/*.rs	src/main.rs	no-match
+!{src,lib}/**/*.rs	lib/foo/bar.rs	no-match
+!{src,lib}/**/*.rs	src/main.ts	match
+
+# ----------------------------------------------------------------------------
+# wildcard mixed with literals — many patterns to sanity-check the matcher
+# ----------------------------------------------------------------------------
+
+## mix.star_question_class
+a*?	abc	match
+a*?	ab	match
+a*?	a	no-match
+a?*c	abxc	match
+a?*c	abc	match
+a?*c	ac	no-match
+[abc]*[xyz]	axxx	match
+[abc]*[xyz]	axyz	match
+[abc]*[xyz]	axyzbz	match
+[abc]*[xyz]	dxxx	no-match
+[abc]*[xyz]	axw	no-match
+[abc]*[xyz]	a	no-match
+
+## mix.star_in_each_segment
+*/*/*/*	a/b/c/d	match
+*/*/*/*	a/b/c	no-match
+*/*/*/*	a/b/c/d/e	no-match
+src/*/*.ts	src/sub/main.ts	match
+src/*/*.ts	src/main.ts	no-match
+src/*/*.ts	src/sub/deep/main.ts	no-match
+
+## mix.full_realworld_combo
+src/components/[A-Z]*/{index,main}.{ts,tsx}	src/components/Button/index.ts	match
+src/components/[A-Z]*/{index,main}.{ts,tsx}	src/components/Modal/main.tsx	match
+src/components/[A-Z]*/{index,main}.{ts,tsx}	src/components/button/index.ts	no-match
+src/components/[A-Z]*/{index,main}.{ts,tsx}	src/components/Button/other.ts	no-match
+src/components/[A-Z]*/{index,main}.{ts,tsx}	src/Button/index.ts	no-match
+
+## mix.bracket_brace_paren_literal
+file(1).txt	file(1).txt	match
+file(1).txt	file1.txt	no-match
+v{1,2}.{0,1}.{x,y}	v1.0.x	match
+v{1,2}.{0,1}.{x,y}	v2.1.y	match
+v{1,2}.{0,1}.{x,y}	v3.0.x	no-match
+v{1,2}.{0,1}.{x,y}	v1.2.x	no-match
+v{1,2}.{0,1}.{x,y}	v1.0.z	no-match
+
+## mix.degenerate_globstars
+a**	a	match
+a**	abc	match
+a**	a/b	no-match
+**a	a	match
+**a	xa	match
+**a	a/x	no-match
+**a**	a	match
+**a**	xax	match
+# `**a**` is degenerate `*a*` (neither `**` is segment-occupying); `xay`
+# does match because `*` accepts non-`a` chars too.
+**a**	xay	match
+**a**	xyz	no-match
+**a**	x/y	no-match
+a/**b	a/b	match
+a/**b	a/xxxb	match
+a/**b	a/x/b	no-match
+a**/b	a/b	match
+a**/b	axxxx/b	match
+a**/b	a/x/b	no-match
+
+## mix.long_chains
+a/*/c/*/e/*/g	a/b/c/d/e/f/g	match
+a/*/c/*/e/*/g	a/B/c/D/e/F/g	match
+a/*/c/*/e/*/g	a/b/c/d/e/g	no-match
+*/*/*/*/*/*	a/b/c/d/e/f	match
+*/*/*/*/*/*	a/b/c/d/e	no-match
+*/*/*/*/*/*	a/b/c/d/e/f/g	no-match
+
+# ----------------------------------------------------------------------------
+# explicit absolute and special-char paths
+# ----------------------------------------------------------------------------
+
+## absolute.literal_anchored
+/foo/bar	/foo/bar	match
+/foo/bar	foo/bar	no-match
+/foo/bar	/foo/baz	no-match
+/foo/bar/	/foo/bar/	match
+/foo/bar/	/foo/bar	no-match
+
+## absolute.with_wildcards
+/src/*	/src/main.rs	match
+/src/*	/src/sub/main.rs	no-match
+/src/*	src/main.rs	no-match
+/**/*.rs	/src/main.rs	match
+/**/*.rs	/main.rs	match
+/**/*.rs	src/main.rs	no-match
+
+## absolute.unc_paths
+# Pattern parser does NOT collapse `//`. Pattern `//server/share`
+# requires exactly two leading separator bytes in the path —
+# matches the UNC literal, rejects the single-`/` Unix-absolute form.
+# `**/share` uses `LeadingSeps` (lenient 0+) at the head, so leading
+# `//` runs are absorbed — UNC-style paths still match the catch-all.
+//server/share	//server/share	match
+//server/share	/server/share	no-match
+//server/share	server/share	no-match
+**/share	//server/share	match
+**/share	server/share	match
+**/share	//share	match
+
+# ----------------------------------------------------------------------------
+# Mixed dot + case_insensitive (independent flags) — exercises both rails
+# ----------------------------------------------------------------------------
+
+## mixed_flags.case_insensitive_with_dot_false
+*.{TS,RS}	main.TS	match	case_insensitive=true,dot=false
+*.{TS,RS}	.MAIN.TS	no-match	case_insensitive=true,dot=false
+*.{TS,RS}	.MAIN.TS	match	case_insensitive=true,dot=true
+**/*.RS	a/.B/c.rs	no-match	case_insensitive=true,dot=false
+**/*.RS	a/.B/c.rs	match	case_insensitive=true,dot=true
+README	readme	match	case_insensitive=true,dot=false
+README	.readme	no-match	case_insensitive=true,dot=false
+
+## mixed_flags.case_insensitive_with_globstar
+{SRC,LIB}/**/*.{TS,RS}	src/main.rs	match	case_insensitive=true
+{SRC,LIB}/**/*.{TS,RS}	LIB/sub/MAIN.TS	match	case_insensitive=true
+{SRC,LIB}/**/*.{TS,RS}	docs/main.rs	no-match	case_insensitive=true
+
+# ----------------------------------------------------------------------------
+# More class edge cases
+# ----------------------------------------------------------------------------
+
+## class.edge.closer_immediately_after_dash
+[a-]	a	match
+[a-]	-	match
+[a-]	z	no-match
+[--]	-	match
+[--]	a	no-match
+[-]	-	match
+[-]	a	no-match
+
+## class.edge.range_spans_punct
+# `[!-z]` is parsed as `[!` + items `-z`. `-` at first item position is
+# literal, so the items are the literal set `{-, z}` (NOT a range), then
+# the leading `!` makes it a negation. So `z` is in items → no-match.
+[!-z]	!	match
+[!-z]	z	no-match
+[!-z]	-	no-match
+[!-z]	a	match
+[!-z]	A	match
+[!-z]	~	match
+[!-z]	{	match
+[A-_]	A	match
+[A-_]	_	match
+[A-_]	Z	match
+[A-_]	a	no-match
+[A-_]	0	no-match
+
+## class.edge.long_alternation
+[abcdefghij]	a	match
+[abcdefghij]	j	match
+[abcdefghij]	k	no-match
+[abcdefghij][klmnop]	al	match
+[abcdefghij][klmnop]	jp	match
+[abcdefghij][klmnop]	ak	match
+[abcdefghij][klmnop]	aq	no-match
+
+# ----------------------------------------------------------------------------
+# Pure-literal heavy patterns (Tier 0 candidates)
+# ----------------------------------------------------------------------------
+
+## tier0.pure_literal
+src/main.rs	src/main.rs	match
+src/main.rs	src/main.RS	no-match
+src/lib/mod.rs	src/lib/mod.rs	match
+src/lib/mod.rs	src/lib/main.rs	no-match
+node_modules/foo/index.js	node_modules/foo/index.js	match
+node_modules/foo/index.js	node_modules/foo/index.cjs	no-match
+
+## tier0.deep_literal
+a/b/c/d/e/f/g/h	a/b/c/d/e/f/g/h	match
+a/b/c/d/e/f/g/h	a/b/c/d/e/f/g	no-match
+a/b/c/d/e/f/g/h	a/b/c/d/e/f/g/h/i	no-match
+a/b/c/d/e/f/g/h	a/b/c/d/x/f/g/h	no-match
+
+# ----------------------------------------------------------------------------
+# Question-mark interactions
+# ----------------------------------------------------------------------------
+
+## question.position_variants
+?oo	foo	match
+?oo	boo	match
+?oo	zoo	match
+?oo	oo	no-match
+?oo	oox	no-match
+fo?	foo	match
+fo?	fox	match
+fo?	fo	no-match
+fo?	fooo	no-match
+f?o	foo	match
+f?o	fxo	match
+f?o	fo	no-match
+
+## question.with_class
+?[abc]	xa	match
+?[abc]	yb	match
+?[abc]	xx	no-match
+?[abc]	a	no-match
+[abc]?	ax	match
+[abc]?	bz	match
+[abc]?	dx	no-match
+[abc]?	a	no-match
+
+# ----------------------------------------------------------------------------
+# `**` in unusual positions
+# ----------------------------------------------------------------------------
+
+## globstar.various_positions
+**/	a/	match
+**/	/a/	match
+**/	a	no-match
+**/	a/b	no-match
+**/	a/b/	match
+**/foo/**	foo	no-match
+**/foo/**	foo/x	match
+**/foo/**	x/foo/x	match
+**/foo/**	foo/	match
+**/foo/**	x/foo/	match
+**/*/foo	a/foo	match
+**/*/foo	a/b/foo	match
+**/*/foo	foo	no-match
+
+## globstar.with_brace_around_root
+{**/a,**/b,c}	a	match
+{**/a,**/b,c}	b	match
+{**/a,**/b,c}	c	match
+{**/a,**/b,c}	x/a	match
+{**/a,**/b,c}	d	no-match
+{**/a,**/b,c}	x/c	no-match
+
+# ----------------------------------------------------------------------------
+# Stress: many wildcards in one segment
+# ----------------------------------------------------------------------------
+
+## stress.many_stars_one_segment
+a*b*c*d*e	abcde	match
+a*b*c*d*e	axbycadze	match
+a*b*c*d*e	axxxbyyycdz	no-match
+a*b*c*d*e	axbcde	match
+a*b*c*d*e	abcdef	no-match
+a*b*c*d*e	a/b/c/d/e	no-match
+
+## stress.alternating_star_question
+*?*?*	abcde	match
+*?*?*	abc	match
+*?*?*	ab	match
+*?*?*	a	no-match
+*?*?*		no-match
+?*?*?	abc	match
+?*?*?	xyz	match
+?*?*?	ab	no-match
+
+# ----------------------------------------------------------------------------
+# Brace + emptiness combinations
+# ----------------------------------------------------------------------------
+
+## brace.empty_in_path
+file{,_a,_b}.txt	file.txt	match
+file{,_a,_b}.txt	file_a.txt	match
+file{,_a,_b}.txt	file_b.txt	match
+file{,_a,_b}.txt	file_c.txt	no-match
+file{,_a,_b}.txt	file_.txt	no-match
+
+## brace.empty_with_separator_outside
+{,prefix-}foo	foo	match
+{,prefix-}foo	prefix-foo	match
+{,prefix-}foo	xfoo	no-match
+{,prefix-}foo	prefix-bar	no-match
+
+# ----------------------------------------------------------------------------
+# Path edge cases — single byte segments, only-separators, etc.
+# ----------------------------------------------------------------------------
+
+## path.one_segment_only_sep
+*	/	no-match
+**	/	match
+**/	/	match
+?	/	no-match
+foo	/	no-match
+foo/	/	no-match
+/	/	match
+/	a	no-match
+# Strict: pattern parser does NOT collapse `//`. Pattern `//`
+# requires exactly two separator bytes in the path.
+//	//	match
+//	/	no-match
+//	///	no-match
+
+## path.trailing_seps
+foo	foo/	no-match
+foo/	foo/	match
+foo/	foo//	no-match
+foo/	foo	no-match
+foo/	foo///	no-match
+
+## path.dot_path_components
+.	.	match
+..	..	match
+.	a	no-match
+.	..	no-match
+./foo	./foo	match
+./foo	foo	no-match
+**	./foo	match
+
+# ----------------------------------------------------------------------------
+# Alternation collapse behaviors
+# ----------------------------------------------------------------------------
+
+## brace.alt_collapse
+{a,a}	a	match
+{a,a}	b	no-match
+{x,x,x}	x	match
+{x,x,x}	y	no-match
+{a,a,b,b}	a	match
+{a,a,b,b}	b	match
+{a,a,b,b}	c	no-match
+
+# ----------------------------------------------------------------------------
+# Assorted matchings that pin spec rules sharply
+# ----------------------------------------------------------------------------
+
+## spec.star_does_not_cross_slash
+*	a/b	no-match
+src/*	src/a/b	no-match
+src/*/sub	src/x/sub	match
+src/*/sub	src/x/y/sub	no-match
+src/*/sub	src/sub	no-match
+src/*/sub/	src/x/sub/	match
+src/*/sub/	src/x/sub	no-match
+
+## spec.questionmark_does_not_cross_slash
+src/?	src/x	match
+src/?	src/	no-match
+src/?	src/xy	no-match
+src/?	src/x/y	no-match
+
+## spec.globstar_segment_only
+src**/main	src/main	match
+src**/main	srcx/main	match
+src**/main	src/x/main	no-match
+src/**main	src/main	match
+src/**main	src/foomain	match
+src/**main	src/foo/main	no-match
+
+## spec.brace_does_not_inhibit_globstar
+{src,**/lib}/main	src/main	match
+{src,**/lib}/main	lib/main	match
+{src,**/lib}/main	a/lib/main	match
+{src,**/lib}/main	docs/main	no-match
+
+## spec.dotfile_segment_each_position
+**/.bin/*	.bin/x	match
+**/.bin/*	a/.bin/x	match
+**/.bin/*	a/.bin/.x	match
+**/.bin/*	.bin	no-match
+**/.bin/*	a/bin/x	no-match
+**/.bin/*	.bin/.hidden	no-match	dot=false
+**/.bin/*	.bin/x	match	dot=false
+
+# ----------------------------------------------------------------------------
+# Patterns with class containing `^` not as negation
+# ----------------------------------------------------------------------------
+
+## class.caret_not_first
+[a^]	a	match
+[a^]	^	match
+[a^]	b	no-match
+[abc^]	^	match
+[abc^]	d	no-match
+
+## class.caret_first_is_negation
+[^abc]	d	match
+[^abc]	a	no-match
+[^abc]	b	no-match
+[^abc]	c	no-match
+
+# ----------------------------------------------------------------------------
+# Final tier-coverage rows
+# ----------------------------------------------------------------------------
+
+## final.tier_literal
+foo/bar/baz	foo/bar/baz	match
+foo/bar/baz	foo/bar/baz/qux	no-match
+foo/bar/baz	other	no-match
+exact-match	exact-match	match
+exact-match	exact-match.txt	no-match
+
+## final.tier_simple_wildcard
+src/*.rs	src/main.rs	match
+src/*.rs	src/lib.rs	match
+src/*.rs	src/sub/main.rs	no-match
+src/*.rs	main.rs	no-match
+[a-z]*/[0-9]*.txt	abc/123.txt	match
+[a-z]*/[0-9]*.txt	xyz/0.txt	match
+[a-z]*/[0-9]*.txt	ABC/123.txt	no-match
+[a-z]*/[0-9]*.txt	abc/abc.txt	no-match
+
+## final.tier_globstar
+src/**/*.{ts,tsx,js,jsx}	src/main.ts	match
+src/**/*.{ts,tsx,js,jsx}	src/a/b/c/d.jsx	match
+src/**/*.{ts,tsx,js,jsx}	src/main.rs	no-match
+src/**/*.{ts,tsx,js,jsx}	other/main.ts	no-match
+{src,lib}/**/[A-Z]*.{ts,rs}	src/Main.ts	match
+{src,lib}/**/[A-Z]*.{ts,rs}	lib/sub/Util.rs	match
+{src,lib}/**/[A-Z]*.{ts,rs}	src/main.ts	no-match
+{src,lib}/**/[A-Z]*.{ts,rs}	docs/Main.ts	no-match

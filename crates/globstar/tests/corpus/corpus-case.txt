@@ -1,0 +1,408 @@
+# ============================================================================
+# corpus-case.txt — ASCII case-insensitive matching
+# (CompileOptions::case_insensitive — see GLOB_SPEC.md §11.2)
+#
+# All `case_insensitive=true` rows test ASCII fold semantics.
+# Mixed case is intentional throughout — both PATTERNS and PATHS use
+# scrambled case (lower/upper/Title/sCrAmBlEd) to ensure the implementation
+# folds in BOTH directions, not just one. A row like
+#
+#     ReAdMe   rEaDmE   match
+#
+# would silently pass if either side were canonicalized at parse/compile.
+#
+# Coverage matrix (every glob construct × case_insensitive on/off):
+#
+#   construct           rows
+#   ─────────────────────────
+#   literal             ~12
+#   star (*)            ~14
+#   question (?)         ~9
+#   class [...]          ~24
+#   negated class [^]    ~8
+#   class with range     ~6
+#   globstar **          ~14
+#   brace {a,b}          ~10
+#   nested brace         ~6
+#   brace + globstar     ~6
+#   class inside brace   ~4
+#   escape \X            ~5
+#   ASCII-only scope     ~6
+#   dot interaction      ~6
+#   default (off) sanity ~5
+#
+# Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Tier 0 — pure literals
+# Three pattern forms × matching mixed path cases:
+#   - all-lower (typical user)
+#   - all-upper
+#   - sCrAmBlEd (stress)
+# ----------------------------------------------------------------------------
+
+## case.literal_lower_pattern
+readme	README	match	case_insensitive=true
+readme	Readme	match	case_insensitive=true
+readme	readme	match	case_insensitive=true
+readme	rEaDmE	match	case_insensitive=true
+readme	xyzme	no-match	case_insensitive=true
+src/main.rs	SRC/MAIN.RS	match	case_insensitive=true
+src/main.rs	src/Main.rs	match	case_insensitive=true
+src/main.rs	SrC/mAiN.Rs	match	case_insensitive=true
+
+## case.literal_upper_pattern
+README	readme	match	case_insensitive=true
+README	README	match	case_insensitive=true
+README	rEaDmE	match	case_insensitive=true
+README	xyzme	no-match	case_insensitive=true
+SRC/MAIN.RS	src/main.rs	match	case_insensitive=true
+SRC/MAIN.RS	SRC/MAIN.RS	match	case_insensitive=true
+SRC/MAIN.RS	SrC/mAiN.rS	match	case_insensitive=true
+
+## case.literal_mixed_pattern
+ReAdMe	rEaDmE	match	case_insensitive=true
+ReAdMe	README	match	case_insensitive=true
+ReAdMe	readme	match	case_insensitive=true
+ReAdMe	README2	no-match	case_insensitive=true
+SrC/MaIn.Rs	sRc/mAiN.rS	match	case_insensitive=true
+SrC/MaIn.Rs	SRC/MAIN.RS	match	case_insensitive=true
+SrC/MaIn.Rs	src/main.rs	match	case_insensitive=true
+fOo.BaR.bAz	FoO.bAr.BaZ	match	case_insensitive=true
+fOo.BaR.bAz	foo.BAR.baz	match	case_insensitive=true
+fOo.BaR.bAz	FOO.BAR.BAZ	match	case_insensitive=true
+fOo.BaR.bAz	xoo.bar.baz	no-match	case_insensitive=true
+
+# ----------------------------------------------------------------------------
+# Tier 1 — `*` `?` `[...]` (mixed case in pattern AND path)
+# ----------------------------------------------------------------------------
+
+## case.star_extension_lower_pattern
+*.ts	main.TS	match	case_insensitive=true
+*.ts	MAIN.tS	match	case_insensitive=true
+*.ts	Main.Ts	match	case_insensitive=true
+*.ts	main.RS	no-match	case_insensitive=true
+foo*	FOOBAR	match	case_insensitive=true
+foo*	FoOBaR	match	case_insensitive=true
+foo*	BAR	no-match	case_insensitive=true
+*bar*	FOOBARBAZ	match	case_insensitive=true
+*bar*	FoObArBaZ	match	case_insensitive=true
+*bar*	foobaz	no-match	case_insensitive=true
+
+## case.star_extension_upper_pattern
+*.TS	main.ts	match	case_insensitive=true
+*.TS	main.Ts	match	case_insensitive=true
+*.TS	main.TS	match	case_insensitive=true
+*.TS	main.rs	no-match	case_insensitive=true
+FOO*	foobar	match	case_insensitive=true
+FOO*	FoOBaR	match	case_insensitive=true
+*BAR*	foobarbaz	match	case_insensitive=true
+*BAR*	foobaz	no-match	case_insensitive=true
+
+## case.star_extension_mixed_pattern
+*.tS	main.Ts	match	case_insensitive=true
+*.Ts	MAIN.tS	match	case_insensitive=true
+*.tSx	main.TSX	match	case_insensitive=true
+*.tSx	MAIN.tSx	match	case_insensitive=true
+*.Tsx	main.tsX	match	case_insensitive=true
+*.Tsx	main.RS	no-match	case_insensitive=true
+*.Tsx		no-match	case_insensitive=true
+fOo*	FoOBar	match	case_insensitive=true
+fOo*	fooBAR	match	case_insensitive=true
+fOo*	FOO	match	case_insensitive=true
+*BaR*	FOObarBAZ	match	case_insensitive=true
+*BaR*	FOObAr	match	case_insensitive=true
+*BaR*	foobaz	no-match	case_insensitive=true
+*.{tS,Ts,TS}	main.tsX	no-match	case_insensitive=true
+
+## case.star_middle_segment
+A*b*C	axBYc	match	case_insensitive=true
+a*B*c	AxByc	match	case_insensitive=true
+a*B*c	AXxBYC	match	case_insensitive=true
+a*B*c	axxxxYc	no-match	case_insensitive=true
+A*b*C	abc	match	case_insensitive=true
+xY*Zw	XYxZW	match	case_insensitive=true
+xY*Zw	XyAaaZw	match	case_insensitive=true
+
+## case.question_basic
+?.tS	A.ts	match	case_insensitive=true
+?.Ts	x.TS	match	case_insensitive=true
+?.tS	5.tS	match	case_insensitive=true
+?.tS	5.RS	no-match	case_insensitive=true
+???.tXt	abc.TXT	match	case_insensitive=true
+???.tXt	XYZ.txt	match	case_insensitive=true
+???.tXt	ab.txt	no-match	case_insensitive=true
+F?o	FoO	match	case_insensitive=true
+F?o	fXo	match	case_insensitive=true
+fOo?bAr	FOOXBAR	match	case_insensitive=true
+fOo?bAr	fooXbar	match	case_insensitive=true
+
+## case.class_letter_set_lower_pattern
+[abc].ts	A.TS	match	case_insensitive=true
+[abc].ts	B.tS	match	case_insensitive=true
+[abc].ts	c.ts	match	case_insensitive=true
+[abc].ts	D.ts	no-match	case_insensitive=true
+[xyz]	X	match	case_insensitive=true
+[xyz]	y	match	case_insensitive=true
+[xyz]	Z	match	case_insensitive=true
+[xyz]	W	no-match	case_insensitive=true
+
+## case.class_letter_set_upper_pattern
+[ABC].TS	a.ts	match	case_insensitive=true
+[ABC].TS	b.Ts	match	case_insensitive=true
+[ABC].TS	d.ts	no-match	case_insensitive=true
+[XYZ]	x	match	case_insensitive=true
+[XYZ]	w	no-match	case_insensitive=true
+
+## case.class_letter_set_mixed_pattern
+[aBc].tS	a.ts	match	case_insensitive=true
+[aBc].tS	B.tS	match	case_insensitive=true
+[aBc].tS	C.Ts	match	case_insensitive=true
+[aBc].tS	D.ts	no-match	case_insensitive=true
+[xYz]	X	match	case_insensitive=true
+[xYz]	y	match	case_insensitive=true
+[xYz]	Z	match	case_insensitive=true
+[xYz]	W	no-match	case_insensitive=true
+[fOoBaR]	o	match	case_insensitive=true
+[fOoBaR]	A	match	case_insensitive=true
+[fOoBaR]	x	no-match	case_insensitive=true
+
+## case.class_letter_range
+[A-z].tS	a.tS	match	case_insensitive=true
+# Note: [A-z] in ASCII is A..Z + [\]^_` + a..z — letters and a few symbols
+[A-z].tS	A.Ts	match	case_insensitive=true
+[A-z].tS	0.tS	no-match	case_insensitive=true
+[A-z].rs	A.RS	match	case_insensitive=true
+[A-z].rs	z.rs	match	case_insensitive=true
+[M-P].txt	N.TXT	match	case_insensitive=true
+[M-P].txt	o.txt	match	case_insensitive=true
+[M-P].txt	a.txt	no-match	case_insensitive=true
+[A-K][L-z].rs	bM.RS	match	case_insensitive=true
+[A-K][L-z].rs	BM.rs	match	case_insensitive=true
+
+## case.class_mixed_range_and_byte
+[A-z0-9_].rS	x.RS	match	case_insensitive=true
+[A-z0-9_].rS	5.rS	match	case_insensitive=true
+[A-z0-9_].rS	_.rs	match	case_insensitive=true
+[A-z0-9_].rS	-.rs	no-match	case_insensitive=true
+[A-Z_-].tXt	A.TXT	match	case_insensitive=true
+[A-Z_-].tXt	-.TxT	match	case_insensitive=true
+
+## case.class_negated
+[^A-z].tXt	A.txt	no-match	case_insensitive=true
+[^A-z].tXt	0.tXt	match	case_insensitive=true
+[^A-z].tXt	a.txt	no-match	case_insensitive=true
+[^A-z].tXt	5.tXt	match	case_insensitive=true
+[^xYz].rS	x.rs	no-match	case_insensitive=true
+[^xYz].rS	a.RS	match	case_insensitive=true
+[^A-Za-z]	5	match	case_insensitive=true
+[^A-Za-z]	A	no-match	case_insensitive=true
+
+## case.class_with_special_letters_only
+# `[a-y]` skips `z` — case-insensitive should still skip `z`/`Z`.
+[a-y]	A	match	case_insensitive=true
+[a-y]	Y	match	case_insensitive=true
+[a-y]	z	no-match	case_insensitive=true
+[a-y]	Z	no-match	case_insensitive=true
+# Mixed: pattern in upper, path in lower
+[A-Y]	q	match	case_insensitive=true
+[A-Y]	Z	no-match	case_insensitive=true
+
+# ----------------------------------------------------------------------------
+# Tier 2 — globstar `**` and brace `{a,b}` (scrambled patterns)
+# ----------------------------------------------------------------------------
+
+## case.globstar_lower_pattern
+**/*.ts	src/Main.TS	match	case_insensitive=true
+**/*.ts	A/B/c.tS	match	case_insensitive=true
+**/*.ts	main.TS	match	case_insensitive=true
+src/**	SRC/Main/lib.rs	match	case_insensitive=true
+src/**	src/	match	case_insensitive=true
+src/**	other/main.rs	no-match	case_insensitive=true
+src/**/main.rs	SRC/CLI/MAIN.RS	match	case_insensitive=true
+
+## case.globstar_upper_pattern
+**/*.TS	src/Main.ts	match	case_insensitive=true
+**/*.TS	a/b/c.Ts	match	case_insensitive=true
+SRC/**	src/Main/lib.rs	match	case_insensitive=true
+SRC/**/MAIN.RS	src/cli/main.rs	match	case_insensitive=true
+SRC/**/MAIN.RS	src/cli/lib.rs	no-match	case_insensitive=true
+
+## case.globstar_mixed_pattern
+**/*.tS	src/Main.ts	match	case_insensitive=true
+**/*.Ts	SRC/MAIN.TS	match	case_insensitive=true
+**/*.tS	A/b/C/d.TS	match	case_insensitive=true
+sRc/**	src/Main/Lib.rs	match	case_insensitive=true
+sRc/**	OTHER/main.rs	no-match	case_insensitive=true
+sRc/**/MaIn.rS	src/Main.rs	match	case_insensitive=true
+sRc/**/MaIn.rS	SRC/CLI/MAIN.rs	match	case_insensitive=true
+sRc/**/MaIn.rS	src/cli/lib.rs	no-match	case_insensitive=true
+SrC/**/cLi/**/*.tS	src/main/CLI/cmd/run.TS	match	case_insensitive=true
+SrC/**/cLi/**/*.tS	src/cli/main.ts	match	case_insensitive=true
+
+## case.globstar_with_question
+sRc/**/?.tS	src/cli/A.tS	match	case_insensitive=true
+sRc/**/?.tS	src/cli/CMD/X.ts	match	case_insensitive=true
+sRc/**/?.tS	src/cli/ab.TS	no-match	case_insensitive=true
+
+## case.brace_lower_pattern
+*.{ts,tsx}	main.TS	match	case_insensitive=true
+*.{ts,tsx}	MAIN.tSx	match	case_insensitive=true
+*.{ts,tsx}	main.RS	no-match	case_insensitive=true
+{src,lib}/*.rs	SRC/Main.rs	match	case_insensitive=true
+{src,lib}/*.rs	LIB/main.RS	match	case_insensitive=true
+{src,lib}/*.rs	docs/main.rs	no-match	case_insensitive=true
+
+## case.brace_upper_pattern
+*.{TS,TSX}	main.ts	match	case_insensitive=true
+*.{TS,TSX}	main.Ts	match	case_insensitive=true
+{SRC,LIB}/*.RS	src/main.rs	match	case_insensitive=true
+{SRC,LIB}/*.RS	lib/Main.RS	match	case_insensitive=true
+TEST.{JPG,PNG}	test.jpg	match	case_insensitive=true
+TEST.{JPG,PNG}	TeSt.PnG	match	case_insensitive=true
+
+## case.brace_mixed_pattern
+*.{tS,Ts}	main.TS	match	case_insensitive=true
+{sRc,LiB}/*.rS	SRC/main.rs	match	case_insensitive=true
+{sRc,LiB}/*.rS	lib/Main.RS	match	case_insensitive=true
+{sRc,LiB}/*.rS	docs/main.rs	no-match	case_insensitive=true
+{fOo,bAr}.tXt	FOO.txt	match	case_insensitive=true
+{fOo,bAr}.tXt	bar.TXT	match	case_insensitive=true
+{fOo,bAr}.tXt	BAZ.txt	no-match	case_insensitive=true
+TeSt.{jPg,pNg,gIf}	test.jpg	match	case_insensitive=true
+TeSt.{jPg,pNg,gIf}	TEST.png	match	case_insensitive=true
+TeSt.{jPg,pNg,gIf}	TeSt.GiF	match	case_insensitive=true
+TeSt.{jPg,pNg,gIf}	test.bmp	no-match	case_insensitive=true
+
+## case.brace_nested
+{fOo,{bAr,bAz}}	foo	match	case_insensitive=true
+{fOo,{bAr,bAz}}	BAR	match	case_insensitive=true
+{fOo,{bAr,bAz}}	BAZ	match	case_insensitive=true
+{fOo,{bAr,bAz}}	qux	no-match	case_insensitive=true
+{{a,B},{C,d}}.{tS,rS}	A.tS	match	case_insensitive=true
+{{a,B},{C,d}}.{tS,rS}	c.RS	match	case_insensitive=true
+{{a,B},{C,d}}.{tS,rS}	x.ts	no-match	case_insensitive=true
+
+## case.brace_with_globstar
+{sRc,LiB}/**/*.{tS,jS}	src/main.TS	match	case_insensitive=true
+{sRc,LiB}/**/*.{tS,jS}	LIB/A/B.js	match	case_insensitive=true
+{sRc,LiB}/**/*.{tS,jS}	docs/x.ts	no-match	case_insensitive=true
+{sRc,LiB,TeStS}/**/MaIn.{rS,Ts}	src/Main.rs	match	case_insensitive=true
+{sRc,LiB,TeStS}/**/MaIn.{rS,Ts}	TESTS/cli/MAIN.RS	match	case_insensitive=true
+{sRc,LiB,TeStS}/**/MaIn.{rS,Ts}	src/cli/lib.rs	no-match	case_insensitive=true
+
+## case.brace_cartesian
+{fOo,bAr}{bAz,qUx}	FOOBAZ	match	case_insensitive=true
+{fOo,bAr}{bAz,qUx}	barQUX	match	case_insensitive=true
+{fOo,bAr}{bAz,qUx}	BarBaz	match	case_insensitive=true
+{fOo,bAr}{bAz,qUx}	BAZBAR	no-match	case_insensitive=true
+
+# ----------------------------------------------------------------------------
+# Cross-construct combinations (the gnarly stuff)
+# ----------------------------------------------------------------------------
+
+## case.class_inside_brace
+{[A-z]*,LiCeNsE}	HELLO	match	case_insensitive=true
+{[A-z]*,LiCeNsE}	hello	match	case_insensitive=true
+{[A-z]*,LiCeNsE}	License	match	case_insensitive=true
+{[A-z]*,LiCeNsE}	123abc	no-match	case_insensitive=true
+
+## case.deep_globstar_with_class_negation
+{sRc,TeStS}/**/[A-z]*.{tS,rS}	src/A/Main.RS	match	case_insensitive=true
+{sRc,TeStS}/**/[A-z]*.{tS,rS}	TESTS/cli/Helper.ts	match	case_insensitive=true
+{sRc,TeStS}/**/[A-z]*.{tS,rS}	src/A/123.ts	no-match	case_insensitive=true
+
+# ----------------------------------------------------------------------------
+# Escape interaction (\X under case_insensitive)
+# ----------------------------------------------------------------------------
+
+## case.escape_letters
+\F\o\O	FOO	match	case_insensitive=true
+\F\o\O	foo	match	case_insensitive=true
+\f\O\o	FoO	match	case_insensitive=true
+\A\B\C.\T\X\T	abc.TXT	match	case_insensitive=true
+\A\B\C.\T\X\T	AbC.tXt	match	case_insensitive=true
+# Escaped meta chars must still be literals — case_insens doesn't change that
+\*	*	match	case_insensitive=true
+\*	A	no-match	case_insensitive=true
+\?	?	match	case_insensitive=true
+
+# ----------------------------------------------------------------------------
+# ASCII-only scope (non-ASCII bytes do NOT fold per §11.3 / §12.5)
+# ----------------------------------------------------------------------------
+
+## case.ascii_only_scope
+# Pattern's non-ASCII byte must match path's non-ASCII byte EXACTLY —
+# we don't fold é/É, ü/Ü etc. (Unicode case folding is out of scope §11.3).
+CaFé.tXt	cafÉ.txt	no-match	case_insensitive=true
+CaFé.tXt	café.TXT	match	case_insensitive=true
+CaFé.tXt	CaFé.tXt	match	case_insensitive=true
+# Pattern `Ü` (0xC3 0x9C) cannot match path `ü` (0xC3 0xBC) — different bytes.
+mÜnChEn.lOg	mÜnChEn.LoG	match	case_insensitive=true
+mÜnChEn.lOg	München.LOG	no-match	case_insensitive=true
+münchen.log	mÜnchen.LOG	no-match	case_insensitive=true
+# Pure-ASCII letters around non-ASCII still fold; non-ASCII byte stays literal
+fOo[É]bAr	FOO[É]BAR	no-match	case_insensitive=true
+
+# ----------------------------------------------------------------------------
+# Interaction with dot protection (independent flags)
+# ----------------------------------------------------------------------------
+
+## case.dot_protection
+*.tXt	.TXT	no-match	case_insensitive=true,dot=false
+*.tXt	.TXT	match	case_insensitive=true,dot=true
+**/*.rS	a/.B/main.rs	no-match	case_insensitive=true,dot=false
+**/*.rS	a/.B/main.rs	match	case_insensitive=true,dot=true
+[^A-z]X.lOg	.X.log	no-match	case_insensitive=true,dot=false
+[^A-z]X.lOg	.X.log	match	case_insensitive=true,dot=true
+
+# ----------------------------------------------------------------------------
+# Case-significant by default (sanity rows for the off-state)
+# ----------------------------------------------------------------------------
+
+## case.disabled_default
+ReAdMe	readme	no-match
+*.tS	main.TS	no-match
+[A-z].tS	a.tS	match
+[A-z].tS	a.ts	no-match
+@(ReAdMe|LiCeNsE)	readme	no-match
+{sRc,LiB}/main.rs	SRC/main.rs	no-match
+
+# ----------------------------------------------------------------------------
+# Range validation is SYNTACTIC (byte-level). case_insensitive is a
+# MATCHING-time behavior, NOT a semantic one — `[a-A]` is invalid because
+# byte 97 > 65, regardless of how the class would be matched. Same patterns
+# error identically with the flag on or off.
+# ----------------------------------------------------------------------------
+
+## case.range_validity_independent_of_flag
+[a-A]	-	err:InvalidRange	case_insensitive=true
+[m-P]	-	err:InvalidRange	case_insensitive=true
+[z-a]	-	err:InvalidRange	case_insensitive=true
+[Z-A]	-	err:InvalidRange	case_insensitive=true
+# And without the flag — same error.
+[a-A]	-	err:InvalidRange
+[m-P]	-	err:InvalidRange
+[z-a]	-	err:InvalidRange
+
+# ----------------------------------------------------------------------------
+# Realistic case-insensitive use cases (Windows / macOS scenarios)
+# ----------------------------------------------------------------------------
+
+## case.realistic_windows_paths
+**/pRoGrAm*/**	C:/Program Files (x86)/App/setup.exe	match	case_insensitive=true
+**/pRoGrAm*/**	c:/program files/app.exe	match	case_insensitive=true
+**/*.{eXe,DlL,mSi}	C:/Windows/System32/kernel32.dll	match	case_insensitive=true
+**/*.{eXe,DlL,mSi}	C:/temp/installer.MSI	match	case_insensitive=true
+**/*.{eXe,DlL,mSi}	C:/data/notes.txt	no-match	case_insensitive=true
+
+## case.realistic_macos_paths
+**/lIbRaRy/**	Users/X/library/Caches/foo	match	case_insensitive=true
+**/.dS_StOrE	src/.DS_STORE	match	case_insensitive=true,dot=true
+**/dOcUmEnTs/**/*.pDf	users/x/DOCUMENTS/A/B/file.PDF	match	case_insensitive=true
+
+## case.realistic_node_project
+**/nOdE_mOdUlEs/**	A/B/Node_Modules/lodash/index.js	match	case_insensitive=true
+**/pAcKaGe.JsOn	src/package.json	match	case_insensitive=true
+**/{tSCoNfIg,TsCoNfIg}.{jSoN,JsOn}	build/TsConfig.JSON	match	case_insensitive=true

@@ -1,0 +1,156 @@
+# ============================================================================
+# corpus-absolute.txt — `**/` + absolute / UNC path semantics (GLOB_SPEC §8.4)
+#
+# At pattern start, `**/X` means "X at any depth", which covers:
+#   - relative paths                  (a/foo)
+#   - Unix absolute paths             (/a/foo, /foo)
+#   - UNC paths                       (//server/share/foo)
+#   - Windows drive-letter paths      (C:/a/foo, handled naturally because
+#                                      `C:` is a valid segment body)
+#
+# `**` alone is `GlobstarAny` ≡ regex `.*` — matches anything including
+# standalone separators (`/`, `\`).
+#
+# `**/` alone expects a trailing segment boundary — matches paths ending
+# with a separator (incl. the single `/`), but NOT e.g. `/a` (there's
+# a leading separator and a segment body without a trailing `/`).
+#
+# `/**/X` (pattern with explicit leading `/`) is an opt-in "absolute only"
+# pattern — does not match relative paths.
+#
+# Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+# ============================================================================
+
+## abs.globstar_star_any_depth
+# `**` matches any path including separators.
+**	a	match
+**	/	match
+**	/a	match
+**	/a/b	match
+**	a/b	match
+**		match
+
+## abs.globstar_slash_trailing_sep
+# `**/` expects a boundary at the end. Empty or sep-terminated ok; bare
+# segment bodies are not.
+**/		match
+**/	a/	match
+**/	/	match
+**/	/a/	match
+**/	a/b/	match
+**/	a	no-match
+**/	/a	no-match
+**/	a/b	no-match
+
+## abs.globstar_slash_then_literal
+# `**/foo` at any depth.
+**/foo	foo	match
+**/foo	a/foo	match
+**/foo	a/b/foo	match
+**/foo	/foo	match
+**/foo	/a/foo	match
+**/foo	/a/b/foo	match
+# UNC
+**/foo	//server/foo	match
+**/foo	//server/share/foo	match
+# No-match: trailing garbage or prefix mismatch.
+**/foo	foobar	no-match
+**/foo	foo/bar	no-match
+**/foo	xfoo	no-match
+
+## abs.globstar_slash_then_star
+# `**/*.txt` — the classic "all .txt files" pattern.
+**/*.txt	foo.txt	match
+**/*.txt	a/foo.txt	match
+**/*.txt	a/b/foo.txt	match
+**/*.txt	/foo.txt	match
+**/*.txt	/a/foo.txt	match
+**/*.txt	/a/b/foo.txt	match
+**/*.txt	//server/share/foo.txt	match
+# Windows drive-letter paths (also work naturally — `C:` is a segment).
+**/*.txt	C:/foo.txt	match
+**/*.txt	C:/a/foo.txt	match
+**/*.txt	C:\foo.txt	match
+**/*.txt	C:\a\b\foo.txt	match
+# Non-matches.
+**/*.txt	foo	no-match
+**/*.txt	foo.rs	no-match
+
+## abs.explicit_leading_slash
+# `/**/X` is opt-in absolute-only — does NOT match relative paths.
+/**/foo	/foo	match
+/**/foo	/a/foo	match
+/**/foo	/a/b/foo	match
+/**/foo	foo	no-match
+/**/foo	a/foo	no-match
+
+## abs.middle_globstar_unaffected
+# `a/**/b` — `**` in the middle. Pattern requires path to start with `a/`,
+# not affected by the leading-seps rule (first op is Lit, not OSS).
+a/**/b	a/b	match
+a/**/b	a/x/b	match
+a/**/b	a/x/y/b	match
+a/**/b	/a/b	no-match
+a/**/b	b	no-match
+
+## abs.literal_pattern_unaffected
+# Literal and single-star patterns: no `**/` at start → no leading-seps
+# absorption. Absolute-path semantics preserved for explicit patterns.
+foo	foo	match
+foo	/foo	no-match
+foo/bar	foo/bar	match
+foo/bar	/foo/bar	no-match
+*.rs	main.rs	match
+*.rs	/main.rs	no-match
+
+## abs.slash_a_matrix
+# Canonical table: which patterns match path `/a`?
+#   `a`     : literal, doesn't cross /, no absorption → no-match
+#   `*`     : Star doesn't cross /, no leading absorb → no-match
+#   `/*`    : explicit Sep + Star → match
+#   `**/*`  : LeadingSeps eats `/`, OSS 0 iter, Star eats `a` → match
+#   `**`    : GlobstarAny ≡ .* → match everything
+a	/a	no-match
+*	/a	no-match
+/*	/a	match
+**/*	/a	match
+**	/a	match
+
+## abs.dot_protection_not_bypassed
+# LeadingSeps must not bypass dot protection for subsequent segments.
+# `**/a` cannot cross `.hidden` segment when dot=false (see §12.4).
+**/a	/.hidden/a	no-match	dot=false
+**/a	.hidden/a	no-match	dot=false
+# But literal `.` in pattern still matches dotfiles at any depth.
+**/.config	.config	match
+**/.config	/.config	match
+**/.config	a/.config	match
+**/.config	/a/.config	match
+
+## abs.brace_per_branch_leadingseps
+# Top-level brace at pattern start: per-branch LeadingSeps absorbs leading
+# seps ONLY on `**/`-rooted branches. Literal branches stay strict.
+{**/a,**/b}	a	match
+{**/a,**/b}	b	match
+{**/a,**/b}	/a	match
+{**/a,**/b}	/b	match
+{**/a,**/b}	x/a	match
+{**/a,**/b}	/x/a	match
+{**/a,**/b}	//server/b	match
+{**/a,**/b}	c	no-match
+{**/a,**/b}	/c	no-match
+# Mixed branches: `**/a` absorbs, literal `README` does NOT.
+{**/a,README}	a	match
+{**/a,README}	/a	match
+{**/a,README}	README	match
+{**/a,README}	/README	no-match
+{**/a,README}	x/README	no-match
+# Nested brace: recurse into inner Alternation.
+{{**/a,**/b},c}	/a	match
+{{**/a,**/b},c}	/b	match
+{{**/a,**/b},c}	c	match
+{{**/a,**/b},c}	/c	no-match
+# Mid-pattern brace: NOT affected — first op is Lit, not Alternation.
+a/{**/x,**/y}	a/x	match
+a/{**/x,**/y}	a/sub/x	match
+a/{**/x,**/y}	/a/x	no-match

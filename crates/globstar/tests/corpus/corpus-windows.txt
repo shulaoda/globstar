@@ -1,0 +1,41 @@
+# ============================================================================
+# corpus-windows.txt — Windows-only corpus (loaded only when target is Windows)
+#
+# On Windows, `\` counts as a path separator (via std::path::is_separator).
+# These rows assert the Windows-specific behavior — their expectations differ
+# on Unix (see corpus-unix.txt for the symmetric assertions).
+#
+# Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+# ============================================================================
+
+## path.separator.backslash.equivalent
+# `\` in path is treated as `/` — the spec separator.
+a/b	a\\b	match
+src/main.rs	src\\main.rs	match
+
+## path.separator.backslash.consecutive
+# Duplicate-separator collapsing works across `\` and mixed `/\`.
+a/b	a\\\\b	match
+a/b	a/\\b	match
+a/b	a\\/b	match
+
+## path.separator.backslash.no_cross
+# Wildcards still refuse to cross `\` on Windows (it's a separator).
+*	a\\b	no-match
+?	a\\b	no-match
+foo*bar	foo\\bar	no-match
+
+## charclass.negated.backslash_short_circuit
+# Negated class short-circuits on path `\` (it's a separator on Windows).
+# On Unix `\` is a regular byte and would match — see corpus-unix.txt.
+[^abc]	\\	no-match
+
+## charclass.positive.literal_backslash_dead_on_windows
+# On Windows `\` ∈ Seps, and classes are segment-local (§6.2). Positive
+# classes that list `\` silently don't match `\` — the user's intent
+# is fundamentally incompatible with the platform's segment rules.
+# Same principle as parser-rejected `[/]`: separator-as-class-member
+# has no coherent semantics under segment-local. Unix behaves
+# oppositely (`\` ∉ Seps, matches as a regular byte) — see corpus-unix.txt.
+[\\\\]	\\	no-match
+[\\\\a]	\\	no-match

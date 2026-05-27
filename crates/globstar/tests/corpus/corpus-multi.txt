@@ -1,0 +1,100 @@
+# ============================================================================
+# corpus-multi.txt — multi-pattern OR matching golden corpus
+# Format: PATTERNS_JSON<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+#
+# PATTERNS_JSON  JSON array of pattern strings combined via OR; any
+#                row matching at least one pattern reports "match".
+# EXPECTED       match | no-match
+# FLAGS          k=v[,k=v]; defaults dot=true, case_insensitive=false
+#
+# Negation (`!`-prefix patterns) is exercised in the single-pattern
+# corpus; this file stays positive-only because Rust's `Glob::union`
+# rejects `!`-prefixed members and we want every row to drive both
+# runtimes through the same surface.
+# ============================================================================
+
+## or.basic.two
+["**/*.ts","**/*.tsx"]	src/main.ts	match
+["**/*.ts","**/*.tsx"]	src/Button.tsx	match
+["**/*.ts","**/*.tsx"]	src/main.rs	no-match
+["**/*.ts","**/*.tsx"]	deeply/nested/file.tsx	match
+["**/*.ts","**/*.tsx"]	a.ts	match
+["**/*.ts","**/*.tsx"]	a/b.tsx	match
+
+## or.mixed_roots
+["src/**/*.ts","tests/**/*.ts"]	src/foo.ts	match
+["src/**/*.ts","tests/**/*.ts"]	tests/bar/baz.ts	match
+["src/**/*.ts","tests/**/*.ts"]	lib/qux.ts	no-match
+["src/**/*.ts","tests/**/*.ts"]	src/qux.rs	no-match
+["src/**/*.ts","tests/**/*.ts"]	srcfoo.ts	no-match
+
+## or.factored_suffix (4 patterns share **/* prefix)
+["**/*.ts","**/*.tsx","**/*.js","**/*.jsx"]	a/b.tsx	match
+["**/*.ts","**/*.tsx","**/*.js","**/*.jsx"]	a/b.jsx	match
+["**/*.ts","**/*.tsx","**/*.js","**/*.jsx"]	a/b.js	match
+["**/*.ts","**/*.tsx","**/*.js","**/*.jsx"]	a/b.ts	match
+["**/*.ts","**/*.tsx","**/*.js","**/*.jsx"]	a/b.mjs	no-match
+["**/*.ts","**/*.tsx","**/*.js","**/*.jsx"]	a/b.cjs	no-match
+
+## or.literal_plus_glob
+["package.json","src/**/*.ts"]	package.json	match
+["package.json","src/**/*.ts"]	src/main.ts	match
+["package.json","src/**/*.ts"]	src/foo/bar.ts	match
+["package.json","src/**/*.ts"]	other.json	no-match
+["package.json","src/**/*.ts"]	tests/foo.ts	no-match
+["package.json","src/**/*.ts"]	package.json/extra	no-match
+
+## or.brace_inside (each pattern carries a brace)
+["**/*.{ts,tsx}","**/*.{js,jsx}"]	src/x.ts	match
+["**/*.{ts,tsx}","**/*.{js,jsx}"]	src/x.tsx	match
+["**/*.{ts,tsx}","**/*.{js,jsx}"]	src/x.js	match
+["**/*.{ts,tsx}","**/*.{js,jsx}"]	src/x.jsx	match
+["**/*.{ts,tsx}","**/*.{js,jsx}"]	src/x.mts	no-match
+["**/*.{ts,tsx}","**/*.{js,jsx}"]	src/x.cts	no-match
+
+## or.nested_globstar
+["src/**/foo.ts","tests/**/bar.ts"]	src/a/b/c/foo.ts	match
+["src/**/foo.ts","tests/**/bar.ts"]	tests/x/y/bar.ts	match
+["src/**/foo.ts","tests/**/bar.ts"]	src/a/b/c/baz.ts	no-match
+["src/**/foo.ts","tests/**/bar.ts"]	src/foo.ts	match
+
+## or.literal_set (all literals — Tier 0 union)
+["foo","bar","baz"]	foo	match
+["foo","bar","baz"]	bar	match
+["foo","bar","baz"]	qux	no-match
+
+## or.character_class
+["src/[abc]*.ts","docs/*.md"]	src/a.ts	match
+["src/[abc]*.ts","docs/*.md"]	src/c123.ts	match
+["src/[abc]*.ts","docs/*.md"]	src/d.ts	no-match
+["src/[abc]*.ts","docs/*.md"]	docs/api.md	match
+["src/[abc]*.ts","docs/*.md"]	docs/x.txt	no-match
+
+## or.huge_set (10 patterns — exercises auto-OR threshold)
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	src/main.ts	match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	src/Button.tsx	match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	tests/foo.test.ts	match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	tests/foo.ts	no-match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	lib/util.js	match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	lib/util.mjs	match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	package.json	match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	docs/api.md	match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	src/foo.spec.ts	match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	target/release/foo	no-match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	bin/main	no-match
+["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	docs/api.txt	no-match
+
+## or.dot_default (default dot=true matches segment-leading dots)
+["**/*.json"]	pkg/.config.json	match
+["**/*.json"]	pkg/.config.json	no-match	dot=false
+["**/*.json","**/.*.json"]	pkg/.config.json	match	dot=false
+
+## or.case_insensitive
+["**/*.MD","docs/*.MD"]	README.md	match	case_insensitive=true
+["**/*.MD","docs/*.MD"]	README.md	no-match
+["src/**/MAIN.RS"]	src/main.rs	match	case_insensitive=true
+["src/**/MAIN.RS","src/**/main.rs"]	src/main.rs	match
+
+## or.solo (degenerate single-pattern array)
+["**/*.ts"]	src/main.ts	match
+["**/*.ts"]	src/main.rs	no-match

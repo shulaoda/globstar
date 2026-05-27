@@ -1,0 +1,115 @@
+# ============================================================================
+# corpus-dir.txt — match_dir 黄金测试语料
+# Format: PATTERN<TAB>DIR_PATH<TAB>EXPECTED[<TAB>FLAGS]
+# EXPECTED: pruned | descend | match | descend-match
+#   pruned        = 整棵子树不可能匹配,walker 跳过
+#   descend       = 子孙可能匹配,需要继续向下走
+#   match         = 该目录本身匹配 pattern,但子孙不再匹配
+#   descend-match = 该目录匹配 pattern,且子孙也可能匹配
+# See tests/README.md for format details
+# ============================================================================
+
+## static.prefix.pruning
+src/**/*.ts	src	descend
+src/**/*.ts	src/components	descend
+src/**/*.ts	src/components/ui	descend
+src/**/*.ts	tests	pruned
+src/**/*.ts	lib	pruned
+src/**/*.ts	node_modules	pruned
+src/**/*.ts	target	pruned
+src/**/*.ts	dist	pruned
+
+## simple.suffix.match_dir
+# Single-`*` (no globstar) — pattern matches exactly one segment after
+# the prefix; the matched dir itself has no descendants under it.
+src/*.ts	src	descend
+src/*.ts	src/main.ts	match
+src/*.ts	tests	pruned
+src/*.ts	node_modules	pruned
+
+## brace.prefix.multiple.starts
+{src,lib}/**	src	descend
+{src,lib}/**	lib	descend
+{src,lib}/**	docs	pruned
+# `**` matches any non-empty content, so `src/a` itself is in L({src,lib}/**)
+# AND `src/a/b...` continues to match — descend-and-match (GLOB_SPEC §13.3).
+{src,lib}/**	src/a	descend-match
+{src,lib}/**	lib/a/b	descend-match
+{src,lib,tests}/**	tests	descend
+{src,lib,tests}/**	node_modules	pruned
+
+## deep.nested.prefix
+src/components/ui/**	src	descend
+src/components/ui/**	src/components	descend
+src/components/ui/**	src/components/ui	descend
+# Trailing `/**` accepts `button` AND deeper — descend-and-match.
+src/components/ui/**	src/components/ui/button	descend-match
+src/components/ui/**	src/pages	pruned
+src/components/ui/**	components	pruned
+
+## globstar.permissive
+**/*.ts	any	descend
+**/*.ts	anything/nested/deeply	descend
+**/*.ts	node_modules	descend
+**	any	descend-match
+**/foo	a	descend
+**/foo	a/b	descend
+
+## exact.dir.match
+src/components	src	descend
+src/components	src/components	match
+src/components	src/components/ui	pruned
+src/components	src/pages	pruned
+src/components	lib	pruned
+
+## trailing.globstar.requires.descent
+src/components/**	src	descend
+src/components/**	src/components	descend
+src/components/**	src/components/a	descend-match
+src/components/**	src/components/a/b	descend-match
+src/components/**	src/other	pruned
+
+## ignore.style.paths
+**/node_modules/**	node_modules	descend
+**/node_modules/**	a/node_modules	descend
+**/node_modules/**	a/node_modules/pkg	descend-match
+**/node_modules/**	src	descend
+**/target/**	target	descend
+**/target/**	src	descend
+
+## charclass.in.prefix
+[ab]oo/**	aoo	descend
+[ab]oo/**	boo	descend
+[ab]oo/**	coo	pruned
+[ab]oo/**	foo	pruned
+[ab]oo/**	aoo/x	descend-match
+
+## combined.brace.charclass.globstar
+{src,test[s-t]}/**/*.ts	src	descend
+{src,test[s-t]}/**/*.ts	tests	descend
+{src,test[s-t]}/**/*.ts	testt	descend
+{src,test[s-t]}/**/*.ts	docs	pruned
+
+## dot.protection.in.match_dir
+src/*	src/.hidden	pruned
+src/*	src/visible	match
+src/*	src/.hidden	match	dot=true
+
+## negation.prefix.cannot.prune
+!foo/**	anywhere	descend
+!foo/**	foo	descend
+!src/**	src	descend
+!src/**	lib	descend
+
+## leading_seps_with_match_dir
+# LeadingSeps (§8.4) must not break match_dir's "could descendant match"
+# analysis. For `**/a` every directory is a potential prefix; leading `/`
+# in the directory path is absorbed by LeadingSeps.
+**/a	src	descend
+**/a	a	descend-match
+**/a	/src	descend
+**/a	/a	descend-match
+# Middle-`**/` unaffected — still requires the explicit `a/` prefix in path.
+a/**/b	a	descend
+a/**/b	other	pruned
+a/**/b	/a	pruned

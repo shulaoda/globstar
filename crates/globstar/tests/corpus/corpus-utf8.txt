@@ -1,0 +1,92 @@
+# ============================================================================
+# corpus-utf8.txt — UTF-8 path / pattern test cases (is_match)
+#
+# Our engine is byte-level: patterns and paths are &[u8]. Well-formed UTF-8
+# works naturally because the encoding is self-synchronizing and both sides
+# use the same byte sequence. These cases exercise:
+#
+#   - Pure-literal multi-byte segments
+#   - Star / globstar crossing multi-byte boundaries
+#   - Mid-literal Star with non-ASCII on both sides
+#   - Repeated non-ASCII bytes across positions (non_ascii_lits merge path)
+#   - Prefix skip with non-ASCII Lit prefix
+#   - Mixed scripts (Latin-1 accents, CJK, emoji)
+#
+# Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+# ============================================================================
+
+## utf8.literal
+フォルダ	フォルダ	match
+フォルダ	フォルタ	no-match
+café	café	match
+café	cafe	no-match
+🎉	🎉	match
+
+## utf8.star.single_segment
+フ*	フォルダ	match
+フ*	フ	match
+フ*	ファイル	match
+フ*	xフ	no-match
+café.*	café.txt	match
+café.*	café.md	match
+
+## utf8.star.mid_literal
+# Star between two non-ASCII literal chunks exercises the non_ascii_lits
+# merge fix — repeated bytes across Lit ops must all activate.
+フ*ル*	フォルダ	match
+フ*ダ	フォルダ	match
+# Star doesn't cross `/` — forces no-match here.
+フ*ル	フォ/ル	no-match
+café*.log	café-report.log	match
+café*.log	café/report.log	no-match
+
+## utf8.star.with_globstar_suffix
+# Non-ASCII byte handling at pattern start. Regression coverage for the
+# UTF-8 walk fix: without per-byte non_ascii_lits in the engine's
+# char_mask, the matcher's state would get stuck on the first multi-byte
+# character of a literal prefix (フォルダ, café, …).
+フォルダ/**/*	フォルダ/aaa.js	match
+フォルダ/**/*	フォルダ/sub/inner.ts	match
+フォルダ/**/*	別のフォルダ/aaa.js	no-match
+café/**/*.txt	café/report.txt	match
+café/**/*.txt	café/sub/deeper.txt	match
+café/**/*.txt	other/report.txt	no-match
+
+## utf8.globstar_only_prefix
+フ*/**/*	フォルダ/aaa.js	match
+フォ*/**/*	フォルダ/aaa.js	match
+フォル*/**/*	フォルダ/aaa.js	match
+フ*ル*/**/*	フォルダ/aaa.js	match
+
+## utf8.brace
+# Brace expansion where branches are non-ASCII literals.
+*.{テスト,例}	foo.テスト	match
+*.{テスト,例}	foo.例	match
+*.{テスト,例}	foo.other	no-match
+
+## utf8.emoji
+# 4-byte UTF-8 (U+1F389 🎉 etc.)
+🎉*.log	🎉party.log	match
+🎉*.log	🎉欢乐会.log	match
+🎉*.log	sad.log	no-match
+*/🎉.txt	folder/🎉.txt	match
+
+## utf8.cjk_path_segments
+# Multi-segment CJK paths.
+プロジェクト/**/*.ts	プロジェクト/src/index.ts	match
+プロジェクト/**/*.ts	プロジェクト/src/sub/mod.ts	match
+プロジェクト/**/*.ts	ほか/index.ts	no-match
+
+## utf8.character_class_ascii_against_utf8_path
+# ASCII char classes shouldn't accidentally match UTF-8 continuation bytes.
+[a-z]*	abc	match
+[a-z]*	フォルダ	no-match
+*.[tj]s	フォルダ.ts	match
+*.[tj]s	フォルダ.mjs	no-match
+
+## utf8.non_ascii_lit_repeat
+# Regression: `フォル` has byte 0x83 at positions 1 and 7. Pre-fix, only the
+# first occurrence was registered in non_ascii_lits; the second never
+# activated, breaking any match that needed it.
+フォル	フォル	match
+フォルフォル	フォルフォル	match

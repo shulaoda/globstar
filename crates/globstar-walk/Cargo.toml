@@ -1,0 +1,26 @@
+[package]
+name = "globstar-walk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Filesystem walker powered by globstar. Prefix jump-start, match_dir pruning, literal O(1) lookup."
+
+[dependencies]
+globstar.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+globwalk = "0.9"
+wax = { version = "0.6", features = ["walk"] }
+ignore = "0.4"
+
+# End-to-end walker comparison across tree scales. Mirrored by JS-side
+# `packages/bench/benches/walker.js`.
+[[bench]]
+name = "walker"
+harness = false
+
+[lints.rust]
+unsafe_code = "forbid"

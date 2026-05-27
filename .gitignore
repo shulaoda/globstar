@@ -1,0 +1,14 @@
+target/
+
+# JS toolchain
+node_modules/
+packages/*/node_modules/
+
+# Lockfiles from other package managers (we use pnpm)
+package-lock.json
+yarn.lock
+
+# Logs / caches
+*.log
+.pnpm-debug.log*
+.DS_Store

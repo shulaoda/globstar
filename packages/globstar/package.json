@@ -1,0 +1,21 @@
+{
+  "name": "@globstar/globstar",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "scripts": {
+    "verify": "node verify.js",
+    "verify-union": "node verify_union.js",
+    "profile": "node profile_compile.js"
+  }
+}

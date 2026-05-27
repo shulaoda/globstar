@@ -1,0 +1,92 @@
+# ============================================================================
+# corpus-fast-glob-diff.txt — divergences from fast-glob
+#
+# Loaded by the test harness like any other match-corpus file. Rows assert
+# OUR expected behavior (the "correct" result per our spec), not fast-glob's.
+# Each group below documents the divergence rationale; the TSV rows below
+# the rationale are the testable assertions.
+#
+# These are NOT bugs on either side — they reflect legitimate spec-level
+# differences (POSIX char-class rules, parser strictness, `\b` escape
+# interpretation).
+#
+# Two kinds of rows:
+#   - Match-semantic:  PATTERN<TAB>PATH<TAB>match|no-match
+#   - Parse-error:     PATTERN<TAB>-<TAB>err:VariantName
+#     (the path column is unused for err rows; use `-` as placeholder)
+#
+# Parse-error rows are also covered defensively in corpus-err.txt as part
+# of our general parser contract; they live here additionally so the
+# fast-glob divergence story is complete in one place.
+#
+# Upstream: https://github.com/oxc-project/fast-glob
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Match-semantic divergences
+# ----------------------------------------------------------------------------
+
+## fast_glob_diff.posix_char_class_negated_does_not_match_slash
+# upstream line 359 (fast_glob.bash_classes)
+#   pattern    : [a-y]*[^c]
+#   path       : bdir/
+#   fast-glob  : match
+#   ours       : no-match
+#   rationale  : `[^c]` per POSIX implicitly excludes `/` (char classes
+#                don't cross segment boundaries — §6.2). fast-glob allows
+#                `/` to match a negated class, so `bdir/` ends in `/`
+#                which for them satisfies `[^c]`. We enforce segment-local.
+[a-y]*[^c]	bdir/	no-match
+
+## fast_glob_diff.class_lenient_escape_vs_backspace
+# upstream line 451 (fast_glob.bash_classes)
+#   pattern    : a[\b]c
+#   path       : abc
+#   fast-glob  : no-match
+#   ours       : match
+#   rationale  : `\b` inside `[…]` — we apply lenient escape (§6.3):
+#                `\X` = literal `X`, so `[\b]` ≡ class `{b}`, and
+#                `a[\b]c` matches `abc`. fast-glob interprets `\b` as
+#                ASCII backspace (0x08), so their class is `{0x08}`
+#                which doesn't match `b`. Both readings are defensible;
+#                POSIX doesn't mandate either. We pick lenient for
+#                consistency with class-external `\X` handling.
+a[\\b]c	abc	match
+
+# ----------------------------------------------------------------------------
+# Parse-error divergences (fast-glob tolerates, we reject)
+# ----------------------------------------------------------------------------
+
+## fast_glob_diff.posix_first_bracket_webpack_pattern
+# upstream line 25 (fast_glob.webpack)
+#   pattern    : \\/$^+?.()=!|{},[].*
+#   fast-glob  : compiles, matches path as literal (no-match outcome)
+#   ours       : Err(UnterminatedClass) at byte 16
+#   rationale  : pattern contains `[]` — POSIX first-`]` rule (§6.5) makes
+#                the `]` literal, so the class is never closed. fast-glob
+#                tolerates and treats the whole bracket expression as
+#                literal text.
+\\\\/$^+?.()=!|{},[].*	-	err:UnterminatedClass
+
+## fast_glob_diff.class_slash_is_segment_separator
+# upstream line 554 (fast_glob.bash_slashmatch)
+#   pattern    : foo[/]bar
+#   path       : foo/bar
+#   fast-glob  : match (treats `[/]` as matching `/`)
+#   ours       : Err(UnterminatedClass) at byte 3
+#   rationale  : `/` inside `[…]` terminates the segment — class is
+#                segment-local (§6.2), so encountering `/` is equivalent
+#                to "class never closed". Parser rejects.
+foo[/]bar	-	err:UnterminatedClass
+
+## fast_glob_diff.unterminated_brace_rejected
+# upstream lines 1253–1256 (fast_glob.not_paired_braces)
+#   patterns   : {a,b  and  !{a,b
+#   fast-glob  : tolerates as literal text → all paths no-match
+#   ours       : Err(UnterminatedBrace)
+#   rationale  : we reject unterminated braces at parse time — safer than
+#                silently degrading to literal (early error exposes typos).
+#                `!{a,b` is the same structure after the outer-negation `!`
+#                is stripped.
+{a,b	-	err:UnterminatedBrace
+!{a,b	-	err:UnterminatedBrace

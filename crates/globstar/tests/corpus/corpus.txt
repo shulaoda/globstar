@@ -1,0 +1,555 @@
+# ============================================================================
+# corpus.txt — is_match 黄金测试语料
+# Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+# EXPECTED: match | no-match
+# Default flags: dot=true (matches CompileOptions::default()),
+# case sensitive. Rows that assert Bash-style dot-protection (the
+# Walker layer default) carry explicit `dot=false`.
+# See tests/README.md for escape rules (\\, \t, \n)
+# ============================================================================
+
+## literal.exact
+foo	foo	match
+foo	bar	no-match
+foo	foo_	no-match
+foo	_foo	no-match
+foo	foofoo	no-match
+foo	FOO	no-match
+a	a	match
+a	b	no-match
+a		no-match
+foo.txt	foo.txt	match
+foo.txt	foo.tx	no-match
+foo.txt	foo.txtx	no-match
+src/main.rs	src/main.rs	match
+src/main.rs	src/lib.rs	no-match
+
+## wildcard.star.basic
+*		match
+*	a	match
+*	ab	match
+*	abcdef	match
+*	/	no-match
+*	a/b	no-match
+*	a/	no-match
+*	/a	no-match
+
+## wildcard.star.suffix
+*.txt	a.txt	match
+*.txt	hello.txt	match
+*.txt	.txt	no-match	dot=false
+*.txt	a.txtx	no-match
+*.txt	a.txt.bak	no-match
+*.txt	txt	no-match
+*.txt	a/b.txt	no-match
+*.txt	a.txt	match	dot=true
+.txt	.txt	match
+*.txt	.txt	match	dot=true
+
+## wildcard.star.prefix
+foo*	foo	match
+foo*	foobar	match
+foo*	foo.bar	match
+foo*	fo	no-match
+foo*	fooo	match
+foo*	bar	no-match
+foo*	foo/bar	no-match
+
+## wildcard.star.middle
+a*b	ab	match
+a*b	axb	match
+a*b	axxxxxb	match
+a*b	a.b	match
+a*b	aXbYb	match
+a*b	a	no-match
+a*b	b	no-match
+a*b	ab.	no-match
+a*b	.ab	no-match
+a*b	a/b	no-match
+
+## wildcard.question
+?	a	match
+?		no-match
+?	/	no-match
+?	ab	no-match
+?.txt	a.txt	match
+?.txt	.txt	no-match
+?.txt	ab.txt	no-match
+a?c	abc	match
+a?c	aXc	match
+a?c	ac	no-match
+a?c	abbc	no-match
+a?c	a/c	no-match
+???	abc	match
+???	ab	no-match
+???	abcd	no-match
+
+## globstar.basic
+**		match
+**	a	match
+**	a/b	match
+**	a/b/c/d/e	match
+# `**` does not consume a dot segment under dot=false (Bash-style protection).
+**	.	no-match	dot=false
+**	.hidden	no-match	dot=false
+**	a/.hidden	no-match	dot=false
+**	a/b/c	match
+
+## globstar.prefix
+**/foo	foo	match
+**/foo	a/foo	match
+**/foo	a/b/foo	match
+**/foo	a/b/c/foo	match
+**/foo	foo/a	no-match
+**/foo	a/foo/b	no-match
+**/foo	fo	no-match
+
+## globstar.suffix
+# L(a/**) = a/.*  — 即必须以 "a/" 开头,后面可以空或任意内容
+# - a     ← 无 "a/" 前缀,no-match
+# - a/    ← "a/" + 空,match (与用户 fast-glob test.rs:994 一致)
+# - a/b   ← "a/" + 内容,match
+a/**	a	no-match
+a/**	a/	match
+a/**	a/b	match
+a/**	a/b/c	match
+a/**	a/b/c/d	match
+a/**	b/a/c	no-match
+a/**	ab/c	no-match
+src/**	src/main.rs	match
+src/**	src/a/b/main.rs	match
+src/**	src	no-match
+src/**	srcx	no-match
+src/**	other/main.rs	no-match
+
+## globstar.middle
+a/**/b	a/b	match
+a/**/b	a/x/b	match
+a/**/b	a/x/y/b	match
+a/**/b	a/x/y/z/b	match
+a/**/b	a/b/c	no-match
+a/**/b	b/a	no-match
+a/**/b	a	no-match
+a/**/b	b	no-match
+a/**/b	a/b/x	no-match
+src/**/main.rs	src/main.rs	match
+src/**/main.rs	src/cli/main.rs	match
+src/**/main.rs	src/cli/util/main.rs	match
+src/**/main.rs	main.rs	no-match
+
+## globstar.combined
+src/**/*.ts	src/main.ts	match
+src/**/*.ts	src/a/main.ts	match
+src/**/*.ts	src/a/b/main.ts	match
+src/**/*.ts	src/main.rs	no-match
+src/**/*.ts	main.ts	no-match
+src/**/*.ts	tests/main.ts	no-match
+src/**/*.ts	src/.hidden.ts	no-match	dot=false
+**/*.ts	a.ts	match
+**/*.ts	src/a.ts	match
+**/*.ts	src/sub/a.ts	match
+**/*.ts	a.rs	no-match
+
+## globstar.normalization
+a/**/**/b	a/b	match
+a/**/**/b	a/x/b	match
+a/**/**/b	a/x/y/b	match
+**/**	a	match
+**/**	a/b	match
+**/**/**	a/b/c	match
+
+## globstar.degenerate
+a**b	ab	match
+a**b	axb	match
+a**b	axxb	match
+a**b	a/b	no-match
+a**b	a.b	match
+a**/b	ax/b	match
+a**/b	a/b	match
+a/**b	a/b	match
+a/**b	a/xb	match
+a/**b	a/x/b	no-match
+
+## charclass.basic
+[abc]	a	match
+[abc]	b	match
+[abc]	c	match
+[abc]	d	no-match
+[abc]	A	no-match
+[abc]		no-match
+[abc]	ab	no-match
+[abc]	/	no-match
+
+## charclass.range
+[a-z]	a	match
+[a-z]	m	match
+[a-z]	z	match
+[a-z]	A	no-match
+[a-z]	0	no-match
+[0-9]	5	match
+[0-9]	a	no-match
+[a-zA-Z]	q	match
+[a-zA-Z]	Q	match
+[a-zA-Z]	0	no-match
+
+## charclass.negated.bang
+[!abc]	d	match
+[!abc]	a	no-match
+[!abc]	b	no-match
+[!abc]	Z	match
+[!a-z]	A	match
+[!a-z]	a	no-match
+
+## charclass.negated.caret
+[^abc]	d	match
+[^abc]	a	no-match
+[^0-9]	x	match
+[^0-9]	5	no-match
+
+## charclass.mixed
+[a-zA-Z0-9]	a	match
+[a-zA-Z0-9]	Z	match
+[a-zA-Z0-9]	5	match
+[a-zA-Z0-9]	_	no-match
+[abc0-9]	a	match
+[abc0-9]	5	match
+[abc0-9]	d	no-match
+
+## charclass.in.pattern
+f[oi]o	foo	match
+f[oi]o	fio	match
+f[oi]o	fxo	no-match
+file[0-9].txt	file0.txt	match
+file[0-9].txt	file5.txt	match
+file[0-9].txt	file10.txt	no-match
+file[0-9].txt	fileA.txt	no-match
+
+## charclass.special.chars
+[-a]	-	match
+[-a]	a	match
+[-a]	b	no-match
+[a-]	a	match
+[a-]	-	match
+[.]	.	match
+[\*]	*	match
+[\*]	a	no-match
+
+## brace.basic
+{a,b}	a	match
+{a,b}	b	match
+{a,b}	c	no-match
+{a,b}		no-match
+{a,b,c}	a	match
+{a,b,c}	b	match
+{a,b,c}	c	match
+{a,b,c}	d	no-match
+{foo,bar}	foo	match
+{foo,bar}	bar	match
+{foo,bar}	baz	no-match
+
+## brace.with.wildcard
+{a*,b*}	aa	match
+{a*,b*}	abc	match
+{a*,b*}	bxy	match
+{a*,b*}	c	no-match
+{a*,b*}	axxb	match
+test.{jpg,png}	test.jpg	match
+test.{jpg,png}	test.png	match
+test.{jpg,png}	test.gif	no-match
+*.{ts,tsx}	main.ts	match
+*.{ts,tsx}	main.tsx	match
+*.{ts,tsx}	main.js	no-match
+*.{ts,tsx}	.ts	no-match	dot=false
+*.{ts,tsx,js,jsx}	app.js	match
+*.{ts,tsx,js,jsx}	app.jsx	match
+
+## brace.empty.branch
+{a,}	a	match
+{a,}		match
+{,a}		match
+{,a}	a	match
+{a,,b}	a	match
+{a,,b}		match
+{a,,b}	b	match
+file{,_bak}	file	match
+file{,_bak}	file_bak	match
+
+## brace.single.is.literal
+{a}	{a}	match
+{a}	a	no-match
+{foo}	{foo}	match
+
+## brace.nested
+{a,{b,c}}	a	match
+{a,{b,c}}	b	match
+{a,{b,c}}	c	match
+{a,{b,c}}	d	no-match
+{{a,b},{c,d}}	a	match
+{{a,b},{c,d}}	d	match
+{x,{y,{z,w}}}	w	match
+
+## brace.cartesian
+{a,b}{c,d}	ac	match
+{a,b}{c,d}	ad	match
+{a,b}{c,d}	bc	match
+{a,b}{c,d}	bd	match
+{a,b}{c,d}	aa	no-match
+{a,b}/{c,d}	a/c	match
+{a,b}/{c,d}	b/d	match
+{a,b}/{c,d}	a/e	no-match
+
+## brace.overlap.linear
+# `{a,aa}{a,aa}` is the classical ambiguity-overlap witness: a naive
+# back-tracker explodes exponentially, but our DFA / PikeVM must stay
+# linear. Each path is admitted iff its length is in {2,3,4}.
+{a,aa}{a,aa}	aa	match
+{a,aa}{a,aa}	aaa	match
+{a,aa}{a,aa}	aaaa	match
+{a,aa}{a,aa}	a	no-match
+{a,aa}{a,aa}	aaaaa	no-match
+
+## brace.with.globstar
+{src,lib}/**/*.ts	src/main.ts	match
+{src,lib}/**/*.ts	lib/util.ts	match
+{src,lib}/**/*.ts	src/a/b.ts	match
+{src,lib}/**/*.ts	lib/a/b/c.ts	match
+{src,lib}/**/*.ts	docs/main.ts	no-match
+{src,lib}/**/*.ts	src/a.js	no-match
+
+## escape.metachars
+# Note: literal-backslash round-trip tests (like `\\` pattern matching `\` path)
+# are intentionally absent — under spec §12.3, path `\` is normalized as a
+# separator and cannot be distinguished from `/`, so a literal `\` in the
+# pattern has nothing to match against.
+\*	*	match
+\*	a	no-match
+\?	?	match
+\?	a	no-match
+\[	[	match
+\]	]	match
+\{	{	match
+\}	}	match
+\!	!	match
+\(	(	match
+
+## escape.lenient
+\a	a	match
+\b	b	match
+\foo	foo	match
+# Trailing `\` alone is a parse error — see corpus-err.txt
+
+## negation.prefix
+!foo	foo	no-match
+!foo	bar	match
+!foo	fo	match
+!foo		match
+!*.log	main.rs	match
+!*.log	debug.log	no-match
+
+## negation.prefix.double
+!!foo	foo	match
+!!foo	bar	no-match
+!!!foo	foo	no-match
+!!!foo	bar	match
+
+## negation.literal.via.escape
+\!foo	!foo	match
+\!foo	foo	no-match
+
+## dot.default.protection
+# These rows test Bash-style dot protection semantics (opt-in via dot=false,
+# which is the Walker layer's default). Glob layer default is dot=true.
+*	.hidden	no-match	dot=false
+*	visible	match
+*	.	no-match	dot=false
+.*	.hidden	match
+.*	visible	no-match
+?	.	no-match	dot=false
+?	a	match
+[^x]	.	no-match	dot=false
+[^x]	a	match
+**/*	a/.b	no-match	dot=false
+**/*	a/b	match
+src/*.ts	src/.hidden.ts	no-match	dot=false
+src/*.ts	src/main.ts	match
+
+## dot.opt.in
+*	.hidden	match	dot=true
+?	.	match	dot=true
+**/*	a/.b	match	dot=true
+*.txt	.txt	match	dot=true
+
+## path.separator.normalization
+# `/` is the spec-level separator (§12.3), platform-independent.
+# `\` additionally counts as a separator on Windows only (via
+# `std::path::is_separator`) — see corpus-windows.txt / corpus-unix.txt
+# for the platform-dependent `a\b` rows.
+a/b	a/b	match
+src/main.rs	src/main.rs	match
+
+## path.separator.strict.no.run.collapse
+# Pattern's `/` consumes exactly one separator byte. Aligned with
+# picomatch / globset / bash. Cross-checks corpus-comprehensive's
+# `a/b/c` rows but in the simpler 2-segment shape.
+a/b	a//b	no-match
+a/b	a///b	no-match
+
+## path.separator.no.cross
+*	a/b	no-match
+?	a/b	no-match
+[abc]	/	no-match
+foo*bar	foo/bar	no-match
+
+## real.world.tsconfig.includes
+src/**/*.ts	src/main.ts	match
+src/**/*.ts	src/lib/util.ts	match
+src/**/*.ts	dist/main.ts	no-match
+**/*.test.ts	src/a.test.ts	match
+**/*.test.ts	src/a/b.test.ts	match
+**/*.test.ts	src/a.ts	no-match
+src/**/*.{ts,tsx}	src/main.tsx	match
+src/**/*.{ts,tsx}	src/component.ts	match
+
+## real.world.gitignore.style
+**/node_modules/**	node_modules/foo	match
+**/node_modules/**	a/node_modules/foo/bar	match
+**/node_modules/**	src/main.ts	no-match
+**/target/**	target/debug/app	match
+**/target/**	src/target.rs	no-match
+**/*.log	debug.log	match
+**/*.log	logs/debug.log	match
+**/*.log	a.log.bak	no-match
+
+## real.world.package.files
+{README,LICENSE}*	README	match
+{README,LICENSE}*	README.md	match
+{README,LICENSE}*	LICENSE	match
+{README,LICENSE}*	LICENSE.txt	match
+{README,LICENSE}*	readme	no-match
+dist/**/*	dist/main.js	match
+dist/**/*	dist/assets/app.css	match
+dist/**/*	dist	no-match
+
+## case.sensitivity.default
+Foo	foo	no-match
+Foo	Foo	match
+[A-Z]	a	no-match
+[A-Z]	A	match
+*.TS	main.ts	no-match
+*.TS	main.TS	match
+
+## interactions.brace.and.globstar
+{src,tests}/**/*.{ts,tsx}	src/a.ts	match
+{src,tests}/**/*.{ts,tsx}	tests/b.tsx	match
+{src,tests}/**/*.{ts,tsx}	lib/c.ts	no-match
+{src,tests}/**/*.{ts,tsx}	src/deep/nested/file.ts	match
+
+## edge.consecutive.slashes
+# Pattern parser does NOT collapse `//` — each `/` becomes its own
+# `Sep`. Combined with strict-Sep on the path, `a//b` (pattern)
+# requires exactly two separator bytes in the path. Aligned with
+# picomatch / globset / fast-glob.
+a//b	a/b	no-match
+a//b	a//b	match
+a//b	a///b	no-match
+a///b	a/b	no-match
+a///b	a//b	no-match
+a///b	a///b	match
+
+## edge.empty.path
+*		match
+**		match
+foo		no-match
+?		no-match
+{a,}		match
+
+## edge.trailing.only
+a/	a	no-match
+a/	a/	match
+
+## edge.special.characters.in.literal
+a.b.c	a.b.c	match
+foo-bar	foo-bar	match
+foo_bar	foo_bar	match
+foo+bar	foo+bar	match
+my file.txt	my file.txt	match
+x=y	x=y	match
+
+## class.semantics.literal_metachars
+# Inside `[…]`, pattern-level metacharacters decay to literals (§6.3).
+[?*!(]	?	match
+[?*!(]	*	match
+[?*!(]	!	match
+[?*!(]	(	match
+[?*!(]	a	no-match
+[{}]	{	match
+[{}]	}	match
+
+## class.semantics.escape_lenient
+# `\X` inside class is a lenient escape: the next byte is taken as a literal,
+# regardless of whether it's a metacharacter or a regular byte.
+[\a]	a	match
+[\a]	b	no-match
+[\?]	?	match
+[\-]	-	match
+[\-]	a	no-match
+# Escape overrides the first-position-negation rule.
+[\!]	!	match
+[\!]	a	no-match
+[\^]	^	match
+[\^]	a	no-match
+
+## class.semantics.literal_backslash
+# Need `\\` in the pattern (i.e. `\\\\` in TSV after unescape) to get a
+# literal `\` as a class member. Class-vs-`\`-byte behavior is
+# platform-dependent: on Unix `\` ∉ Seps (regular byte), on Windows
+# `\` ∈ Seps and classes are segment-local (§6.2). Platform-specific
+# rows live in corpus-windows.txt / corpus-unix.txt.
+[\\\\]	/	no-match
+[\\\\]	a	no-match
+[\\\\a]	a	match
+[\\\\a]	b	no-match
+# Negated class with explicit `\` in items — both platforms agree:
+# `\` is excluded (Unix: items.has(\)=T, !T=F; Windows: Seps short-circuit).
+[^\\\\]	\\	no-match
+[^\\\\]	a	match
+[^\\\\]	/	no-match
+# Negated class without `\` in items — rows with non-sep paths are
+# cross-platform; the `\` path is platform-dep and lives in the
+# per-platform corpus files.
+[^abc]	/	no-match
+[^abc]	d	match
+
+## class.semantics.posix_first_bracket
+# POSIX first-`]` rule (§6.5): `]` as the first member is literal.
+[]]	]	match
+[]]	a	no-match
+# Combined with `-` at the end being literal.
+[]-]	]	match
+[]-]	-	match
+[]-]	a	no-match
+# Negated: `[!]abc]` = negated class {`]`, a, b, c}.
+[!]abc]	]	no-match
+[!]abc]	a	no-match
+[!]abc]	z	match
+
+## class.semantics.range_vs_literal_dash
+# `[a-z]` is a range; escaping dash breaks the range into literals.
+[a-z]	m	match
+[a-z]	A	no-match
+[a\-z]	-	match
+[a\-z]	a	match
+[a\-z]	z	match
+[a\-z]	m	no-match
+# `-` at the end of a class is literal.
+[abc-]	-	match
+[abc-]	a	match
+
+## class.semantics.escape_closer
+# `[\]]` — `\]` is escaped literal `]`, then `]` closes the class. Class `{]}`.
+[\]]	]	match
+[\]]	a	no-match
+# `[\]abc]` — escape `]`, then `abc` literals, then `]` closes. Class `{], a, b, c}`.
+[\]abc]	]	match
+[\]abc]	a	match
+[\]abc]	z	no-match

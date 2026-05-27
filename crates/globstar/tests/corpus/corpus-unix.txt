@@ -1,0 +1,33 @@
+# ============================================================================
+# corpus-unix.txt — Unix-only corpus (loaded only when target is not Windows)
+#
+# On Unix, `\` is an ordinary byte; it does NOT count as a path separator.
+# These rows assert the Unix-specific behavior — their expectations differ
+# on Windows (see corpus-windows.txt for the symmetric assertions).
+#
+# Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
+# ============================================================================
+
+## path.separator.backslash.is_regular_byte
+# `\` in path is just a byte — `a/b` does not match `a\b`.
+a/b	a\\b	no-match
+src/main.rs	src\\main.rs	no-match
+
+## path.separator.backslash.wildcards_can_cross
+# `*` and `?` do cross `\` on Unix (it's not a separator).
+*	a\\b	match
+a*b	a\\b	match
+
+## charclass.negated.backslash_is_regular
+# Negated class does NOT short-circuit on `\` — it's a regular byte,
+# not listed in items, so the negation passes. On Windows `\` is a
+# separator and short-circuits to no-match — see corpus-windows.txt.
+[^abc]	\\	match
+
+## charclass.positive.literal_backslash
+# `[\\]` (positive class with explicit literal `\`) matches a `\` byte
+# on Unix because `\` ∉ Seps. On Windows `\` ∈ Seps and classes are
+# segment-local, so the class silently doesn't match — see
+# corpus-windows.txt.
+[\\\\]	\\	match
+[\\\\a]	\\	match
