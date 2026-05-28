@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "globstar"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "criterion",
  "fast-glob",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "globstar-walk"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "criterion",
  "globstar",
