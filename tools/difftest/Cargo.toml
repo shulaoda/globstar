@@ -1,0 +1,17 @@
+[package]
+name = "difftest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+globstar = { path = "../../crates/globstar" }
+
+# Cross-runtime differential harness: reads request lines on stdin and
+# emits one result token per line, using ONLY globstar's public API. The
+# JS-side driver (`fuzz.mjs`) feeds the same randomly generated inputs to
+# this binary and to the `@globstar/globstar` JS port, then asserts the
+# two runtimes agree — catching drift the fixed corpus cannot reach.
+[[bin]]
+name = "difftest"
+path = "src/main.rs"

@@ -17,6 +17,12 @@ verify *args:
 bench *args:
     node bench.mjs {{args}}
 
+# Cross-runtime differential fuzzing (JS vs Rust on random inputs the
+# corpus can't reach). `just fuzz --seeds 1-20 --count 100000` for nightly.
+fuzz *args:
+    cargo build --release -p difftest
+    node fuzz.mjs {{args}}
+
 # All static checks: JS format/lint + Rust fmt + clippy. CI-grade strict.
 lint:
     pnpm check

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/globstar",
     "crates/globstar-walk",
+    "tools/difftest",
     "tools/memory-check",
 ]
 
