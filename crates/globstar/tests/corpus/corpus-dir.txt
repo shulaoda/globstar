@@ -113,3 +113,17 @@ src/*	src/.hidden	match	dot=true
 a/**/b	a	descend
 a/**/b	other	pruned
 a/**/b	/a	pruned
+
+## trailing.wildcard.segment.dot_protection
+# Regression (PikeVm match_dir): under dot=false the prefix-descent check must
+# ε-expand DOT_GUARD states, or a separator consumer hidden behind the guard
+# (e.g. the trailing `/` of `*/`) is missed and the subtree wrongly pruned.
+# DFA + Rust were always correct; PikeVm matched them only after the fix.
+*/	a	descend
+*/	a	descend	dot=true
+?*/	a	descend
+[ab]*/	a	descend
+x*/	x	descend
+{a,b}*/	foo	pruned
+*/	.hidden	pruned
+**/	a	descend

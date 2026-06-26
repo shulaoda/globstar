@@ -66,8 +66,8 @@ function unescape(s) {
   return out;
 }
 
-function parseFlags(s) {
-  let dot = true;
+function parseFlags(s, defaultDot = true) {
+  let dot = defaultDot;
   let caseInsensitive = false;
   for (const kv of s.split(",")) {
     const eq = kv.indexOf("=");
@@ -128,6 +128,7 @@ async function runJsVerify() {
   const { globstar } = await import("./packages/globstar/src/index.js");
   const { compileMatcher } = await import("./packages/globstar/src/matcher/glob.js");
   const { GlobError } = await import("./packages/globstar/src/matcher/error.js");
+  const { parse } = await import("./packages/globstar/src/matcher/parser.js");
 
   // ── single-pattern corpus
   const filenames = new Set(readdirSync(CORPUS_DIR));
@@ -281,6 +282,71 @@ async function runJsVerify() {
     else record(multi.PikeVm, p === row.expected, () => multiFail(row, "PikeVm", p));
   }
 
+  // ── match_dir corpus — three engines vs the four-valued golden truth.
+  // Mirrors the Rust `corpus_dir_engines_vs_truth` test: rows default to
+  // `dot=false` (the walker convention), and negated patterns are skipped
+  // because `match_dir` does not invert a leading `!`.
+  const DIR_TOKEN = ["pruned", "descend", "match", "descend-match"];
+  function* dirRows() {
+    const text = readFileSync(join(CORPUS_DIR, "corpus-dir.txt"), "utf8");
+    let lineNo = 0;
+    for (const raw of text.split("\n")) {
+      lineNo++;
+      const line = raw.replace(/\s+$/, "");
+      if (!line || line.startsWith("#")) continue;
+      const cols = line.split("\t");
+      if (cols.length < 3) continue;
+      const expected = cols[2];
+      if (!DIR_TOKEN.includes(expected)) continue;
+      const flags =
+        cols.length >= 4 ? parseFlags(cols[3], false) : { dot: false, caseInsensitive: false };
+      yield {
+        lineNo,
+        pattern: unescape(cols[0]),
+        path: unescape(cols[1]),
+        expected,
+        ...flags,
+      };
+    }
+  }
+
+  function runDirEngine(row, engineName) {
+    let ast;
+    try {
+      ast = parse(row.pattern);
+    } catch {
+      return null;
+    }
+    if (ast.isNegated) return null; // match_dir doesn't invert `!`; skip like Rust
+    try {
+      const dm = compileMatcher(row.pattern, {
+        dot: row.dot,
+        caseInsensitive: row.caseInsensitive,
+        __engine: engineName,
+      }).matchDir(row.path);
+      return DIR_TOKEN[dm];
+    } catch {
+      return null;
+    }
+  }
+  const dirFail = (row, engine, got) =>
+    `corpus-dir.txt:${row.lineNo}: pattern=${JSON.stringify(row.pattern)} dir=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
+
+  const dir = { globstar: makeStats(), ThompsonDfa: makeStats(), PikeVm: makeStats() };
+  for (const row of dirRows()) {
+    const g = runDirEngine(row, undefined); // public default engine (PikeVm)
+    if (g === null) dir.globstar.skip++;
+    else record(dir.globstar, g === row.expected, () => dirFail(row, "globstar", g));
+
+    const d = runDirEngine(row, "dfa");
+    if (d === null) dir.ThompsonDfa.skip++;
+    else record(dir.ThompsonDfa, d === row.expected, () => dirFail(row, "ThompsonDfa", d));
+
+    const p = runDirEngine(row, "pikevm");
+    if (p === null) dir.PikeVm.skip++;
+    else record(dir.PikeVm, p === row.expected, () => dirFail(row, "PikeVm", p));
+  }
+
   // ── parse-error corpus — public API only (engines never see malformed input)
   const errStats = makeStats();
   {
@@ -318,6 +384,9 @@ async function runJsVerify() {
     { corpus: "multi", engine: "globstar", ...multi.globstar },
     { corpus: "multi", engine: "ThompsonDfa", ...multi.ThompsonDfa },
     { corpus: "multi", engine: "PikeVm", ...multi.PikeVm },
+    { corpus: "dir", engine: "globstar", ...dir.globstar },
+    { corpus: "dir", engine: "ThompsonDfa", ...dir.ThompsonDfa },
+    { corpus: "dir", engine: "PikeVm", ...dir.PikeVm },
     { corpus: "err", engine: "globstar", ...errStats },
   ];
 }
@@ -367,7 +436,7 @@ console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 5 + 5));
 // Stable cross-runtime row order: single → multi → err, then
 // globstar → ThompsonDfa → PikeVm. Rust prints in cargo-test name
 // order (alphabetical), JS in author order — sort so both line up.
-const CORPUS_ORDER = { single: 0, multi: 1, err: 2 };
+const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, err: 3 };
 const ENGINE_ORDER = { globstar: 0, ThompsonDfa: 1, PikeVm: 2 };
 const rowKey = (r) => [CORPUS_ORDER[r.corpus] ?? 99, ENGINE_ORDER[r.engine] ?? 99];
 for (const side of sides) {

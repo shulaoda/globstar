@@ -277,9 +277,45 @@ export class PikeVm {
     const infoOff = this.infoOff;
     const nWords = this.nWords;
     const scratch = this._scratch;
+
+    // The hypothetical separator step below consumes a `/`, which is never a
+    // segment-start dot — so every `T_DOT_GUARD` in the live set always
+    // passes here. Static closures stop AT a dot-guard (it is a byte-
+    // conditional ε-leaf), so a separator consumer sitting behind one (e.g.
+    // the `SEP` of `*/` under `dot=false`, whose live set is
+    // `{ANY_NON_SEP, DOT_GUARD→SEP}`) is invisible to the raw `scratch` scan.
+    // ε-expand the guards to a fixpoint first, or the subtree is wrongly
+    // pruned. `_runFast`/`dot=true` programs have no guards, so `cur` just
+    // equals the live set and this is a no-op.
+    const cur = new Uint32Array(nWords);
+    for (let w = 0; w < nWords; w++) cur[w] = scratch[w];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let w = 0; w < nWords; w++) {
+        let word = cur[w];
+        while (word !== 0) {
+          const off = ctz32(word);
+          const s = (w << 5) + off;
+          word &= word - 1;
+          const word2 = closures[infoOff + s];
+          if ((word2 & 0xf) === T_DOT_GUARD) {
+            const base = (word2 >>> 16) * nWords;
+            for (let j = 0; j < nWords; j++) {
+              const merged = cur[j] | closures[base + j];
+              if (merged !== cur[j]) {
+                cur[j] = merged;
+                changed = true;
+              }
+            }
+          }
+        }
+      }
+    }
+
     const next = new Uint32Array(nWords);
     for (let w = 0; w < nWords; w++) {
-      let word = scratch[w];
+      let word = cur[w];
       while (word !== 0) {
         const off = ctz32(word);
         const s = (w << 5) + off;

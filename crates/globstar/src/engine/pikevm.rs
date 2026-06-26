@@ -209,6 +209,41 @@ impl PikeVm {
         after_sep.fill(0);
         let states = &self.states;
         let closures = &self.static_closures;
+
+        // ε-expand DotGuard states before the hypothetical '/' step. A
+        // separator is never a segment-start dot, so every DotGuard passes
+        // here. Static closures stop AT a DotGuard (byte-conditional ε-leaf),
+        // so a Sep/AnyByte consumer sitting behind one (e.g. the trailing `/`
+        // of `*/` under dot=false, whose active set is `{AnyNonSep,
+        // DotGuard→Sep}`) is invisible to the raw active scan and the subtree
+        // is wrongly pruned. No-op when the NFA has no DotGuard.
+        if self.has_dot_guard {
+            let cur = &mut active[..nw];
+            loop {
+                let mut changed = false;
+                for w_idx in 0..nw {
+                    let mut word = cur[w_idx];
+                    while word != 0 {
+                        let s = w_idx * 64 + word.trailing_zeros() as usize;
+                        word &= word - 1;
+                        if let Trans::DotGuard { next } = &states[s] {
+                            let base = (*next as usize) * nw;
+                            for j in 0..nw {
+                                let merged = cur[j] | closures[base + j];
+                                if merged != cur[j] {
+                                    cur[j] = merged;
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         for s in iter_set_states(&active[..nw]) {
             if let Some(n) = byte_step(&states[s], b'/', true, false) {
                 let base = (n as usize) * nw;
