@@ -12,7 +12,16 @@
 //! |------|-------------------------------------|------------------------|
 //! | 0    | Pure literal                        | `LiteralMatcher` (shared) |
 //! | 1    | Segment-expressible (≈ all real patterns) | SSM ([`engine`]) |
-//! | 2/3  | Glued globstars, budget overflows   | `ThompsonDfa` → `PikeVm` (shared) |
+//! | 2    | Glued globstars, budget overflows (rare) | `PikeVm` (shared)  |
+//!
+//! The fallback is deliberately just the Pike VM: it is the only
+//! *total* engine (any pattern, guaranteed O(n·m) — the ReDoS
+//! soundness floor), it compiles in ~1µs, and the patterns that reach
+//! it are degenerate stress shapes where match micro-speed is
+//! irrelevant. Keeping the eager DFA here would re-import the exact
+//! subset-construction cost the SSM exists to eliminate, for a tier
+//! that still could not drop the Pike VM (the DFA has its own state
+//! cap and falls back to it).
 //!
 //! Design + errata: `references/decisions/segment-engine-design.md`;
 //! theory note `references/theory/07-segment-matcher.md`.
@@ -28,7 +37,6 @@ use globstar::ast::{Ast, Node};
 use globstar::engine::literal::LiteralMatcher;
 use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
-use globstar::engine::thompson_dfa::ThompsonDfa;
 use globstar::factor::factor_branches;
 use globstar::parser;
 
@@ -45,7 +53,6 @@ pub struct SegGlob {
 enum Engine {
     Literal(LiteralMatcher),
     Segment(Box<SegmentMatcher>),
-    ThompsonDfa(Box<ThompsonDfa>),
     PikeVm(Box<PikeVm>),
 }
 
@@ -129,11 +136,10 @@ impl SegGlob {
                 match SegmentMatcher::build(program, opts.dot) {
                     Ok(seg) => Engine::Segment(seg),
                     // Not segment-expressible (glued globstars via
-                    // braces, budget overflows): shared automata tiers.
-                    Err(program) => match ThompsonDfa::build(program, opts.dot) {
-                        Ok(dfa) => Engine::ThompsonDfa(dfa),
-                        Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),
-                    },
+                    // braces, escaped separators, budget overflows —
+                    // ~0.5% of the corpus, all degenerate shapes):
+                    // the total, ReDoS-bounded Pike VM.
+                    Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),
                 }
             }
         };
@@ -154,7 +160,6 @@ impl SegGlob {
         match &self.engine {
             Engine::Literal(_) => "Literal",
             Engine::Segment(_) => "Segment",
-            Engine::ThompsonDfa(_) => "ThompsonDfa",
             Engine::PikeVm(_) => "PikeVm",
         }
     }
@@ -165,7 +170,6 @@ impl SegGlob {
         let raw = match &self.engine {
             Engine::Literal(m) => m.is_match(path),
             Engine::Segment(m) => m.is_match(path),
-            Engine::ThompsonDfa(m) => m.is_match(path),
             Engine::PikeVm(m) => m.is_match(path),
         };
         if self.negated { !raw } else { raw }
@@ -176,7 +180,6 @@ impl SegGlob {
         match &self.engine {
             Engine::Literal(m) => m.match_dir(dir_path),
             Engine::Segment(m) => m.match_dir(dir_path),
-            Engine::ThompsonDfa(m) => m.match_dir(dir_path),
             Engine::PikeVm(m) => m.match_dir(dir_path),
         }
     }
@@ -193,7 +196,6 @@ impl SegGlob {
                 vec![bytes]
             }
             Engine::Segment(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
-            Engine::ThompsonDfa(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
             Engine::PikeVm(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
         }
     }

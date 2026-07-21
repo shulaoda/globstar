@@ -59,8 +59,9 @@ One linear pass: fork expansion (separator-crossing braces, capped at
 64 sequences) → segmentize → classify. No subset construction, no
 hash maps, no byte-class tables. Patterns outside the model
 (`a{**,x}b`-style glued absorbers, escaped separators inside
-literals, budget overflows) return the program unchanged and fall
-through to `ThompsonDfa` → `PikeVm`.
+literals, budget overflows — ~0.5% of the corpus, all degenerate stress
+shapes) return the program unchanged and fall through to the shared
+`PikeVm`, the total O(n·m) engine.
 
 ## Complexity and safety
 

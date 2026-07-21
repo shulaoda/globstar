@@ -278,10 +278,14 @@ objects, shared shapes; no typed-array tables except `WGeneric` masks.
 
 ## 9. Fallback + testing
 
-Dispatch: Literal → LiteralMatcher (unchanged); segmentizable ∧ elements
-≤ 64 ∧ forks ≤ 64 ∧ WGeneric positions ≤ 64 → SSM; else PikeVm. The
-eager ThompsonDfa stays in-tree during the transition as a bench
-reference and corpus oracle.
+Dispatch (in the standalone crate/package): Literal → LiteralMatcher
+(shared); segmentizable ∧ elements ≤ 64 ∧ forks ≤ 64 ∧ WGeneric
+positions ≤ 64 → SSM; else the shared PikeVm — the only *total*
+engine, and the O(n·m) ReDoS floor. The eager ThompsonDfa is NOT in
+the fallback chain: it would re-import the subset-construction
+compile cost for a tier that still could not drop the PikeVm (the
+DFA has its own state cap). It remains the `globstar` crate's primary
+engine and the corpus oracle.
 
 Gates, in order, after every change: `cargo test --workspace`,
 `node verify.mjs` (corpus, all engines incl. SSM rows added),
