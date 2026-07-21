@@ -10,18 +10,19 @@ These notes record the formal foundations of the engine modules under `impl/crat
 4. [04-pike-vm.md](04-pike-vm.md) — linear-time NFA simulation used when subset construction exceeds its state cap.
 5. [05-literal-prefilter.md](05-literal-prefilter.md) — the suffix- anchored literal prefilter used to short-circuit the matcher; its correctness invariant.
 6. [06-walker-and-pruning.md](06-walker-and-pruning.md) — static- prefix extraction and the four-valued `match_dir` predicate, which together drive directory-level pruning.
+7. [07-segment-matcher.md](07-segment-matcher.md) — the segment-structured matcher (SSM), a standalone experimental engine (`crates/globstar-segment`, `packages/globstar-segment`): patterns as linear element sequences, anchored single-globstar matching, the element-position NFA behind `match_dir`, and the JS string/byte dual-mode execution.
 
 ## Engine map
 
 | Source file              | Theory note | Role                                                                                                          |
 | ------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------- |
 | `engine/literal.rs`      | —           | Tier 0 byte-equality matcher for pure-literal patterns.                                                       |
+| `globstar-segment` crate | §07         | Segment-structured matcher — standalone experimental engine, benchmarked against this crate's tiers.          |
 | `engine/ops.rs`          | §06         | AST-to-linear lowering, globstar fold passes, static-prefix extraction.                                       |
 | `engine/facts.rs`        | §05         | Suffix prefilter.                                                                                             |
 | `engine/thompson.rs`     | §02         | Thompson NFA.                                                                                                 |
-| `engine/thompson_dfa.rs` | §03         | Subset-constructed DFA.                                                                                       |
-| `engine/pikevm.rs`       | §04         | NFA simulation.                                                                                               |
-| `engine/backtrack.rs`    | —           | Recursive backtracking matcher retained as the differential-test oracle. Not on any production dispatch path. |
+| `engine/thompson_dfa.rs` | §03         | Subset-constructed DFA — primary Tier 1/2 engine.                                                             |
+| `engine/pikevm.rs`       | §04         | NFA simulation — fallback and ReDoS soundness floor.                                                          |
 
 ## Notation
 

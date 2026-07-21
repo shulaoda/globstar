@@ -22,7 +22,8 @@
 import { spawnSync } from "node:child_process";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMatcher } from "./packages/globstar/src/matcher/glob.js";
+import { compileMatcher as compileMatcherMain } from "./packages/globstar/src/matcher/glob.js";
+import { compileMatcher as compileMatcherSegment } from "./packages/globstar-segment/src/index.js";
 import { GlobError } from "./packages/globstar/src/matcher/error.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +36,7 @@ function argVal(name, def) {
 }
 const COUNT = Number(argVal("--count", "50000"));
 const MODE = argVal("--mode", "all"); // all | m | d | u
-const JS_ENGINE = argVal("--js-engine", "pikevm"); // pikevm | dfa
+const JS_ENGINE = argVal("--js-engine", "segment"); // segment | pikevm | dfa
 const MAX_SAMPLES = Number(argVal("--max-samples", "30"));
 // `--seed N` for one run, or `--seeds A-B` to sweep a range.
 const SEEDS = (() => {
@@ -51,7 +52,12 @@ const SEEDS = (() => {
 
 // Engine override threaded into compileMatcher. `undefined` = the shipped
 // default (PikeVm for one-shot callers); "dfa" forces the walker's engine.
+// `segment` (default) pairs the `@globstar/segment` package with the
+// `globstar-segment` Rust crate; `pikevm` / `dfa` force those engines
+// in `@globstar/globstar` and pair with the `globstar` crate.
+const SEGMENT_MODE = JS_ENGINE !== "dfa" && JS_ENGINE !== "pikevm";
 const ENGINE_OPT = JS_ENGINE === "dfa" ? "dfa" : undefined;
+const compileMatcher = SEGMENT_MODE ? compileMatcherSegment : compileMatcherMain;
 
 // ── deterministic PRNG (mulberry32) so any failure reproduces ────────
 function rng(seed) {
@@ -291,6 +297,9 @@ function runSeed(seed) {
     encoding: "utf8",
     maxBuffer: 1 << 30,
     cwd: ROOT,
+    env: SEGMENT_MODE
+      ? { ...process.env, GLOBSTAR_DIFFTEST_ENGINE: "segment" }
+      : process.env,
   });
   if (r.status !== 0) {
     console.error(`[fuzz] rust harness failed (status=${r.status})`);

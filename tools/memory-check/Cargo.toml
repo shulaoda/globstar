@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 globstar = { path = "../../crates/globstar" }
+globstar-segment = { path = "../../crates/globstar-segment" }
 globset = "0.4"
 wax = "0.6"
 

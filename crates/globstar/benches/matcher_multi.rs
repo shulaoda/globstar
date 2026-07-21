@@ -84,6 +84,12 @@ fn build_globstar(patterns: &[&str]) -> GcGlob {
     GcGlob::union(patterns.iter().copied()).unwrap()
 }
 
+/// `SegGlob::union` — the experimental `globstar-segment` crate
+/// (merged fork sequences, no NFA probe).
+fn build_segment(patterns: &[&str]) -> globstar_segment::SegGlob {
+    globstar_segment::SegGlob::union(patterns.iter().copied()).unwrap()
+}
+
 /// Forced merged DFA — bypass auto-OR by feeding the merged program
 /// directly to `ThompsonDfa::build`. Used to measure the wide-path
 /// behavior independent of the dispatch policy.
@@ -170,6 +176,9 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.bench_function("globstar", |b| {
         b.iter(|| black_box(build_globstar(black_box(patterns))));
     });
+    group.bench_function("globstar_segment", |b| {
+        b.iter(|| black_box(build_segment(black_box(patterns))));
+    });
     group.bench_function("DFA_union", |b| {
         b.iter(|| black_box(build_dfa_union(black_box(patterns))));
     });
@@ -199,6 +208,7 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
 // ---------- MATCH bench ----------
 fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let gs = build_globstar(patterns);
+    let seg = build_segment(patterns);
     let dfa_u = build_dfa_union(patterns);
     let dfa_or = build_dfa_or(patterns);
     let pike_u = build_pikevm_union(patterns);
@@ -217,6 +227,13 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
         b.iter(|| {
             for p in PATHS {
                 black_box(gs.is_match(black_box(p.as_bytes())));
+            }
+        });
+    });
+    group.bench_function("globstar_segment", |b| {
+        b.iter(|| {
+            for p in PATHS {
+                black_box(seg.is_match(black_box(p.as_bytes())));
             }
         });
     });

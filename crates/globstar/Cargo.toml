@@ -13,6 +13,9 @@ globset = "0.4"
 fast-glob = "0.4"
 wax = "0.6"
 glob = "0.3"
+# Dev-only cycle (allowed by cargo): the corpus driver and benches run
+# the experimental segment engine side-by-side with this crate's own.
+globstar-segment = { workspace = true }
 
 # Single-pattern engine head-to-head: globstar(DFA) vs globstar(PikeVM)
 # vs fast_glob. Mirrored by JS-side

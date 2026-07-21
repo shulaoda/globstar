@@ -54,8 +54,14 @@ export class LiteralFacts {
 // Right-to-left scan: collect Lit / Sep bytes until the first
 // non-literal op. Returns the guaranteed byte suffix of any match.
 function extractSuffix(ops) {
+  return Uint8Array.from(suffixArray(ops, ops.length));
+}
+
+// Plain-array core shared by `extractSuffix` and the suffix-set glue
+// (skips intermediate typed arrays). Scans `ops[0 .. end)`.
+function suffixArray(ops, end) {
   const acc = [];
-  for (let i = ops.length - 1; i >= 0; i--) {
+  for (let i = end - 1; i >= 0; i--) {
     const op = ops[i];
     if (op.kind === OP_LIT) {
       for (let j = op.bytes.length - 1; j >= 0; j--) acc.push(op.bytes[j]);
@@ -66,7 +72,7 @@ function extractSuffix(ops) {
     }
   }
   acc.reverse();
-  return Uint8Array.from(acc);
+  return acc;
 }
 
 // If the program ends with `Alternation` of literal-only branches, build
@@ -80,11 +86,11 @@ function extractSuffixSet(ops) {
 
   // Tail literals BEFORE the alternation can be safely glued to each
   // all-literal branch.
-  const commonTail = extractSuffix(ops.slice(0, ops.length - 1));
+  const commonTail = suffixArray(ops, ops.length - 1);
 
   const set = [];
   for (const branch of last.branches) {
-    const branchSuffix = extractSuffix(branch);
+    const branchSuffix = suffixArray(branch, branch.length);
     // (a) Branch contributes no literal at the tail (e.g. `{..Star}`)
     //     — abandon the suffix-set strategy entirely.
     if (branchSuffix.length === 0 && branch.length > 0) return [];
@@ -100,14 +106,9 @@ function extractSuffixSet(ops) {
       }
     }
 
-    let full;
-    if (allLiteral) {
-      full = new Uint8Array(commonTail.length + branchSuffix.length);
-      full.set(commonTail, 0);
-      full.set(branchSuffix, commonTail.length);
-    } else {
-      full = branchSuffix;
-    }
+    const full = allLiteral
+      ? Uint8Array.from(commonTail.concat(branchSuffix))
+      : Uint8Array.from(branchSuffix);
     // (b) Empty final suffix — useless as a filter.
     if (full.length === 0) return [];
     set.push(full);

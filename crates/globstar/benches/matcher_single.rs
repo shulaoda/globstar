@@ -25,7 +25,8 @@ use globset::GlobBuilder;
 use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
 use globstar::engine::thompson_dfa::ThompsonDfa;
-use globstar::parser;
+use globstar::{CompileOptions, Glob, parser};
+use globstar_segment::SegGlob;
 use std::path::Path;
 use wax::Pattern as WaxPattern;
 
@@ -76,16 +77,40 @@ fn build_pikevm(pattern: &str) -> PikeVm {
     PikeVm::new(program, DOT)
 }
 
+/// Public-API build of the EXISTING crate (automata dispatch) — the
+/// "globstar (Rust)" column in BENCHMARKS.md.
+fn build_public(pattern: &str) -> Glob {
+    Glob::new_with(pattern, CompileOptions::default().dot(DOT)).expect("compile")
+}
+
+/// Public-API build of the experimental `globstar-segment` crate —
+/// the "globstar-ssm (Rust)" column in BENCHMARKS.md.
+fn build_segment(pattern: &str) -> SegGlob {
+    SegGlob::new_with(pattern, CompileOptions::default().dot(DOT)).expect("compile")
+}
+
 /// Sanity check: DFA, PikeVM, and fast_glob must all agree on every
 /// (pattern, path) pair. Runs once per group before timing starts.
 fn assert_all_agree() {
     for &(label, pattern) in PATTERNS {
+        let public = build_public(pattern);
+        let seg = build_segment(pattern);
         let dfa = build_dfa(pattern);
         let pike = build_pikevm(pattern);
         for &path in PATHS {
+            let g = public.is_match(path.as_bytes());
+            let sg = seg.is_match(path.as_bytes());
+            assert_eq!(
+                g, sg,
+                "globstar vs globstar-segment disagree on `{label}` `{pattern}` / `{path}`"
+            );
             let d = dfa.is_match(path.as_bytes());
             let p = pike.is_match(path.as_bytes());
             let f = fg_glob_match(pattern, path);
+            assert_eq!(
+                g, d,
+                "public vs DFA disagree on `{label}` `{pattern}` / `{path}`"
+            );
             assert_eq!(
                 d, p,
                 "DFA vs PikeVM disagree on `{label}` `{pattern}` / `{path}`"
@@ -108,6 +133,12 @@ fn strict_globset(pattern: &str) -> globset::GlobMatcher {
 
 fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
     let mut group = c.benchmark_group(format!("compile_{label}"));
+    group.bench_function("globstar", |b| {
+        b.iter(|| black_box(build_public(black_box(pattern))));
+    });
+    group.bench_function("globstar_segment", |b| {
+        b.iter(|| black_box(build_segment(black_box(pattern))));
+    });
     group.bench_function("globstar_dfa", |b| {
         b.iter(|| black_box(build_dfa(black_box(pattern))));
     });
@@ -132,12 +163,28 @@ fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
 }
 
 fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
+    let public = build_public(pattern);
+    let seg = build_segment(pattern);
     let dfa = build_dfa(pattern);
     let pike = build_pikevm(pattern);
     let gs = strict_globset(pattern);
     let wax_g = wax::Glob::new(pattern).expect("wax parse").into_owned();
 
     let mut group = c.benchmark_group(format!("match_{label}"));
+    group.bench_function("globstar", |b| {
+        b.iter(|| {
+            for p in PATHS {
+                black_box(public.is_match(black_box(p.as_bytes())));
+            }
+        });
+    });
+    group.bench_function("globstar_segment", |b| {
+        b.iter(|| {
+            for p in PATHS {
+                black_box(seg.is_match(black_box(p.as_bytes())));
+            }
+        });
+    });
     group.bench_function("globstar_dfa", |b| {
         b.iter(|| {
             for p in PATHS {

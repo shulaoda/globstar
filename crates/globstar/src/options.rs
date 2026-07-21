@@ -60,7 +60,7 @@ impl CompileOptions {
 /// `Z`(0x5A) ↔ `z`(0x7A). Setting it lowercases an upper letter; clearing
 /// it uppercases a lower letter.
 #[inline]
-pub(crate) fn ascii_case_alt(b: u8) -> u8 {
+pub fn ascii_case_alt(b: u8) -> u8 {
     match b {
         b'A'..=b'Z' => b | 0x20,
         b'a'..=b'z' => b & !0x20,

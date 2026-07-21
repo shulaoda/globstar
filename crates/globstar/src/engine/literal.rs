@@ -56,6 +56,11 @@ impl LiteralMatcher {
         }
     }
 
+    /// The compiled literal bytes (for external tier wrappers).
+    pub fn literal_bytes(&self) -> &[u8] {
+        &self.literal
+    }
+
     /// Whether `path` matches the compiled literal (per §12.3 normalization).
     ///
     /// Dispatches to a const-generic monomorphization of [`path_eq`];

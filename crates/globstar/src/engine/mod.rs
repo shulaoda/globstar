@@ -12,9 +12,9 @@
 //! - [`pikevm`] — linear-time Pike VM over the Thompson NFA. Fallback
 //!   when `thompson_dfa` subset construction exceeds its state cap.
 
-pub(crate) mod facts;
+pub mod facts;
 pub(crate) mod fxhash;
-pub(crate) mod literal;
+pub mod literal;
 pub mod ops;
 pub mod pikevm;
 pub(crate) mod thompson;
@@ -26,7 +26,7 @@ pub mod thompson_dfa;
 /// `eq_byte::<false>`) monomorphize into a single instruction — the
 /// `if CI { ... } else { ... }` branch is dead-code-eliminated at MIR.
 #[inline(always)]
-pub(crate) fn eq_byte<const CI: bool>(a: u8, b: u8) -> bool {
+pub fn eq_byte<const CI: bool>(a: u8, b: u8) -> bool {
     if CI {
         a.eq_ignore_ascii_case(&b)
     } else {

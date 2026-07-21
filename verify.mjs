@@ -127,6 +127,9 @@ function record(stats, ok, msgFn) {
 async function runJsVerify() {
   const { globstar } = await import("./packages/globstar/src/index.js");
   const { compileMatcher } = await import("./packages/globstar/src/matcher/glob.js");
+  const { compileMatcher: compileSegment } = await import(
+    "./packages/globstar-segment/src/index.js"
+  );
   const { GlobError } = await import("./packages/globstar/src/matcher/error.js");
   const { parse } = await import("./packages/globstar/src/matcher/parser.js");
 
@@ -182,8 +185,20 @@ async function runJsVerify() {
   const singleFail = (row, engine, got) =>
     `${row.file}:${row.lineNo}: pattern=${JSON.stringify(row.pattern)} path=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
 
+  function runSingleSegment(row) {
+    try {
+      return compileSegment(row.pattern, {
+        dot: row.dot,
+        caseInsensitive: row.caseInsensitive,
+      }).match(row.path);
+    } catch {
+      return null;
+    }
+  }
+
   const single = {
     globstar: makeStats(),
+    Segment: makeStats(),
     ThompsonDfa: makeStats(),
     PikeVm: makeStats(),
   };
@@ -191,6 +206,10 @@ async function runJsVerify() {
     const g = runSinglePub(row);
     if (g === null) single.globstar.skip++;
     else record(single.globstar, g === row.expected, () => singleFail(row, "globstar", g));
+
+    const sgm = runSingleSegment(row);
+    if (sgm === null) single.Segment.skip++;
+    else record(single.Segment, sgm === row.expected, () => singleFail(row, "Segment", sgm));
 
     const d = runSingleEngine(row, "dfa");
     if (d === null) single.ThompsonDfa.skip++;
@@ -263,8 +282,20 @@ async function runJsVerify() {
   const multiFail = (row, engine, got) =>
     `corpus-multi.txt:${row.lineNo}: patterns=${JSON.stringify(row.patterns)} path=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
 
+  function runMultiSegment(row) {
+    try {
+      return compileSegment(row.patterns, {
+        dot: row.dot,
+        caseInsensitive: row.caseInsensitive,
+      }).match(row.path);
+    } catch {
+      return null;
+    }
+  }
+
   const multi = {
     globstar: makeStats(),
+    Segment: makeStats(),
     ThompsonDfa: makeStats(),
     PikeVm: makeStats(),
   };
@@ -272,6 +303,10 @@ async function runJsVerify() {
     const g = runMultiPub(row);
     if (g === null) multi.globstar.skip++;
     else record(multi.globstar, g === row.expected, () => multiFail(row, "globstar", g));
+
+    const sgm = runMultiSegment(row);
+    if (sgm === null) multi.Segment.skip++;
+    else record(multi.Segment, sgm === row.expected, () => multiFail(row, "Segment", sgm));
 
     const d = runMultiEngine(row, "dfa");
     if (d === null) multi.ThompsonDfa.skip++;
@@ -332,11 +367,39 @@ async function runJsVerify() {
   const dirFail = (row, engine, got) =>
     `corpus-dir.txt:${row.lineNo}: pattern=${JSON.stringify(row.pattern)} dir=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
 
-  const dir = { globstar: makeStats(), ThompsonDfa: makeStats(), PikeVm: makeStats() };
+  function runDirSegment(row) {
+    let ast;
+    try {
+      ast = parse(row.pattern);
+    } catch {
+      return null;
+    }
+    if (ast.isNegated) return null;
+    try {
+      const dm = compileSegment(row.pattern, {
+        dot: row.dot,
+        caseInsensitive: row.caseInsensitive,
+      }).matchDir(row.path);
+      return DIR_TOKEN[dm];
+    } catch {
+      return null;
+    }
+  }
+
+  const dir = {
+    globstar: makeStats(),
+    Segment: makeStats(),
+    ThompsonDfa: makeStats(),
+    PikeVm: makeStats(),
+  };
   for (const row of dirRows()) {
     const g = runDirEngine(row, undefined); // public default engine (PikeVm)
     if (g === null) dir.globstar.skip++;
     else record(dir.globstar, g === row.expected, () => dirFail(row, "globstar", g));
+
+    const sgm = runDirSegment(row);
+    if (sgm === null) dir.Segment.skip++;
+    else record(dir.Segment, sgm === row.expected, () => dirFail(row, "Segment", sgm));
 
     const d = runDirEngine(row, "dfa");
     if (d === null) dir.ThompsonDfa.skip++;
@@ -379,12 +442,15 @@ async function runJsVerify() {
 
   return [
     { corpus: "single", engine: "globstar", ...single.globstar },
+    { corpus: "single", engine: "Segment", ...single.Segment },
     { corpus: "single", engine: "ThompsonDfa", ...single.ThompsonDfa },
     { corpus: "single", engine: "PikeVm", ...single.PikeVm },
     { corpus: "multi", engine: "globstar", ...multi.globstar },
+    { corpus: "multi", engine: "Segment", ...multi.Segment },
     { corpus: "multi", engine: "ThompsonDfa", ...multi.ThompsonDfa },
     { corpus: "multi", engine: "PikeVm", ...multi.PikeVm },
     { corpus: "dir", engine: "globstar", ...dir.globstar },
+    { corpus: "dir", engine: "Segment", ...dir.Segment },
     { corpus: "dir", engine: "ThompsonDfa", ...dir.ThompsonDfa },
     { corpus: "dir", engine: "PikeVm", ...dir.PikeVm },
     { corpus: "err", engine: "globstar", ...errStats },

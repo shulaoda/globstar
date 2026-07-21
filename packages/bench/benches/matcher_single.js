@@ -8,6 +8,7 @@ import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { compileMatcher } from "../../globstar/src/matcher/glob.js";
+import { compileMatcher as compileSegment } from "../../globstar-segment/src/index.js";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
@@ -40,6 +41,7 @@ const N = PATHS.length;
 
 const LIBS = [
   ["globstar", (p) => compileMatcher(p).match, (m, s) => m(s)],
+  ["globstar-ssm", (p) => compileSegment(p).match, (m, s) => m(s)],
   ["picomatch", (p) => pico(p), (m, s) => m(s)],
   ["minimatch", (p) => new Minimatch(p), (m, s) => m.match(s)],
   ["micromatch", (p) => micro.matcher(p), (m, s) => m(s)],

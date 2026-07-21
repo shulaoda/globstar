@@ -15,7 +15,7 @@ use globset::GlobBuilder;
 use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
 use globstar::engine::thompson_dfa::ThompsonDfa;
-use globstar::parser;
+use globstar::{CompileOptions, Glob, parser};
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
@@ -48,6 +48,18 @@ fn build_pikevm(pattern: &str) -> PikeVm {
     let ast = parser::parse(pattern.as_bytes()).expect("parse");
     let program = lower(&ast.body, false);
     PikeVm::new(program, true)
+}
+
+/// Public-API build of the existing crate. `dot=true` mirrors the
+/// JS default.
+fn build_public(pattern: &str) -> Glob {
+    Glob::new_with(pattern, CompileOptions::default().dot(true)).expect("compile")
+}
+
+/// Public-API build of the experimental `globstar-segment` crate.
+fn build_segment(pattern: &str) -> globstar_segment::SegGlob {
+    globstar_segment::SegGlob::new_with(pattern, CompileOptions::default().dot(true))
+        .expect("compile")
 }
 
 /// Returns `(value, inline_size, net_heap_bytes)`.
@@ -94,16 +106,24 @@ fn main() {
     }
 
     println!(
-        "{:<20}   {:>10}   {:>10}   {:>10}   {:>10}",
-        "Pattern (total B/matcher)", "DFA", "PikeVM", "globset", "wax"
+        "{:<20}   {:>10}   {:>10}   {:>10}   {:>10}   {:>10}   {:>10}",
+        "Pattern (total B/matcher)", "globstar", "ssm", "DFA", "PikeVM", "globset", "wax"
     );
     println!(
-        "{:-<20}   {:->10}   {:->10}   {:->10}   {:->10}",
-        "", "", "", "", ""
+        "{:-<20}   {:->10}   {:->10}   {:->10}   {:->10}   {:->10}   {:->10}",
+        "", "", "", "", "", "", ""
     );
 
     let trials = 9;
     for &(label, pattern) in patterns {
+        let public_total = median_total(trials, || {
+            let (_v, inline, heap) = measure(|| build_public(pattern));
+            inline + heap
+        });
+        let ssm_total = median_total(trials, || {
+            let (_v, inline, heap) = measure(|| build_segment(pattern));
+            inline + heap
+        });
         let dfa_total = median_total(trials, || {
             let (_v, inline, heap) = measure(|| build_dfa(pattern));
             inline + heap
@@ -122,8 +142,8 @@ fn main() {
         });
 
         println!(
-            "{:<20}   {:>10}   {:>10}   {:>10}   {:>10}",
-            label, dfa_total, pike_total, gs_total, wax_total
+            "{:<20}   {:>10}   {:>10}   {:>10}   {:>10}   {:>10}   {:>10}",
+            label, public_total, ssm_total, dfa_total, pike_total, gs_total, wax_total
         );
     }
 }
