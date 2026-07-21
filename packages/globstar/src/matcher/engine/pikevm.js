@@ -302,7 +302,12 @@ export class PikeVm {
           if ((word2 & 0xf) === T_DOT_GUARD) {
             const base = (word2 >>> 16) * nWords;
             for (let j = 0; j < nWords; j++) {
-              const merged = cur[j] | closures[base + j];
+              // `>>> 0` — bitwise OR yields a SIGNED int32, but reads
+              // from the Uint32Array are unsigned; with bit 31 set the
+              // signed/unsigned compare never stabilizes and the
+              // fixpoint loops forever (found by the segment-engine
+              // string-mode fuzzer on a 37-state dot=false pattern).
+              const merged = (cur[j] | closures[base + j]) >>> 0;
               if (merged !== cur[j]) {
                 cur[j] = merged;
                 changed = true;

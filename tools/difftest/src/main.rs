@@ -28,7 +28,15 @@
 //! A PATH stays raw `&[u8]`, so it may be arbitrary (non-UTF-8) bytes.
 
 use globstar::{CompileOptions, DirMatch, Glob, GlobError};
+use globstar_segment::SegGlob;
 use std::io::{self, BufRead, Write};
+
+/// Engine selection: `GLOBSTAR_DIFFTEST_ENGINE=segment` routes every
+/// request through the experimental `globstar-segment` crate instead
+/// of `globstar`'s own engines — same wire, same options.
+fn use_segment() -> bool {
+    std::env::var("GLOBSTAR_DIFFTEST_ENGINE").is_ok_and(|v| v == "segment")
+}
 
 fn main() {
     let stdin = io::stdin();
@@ -53,7 +61,9 @@ fn main() {
 /// silent false "agreement".
 fn handle(line: &str) -> String {
     let cols: Vec<&str> = line.split('\t').collect();
-    if cols.len() < 3 {
+    // `m`/`d` need 4 columns, `u` checks its own arity below; a bare
+    // 3-column `m`/`d` line used to panic on `cols[3]`.
+    if cols.len() < 4 {
         return "err:BadRequest".to_string();
     }
     let cmd = cols[0];
@@ -70,6 +80,12 @@ fn handle(line: &str) -> String {
                 Err(t) => return t,
             };
             let path = unescape(cols[3]);
+            if use_segment() {
+                return match SegGlob::new_with(&pat, opts) {
+                    Ok(g) => is_match_token(g.is_match(&path)),
+                    Err(e) => err_token(&e),
+                };
+            }
             match Glob::new_with(&pat, opts) {
                 Ok(g) => is_match_token(g.is_match(&path)),
                 Err(e) => err_token(&e),
@@ -82,6 +98,12 @@ fn handle(line: &str) -> String {
                 Err(t) => return t,
             };
             let dir = unescape(cols[3]);
+            if use_segment() {
+                return match SegGlob::new_with(&pat, opts) {
+                    Ok(g) => dir_token(g.match_dir(&dir)),
+                    Err(e) => err_token(&e),
+                };
+            }
             match Glob::new_with(&pat, opts) {
                 Ok(g) => dir_token(g.match_dir(&dir)),
                 Err(e) => err_token(&e),
@@ -99,6 +121,12 @@ fn handle(line: &str) -> String {
                     Ok(p) => patterns.push(p),
                     Err(t) => return t,
                 }
+            }
+            if use_segment() {
+                return match SegGlob::union_with(&patterns, opts) {
+                    Ok(g) => is_match_token(g.is_match(&path)),
+                    Err(e) => err_token(&e),
+                };
             }
             match Glob::union_with(&patterns, opts) {
                 Ok(g) => is_match_token(g.is_match(&path)),
