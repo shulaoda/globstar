@@ -6,7 +6,6 @@ publish = false
 
 [dependencies]
 globstar = { path = "../../crates/globstar" }
-globstar-segment = { path = "../../crates/globstar-segment" }
 
 # Cross-runtime differential harness: reads request lines on stdin and
 # emits one result token per line, using ONLY globstar's public API. The

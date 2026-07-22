@@ -35,6 +35,7 @@ const PATHS: &[&[u8]] = &[
 fn equivalence_with_or_oracle() {
     let patterns = ["**/*.ts", "**/*.tsx", "**/*.js"];
     let u = Glob::union(patterns).unwrap();
+    assert_eq!(u.engine_name(), "Segment");
     for p in PATHS {
         assert_eq!(u.is_match(p), or_oracle(&patterns, p), "path {p:?}");
     }
@@ -90,7 +91,7 @@ fn factoring_preserves_globstar_fold() {
 
 #[test]
 fn factoring_lifts_shared_prefix_for_globstar_patterns() {
-    // The whole point of factoring: union should produce the same DFA
+    // The whole point of factoring: union should produce the same SSM
     // as the hand-written brace, so this should match identically.
     let u = Glob::union(["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.md"]).unwrap();
     let manual = Glob::new("**/*.{ts,tsx,js,jsx,md}").unwrap();

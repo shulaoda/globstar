@@ -1,9 +1,9 @@
 //! Pike VM interpreter over a compiled [`super::thompson::Thompson`] NFA.
 //!
-//! Linear-time O(n·m) matcher, used as the Tier-1/2 fallback when
-//! [`super::thompson_dfa::ThompsonDfa`] subset construction overruns
-//! its state cap, and as a standalone engine when callers want a
-//! fast-to-compile matcher.
+//! Linear-time O(n·m) matcher, used as the Tier-1/2 fallback when the
+//! primary [`super::segment`] engine cannot represent a pattern within
+//! its bounded fork/state model. It is also retained as a standalone
+//! reference engine.
 //!
 //! # Algorithm
 //!
@@ -416,12 +416,9 @@ fn iter_set_states(bits: &[u64]) -> impl Iterator<Item = usize> + '_ {
 /// (closures filter to leaves: byte-consumers + DotGuard + Match),
 /// and Match doesn't fire on any byte.
 ///
-/// The DFA's
-/// [`super::thompson_dfa::collect_successors_bits`] is the same
-/// per-byte transition relation, but written as a bitmap-deposit
-/// recursion that walks Split/Jump/passing-DotGuard inline (subset
-/// construction does the ε-extension on the fly rather than relying
-/// on a precomputed `static_closures` table).
+/// A deterministic construction would evaluate the same transition
+/// relation eagerly for every reachable subset; PikeVm evaluates it only
+/// for the current active set and uses `static_closures` for ε-extension.
 #[inline]
 fn byte_step(t: &Trans, c: u8, sep: bool, dot_mask: bool) -> Option<StateId> {
     match t {

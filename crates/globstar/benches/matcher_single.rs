@@ -1,5 +1,6 @@
-//! Engine-level head-to-head: `globstar(DFA)` vs `globstar(PikeVM)` vs
-//! `fast_glob`. Mirrors the JS-side `matcher_single.js` so the same
+//! Engine-level head-to-head: production `globstar` (SSM-first), forced
+//! PikeVM reference, and third-party matchers. Mirrors the JS-side
+//! `matcher_single.js` so the same
 //! `(pattern, path)` corpus drives both rows in the comparison table.
 //!
 //! Each pattern reports two timings:
@@ -14,19 +15,15 @@
 //! the per-call parse + match work, matching what the JS bench
 //! prints.
 //!
-//! The `globstar(DFA)` row force-builds a `ThompsonDfa` directly, so
-//! we exercise the DFA path even on patterns that the high-level
-//! `Glob` would dispatch to a different tier. PikeVM is built the
-//! same way to keep the comparison apples-to-apples.
+//! The PikeVM row bypasses production dispatch so it remains a stable
+//! total-engine reference for the segment matcher.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;
 use globset::GlobBuilder;
 use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
-use globstar::engine::thompson_dfa::ThompsonDfa;
 use globstar::{CompileOptions, Glob, parser};
-use globstar_segment::SegGlob;
 use std::path::Path;
 use wax::Pattern as WaxPattern;
 
@@ -61,62 +58,34 @@ const PATHS: &[&str] = &[
 /// dotfiles — keeps Rust and JS results comparable.
 const DOT: bool = true;
 
-/// Build a `ThompsonDfa` for `pattern`. Patterns that cap out the DFA
-/// state limit return `Err(program)`; for our corpus none should hit
-/// the cap, so we panic with the pattern name on overflow rather than
-/// silently fall back to PikeVM.
-fn build_dfa(pattern: &str) -> Box<ThompsonDfa> {
-    let ast = parser::parse(pattern.as_bytes()).expect("parse");
-    let program = lower(&ast.body, false);
-    ThompsonDfa::build(program, DOT).unwrap_or_else(|_| panic!("DFA cap exceeded on `{pattern}`"))
-}
-
 fn build_pikevm(pattern: &str) -> PikeVm {
     let ast = parser::parse(pattern.as_bytes()).expect("parse");
     let program = lower(&ast.body, false);
     PikeVm::new(program, DOT)
 }
 
-/// Public-API build of the EXISTING crate (automata dispatch) — the
+/// Public-API build of the production SSM-first crate — the
 /// "globstar (Rust)" column in BENCHMARKS.md.
 fn build_public(pattern: &str) -> Glob {
     Glob::new_with(pattern, CompileOptions::default().dot(DOT)).expect("compile")
 }
 
-/// Public-API build of the experimental `globstar-segment` crate —
-/// the "globstar-ssm (Rust)" column in BENCHMARKS.md.
-fn build_segment(pattern: &str) -> SegGlob {
-    SegGlob::new_with(pattern, CompileOptions::default().dot(DOT)).expect("compile")
-}
-
-/// Sanity check: DFA, PikeVM, and fast_glob must all agree on every
+/// Sanity check: production, PikeVM, and fast_glob must agree on every
 /// (pattern, path) pair. Runs once per group before timing starts.
 fn assert_all_agree() {
     for &(label, pattern) in PATTERNS {
         let public = build_public(pattern);
-        let seg = build_segment(pattern);
-        let dfa = build_dfa(pattern);
         let pike = build_pikevm(pattern);
         for &path in PATHS {
             let g = public.is_match(path.as_bytes());
-            let sg = seg.is_match(path.as_bytes());
-            assert_eq!(
-                g, sg,
-                "globstar vs globstar-segment disagree on `{label}` `{pattern}` / `{path}`"
-            );
-            let d = dfa.is_match(path.as_bytes());
             let p = pike.is_match(path.as_bytes());
             let f = fg_glob_match(pattern, path);
             assert_eq!(
-                g, d,
-                "public vs DFA disagree on `{label}` `{pattern}` / `{path}`"
+                g, p,
+                "public vs PikeVM disagree on `{label}` `{pattern}` / `{path}`"
             );
             assert_eq!(
-                d, p,
-                "DFA vs PikeVM disagree on `{label}` `{pattern}` / `{path}`"
-            );
-            assert_eq!(
-                d, f,
+                g, f,
                 "globstar vs fast_glob disagree on `{label}` `{pattern}` / `{path}`"
             );
         }
@@ -135,12 +104,6 @@ fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
     let mut group = c.benchmark_group(format!("compile_{label}"));
     group.bench_function("globstar", |b| {
         b.iter(|| black_box(build_public(black_box(pattern))));
-    });
-    group.bench_function("globstar_segment", |b| {
-        b.iter(|| black_box(build_segment(black_box(pattern))));
-    });
-    group.bench_function("globstar_dfa", |b| {
-        b.iter(|| black_box(build_dfa(black_box(pattern))));
     });
     group.bench_function("globstar_pikevm", |b| {
         b.iter(|| black_box(build_pikevm(black_box(pattern))));
@@ -164,8 +127,6 @@ fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
 
 fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
     let public = build_public(pattern);
-    let seg = build_segment(pattern);
-    let dfa = build_dfa(pattern);
     let pike = build_pikevm(pattern);
     let gs = strict_globset(pattern);
     let wax_g = wax::Glob::new(pattern).expect("wax parse").into_owned();
@@ -175,20 +136,6 @@ fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
         b.iter(|| {
             for p in PATHS {
                 black_box(public.is_match(black_box(p.as_bytes())));
-            }
-        });
-    });
-    group.bench_function("globstar_segment", |b| {
-        b.iter(|| {
-            for p in PATHS {
-                black_box(seg.is_match(black_box(p.as_bytes())));
-            }
-        });
-    });
-    group.bench_function("globstar_dfa", |b| {
-        b.iter(|| {
-            for p in PATHS {
-                black_box(dfa.is_match(black_box(p.as_bytes())));
             }
         });
     });

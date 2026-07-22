@@ -1,216 +1,100 @@
 # 04 — NFA Simulation (Pike VM)
 
-The Tier-1 fallback matcher simulates the Thompson NFA (§02) directly, following Cox (2009). It is invoked when `ThompsonDfa::build` (§03) returns `Err(program)` because the powerset construction would exceed `MAX_DFA_STATES`. The simulator runs in `O(n · m)` time where `n` is the input length and `m = |Q_N|`.
+PikeVm is the total fallback for patterns that the bounded segment matcher cannot represent. It simulates the Thompson NFA from §02 without backtracking, so matching remains polynomial and cannot exhibit ReDoS-style exponential behavior.
 
-Implementation: `impl/crates/globstar/src/engine/pikevm.rs`.
+Implementations:
 
-## 0. Pipeline
+- Rust: `crates/globstar/src/engine/pikevm.rs` over `engine/thompson.rs`.
+- JavaScript: `packages/globstar/src/matcher/engine/pikevm.js` over `engine/nfa-soa.js`.
 
-```
-Thompson NFA  ─────►  PikeVm::new
-                          │
-                          ▼   PikeVm { thompson, facts, prefixes, reach_to_accept }
-   ┌───────────────────────────────────┐
-   │ Per call (is_match / match_dir):  │
-   │                                   │
-   │  Scratch { current, next,          │   (ε-closure scratch buffers)
-   │            visited: u32[],         │
-   │            generation: u32 }        │
-   │                                   │
-   │  for each input byte b:           │
-   │    next ← ∅                       │
-   │    bump generation                │
-   │    for each q in current:         │
-   │      step(states[q], b, next, ...)│
-   │    swap(current, next)            │
-   └───────────────────────────────────┘
+## 1. Dispatch and ownership
+
+Production dispatch is:
+
+```text
+pure literal → LiteralMatcher
+otherwise    → SegmentMatcher.build(program)
+                 ├─ success → SegmentMatcher
+                 └─ decline → PikeVm
 ```
 
-Pike VM never materializes a DFA. The `current` set is the running powerset state (§03 §1) computed on the fly per byte. `visited[q] = generation` says "state `q` was added to `next` in this byte's step", which dedupes ε-paths in `O(1)` per insert — bumping the generation invalidates every entry without zeroing the array.
+PikeVm accepts every valid `OpProgram`; it has no pattern-shape or state-count rejection. The segment engine may decline when cross-segment expansion, sequence count, or in-segment state budgets are exceeded. The unchanged program is then compiled once into the Thompson representation.
 
-## 1. The simulator
+## 2. Active-set semantics
 
-Maintain two state sets `S_curr, S_next ⊆ Q_N`. Initially:
+Let `Q` be the NFA states and `C(S)` the ε-closure of a state set through `Split` and `Jump`. PikeVm maintains an active set `S ⊆ Q`:
 
-```
-S_curr ← ε-closure({q₀})
-```
-
-For each input byte `b`, expand:
-
-```
-S_next ← ε-closure({ q' :
-    q ∈ S_curr,
-    (q, b, q') ∈ δ_N,
-    DotGuard predicate satisfied for q on b
-})
+```text
+S₀ = C({q₀})
+Sᵢ₊₁ = ⋃ { C({next(q)}) : q ∈ Sᵢ and q accepts byte bᵢ }
 ```
 
-then swap `S_curr ↔ S_next`. After consuming the entire input, `is_match(w)` ≡ `S_curr ∩ accepts_at_eof ≠ ∅`.
+After the final byte, the path matches iff `S` intersects `accepts_at_eof`. `DotGuard` is not part of the static ε-closure because its edge depends on whether the upcoming byte is a segment-leading `.`; the guarded run path expands it conditionally.
 
-This is a direct realization of the powerset semantics from §03 without materializing the DFA: at each byte, the active state set is computed on the fly. The work per byte is bounded by `|S_curr|` state expansions plus their ε-closure, which is `O(m²)` in the worst case and `O(m)` in practice with bitset closures.
+This computes only the subset reached by the current input. It does not precompute a transition table for every reachable subset.
 
-## 2. ε-closure with deduplication
+## 3. Bitmap representation
 
-The textbook `ε-closure(S)` may visit the same state multiple times along distinct ε-paths. Without deduplication, the closure can re-enter exponentially. The standard fix maintains a per-step `visited: array of bool` table reset between bytes.
+An active set is a bitmap with `ceil(|Q| / word_bits)` words. Each NFA state also has a precomputed closure bitmap. A byte step therefore:
 
-The implementation uses a generation-stamped variant:
+1. iterates set bits in the current bitmap;
+2. tests the corresponding byte-consuming state;
+3. ORs the successor's closure bitmap into the next bitmap;
+4. swaps current and next.
 
-```
-struct Scratch {
-    current:    Vec<StateId>,
-    next:       Vec<StateId>,
-    visited:    Vec<u32>,
-    generation: u32,
-}
-```
+There are two loops:
 
-The `visited[s] = generation` invariant means "state `s` was added in the current step". Bumping `generation` between steps invalidates every entry in `O(1)`, replacing the per-step `O(m)` `fill(0)`. The trick is folklore in modern regex engines; for our use-case the amortized improvement matters when patterns produce hundreds of NFA states.
+- fast path: no `DotGuard`, one pass over the active bits per byte;
+- guarded path: a `processed` bitmap deduplicates conditional ε-work introduced by passing `DotGuard` states.
 
-## 3. `DotGuard` evaluation
+The literal suffix facts from §05 run before `is_match`, but not before `match_dir`, because a directory prefix need not yet contain the pattern's suffix.
 
-`Trans::DotGuard { next }` (§02 §2.7) is a state whose successor edge is conditional on the upcoming byte. The simulator handles it during the byte-step rather than during ε-closure:
+## 4. Runtime-specific layout
 
-```
-when processing byte b at state s = DotGuard { next }:
-    if at_segment_start ∧ b == b'.':
-        thread dies         (ε-edge not taken)
-    else:
-        recursively process states[next] on b
-```
+Rust uses `u64` bitmaps. Up to 256 NFA states use one stack buffer containing current, next, processed, and (for `match_dir`) after-separator slots. Larger NFAs allocate one contiguous `Vec<u64>` per call. The compiled matcher has no interior mutability and remains `Send + Sync`.
 
-ε-closure admits `DotGuard` to the active set but does not follow the outgoing edge; the byte-step §1 therefore observes `DotGuard` states and dispatches accordingly.
+JavaScript uses `Uint32Array`. Compile-time SoA arrays are packed into one runtime array containing closure bitmaps, initial/accept bitmaps, and one metadata word per state. Scratch storage is retained by the matcher and reused because JavaScript execution is single-threaded. Character-class objects remain in a sparse side array.
 
-## 4. The reach-to-accept mask
+The layouts differ to suit each runtime, while their state tags, closure rules, and transition semantics remain aligned.
 
-For `match_dir` Pike VM computes
+## 5. Directory pruning
 
-```
-reach_to_accept[s] := ∃ a non-empty byte sequence taking s to F_N
+`match_dir(d)` first runs `d` without the suffix prefilter:
+
+```text
+exact = active(d) intersects accepts_at_eof
+after_sep = step(active(d), '/')
+prefix = after_sep intersects accepts_at_eof or reach_to_accept
+return DirMatch::from_exact_prefix(exact, prefix)
 ```
 
-via reverse BFS from `accept` over the inverse of `δ_N`. The mask is constructed eagerly inside `PikeVm::new`. Cost is `O(|Q_N| + |δ_N|)` once.
+`reach_to_accept[q]` means that some non-empty byte sequence can reach the accepting state from `q`. Rust packs this mask eagerly during construction. JavaScript computes it lazily on the first directory query so ordinary `isMatch`-only matchers do not pay for it.
 
-(Pike VM cannot defer this the way the DFA path does, because the Pike VM's `match_dir` uses the mask on the first call. The wider project of "lazy reach-to-accept" applies only to the DFA hot path, which never uses the mask.)
-
-## 5. `is_match` and `match_dir`
-
-`is_match(w)`:
-
-```
-if ¬facts.accept(w): return false        // §05 prefilter
-S_curr ← ε-closure({q₀})
-for b in w:
-    S_next ← ∅
-    bump generation
-    for q in S_curr:
-        step(states[q], b, S_next, generation, at_segment_start)
-    swap(S_curr, S_next)
-    at_segment_start ← b ∈ Sep
-    if S_curr is empty: return false
-return S_curr ∩ accepts_at_eof ≠ ∅
-```
-
-`match_dir(d)` runs the byte loop without the suffix prefilter (a directory path may not yet carry the pattern's suffix), then queries the same combination as the DFA:
-
-```
-exact   ← S_curr ∩ accepts_at_eof ≠ ∅
-S_sep   ← ε-closure({ q' : q ∈ S_curr, (q, sep, q') ∈ δ_N })
-prefix  ← (S_sep ∩ accepts_at_eof ≠ ∅)
-          ∨ (S_sep ∩ reach_to_accept ≠ ∅)
-verdict ← combine(exact, prefix)         // see §06
-```
+Before the hypothetical separator step, any live `DotGuard` is expanded to a fixpoint: `/` is never a segment-leading dot, so those guards necessarily pass.
 
 ## 6. Complexity
 
-- **Time** per byte: `O(m)` amortized using bitset ε-closure; `O(m²)` worst case in the pure-`Vec<StateId>` formulation. The implementation uses the latter, as `m ≤ 4096` makes the constant factor tolerable.
-- **Time** total: `O(n · m)`, with `n = |w|`.
-- **Space**: `O(m)` for the two state sets and the visited table.
-- **Construction**: `O(|Q_N| + |δ_N|)` for `compute_reach_to_accept` plus the `Thompson::compile` cost.
+For input length `n`, NFA state count `m`, active state count `a`, and bitmap word count `w = ceil(m / word_bits)`:
 
-The asymptotic guarantees are independent of pattern shape: any pattern admissible to the parser admits an `O(n · m)` simulation, regardless of brace breadth or class complexity. The Pike VM is therefore a soundness floor — should any future change destabilize the DFA budget, the matcher remains predictable.
+- construction: Thompson NFA plus closure-table computation;
+- match space: `O(m)` active/scratch bits, excluding the precomputed closure table;
+- byte step: at most `O(a · w)` bitmap work;
+- total match time: polynomial and bounded by `O(n · m² / word_bits)` for the packed implementation.
 
-## 7. Worked example: simulating `a/*.ts` against `a/x.ts`
+For common fallback patterns, `w` is small and the loop behaves like `O(n · a)`. The important architectural property is totality: every valid program has a non-backtracking execution path even when the faster bounded engine declines it.
 
-Reusing the NFA from §02 §6. The states are `q₀ … q₇, accept`. Pike VM starts from `S_curr = ε-closure({q₀}) = {q₀}` and processes each input byte.
+## 7. Source map
 
-`generation` starts at 0 and is bumped before each step. `visited` is sized `|Q_N| = 9`.
+| Responsibility        | Rust                                    | JavaScript                         |
+| --------------------- | --------------------------------------- | ---------------------------------- |
+| Thompson construction | `engine/thompson.rs::Thompson::compile` | `engine/nfa-soa.js::compileNfaSoa` |
+| Static ε-closures     | `thompson.rs::compute_static_closures`  | `pikevm.js::staticClosuresN`       |
+| Packed runtime        | `pikevm.rs::PikeVm`                     | `pikevm.js::PikeVm`                |
+| Full match            | `PikeVm::is_match`                      | `PikeVm.isMatch`                   |
+| Directory query       | `PikeVm::match_dir`                     | `PikeVm.matchDir`                  |
 
-```
-init:    current = {q₀}                         visited = [0,0,0,0,0,0,0,0,0]
+## 8. References
 
-byte 'a' (gen=1)
-   step(q₀): Byte('a', next=q₁) — accepted, add_thread(q₁)
-                add_thread enters q₁ (Byte) — visited[q₁]=1, push to next
-   next = {q₁}                                  visited = [0,1,0,0,0,0,0,0,0]
-   swap → current = {q₁}; at_segment_start = false
-
-byte '/' (gen=2)
-   step(q₁): Byte('/', next=q₂) — accepted, add_thread(q₂)
-                q₂ is Jump(q₃); recurse add_thread(q₃)
-                q₃ is Split(q₄, q₅); recurse add_thread(q₄), add_thread(q₅)
-                q₄, q₅ are byte-consumers — visited[q₄]=visited[q₅]=2, pushed
-                q₃ is ε-only — only its successors went to next
-   next = {q₄, q₅}                              visited = [0,0,2,0,2,2,0,0,0]
-   swap → current = {q₄, q₅}; at_segment_start = true (just consumed '/')
-
-byte 'x' (gen=3)
-   step(q₄): AnyNonSep, dot_protected.
-       segment_start=true ∧ b='x'≠'.' — guard passes.
-       'x' is non-sep → accept. next=q₃, recurse add_thread(q₃)
-       q₃ Split → add_thread(q₄), add_thread(q₅) — visited[q₄]=visited[q₅]=3
-   step(q₅): Byte('.', next=q₆). 'x'≠'.' — REJECT.
-   next = {q₄, q₅}                              visited = [0,0,0,0,3,3,0,0,0]
-   swap → current = {q₄, q₅}; at_segment_start = false
-
-byte '.' (gen=4)
-   step(q₄): AnyNonSep, dot_protected.
-       segment_start=false → guard does not fire.
-       '.' is non-sep → accept. next=q₃, ε-closure {q₄, q₅}
-   step(q₅): Byte('.', next=q₆). '.' = '.' — accept.
-       add_thread(q₆) — q₆ is Byte, push.
-   next = {q₄, q₅, q₆}                          visited = [0,0,0,0,4,4,4,0,0]
-   swap → current = {q₄, q₅, q₆}; at_segment_start = false
-
-byte 't' (gen=5)
-   step(q₄): non-sep 't' → next=q₃ → ε-closure {q₄, q₅}
-   step(q₅): Byte('.', next=q₆). 't'≠'.' — REJECT.
-   step(q₆): Byte('t', next=q₇). accepted. add_thread(q₇).
-   next = {q₄, q₅, q₇}                          visited = [0,0,0,0,5,5,0,5,0]
-   swap → current = {q₄, q₅, q₇}
-
-byte 's' (gen=6)
-   step(q₄): non-sep 's' → ε-closure {q₄, q₅}
-   step(q₅): Byte('.', next=q₆). REJECT.
-   step(q₇): Byte('s', next=accept). accepted. add_thread(accept).
-       accept is Match — visited[accept]=6, push.
-   next = {q₄, q₅, accept}                      visited = [0,0,0,0,6,6,0,0,6]
-   swap → current = {q₄, q₅, accept}
-
-end of input.
-   current ∩ accepts_at_eof = {accept} ≠ ∅  ⇒  is_match = true
-```
-
-Three things to notice:
-
-1. `current` never grows past 3 elements. The bound is `|Q_N| = 9`, so the simulator's per-byte work is `O(9)` regardless of input length.
-2. Every `step` reads `visited[q]` and writes `visited[q] = generation` before pushing to `next`. The same `q` reachable through two ε-paths in one byte's step would hit `visited[q] == generation` on the second visit and be skipped.
-3. `dot_protected` on `q₄` only fires once — at byte 3, where `at_segment_start` was true. From byte 4 onwards the flag is false and the guard is a no-op.
-
-For comparison: the DFA (§03 §8) reaches the same conclusion in 6 indexed loads with no scratch buffers and no per-state dispatch. Pike VM pays its overhead in the inner `step` match arm but offers identical correctness with a hard `O(n · m)` worst case across all patterns.
-
-## 8. Source map
-
-`engine/pikevm.rs`:
-
-- `pub struct PikeVm { thompson, facts, prefixes, reach_to_accept }`.
-- `PikeVm::new(program, dot)`: compiles the Thompson NFA, computes `reach_to_accept`, extracts static prefixes (§06).
-- `PikeVm::is_match(path)` / `PikeVm::match_dir(dir_path)`: §5.
-- `Scratch` (private): the active-set scratch buffers.
-- `add_thread`, `step`: ε-closure expansion and per-byte dispatch.
-
-## 9. References
-
-- Cox, R. (2009). Regular Expression Matching: the Virtual Machine Approach. https://swtch.com/~rsc/regexp/regexp2.html.
-- Cox, R. (2007). Regular Expression Matching Can Be Simple And Fast. https://swtch.com/~rsc/regexp/regexp1.html.
-- Thompson, K. (1968). Regular Expression Search Algorithm. _CACM_ 11(6):419–422.
+- Cox, R. (2009). _Regular Expression Matching: the Virtual Machine Approach_. https://swtch.com/~rsc/regexp/regexp2.html
+- Cox, R. (2007). _Regular Expression Matching Can Be Simple And Fast_. https://swtch.com/~rsc/regexp/regexp1.html
+- Thompson, K. (1968). _Regular Expression Search Algorithm_. CACM 11(6):419–422.

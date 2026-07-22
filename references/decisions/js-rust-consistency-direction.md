@@ -21,14 +21,14 @@ globstar 是给 Vite `import.meta.glob` 专门做的 glob 库，**Rust crate 是
 
 1. `parse`：pattern 字节 → AST（parser.rs 340 行 / parser.js 266 行）。处理 `!` 取反、`/`、`?`、`*`、`**`（必须独占一段否则退化成 `*`）、`[...]` 字符类（POSIX 首个 `]` 规则、范围、转义、类里 `/` 报错）、`{...}` 花括号（不预展开、嵌套≤32、单分支 `{a}` 当字面量）、`\` 宽松转义。
 2. `lower`：AST → 线性指令程序（ops.rs 423 / ops.js 260）。把 `**` 折叠成专用 op（`**/`→OptSegmentsSlash、`/**`→SlashAnything、`**`→GlobstarAny…），抽取 `LiteralFacts` 后缀预过滤 + 静态前缀（walker 直跳目录）。
-3. 选引擎：纯字面量→LiteralMatcher（字节比较）；否则 PikeVm（默认，编译便宜）或 ThompsonDfa（walker 用，超状态上限退回 PikeVm）。多模式并集会做前后缀因子合并，NFA>64 状态就拆成 per-pattern 的 OrEngine。
+3. 选引擎：纯字面量→LiteralMatcher；否则优先 SegmentMatcher，无法在 fork/state 预算内表达时回退 PikeVm。多模式并集先做前后缀因子合并，再编译为 segment forks。PikeVm 同时作为强制验证基线。
 4. `match`：引擎在 **UTF-8 字节**上跑。分隔符集 `Seps = {/}`，Windows 上加 `\`。整路径匹配。`dot`（matcher 默认 true / walker 默认 false）= bash 隐藏文件保护。`case_insensitive` = **仅 ASCII** 折叠。
 5. `match_dir`：返回 Pruned/Descend/Match/DescendAndMatch 四值，给 walker 剪枝。
 
 **实测现状（我亲自跑的）：**
 
 - `cargo test --test corpus`：Rust 通过 单 3322 + 多 62 + 目录 66 + 错误 28，**0 失败**。
-- `node verify.mjs --skip-rust`：JS 三个引擎（公开 API / 强制 DFA / 强制 PikeVm）通过 单 3322 + 多 62 + 错误 28，**0 失败**。
+- `node verify.mjs --skip-rust`：JS 两个引擎（公开 API / 强制 PikeVm）通过完整单模式、多模式、目录与错误语料，**0 失败**。
 - 性能（BENCHMARKS.md）：Rust globstar 是所有库里最快的（每次匹配 2–7ns）。**JS globstar 单次匹配比 picomatch 慢**（globstar 模式 66ns vs picomatch 42ns；brace-suffix 180 vs 58），因为 picomatch 编译成**原生 RegExp**（V8 的 C++ JIT）。**但 JS globstar 在端到端 walker 上反而比 fast-glob/tinyglobby 快**。
 
 > ⚠️ 一个我独立发现、很关键的点：JS globstar 在 walker 上赢，**不是因为引擎快，而是因为** `facts` 后缀预过滤 + `match_dir` 四值剪枝 + 静态前缀直跳目录。**纯 RegExp 只能回答"匹配/不匹配"，给不了 `match_dir` 的"这个目录还能不能往下走"**。所以任何"改用正则"的方案，都没法替掉 walker 的剪枝引擎。

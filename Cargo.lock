@@ -205,7 +205,6 @@ name = "difftest"
 version = "0.0.0"
 dependencies = [
  "globstar",
- "globstar-segment",
 ]
 
 [[package]]
@@ -250,15 +249,7 @@ dependencies = [
  "fast-glob",
  "glob",
  "globset",
- "globstar-segment",
  "wax",
-]
-
-[[package]]
-name = "globstar-segment"
-version = "0.0.1"
-dependencies = [
- "globstar",
 ]
 
 [[package]]
@@ -375,7 +366,6 @@ version = "0.1.0"
 dependencies = [
  "globset",
  "globstar",
- "globstar-segment",
  "wax",
 ]
 

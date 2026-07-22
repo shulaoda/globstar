@@ -1,11 +1,8 @@
-//! Multi-pattern bench with explicit union vs OR rows for both
-//! engines, mirroring JS's `matcher_multi.js`.
+//! Multi-pattern bench with explicit union vs OR rows for PikeVM,
+//! mirroring JS's `matcher_multi.js`.
 //!
 //! Columns:
-//!   globstar       — `Glob::union` default API (auto-OR's at NFA > 64)
-//!   DFA union      — forced merged DFA (bypass auto-OR via direct
-//!                     `ThompsonDfa::build`)
-//!   DFA OR         — N independent `Glob::new` matchers OR'd at match
+//!   globstar       — `Glob::union` production SSM-first API
 //!   PikeVM union   — forced merged PikeVM (direct `PikeVm::new`)
 //!   PikeVM OR      — N independent `PikeVm::new` matchers OR'd
 //!   globset / wax / fast_glob / glob — third-party baselines
@@ -17,7 +14,6 @@ use globstar::Glob as GcGlob;
 use globstar::ast::Node;
 use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
-use globstar::engine::thompson_dfa::ThompsonDfa;
 use globstar::factor::factor_branches;
 use globstar::parser;
 use std::path::Path;
@@ -79,38 +75,13 @@ fn has_brace(patterns: &[&str]) -> bool {
 
 // ---------- globstar configurations ----------
 
-/// `Glob::union` default API — auto-OR's internally at NFA > 64.
+/// `Glob::union` production SSM-first API.
 fn build_globstar(patterns: &[&str]) -> GcGlob {
     GcGlob::union(patterns.iter().copied()).unwrap()
 }
 
-/// `SegGlob::union` — the experimental `globstar-segment` crate
-/// (merged fork sequences, no NFA probe).
-fn build_segment(patterns: &[&str]) -> globstar_segment::SegGlob {
-    globstar_segment::SegGlob::union(patterns.iter().copied()).unwrap()
-}
-
-/// Forced merged DFA — bypass auto-OR by feeding the merged program
-/// directly to `ThompsonDfa::build`. Used to measure the wide-path
-/// behavior independent of the dispatch policy.
-fn build_dfa_union(patterns: &[&str]) -> Box<ThompsonDfa> {
-    let bodies: Vec<Node> = patterns
-        .iter()
-        .map(|p| parser::parse(p.as_bytes()).expect("parse").body)
-        .collect();
-    let merged = factor_branches(bodies);
-    let program = lower(&merged, false);
-    ThompsonDfa::build(program, true).expect("DFA build")
-}
-
-/// Per-pattern DFA — N independent `Glob::new` matchers, OR'd at
-/// match time.
-fn build_dfa_or(patterns: &[&str]) -> Vec<GcGlob> {
-    patterns.iter().map(|p| GcGlob::new(p).unwrap()).collect()
-}
-
 /// Forced merged PikeVM — direct `PikeVm::new` on the factored
-/// program; no auto-OR.
+/// program.
 fn build_pikevm_union(patterns: &[&str]) -> PikeVm {
     let bodies: Vec<Node> = patterns
         .iter()
@@ -176,15 +147,6 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.bench_function("globstar", |b| {
         b.iter(|| black_box(build_globstar(black_box(patterns))));
     });
-    group.bench_function("globstar_segment", |b| {
-        b.iter(|| black_box(build_segment(black_box(patterns))));
-    });
-    group.bench_function("DFA_union", |b| {
-        b.iter(|| black_box(build_dfa_union(black_box(patterns))));
-    });
-    group.bench_function("DFA_OR", |b| {
-        b.iter(|| black_box(build_dfa_or(black_box(patterns))));
-    });
     group.bench_function("PikeVM_union", |b| {
         b.iter(|| black_box(build_pikevm_union(black_box(patterns))));
     });
@@ -208,9 +170,6 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
 // ---------- MATCH bench ----------
 fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let gs = build_globstar(patterns);
-    let seg = build_segment(patterns);
-    let dfa_u = build_dfa_union(patterns);
-    let dfa_or = build_dfa_or(patterns);
     let pike_u = build_pikevm_union(patterns);
     let pike_or = build_pikevm_or(patterns);
     let gset = build_globset(patterns);
@@ -227,28 +186,6 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
         b.iter(|| {
             for p in PATHS {
                 black_box(gs.is_match(black_box(p.as_bytes())));
-            }
-        });
-    });
-    group.bench_function("globstar_segment", |b| {
-        b.iter(|| {
-            for p in PATHS {
-                black_box(seg.is_match(black_box(p.as_bytes())));
-            }
-        });
-    });
-    group.bench_function("DFA_union", |b| {
-        b.iter(|| {
-            for p in PATHS {
-                black_box(dfa_u.is_match(black_box(p.as_bytes())));
-            }
-        });
-    });
-    group.bench_function("DFA_OR", |b| {
-        b.iter(|| {
-            for p in PATHS {
-                let any = dfa_or.iter().any(|g| g.is_match(black_box(p.as_bytes())));
-                black_box(any);
             }
         });
     });

@@ -1,6 +1,6 @@
 //! Segment-at-a-time matching over compiled [`ElemSeq`]s.
 
-use globstar::engine::eq_byte;
+use crate::engine::eq_byte;
 
 use super::{Elem, ElemSeq, Wild, WildKind, is_sep};
 
@@ -273,11 +273,7 @@ fn nfa_step<const CI: bool>(seq: &ElemSeq, active: u64, seg: &[u8], dot: bool) -
 }
 
 /// `match_dir` for one sequence: `(exact, prefix)`.
-pub(super) fn seq_match_dir<const CI: bool>(
-    seq: &ElemSeq,
-    dir: &[u8],
-    dot: bool,
-) -> (bool, bool) {
+pub(super) fn seq_match_dir<const CI: bool>(seq: &ElemSeq, dir: &[u8], dot: bool) -> (bool, bool) {
     let active = nfa_run::<CI>(seq, dir, dot);
     let exact = active & accept_bit(seq) != 0;
     let prefix = active & seq.reach1 != 0;

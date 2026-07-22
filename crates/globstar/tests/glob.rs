@@ -24,6 +24,18 @@ fn classify_globstar() {
 }
 
 #[test]
+fn non_literal_patterns_use_segment_engine() {
+    for pattern in ["*.ts", "src/**/*.ts", "**/*.{ts,tsx,js,jsx}"] {
+        assert_eq!(Glob::new(pattern).unwrap().engine_name(), "Segment");
+    }
+}
+
+#[test]
+fn segment_inexpressible_shape_uses_pikevm_fallback() {
+    assert_eq!(Glob::new("a\\/b*").unwrap().engine_name(), "PikeVm");
+}
+
+#[test]
 fn classify_brace_routes_to_globstar_tier() {
     let g = Glob::new("*.{ts,tsx}").unwrap();
     // Brace pattern goes to Tier 2 because it needs the same machinery.

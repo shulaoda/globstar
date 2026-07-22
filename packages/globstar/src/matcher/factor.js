@@ -1,10 +1,10 @@
 // AST-level factoring for `globstar(patterns)` brace branches.
 //
 // Without factoring, `globstar(["**/*.ts", "**/*.tsx", ...])` parses to
-// N branches each carrying a duplicated `**/*` prefix; the DFA grows
+// N branches each carrying a duplicated `**/*` prefix; the program grows
 // linearly with N. Lifting common leading + trailing fragments makes
 // `union(["**/*.ts","**/*.tsx"])` equivalent to the hand-written
-// `**/*.{ts,tsx}` — one shared prefix path through the DFA.
+// `**/*.{ts,tsx}` — one shared prefix path through the segment program.
 //
 // Two phases per side (lifting from the front, then mirrored from the back):
 //

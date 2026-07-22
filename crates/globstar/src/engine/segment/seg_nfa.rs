@@ -6,10 +6,10 @@
 //! segment start inside a segment, so DotGuards block there when the
 //! first byte is `.`, and dot-protected consumers refuse that `.`.
 
-use globstar::ast::{CharClass, ClassItem};
-use globstar::engine::eq_byte;
-use globstar::engine::ops::Op;
-use globstar::options::ascii_case_alt;
+use crate::ast::{CharClass, ClassItem};
+use crate::engine::eq_byte;
+use crate::engine::ops::Op;
+use crate::options::ascii_case_alt;
 
 /// In-segment NFA state budget (active set is one `u64`).
 const MAX_SEG_NFA_STATES: usize = 64;

@@ -1,10 +1,8 @@
-//! Thompson NFA compiled from an [`OpProgram`]. Two consumers:
+//! Thompson NFA compiled from an [`OpProgram`].
 //!
-//! - [`super::thompson_dfa`] eagerly subset-constructs a DFA over it
-//!   for the Tier-1/2 fast path (~1-2 ns/byte at match time).
-//! - [`super::pikevm::PikeVm`] simulates it directly with O(n·m)
-//!   linear time and no backtracking — used as a fallback when DFA
-//!   subset construction overruns its state cap.
+//! [`super::pikevm::PikeVm`] simulates it directly with O(n·m)
+//!   linear time and no backtracking — the production fallback when
+//!   the segment engine declines a pattern.
 //!
 //! # Construction
 //!
@@ -97,14 +95,11 @@ pub(crate) enum Trans {
 
 /// Compiled Thompson NFA.
 #[derive(Clone, Debug)]
-pub struct Thompson {
+pub(crate) struct Thompson {
     pub(crate) states: Vec<Trans>,
     pub(crate) initial: StateId,
     /// `Trans::Match` state id. Stored so [`super::pikevm::PikeVm`] can
-    /// derive its own `reach_to_accept` lazily when `match_dir` is first
-    /// called — the DFA path never needs this, and the typical compile
-    /// stays in the DFA path, so eager computation here would be dead
-    /// work for every common pattern.
+    /// derive its own `reach_to_accept` during construction.
     pub(crate) accept: StateId,
     /// Mask of states from which [`Trans::Match`] is reachable via **zero**
     /// byte steps, i.e. through any chain of [`Trans::Split`] /
@@ -119,19 +114,11 @@ pub struct Thompson {
     /// on the next byte; this separate mask captures the EOF semantics so
     /// callers can check acceptance without re-walking the ε graph.
     ///
-    /// Used by [`super::pikevm::PikeVm::has_accept`] and
-    /// [`super::thompson_dfa`] when computing DFA state acceptance.
+    /// Used by [`super::pikevm::PikeVm::has_accept`].
     pub(crate) accepts_at_eof: Vec<bool>,
 }
 
 impl Thompson {
-    /// Number of NFA states. Used by [`crate::Glob::union_with`] to
-    /// route huge unions (`state_count > NFA_FAST_PATH_LIMIT`) through
-    /// per-pattern decomposition instead of a merged DFA.
-    pub(crate) fn state_count(&self) -> usize {
-        self.states.len()
-    }
-
     /// Compile the program into an NFA. Never fails — every op in
     /// [`super::ops`] has a Thompson translation.
     pub(crate) fn compile(program: &OpProgram, dot: bool) -> Self {
@@ -147,10 +134,8 @@ impl Thompson {
             builder.patch(st, accept);
         }
         let states = builder.states;
-        // `reach_to_accept` deliberately NOT computed here — only PikeVm
-        // needs it (for `match_dir` prefix mode), and PikeVm only
-        // constructs when the DFA path overflows. DFA path skips this
-        // O(n+E) backward BFS entirely.
+        // PikeVm computes `reach_to_accept` from this graph while packing
+        // its runtime representation.
         let accepts_at_eof = compute_accepts_at_eof(&states);
         Self {
             states,
@@ -687,10 +672,8 @@ pub(crate) fn compute_reach_to_accept(states: &[Trans], accept: StateId) -> Vec<
 /// reachable from `s` via Split/Jump. Leaves include byte-consumers,
 /// `DotGuard`, and `Match` — anything that's NOT a Split/Jump.
 ///
-/// Shared by [`super::pikevm::PikeVm`] (per-byte ε expansion replaced
-/// by `O(active × n_words)` bitmap ORs) and
-/// [`super::thompson_dfa::ThompsonDfa`] (subset construction, same
-/// avoid-recursive-BFS trick).
+/// Used by [`super::pikevm::PikeVm`] to replace per-byte ε expansion
+/// with `O(active × n_words)` bitmap ORs.
 ///
 /// Implementation: two-phase post-order DFS via explicit stack.
 /// Each work item is `(state, phase)` packed into a `u32` — the

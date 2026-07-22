@@ -1,10 +1,10 @@
 //! AST-level factoring for [`crate::Glob::union`] brace branches.
 //!
 //! Without factoring, `union(["**/*.ts", "**/*.tsx", ...])` produces a
-//! brace where every branch carries a duplicated `**/*` prefix; the DFA
-//! grows linearly with N. Lifting common leading + trailing fragments
+//! brace where every branch carries a duplicated `**/*` prefix; the
+//! compiled program grows linearly with N. Lifting common leading + trailing fragments
 //! out makes `union(["**/*.ts","**/*.tsx"])` equivalent to the
-//! hand-written `**/*.{ts,tsx}` (same DFA, same cost).
+//! hand-written `**/*.{ts,tsx}` (one shared segment-program path).
 //!
 //! Two phases per side (lifting from the front, then mirrored from the back):
 //!

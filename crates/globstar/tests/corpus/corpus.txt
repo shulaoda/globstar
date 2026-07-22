@@ -300,7 +300,7 @@ file{,_bak}	file_bak	match
 
 ## brace.overlap.linear
 # `{a,aa}{a,aa}` is the classical ambiguity-overlap witness: a naive
-# back-tracker explodes exponentially, but our DFA / PikeVM must stay
+# back-tracker explodes exponentially, but SegmentMatcher / PikeVM stay
 # linear. Each path is admitted iff its length is in {2,3,4}.
 {a,aa}{a,aa}	aa	match
 {a,aa}{a,aa}	aaa	match

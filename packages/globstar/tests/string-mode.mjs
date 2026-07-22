@@ -6,10 +6,10 @@
 // random patterns × paths, including multi-byte text, `?`-vs-bytes
 // traps, and dot/class/brace shapes, asserting the two modes agree.
 //
-// Run: node packages/globstar-segment/tests/string-mode.mjs [count]
+// Run: node packages/globstar/tests/string-mode.mjs [count]
 
-import { compileMatcher } from "../src/index.js";
-import { toBytes } from "../../globstar/src/matcher/utf8.js";
+import { compileMatcher } from "../src/matcher/glob.js";
+import { toBytes } from "../src/matcher/utf8.js";
 
 const COUNT = Number(process.argv[2] ?? 200000);
 
@@ -29,13 +29,56 @@ const rand = rng(0xc0ffee);
 const pick = (arr) => arr[(rand() * arr.length) | 0];
 
 const PAT_TOKENS = [
-  "a", "b", "cc", ".", "..", "/", "*", "?", "**/", "/**", "**", "{a,b}",
-  "{a,}", "*.ts", "[a-c]", "[!a]", "[^b]", "é", "中", "{*.ts,*.tsx}",
-  "n*d", "e?t", "\\*", "\\?", "x", ".hidden", "{src,lib}/", "?*",
+  "a",
+  "b",
+  "cc",
+  ".",
+  "..",
+  "/",
+  "*",
+  "?",
+  "**/",
+  "/**",
+  "**",
+  "{a,b}",
+  "{a,}",
+  "*.ts",
+  "[a-c]",
+  "[!a]",
+  "[^b]",
+  "é",
+  "中",
+  "{*.ts,*.tsx}",
+  "n*d",
+  "e?t",
+  "\\*",
+  "\\?",
+  "x",
+  ".hidden",
+  "{src,lib}/",
+  "?*",
 ];
 const PATH_TOKENS = [
-  "a", "b", "cc", ".", "..", "/", "x", "é", "中", "🙂", "src", "lib",
-  ".hidden", "a.ts", "b.tsx", "e.t", "ndt", "née", "caf", "é",
+  "a",
+  "b",
+  "cc",
+  ".",
+  "..",
+  "/",
+  "x",
+  "é",
+  "中",
+  "🙂",
+  "src",
+  "lib",
+  ".hidden",
+  "a.ts",
+  "b.tsx",
+  "e.t",
+  "ndt",
+  "née",
+  "caf",
+  "é",
 ];
 
 function genPattern() {

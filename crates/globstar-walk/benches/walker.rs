@@ -2,12 +2,8 @@
 //!
 //! Three axes:
 //! - **scale**: small (~1K) / medium (~13K) / large (~50K) files
-//! - **patterns**: multi-small (4 patterns, NFA < 64, fast-path DFA) /
-//!   multi-huge (10 patterns, NFA > 64, triggers `Glob::union`'s
-//!   auto-OR decomposition)
-//! - **lib**: globstar-walk (default API) / globstar-walk-merged
-//!   (single brace-combined Glob, forces merged DFA path) / globwalk /
-//!   ignore::WalkBuilder
+//! - **patterns**: multi-small (4 patterns) / multi-huge (10 patterns)
+//! - **lib**: globstar-walk (SSM-first) / globwalk / ignore::WalkBuilder
 //!
 //! `wax::walk` is single-pattern only and skipped here.
 
@@ -123,12 +119,10 @@ fn build_tree(shape: &TreeShape) -> PathBuf {
     root
 }
 
-// 4-pattern set — NFA stays under 64, so `Glob::union` builds one
-// merged DFA on the fast path.
+// 4-pattern set.
 const PATTERNS_SMALL: &[&str] = &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
 
-// 10-pattern set — combined NFA is 223 states, triggers
-// `Glob::union`'s auto-OR decomposition into per-pattern DFAs.
+// 10-pattern set — exercises a larger factored SSM union.
 const PATTERNS_HUGE: &[&str] = &[
     "src/**/*.ts",
     "src/**/*.tsx",
@@ -142,34 +136,16 @@ const PATTERNS_HUGE: &[&str] = &[
     "**/*.md",
 ];
 
-/// Brace-combined single-pattern equivalent — exercises the merged-
-/// DFA path even when the pattern count would otherwise trigger
-/// auto-OR (Glob::new doesn't probe NFA size, only Glob::union does).
-fn brace_combined(patterns: &[&str]) -> String {
-    format!("{{{}}}", patterns.join(","))
-}
-
 fn bench_combo(c: &mut Criterion, scale: &TreeShape, label: &str, patterns: &[&str]) {
     let root = build_tree(scale);
     let group_name = format!("walk_{}_{}", scale.name, label);
     let mut g = c.benchmark_group(&group_name);
     g.sample_size(20);
 
-    // globstar-walk default API — Glob::union auto-routes (DFA union
-    // for small NFA, Engine::Or per-pattern for huge NFA).
+    // globstar-walk default SSM-first API.
     g.bench_function("globstar_walk", |b| {
         b.iter(|| {
             let w = Walk::from_patterns(black_box(patterns), &root).unwrap();
-            black_box(w.filter(|r| r.is_ok()).count())
-        });
-    });
-
-    // Forced merged DFA — feed the brace-combined string through
-    // Walk::new (single-pattern path skips the union NFA-size probe).
-    let combined = brace_combined(patterns);
-    g.bench_function("globstar_walk_merged", |b| {
-        b.iter(|| {
-            let w = Walk::new(black_box(combined.as_str()), &root).unwrap();
             black_box(w.filter(|r| r.is_ok()).count())
         });
     });

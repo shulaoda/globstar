@@ -12,10 +12,5 @@
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
     }
-  },
-  "scripts": {
-    "verify": "node verify.js",
-    "verify-union": "node verify_union.js",
-    "profile": "node profile_compile.js"
   }
 }

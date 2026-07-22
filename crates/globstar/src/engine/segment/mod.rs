@@ -27,9 +27,9 @@ mod compile;
 mod exec;
 mod seg_nfa;
 
-use globstar::dir_match::DirMatch;
-use globstar::engine::facts::LiteralFacts;
-use globstar::engine::ops::{OpProgram, compute_static_prefixes};
+use crate::dir_match::DirMatch;
+use crate::engine::facts::LiteralFacts;
+use crate::engine::ops::{OpProgram, compute_static_prefixes};
 
 use exec::{affix_eq, seq_match_dir, seq_matches};
 use seg_nfa::SegNfa;
@@ -105,7 +105,10 @@ enum WildKind {
     /// `lit1 (*|?)+ lit2` and degenerate forms: pure `*`/`?` runs
     /// (both affixes empty), `*lit`, `lit*`, `a?b` (no star — exact
     /// length via `variable=false`), plain multi-op literals.
-    Affix { prefix: Box<[u8]>, suffix: Box<[u8]> },
+    Affix {
+        prefix: Box<[u8]>,
+        suffix: Box<[u8]>,
+    },
     /// `lit (*|?)+ {lit,…}` — segment must carry the prefix and end
     /// with one of the suffixes (`*.{ts,tsx}`).
     AffixSet {
@@ -209,7 +212,7 @@ impl SegmentMatcher {
     }
 
     /// Post-prefilter body. `#[inline(never)]` keeps the (dominant)
-    /// facts rejection path tiny inside `SegGlob::is_match`.
+    /// facts rejection path tiny inside `Glob::is_match`.
     #[inline(never)]
     fn is_match_slow<const CI: bool>(&self, path: &[u8]) -> bool {
         if self.seqs.len() == 1 {

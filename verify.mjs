@@ -3,13 +3,12 @@
 //
 // Three corpora share the same harness:
 //
-//   single — `tests/corpus/corpus*.txt`        single-pattern × 3 engines
-//   multi  — `tests/corpus/corpus-multi.txt`   N-pattern OR × 3 engines
+//   single — `tests/corpus/corpus*.txt`        single-pattern × 2 engines
+//   multi  — `tests/corpus/corpus-multi.txt`   N-pattern OR × 2 engines
 //   err    — `tests/corpus/corpus-err.txt`     parse-error variants × public API
 //
-// Three engines per match-corpus row:
+// Two engines per match-corpus row:
 //   - globstar     — public API (`globstar(...)`, `Glob::new` / `Glob::union`)
-//   - ThompsonDfa  — forced (single: lower+ThompsonDfa::build; multi: factored merge)
 //   - PikeVm       — forced
 //
 // Rust path runs `cargo test --test corpus -- --nocapture` and parses
@@ -127,9 +126,6 @@ function record(stats, ok, msgFn) {
 async function runJsVerify() {
   const { globstar } = await import("./packages/globstar/src/index.js");
   const { compileMatcher } = await import("./packages/globstar/src/matcher/glob.js");
-  const { compileMatcher: compileSegment } = await import(
-    "./packages/globstar-segment/src/index.js"
-  );
   const { GlobError } = await import("./packages/globstar/src/matcher/error.js");
   const { parse } = await import("./packages/globstar/src/matcher/parser.js");
 
@@ -185,35 +181,14 @@ async function runJsVerify() {
   const singleFail = (row, engine, got) =>
     `${row.file}:${row.lineNo}: pattern=${JSON.stringify(row.pattern)} path=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
 
-  function runSingleSegment(row) {
-    try {
-      return compileSegment(row.pattern, {
-        dot: row.dot,
-        caseInsensitive: row.caseInsensitive,
-      }).match(row.path);
-    } catch {
-      return null;
-    }
-  }
-
   const single = {
     globstar: makeStats(),
-    Segment: makeStats(),
-    ThompsonDfa: makeStats(),
     PikeVm: makeStats(),
   };
   for (const row of singleRows()) {
     const g = runSinglePub(row);
     if (g === null) single.globstar.skip++;
     else record(single.globstar, g === row.expected, () => singleFail(row, "globstar", g));
-
-    const sgm = runSingleSegment(row);
-    if (sgm === null) single.Segment.skip++;
-    else record(single.Segment, sgm === row.expected, () => singleFail(row, "Segment", sgm));
-
-    const d = runSingleEngine(row, "dfa");
-    if (d === null) single.ThompsonDfa.skip++;
-    else record(single.ThompsonDfa, d === row.expected, () => singleFail(row, "ThompsonDfa", d));
 
     const p = runSingleEngine(row, "pikevm");
     if (p === null) single.PikeVm.skip++;
@@ -264,16 +239,12 @@ async function runJsVerify() {
       return null;
     }
   }
-  // `__noAutoOr: true` keeps the union as one merged engine instead of
-  // auto-decomposing to per-pattern OR — that's what the Rust side
-  // forced-DFA / forced-PikeVm runners measure.
   function runMultiEngine(row, engineName) {
     try {
       return compileMatcher(row.patterns, {
         dot: row.dot,
         caseInsensitive: row.caseInsensitive,
         __engine: engineName,
-        __noAutoOr: true,
       }).match(row.path);
     } catch {
       return null;
@@ -282,21 +253,8 @@ async function runJsVerify() {
   const multiFail = (row, engine, got) =>
     `corpus-multi.txt:${row.lineNo}: patterns=${JSON.stringify(row.patterns)} path=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
 
-  function runMultiSegment(row) {
-    try {
-      return compileSegment(row.patterns, {
-        dot: row.dot,
-        caseInsensitive: row.caseInsensitive,
-      }).match(row.path);
-    } catch {
-      return null;
-    }
-  }
-
   const multi = {
     globstar: makeStats(),
-    Segment: makeStats(),
-    ThompsonDfa: makeStats(),
     PikeVm: makeStats(),
   };
   for (const row of multiRows()) {
@@ -304,20 +262,12 @@ async function runJsVerify() {
     if (g === null) multi.globstar.skip++;
     else record(multi.globstar, g === row.expected, () => multiFail(row, "globstar", g));
 
-    const sgm = runMultiSegment(row);
-    if (sgm === null) multi.Segment.skip++;
-    else record(multi.Segment, sgm === row.expected, () => multiFail(row, "Segment", sgm));
-
-    const d = runMultiEngine(row, "dfa");
-    if (d === null) multi.ThompsonDfa.skip++;
-    else record(multi.ThompsonDfa, d === row.expected, () => multiFail(row, "ThompsonDfa", d));
-
     const p = runMultiEngine(row, "pikevm");
     if (p === null) multi.PikeVm.skip++;
     else record(multi.PikeVm, p === row.expected, () => multiFail(row, "PikeVm", p));
   }
 
-  // ── match_dir corpus — three engines vs the four-valued golden truth.
+  // ── match_dir corpus — public SSM plus reference engines vs truth.
   // Mirrors the Rust `corpus_dir_engines_vs_truth` test: rows default to
   // `dot=false` (the walker convention), and negated patterns are skipped
   // because `match_dir` does not invert a leading `!`.
@@ -367,43 +317,14 @@ async function runJsVerify() {
   const dirFail = (row, engine, got) =>
     `corpus-dir.txt:${row.lineNo}: pattern=${JSON.stringify(row.pattern)} dir=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
 
-  function runDirSegment(row) {
-    let ast;
-    try {
-      ast = parse(row.pattern);
-    } catch {
-      return null;
-    }
-    if (ast.isNegated) return null;
-    try {
-      const dm = compileSegment(row.pattern, {
-        dot: row.dot,
-        caseInsensitive: row.caseInsensitive,
-      }).matchDir(row.path);
-      return DIR_TOKEN[dm];
-    } catch {
-      return null;
-    }
-  }
-
   const dir = {
     globstar: makeStats(),
-    Segment: makeStats(),
-    ThompsonDfa: makeStats(),
     PikeVm: makeStats(),
   };
   for (const row of dirRows()) {
-    const g = runDirEngine(row, undefined); // public default engine (PikeVm)
+    const g = runDirEngine(row, undefined); // public default engine (Segment/PikeVm)
     if (g === null) dir.globstar.skip++;
     else record(dir.globstar, g === row.expected, () => dirFail(row, "globstar", g));
-
-    const sgm = runDirSegment(row);
-    if (sgm === null) dir.Segment.skip++;
-    else record(dir.Segment, sgm === row.expected, () => dirFail(row, "Segment", sgm));
-
-    const d = runDirEngine(row, "dfa");
-    if (d === null) dir.ThompsonDfa.skip++;
-    else record(dir.ThompsonDfa, d === row.expected, () => dirFail(row, "ThompsonDfa", d));
 
     const p = runDirEngine(row, "pikevm");
     if (p === null) dir.PikeVm.skip++;
@@ -442,16 +363,10 @@ async function runJsVerify() {
 
   return [
     { corpus: "single", engine: "globstar", ...single.globstar },
-    { corpus: "single", engine: "Segment", ...single.Segment },
-    { corpus: "single", engine: "ThompsonDfa", ...single.ThompsonDfa },
     { corpus: "single", engine: "PikeVm", ...single.PikeVm },
     { corpus: "multi", engine: "globstar", ...multi.globstar },
-    { corpus: "multi", engine: "Segment", ...multi.Segment },
-    { corpus: "multi", engine: "ThompsonDfa", ...multi.ThompsonDfa },
     { corpus: "multi", engine: "PikeVm", ...multi.PikeVm },
     { corpus: "dir", engine: "globstar", ...dir.globstar },
-    { corpus: "dir", engine: "Segment", ...dir.Segment },
-    { corpus: "dir", engine: "ThompsonDfa", ...dir.ThompsonDfa },
     { corpus: "dir", engine: "PikeVm", ...dir.PikeVm },
     { corpus: "err", engine: "globstar", ...errStats },
   ];
@@ -500,10 +415,10 @@ console.log(
 console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 5 + 5));
 
 // Stable cross-runtime row order: single → multi → err, then
-// globstar → ThompsonDfa → PikeVm. Rust prints in cargo-test name
+// globstar → PikeVm. Rust prints in cargo-test name
 // order (alphabetical), JS in author order — sort so both line up.
 const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, err: 3 };
-const ENGINE_ORDER = { globstar: 0, ThompsonDfa: 1, PikeVm: 2 };
+const ENGINE_ORDER = { globstar: 0, PikeVm: 1 };
 const rowKey = (r) => [CORPUS_ORDER[r.corpus] ?? 99, ENGINE_ORDER[r.engine] ?? 99];
 for (const side of sides) {
   side.rows.sort((a, b) => {

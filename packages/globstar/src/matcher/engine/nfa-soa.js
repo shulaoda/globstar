@@ -1,14 +1,8 @@
-// SoA-direct NFA builder for PikeVm. Mirrors `thompson.js`'s build
-// algorithm but stores state data in parallel `number[]` arrays
+// SoA-direct Thompson NFA builder for PikeVm. State data lives in parallel
+// `number[]` arrays
 // instead of a `Trans` object per state — Builder skips ~N V8 object
 // allocations per compile, freezes to typed arrays at the end, and
 // hands PikeVm a ready-to-consume SoA shape.
-//
-// Why a separate file: `thompson.js` is still the source of truth
-// for the DFA path (the DFA build loop reads `t.tag/t.b/t.next/t.a/
-// t.splitB/t.dotProtected/t.cls` extensively). Touching it to share
-// storage would force a parallel DFA refactor. This module is
-// PikeVm-only and lets the DFA path stay byte-for-byte unchanged.
 //
 // Per-state storage (during build, plain JS arrays):
 //   tags[s]      number   T_BYTE | T_CLASS | …
@@ -44,17 +38,19 @@ import {
 } from "./ops.js";
 import { CI_BYTE } from "../ast.js";
 import { asciiCaseAlt } from "../options.js";
-import {
-  T_MATCH,
-  T_BYTE,
-  T_CLASS,
-  T_ANY_NON_SEP,
-  T_ANY_BYTE,
-  T_SEP,
-  T_SPLIT,
-  T_JUMP,
-  T_DOT_GUARD,
-} from "./thompson.js";
+
+// NFA transition tags. `T_NULL` is a packed-runtime sentinel for ε-only
+// states whose closures have already been absorbed by PikeVm.
+export const T_MATCH = 0;
+export const T_BYTE = 1;
+export const T_CLASS = 2;
+export const T_ANY_NON_SEP = 3;
+export const T_ANY_BYTE = 4;
+export const T_SEP = 5;
+export const T_SPLIT = 6;
+export const T_JUMP = 7;
+export const T_DOT_GUARD = 8;
+export const T_NULL = 9;
 
 const UNSET = -1;
 

@@ -1,4 +1,4 @@
-//! Multi-pattern memory comparison: globstar union (one merged DFA),
+//! Multi-pattern memory comparison: globstar union (one merged matcher),
 //! globstar per-pattern (N independent matchers), globset (one
 //! GlobSet over Aho-Corasick + N regexes), wax (N independent
 //! matchers). Mirrors the JS-side `matcher_multi.js`.
@@ -97,12 +97,12 @@ fn main() {
     let trials = 9;
 
     println!(
-        "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12} {:>12}",
-        "Pattern set", "N", "gs_union", "ssm_union", "gs_per", "globset", "wax_per"
+        "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12}",
+        "Pattern set", "N", "gs_union", "gs_per", "globset", "wax_per"
     );
     println!(
-        "{:-<18} {:->3} {:->12} {:->12} {:->12} {:->12} {:->12}",
-        "", "", "", "", "", "", ""
+        "{:-<18} {:->3} {:->12} {:->12} {:->12} {:->12}",
+        "", "", "", "", "", ""
     );
 
     for &(label, patterns) in pattern_sets {
@@ -116,17 +116,6 @@ fn main() {
             })
             .collect();
         let gs_union = median(&mut samples);
-
-        // globstar-segment union — one merged SegGlob (SSM forks).
-        let mut samples: Vec<usize> = (0..trials)
-            .map(|_| {
-                let (_v, heap) = measure_heap(|| {
-                    globstar_segment::SegGlob::union(patterns.iter().copied()).unwrap()
-                });
-                heap
-            })
-            .collect();
-        let ssm_union = median(&mut samples);
 
         // globstar per-pattern — N independent Glob matchers (heap of
         // a Vec<Glob> with N entries).
@@ -167,8 +156,8 @@ fn main() {
         let wax_per = median(&mut samples);
 
         println!(
-            "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12} {:>12}",
-            label, n, gs_union, ssm_union, gs_per, globset_total, wax_per
+            "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12}",
+            label, n, gs_union, gs_per, globset_total, wax_per
         );
     }
 }

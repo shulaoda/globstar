@@ -70,7 +70,7 @@
 ["src/[abc]*.ts","docs/*.md"]	docs/api.md	match
 ["src/[abc]*.ts","docs/*.md"]	docs/x.txt	no-match
 
-## or.huge_set (10 patterns — exercises auto-OR threshold)
+## or.huge_set (10 patterns — exercises a large factored segment union)
 ["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	src/main.ts	match
 ["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	src/Button.tsx	match
 ["src/**/*.ts","src/**/*.tsx","tests/**/*.test.ts","lib/**/*.{js,mjs}","**/*.json","**/package.json","components/**/*.vue","scripts/**/*.sh","docs/**/*.md","src/**/*.spec.ts"]	tests/foo.test.ts	match

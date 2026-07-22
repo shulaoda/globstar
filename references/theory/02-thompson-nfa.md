@@ -1,8 +1,8 @@
 # 02 — Thompson NFA
 
-The matcher's NFA is built from the linear `Op` program produced by the lowering pass (`engine/ops.rs`) using Thompson's classical construction (Thompson, 1968), augmented with a single implementation-specific state, `DotGuard`, that captures glob's segment-start dot rule.
+The fallback matcher's NFA is built from the linear `Op` program produced by the lowering pass (`engine/ops/`) using Thompson's classical construction (Thompson, 1968), augmented with a `DotGuard` state that captures glob's segment-start dot rule.
 
-Implementation: `impl/crates/globstar/src/engine/thompson.rs`.
+Implementations: `crates/globstar/src/engine/thompson.rs` and `packages/globstar/src/matcher/engine/nfa-soa.js`.
 
 ## 0. Pipeline
 
@@ -16,7 +16,7 @@ Implementation: `impl/crates/globstar/src/engine/thompson.rs`.
         │
         ▼   AST: Concat[Lit("a"), Sep, Star, Lit(".ts")]
    ┌─────────┐
-   │ lower   │  (engine/ops.rs)
+   │ lower   │  (engine/ops/lower.rs)
    └─────────┘
         │
         ▼   linear `Vec<Op>`:  [ Lit("a"), Sep, Star, Lit(".ts") ]
@@ -26,13 +26,13 @@ Implementation: `impl/crates/globstar/src/engine/thompson.rs`.
    └──────────┘
         │
         ▼   `Thompson { states: Vec<Trans>, initial, accept, accepts_at_eof }`
-   ┌──────────────┐    ┌──────────────┐
-   │ ThompsonDfa  │ or │   PikeVm     │   (consumers, see §03 / §04)
-   │  ::build     │    │   ::new      │
-   └──────────────┘    └──────────────┘
+   ┌──────────────┐
+   │   PikeVm     │   (consumer, see §04)
+   │   ::new      │
+   └──────────────┘
 ```
 
-Thompson takes the linear `Vec<Op>` and emits one `Trans` per NFA state plus the wiring (ε-transitions) between fragments. The output `Thompson` value is shared by the two downstream engines: the eager DFA when subset construction fits inside `MAX_DFA_STATES`, the Pike VM when it does not.
+Thompson takes the linear `Vec<Op>` and emits one state per NFA transition plus the ε-wiring between fragments. Production dispatch reaches this construction only through Pike VM fallback; the primary segment engine consumes `OpProgram` directly.
 
 ## 1. Definition
 
@@ -205,7 +205,7 @@ Sᵢ₊₁ = ε-closure({ q' :  q ∈ Sᵢ ∧ (q, b, q') ∈ δ
 
 For our specific rules, `c ≤ 5`: each atomic op contributes at most 1 state, each concatenation contributes 1 ε-state, each alternation contributes `n + 1` ε-states for `n` branches, and the segment-aware ops contribute at most 4 states each.
 
-The bound matters because the `MAX_DFA_STATES = 4096` cap in §03 operates on subsets of `Q`. The size of `Q` directly bounds the fast-dedup feasibility (§03 §4).
+The bound matters because Pike VM's active bitmap, closure table, and per-byte work are all functions of `|Q|`. A linear construction keeps fallback memory and runtime predictable.
 
 ## 6. Worked example: `a/*.ts` matching `a/x.ts`
 
@@ -215,7 +215,7 @@ The bound matters because the `MAX_DFA_STATES = 4096` cap in §03 operates on su
 pattern  : "a/*.ts"
 ↓ parser
 AST      : Concat[ Lit("a"), Sep, Star, Lit(".ts") ]
-↓ lower (engine/ops.rs)
+↓ lower (engine/ops/lower.rs)
 Vec<Op>  : [ Lit("a"),  Sep,  Star,  Lit(".ts") ]
             └ op[0] ─┘ └op[1]┘ └op[2]┘ └ op[3] ─┘
 ```

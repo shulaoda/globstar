@@ -1,5 +1,5 @@
-//! Boundary matrix: pattern shapes × path shapes, SSM vs the old
-//! engine vs globset. Asserts all engines agree on every cell before
+//! Boundary matrix: pattern shapes × path shapes, production SSM vs a
+//! forced PikeVM reference and globset. Asserts all engines agree before
 //! timing it. Ad-hoc hot-loop timing (median of 3 × 200k iters) —
 //! for relative comparison, not absolute SLOs.
 //!
@@ -8,8 +8,10 @@
 //! ```
 
 use globset::GlobBuilder;
+use globstar::engine::ops::lower;
+use globstar::engine::pikevm::PikeVm;
+use globstar::parser;
 use globstar::{CompileOptions, Glob};
-use globstar_segment::SegGlob;
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -62,18 +64,24 @@ fn time_ns(mut f: impl FnMut()) -> f64 {
     best
 }
 
+fn build_pikevm(pattern: &str, dot: bool) -> PikeVm {
+    let ast = parser::parse(pattern.as_bytes()).expect("parse");
+    let program = lower(&ast.body, false);
+    PikeVm::new(program, dot)
+}
+
 fn main() {
     let dots = [true, false];
     for dot in dots {
         println!("\n================ dot={dot} ================");
         println!(
-            "{:<12} {:<10} | {:>7} {:>7} {:>7} | ssm/old ssm/gset | agree",
-            "pattern", "path", "ssm", "old", "globset"
+            "{:<12} {:<10} | {:>7} {:>7} {:>7} | ssm/pike ssm/gset | agree",
+            "pattern", "path", "ssm", "pike", "globset"
         );
         for &(plabel, pat) in PATTERNS {
             let opts = CompileOptions::default().dot(dot);
-            let ssm = SegGlob::new_with(pat, opts).unwrap();
-            let old = Glob::new_with(pat, opts).unwrap();
+            let ssm = Glob::new_with(pat, opts).unwrap();
+            let pike = build_pikevm(pat, dot);
             let gset = GlobBuilder::new(pat)
                 .literal_separator(true)
                 .build()
@@ -83,24 +91,24 @@ fn main() {
             for &(plab2, path) in PATHS {
                 let bytes = path.as_bytes();
                 let a = ssm.is_match(bytes);
-                let b = old.is_match(bytes);
+                let b = pike.is_match(bytes);
                 // globset has no dot option; only compare verdicts at
                 // dot=true where dialects line up.
                 let agree_gs = if dot { gset.is_match(path) == a } else { true };
-                assert_eq!(a, b, "SSM vs old disagree: {pat} / {path} dot={dot}");
+                assert_eq!(a, b, "SSM vs PikeVM disagree: {pat} / {path} dot={dot}");
 
                 let t_ssm = time_ns(|| {
                     black_box(ssm.is_match(black_box(bytes)));
                 });
-                let t_old = time_ns(|| {
-                    black_box(old.is_match(black_box(bytes)));
+                let t_pike = time_ns(|| {
+                    black_box(pike.is_match(black_box(bytes)));
                 });
                 let t_gs = time_ns(|| {
                     black_box(gset.is_match(black_box(path)));
                 });
                 println!(
-                    "{plabel:<12} {plab2:<10} | {t_ssm:7.1} {t_old:7.1} {t_gs:7.1} | {:7.2} {:8.2} | {}{}",
-                    t_ssm / t_old,
+                    "{plabel:<12} {plab2:<10} | {t_ssm:7.1} {t_pike:7.1} {t_gs:7.1} | {:8.2} {:8.2} | {}{}",
+                    t_ssm / t_pike,
                     t_ssm / t_gs,
                     if a { "m" } else { "-" },
                     if agree_gs { "" } else { " (gset-diff)" },
@@ -111,13 +119,16 @@ fn main() {
 
     // Compile-time row per pattern (engines built fresh per iter).
     println!("\n================ compile (dot=true) ================");
-    println!("{:<12} | {:>9} {:>9} {:>9}", "pattern", "ssm", "old", "globset");
+    println!(
+        "{:<12} | {:>9} {:>9} {:>9}",
+        "pattern", "ssm", "pike", "globset"
+    );
     for &(plabel, pat) in PATTERNS {
         let t_ssm = time_ns(|| {
-            black_box(SegGlob::new(black_box(pat)).unwrap());
-        });
-        let t_old = time_ns(|| {
             black_box(Glob::new(black_box(pat)).unwrap());
+        });
+        let t_pike = time_ns(|| {
+            black_box(build_pikevm(black_box(pat), true));
         });
         let t_gs = time_ns(|| {
             black_box(
@@ -128,6 +139,6 @@ fn main() {
                     .compile_matcher(),
             );
         });
-        println!("{plabel:<12} | {t_ssm:9.1} {t_old:9.1} {t_gs:9.1}");
+        println!("{plabel:<12} | {t_ssm:9.1} {t_pike:9.1} {t_gs:9.1}");
     }
 }

@@ -1,7 +1,7 @@
 //! Ops → element sequences: fork expansion, the segmentizer, and
 //! in-segment wildcard classification.
 
-use globstar::engine::ops::Op;
+use crate::engine::ops::Op;
 
 use super::seg_nfa::SegNfa;
 use super::{Elem, ElemSeq, MAX_FORKS, MAX_SEQ_STATES, Wild, WildKind, is_sep};
@@ -202,7 +202,11 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                     Boundary::Lenient => false,
                     Boundary::InSegment => unreachable!(),
                 };
-                elems.push(if strict_entry { Elem::G0Strict } else { Elem::G0 });
+                elems.push(if strict_entry {
+                    Elem::G0Strict
+                } else {
+                    Elem::G0
+                });
                 state = Boundary::Fresh;
                 leading_seps = false;
             }

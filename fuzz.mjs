@@ -14,7 +14,6 @@
 //   node fuzz.mjs --mode m                # only is_match (incl. negation)
 //   node fuzz.mjs --mode d                # only match_dir (4-valued)
 //   node fuzz.mjs --mode u                # only multi-pattern union
-//   node fuzz.mjs --js-engine dfa         # exercise the JS DFA, not PikeVm
 //   node fuzz.mjs --seeds 1-20 --count 50000   # sweep seeds (nightly)
 //
 // Wire format and escaping mirror tools/difftest/src/main.rs exactly.
@@ -22,8 +21,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMatcher as compileMatcherMain } from "./packages/globstar/src/matcher/glob.js";
-import { compileMatcher as compileMatcherSegment } from "./packages/globstar-segment/src/index.js";
+import { compileMatcher } from "./packages/globstar/src/matcher/glob.js";
 import { GlobError } from "./packages/globstar/src/matcher/error.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -36,7 +34,6 @@ function argVal(name, def) {
 }
 const COUNT = Number(argVal("--count", "50000"));
 const MODE = argVal("--mode", "all"); // all | m | d | u
-const JS_ENGINE = argVal("--js-engine", "segment"); // segment | pikevm | dfa
 const MAX_SAMPLES = Number(argVal("--max-samples", "30"));
 // `--seed N` for one run, or `--seeds A-B` to sweep a range.
 const SEEDS = (() => {
@@ -49,15 +46,6 @@ const SEEDS = (() => {
   }
   return [Number(argVal("--seed", "1"))];
 })();
-
-// Engine override threaded into compileMatcher. `undefined` = the shipped
-// default (PikeVm for one-shot callers); "dfa" forces the walker's engine.
-// `segment` (default) pairs the `@globstar/segment` package with the
-// `globstar-segment` Rust crate; `pikevm` / `dfa` force those engines
-// in `@globstar/globstar` and pair with the `globstar` crate.
-const SEGMENT_MODE = JS_ENGINE !== "dfa" && JS_ENGINE !== "pikevm";
-const ENGINE_OPT = JS_ENGINE === "dfa" ? "dfa" : undefined;
-const compileMatcher = SEGMENT_MODE ? compileMatcherSegment : compileMatcherMain;
 
 // ── deterministic PRNG (mulberry32) so any failure reproduces ────────
 function rng(seed) {
@@ -220,7 +208,7 @@ const pathWire = (s) => escapeBytes(pathBytes(s));
 const DIR_TOKEN = ["pruned", "descend", "match", "descend-match"];
 
 function jsResult(c) {
-  const opts = { dot: c.dot, caseInsensitive: c.ci, __engine: ENGINE_OPT };
+  const opts = { dot: c.dot, caseInsensitive: c.ci };
   try {
     if (c.cmd === "m") {
       return compileMatcher(c.pat, opts).match(pathBytes(c.path)) ? "match" : "no-match";
@@ -275,8 +263,8 @@ function makeGen(seed) {
     if (cmd === "m") return { cmd, dot, ci, pat: genPattern(10), path: genPath(8) };
     if (cmd === "d") return { cmd, dot, ci, pat: stripBang(genPattern(10)), dir: genPath(8) };
     // union: 2..10 positive patterns (Glob::union rejects negation; the JS
-    // union path factors positives) — large counts push the merged NFA past
-    // the 64-state OrEngine-decomposition threshold on both sides.
+    // union path factors positives). Large counts exercise crossing-fork and
+    // fallback budgets on both runtimes.
     const k = randint(2, 10);
     const patterns = [];
     for (let i = 0; i < k; i++) patterns.push(stripBang(genPattern(6)));
@@ -297,9 +285,7 @@ function runSeed(seed) {
     encoding: "utf8",
     maxBuffer: 1 << 30,
     cwd: ROOT,
-    env: SEGMENT_MODE
-      ? { ...process.env, GLOBSTAR_DIFFTEST_ENGINE: "segment" }
-      : process.env,
+    env: process.env,
   });
   if (r.status !== 0) {
     console.error(`[fuzz] rust harness failed (status=${r.status})`);
@@ -329,7 +315,7 @@ function runSeed(seed) {
 
 // ── main ─────────────────────────────────────────────────────────────
 console.log(
-  `[fuzz] mode=${MODE} js-engine=${JS_ENGINE} count=${COUNT} seeds=[${SEEDS[0]}..${SEEDS[SEEDS.length - 1]}]`,
+  `[fuzz] mode=${MODE} engine=segment count=${COUNT} seeds=[${SEEDS[0]}..${SEEDS[SEEDS.length - 1]}]`,
 );
 const t0 = Date.now();
 let totalDiff = 0;

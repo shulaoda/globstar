@@ -4,17 +4,14 @@ A glob library purpose-built for [Vite][vite]'s `import.meta.glob` feature.
 
 ```
 crates/globstar          — Rust crate (canonical implementation)
-crates/globstar-segment  — experimental segment-structured matcher (SSM)
 crates/globstar-walk     — Rust filesystem walker built on globstar
 packages/globstar        — JavaScript port published as @globstar/globstar
-packages/globstar-segment— JS port of the SSM engine (@globstar/segment)
 ```
 
-The `*-segment` crate/package implement the same dialect on a
-different engine (see
-[`references/theory/07-segment-matcher.md`](./references/theory/07-segment-matcher.md));
-they share `globstar`'s parser and are held to the same corpus and
-cross-runtime fuzzer, and BENCHMARKS.md reports both side by side.
+Both `globstar` implementations use the segment-structured matcher (SSM)
+as their primary engine, with Pike VM fallback for bounded or unusual
+shapes. See
+[`references/theory/07-segment-matcher.md`](./references/theory/07-segment-matcher.md).
 
 ## Why this exists
 

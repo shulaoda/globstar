@@ -1,5 +1,5 @@
-// SSM — segment-structured matcher. JS port of the Rust crate
-// `globstar-segment` (crates/globstar-segment/src/engine/); see
+// SSM — segment-structured matcher. JS port of the Rust module
+// `crates/globstar/src/engine/segment/`; see
 // `references/decisions/segment-engine-design.md`.
 //
 // One algorithm, two execution modes:
@@ -36,11 +36,11 @@ import {
   OP_LEADING_SEPS,
   OP_ALTERNATION,
   computeStaticPrefixes,
-} from "../../globstar/src/matcher/engine/ops.js";
-import { CI_BYTE, classMatches, klass, classItemByte } from "../../globstar/src/matcher/ast.js";
-import { isPathSep, eqByteCi, asciiCaseAlt } from "../../globstar/src/matcher/options.js";
-import { toBytes } from "../../globstar/src/matcher/utf8.js";
-import { DirMatch } from "../../globstar/src/matcher/dir-match.js";
+} from "./ops.js";
+import { CI_BYTE, classMatches, klass, classItemByte } from "../ast.js";
+import { isPathSep, eqByteCi, asciiCaseAlt } from "../options.js";
+import { toBytes } from "../utf8.js";
+import { DirMatch } from "../dir-match.js";
 
 // Budgets (element NFA and in-segment NFA live in 32-bit masks here;
 // Rust uses 64 — overflow just means the pattern takes the PikeVM
@@ -116,8 +116,7 @@ export class SegmentMatcher {
     // touches bytes.
     const f = program.facts;
     this.factsSuffixStr = f.suffix.length > 0 ? latin1(f.suffix) : null;
-    this.factsSuffixSetStr =
-      f.suffixSet.length > 0 ? f.suffixSet.map(latin1) : null;
+    this.factsSuffixSetStr = f.suffixSet.length > 0 ? f.suffixSet.map(latin1) : null;
   }
 
   /// `null` ⇒ not segment-expressible; caller falls back.

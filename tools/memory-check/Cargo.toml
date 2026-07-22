@@ -6,11 +6,10 @@ publish = false
 
 [dependencies]
 globstar = { path = "../../crates/globstar" }
-globstar-segment = { path = "../../crates/globstar-segment" }
 globset = "0.4"
 wax = "0.6"
 
-# Single-pattern memory: globstar (DFA / PikeVM) vs globset / wax,
+# Single-pattern memory: production globstar / PikeVM vs globset / wax,
 # matching the 7-pattern corpus in
 # `packages/bench/benches/matcher_single.js`.
 [[bin]]

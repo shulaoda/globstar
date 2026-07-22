@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/globstar",
-    "crates/globstar-segment",
     "crates/globstar-walk",
     "tools/difftest",
     "tools/memory-check",
@@ -17,7 +16,6 @@ repository = "https://github.com/shulaoda/globstar"
 
 [workspace.dependencies]
 globstar = { path = "crates/globstar", version = "0.0.1" }
-globstar-segment = { path = "crates/globstar-segment", version = "0.0.1" }
 globstar-walk = { path = "crates/globstar-walk", version = "0.0.1" }
 
 [profile.release]

@@ -5,11 +5,11 @@
 //!
 //! ## Engine tiers
 //!
-//! | Tier | Pattern shape                              | Engine         | Speed        |
-//! |------|--------------------------------------------|----------------|--------------|
-//! | 0    | Pure literal (`src/main.rs`)               | `Literal`      | ~0.5 ns/byte |
-//! | 1/2  | `*`, `?`, `[...]`, `**`, `{a,b}`           | `ThompsonDfa`  | ~1-2 ns/byte |
-//! | 1/2  | DFA state cap exceeded (very rare)         | `PikeVm`       | ~10 ns/byte  |
+//! | Tier | Pattern shape                              | Engine    |
+//! |------|--------------------------------------------|-----------|
+//! | 0    | Pure literal (`src/main.rs`)               | `Literal` |
+//! | 1/2  | Segment-expressible wildcards and braces   | `Segment` |
+//! | 1/2  | Segment budget/shape fallback (rare)       | `PikeVm`  |
 //!
 //! Every tier implements both `is_match` and `match_dir` natively via
 //! a precomputed reach-to-accept set — no fallback to recursive
@@ -39,19 +39,10 @@ pub use options::CompileOptions;
 
 use ast::{Ast, Node};
 use engine::literal::LiteralMatcher;
-use engine::ops::{lower, lower_owned};
+use engine::ops::lower_owned;
 use engine::pikevm::PikeVm;
-use engine::thompson::Thompson;
-use engine::thompson_dfa::ThompsonDfa;
+use engine::segment::SegmentMatcher;
 use factor::factor_branches;
-
-/// NFA state count above which `Glob::union` decomposes into per-pattern
-/// engines (`Engine::Or`) instead of building one merged DFA. Matches
-/// the DFA's `StateKey` fast-path budget — beyond 64 states the wide-
-/// path subset construction's compile cost balloons (huge-set-pos: 414
-/// µs at 223 NFA states vs ~60 µs decomposed). 95% of realistic
-/// patterns fit under this threshold (per `tools/memory-check/src/nfa_survey.rs`).
-const NFA_FAST_PATH_LIMIT: usize = 64;
 
 /// Tier classification for compiled patterns. Each glob is routed at
 /// compile time to exactly one tier. See ADR-001.
@@ -85,24 +76,11 @@ enum Engine {
     /// boxed: it is the smallest variant, and `LiteralMatcher`'s
     /// `Vec<u8>` already owns its bytes on the heap.
     Literal(LiteralMatcher),
-    /// Tier 1/2 — eager DFA subset-constructed from a Thompson NFA.
-    /// Primary engine for every non-literal pattern (~1-2 ns/byte hot
-    /// loop). Falls back to [`Engine::PikeVm`] when subset
-    /// construction overruns
-    /// [`engine::thompson_dfa::MAX_DFA_STATES`].
-    ThompsonDfa(Box<ThompsonDfa>),
-    /// Linear-time O(n·m) NFA simulation. Used when the DFA's state
-    /// cap is exceeded — rare in practice but guarantees no ReDoS
-    /// surface even on adversarial brace-heavy patterns.
+    /// Tier 1/2 — segment-structured matcher for the dominant shapes.
+    Segment(Box<SegmentMatcher>),
+    /// Linear-time O(n·m) fallback for shapes or bounded expansions
+    /// the segment representation cannot express.
     PikeVm(Box<PikeVm>),
-    /// Per-pattern decomposition for `Glob::union` when the merged
-    /// NFA would exceed [`NFA_FAST_PATH_LIMIT`]. Each child compiles
-    /// independently on the DFA fast-path; `is_match` ORs results,
-    /// `match_dir` aggregates `(exact, prefix)` flags. Avoids the
-    /// wide-path subset construction's compile blowup (huge-set-pos:
-    /// 414 µs → ~60 µs) at the cost of N×match-time-overhead vs a
-    /// single merged DFA (huge-set-pos: 132 ns → ~321 ns).
-    Or(Box<[Glob]>),
 }
 
 impl Glob {
@@ -118,10 +96,8 @@ impl Glob {
     }
 
     /// Compile `patterns` as the boolean OR of their matches, returning a
-    /// single `Glob`. Lowers to one DFA via `N_BRACE` alternation, which
-    /// in turn shares states for any common prefix/suffix across
-    /// branches — measurably faster to compile and smaller in memory
-    /// than aggregating N independent matchers.
+    /// single `Glob`. Branches are factored and lowered once; separator-
+    /// crossing alternatives become bounded segment sequences.
     ///
     /// ## Constraints
     ///
@@ -133,16 +109,15 @@ impl Glob {
     /// - All patterns share one [`CompileOptions`] — split mixed-options
     ///   groups in the caller
     ///
-    /// A single-pattern input is degenerate and forwards to
-    /// [`Glob::new_with`].
+    /// A single-pattern input is degenerate but still enforces the union
+    /// restriction against negated patterns.
     ///
     /// ## Implementation note
     ///
     /// AST-level prefix/suffix factoring lifts shared leading and trailing
-    /// fragments out of the brace branches before lowering, so
-    /// `union(["**/*.ts", "**/*.tsx"])` produces the same DFA as the
-    /// hand-written `**/*.{ts,tsx}` rather than two duplicated `**/*.`
-    /// prefixes.
+    /// fragments out of the branches before lowering, so
+    /// `union(["**/*.ts", "**/*.tsx"])` produces the same segment program
+    /// as the hand-written `**/*.{ts,tsx}`.
     pub fn union<I, S>(patterns: I) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -157,58 +132,37 @@ impl Glob {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let raw: Vec<String> = patterns
-            .into_iter()
-            .map(|s| s.as_ref().to_string())
-            .collect();
-        if raw.is_empty() {
-            return Err(GlobError::EmptyPatternSet);
-        }
-        if raw.len() == 1 {
-            return Self::new_with(&raw[0], opts);
-        }
-
-        let mut branches: Vec<Node> = Vec::with_capacity(raw.len());
-        for (i, p) in raw.iter().enumerate() {
-            let parsed = parser::parse(p.as_bytes())?;
+        let mut first: Option<Ast> = None;
+        let mut branches: Vec<Node> = Vec::new();
+        for (i, pattern) in patterns.into_iter().enumerate() {
+            let pattern = pattern.as_ref();
+            let parsed = parser::parse(pattern.as_bytes())?;
             if parsed.is_negated() {
                 return Err(GlobError::NegatedInUnion {
                     index: i,
-                    pattern: p.clone(),
+                    pattern: pattern.to_string(),
                 });
             }
-            branches.push(parsed.body);
+            if first.is_none() && branches.is_empty() {
+                first = Some(parsed);
+            } else {
+                if let Some(ast) = first.take() {
+                    branches.push(ast.body);
+                }
+                branches.push(parsed.body);
+            }
         }
-
-        // Probe merged NFA size before committing to one strategy.
-        // Thompson::compile is fast (~1-15 µs even at 223 states) —
-        // negligible vs either path's actual work.
-        let merged_body = factor_branches(branches);
-        let probe_program = lower(&merged_body, opts.case_insensitive);
-        let probe_thompson = Thompson::compile(&probe_program, opts.dot);
-
-        if probe_thompson.state_count() <= NFA_FAST_PATH_LIMIT {
-            // Fast-path: merged NFA fits the DFA's `u64`-keyed dedup
-            // budget, so subset construction stays cheap. One merged
-            // state machine, 1 table-lookup per byte at match.
-            let merged_ast = Ast {
-                negation_count: 0,
-                body: merged_body,
-            };
-            return Self::from_ast(merged_ast, opts);
+        match first {
+            Some(ast) => Self::from_ast(ast, opts),
+            None if branches.is_empty() => Err(GlobError::EmptyPatternSet),
+            None => Self::from_ast(
+                Ast {
+                    negation_count: 0,
+                    body: factor_branches(branches),
+                },
+                opts,
+            ),
         }
-
-        // Wide-path detected — decompose into per-pattern Globs.
-        // Each child's NFA is small (single pattern), so each compiles
-        // on the DFA fast-path. Skips the merged wide-path subset
-        // construction's pathological compile cost.
-        let children: Result<Vec<Glob>, GlobError> =
-            raw.iter().map(|p| Self::new_with(p, opts)).collect();
-        Ok(Self {
-            tier: Tier::Globstar,
-            engine: Engine::Or(children?.into_boxed_slice()),
-            negated: false,
-        })
     }
 
     /// Internal: compile from a pre-parsed AST. Used by both `new_with`
@@ -227,8 +181,8 @@ impl Glob {
             }
             Tier::SimpleWildcard | Tier::Globstar => {
                 let program = lower_owned(ast.body, opts.case_insensitive);
-                match ThompsonDfa::build(program, opts.dot) {
-                    Ok(dfa) => Engine::ThompsonDfa(dfa),
+                match SegmentMatcher::build(program, opts.dot) {
+                    Ok(segment) => Engine::Segment(segment),
                     Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),
                 }
             }
@@ -245,24 +199,13 @@ impl Glob {
         self.tier
     }
 
-    /// Diagnostic: `(num_states, num_byte_classes)` of the compiled
-    /// DFA if the engine has one, else `None`. Intended for bench
-    /// and debugging use only.
-    pub fn dfa_size(&self) -> Option<(usize, usize)> {
-        match &self.engine {
-            Engine::ThompsonDfa(m) => Some((m.num_states(), m.num_byte_classes())),
-            _ => None,
-        }
-    }
-
     /// Diagnostic: which concrete engine variant compiled this
     /// pattern. Intended for bench instrumentation and tests.
     pub fn engine_name(&self) -> &'static str {
         match &self.engine {
             Engine::Literal(_) => "Literal",
-            Engine::ThompsonDfa(_) => "ThompsonDfa",
+            Engine::Segment(_) => "Segment",
             Engine::PikeVm(_) => "PikeVm",
-            Engine::Or(_) => "Or",
         }
     }
 
@@ -271,9 +214,8 @@ impl Glob {
     pub fn is_match(&self, path: &[u8]) -> bool {
         let raw = match &self.engine {
             Engine::Literal(m) => m.is_match(path),
-            Engine::ThompsonDfa(m) => m.is_match(path),
+            Engine::Segment(m) => m.is_match(path),
             Engine::PikeVm(m) => m.is_match(path),
-            Engine::Or(children) => children.iter().any(|g| g.is_match(path)),
         };
         if self.negated { !raw } else { raw }
     }
@@ -311,16 +253,8 @@ impl Glob {
             // `compute_static_prefixes` in `engine::ops`. Already
             // deduplicated; we just clone into the public `Vec<Vec<u8>>`
             // shape that callers expect.
-            Engine::ThompsonDfa(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
+            Engine::Segment(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
             Engine::PikeVm(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
-            // Per-pattern Or: union of children's prefixes, deduped.
-            // Walker uses this to seed traversal; each child's prefix
-            // names a possible root. Dedupe collapses overlap (e.g.
-            // `[src, src/cli]` → `[src]`).
-            Engine::Or(children) => {
-                let raw: Vec<Vec<u8>> = children.iter().flat_map(|g| g.static_prefixes()).collect();
-                engine::ops::dedupe_prefixes(raw)
-            }
         }
     }
 
@@ -332,27 +266,8 @@ impl Glob {
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
         match &self.engine {
             Engine::Literal(m) => m.match_dir(dir_path),
-            Engine::ThompsonDfa(m) => m.match_dir(dir_path),
+            Engine::Segment(m) => m.match_dir(dir_path),
             Engine::PikeVm(m) => m.match_dir(dir_path),
-            // Aggregate children's `(exact, prefix)` flags. Any child
-            // descend-and-matches → return DescendAndMatch (strongest);
-            // else combine via `from_exact_prefix`.
-            Engine::Or(children) => {
-                let mut exact = false;
-                let mut prefix = false;
-                for child in children.iter() {
-                    match child.match_dir(dir_path) {
-                        DirMatch::DescendAndMatch => return DirMatch::DescendAndMatch,
-                        DirMatch::Match => exact = true,
-                        DirMatch::Descend => prefix = true,
-                        DirMatch::Pruned => {}
-                    }
-                    if exact && prefix {
-                        return DirMatch::DescendAndMatch;
-                    }
-                }
-                DirMatch::from_exact_prefix(exact, prefix)
-            }
         }
     }
 }

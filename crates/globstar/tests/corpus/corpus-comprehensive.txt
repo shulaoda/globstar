@@ -1577,7 +1577,7 @@ src/?	src/	no-match
 src/?	src/xy	no-match
 src/?	src/x/y	no-match
 
-## spec.globstar_segment_only
+## spec.globstar_must_occupy_segment
 src**/main	src/main	match
 src**/main	srcx/main	match
 src**/main	src/x/main	no-match

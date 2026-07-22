@@ -7,7 +7,6 @@ import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { compileMatcher } from "../../globstar/src/matcher/glob.js";
-import { compileMatcher as compileSegment } from "../../globstar-segment/src/index.js";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
@@ -84,7 +83,6 @@ function runPerPattern(matchOne) {
 const LIBS = [
   // globstar handles `!`-prefixed patterns natively in `compileMatcher`.
   ["globstar", (patterns) => compileMatcher(patterns).match, (fn, s) => fn(s)],
-  ["globstar-ssm", (patterns) => compileSegment(patterns).match, (fn, s) => fn(s)],
   ["picomatch", buildPerPattern((b) => pico(b)), runPerPattern((m, s) => m(s))],
   ["minimatch", buildPerPattern((b) => new Minimatch(b)), runPerPattern((m, s) => m.match(s))],
   ["micromatch", buildPerPattern((b) => micro.matcher(b)), runPerPattern((m, s) => m(s))],

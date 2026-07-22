@@ -1,11 +1,10 @@
 //! Integration test driver for the golden test corpus.
 //!
-//! Runs every `(pattern, path, expected)` row through THREE engines
+//! Runs every `(pattern, path, expected)` row through the public engine
+//! and the total Pike VM reference engine
 //! and asserts each agrees with the recorded truth:
 //!
 //! - `globstar`     — public API (`Glob::new` / `Glob::union`), tier routing
-//! - `Segment`      — the experimental `globstar-segment` crate (SSM)
-//! - `ThompsonDfa`  — forced via `lower` + `ThompsonDfa::build`
 //! - `PikeVm`       — forced via `PikeVm::new`
 //!
 //! Single-pattern `is_match` rows live in `tests/corpus/corpus*.txt`;
@@ -21,11 +20,9 @@
 use globstar::ast::Node;
 use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
-use globstar::engine::thompson_dfa::ThompsonDfa;
 use globstar::factor::factor_branches;
 use globstar::parser::parse;
 use globstar::{CompileOptions, DirMatch, Glob};
-use globstar_segment::SegGlob;
 use std::path::PathBuf;
 
 const CORPUS_DIR: &str = "tests/corpus";
@@ -280,10 +277,7 @@ fn load_dir_corpus() -> Vec<DirRow> {
         let path = unescape(cols[1]);
         let expected = match parse_dir_expected(cols[2]) {
             Some(d) => d,
-            None => panic!(
-                "corpus-dir.txt:{line_no}: unknown DirMatch `{}`",
-                cols[2]
-            ),
+            None => panic!("corpus-dir.txt:{line_no}: unknown DirMatch `{}`", cols[2]),
         };
         let (dot, ci) = if cols.len() >= 4 {
             parse_flags_default(cols[3], false)
@@ -356,22 +350,6 @@ fn run_globstar_single(row: &SingleRow) -> Option<bool> {
     Some(g.is_match(&row.path))
 }
 
-fn run_segment_single(row: &SingleRow) -> Option<bool> {
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = SegGlob::new_with(&row.pattern, opts).ok()?;
-    Some(g.is_match(&row.path))
-}
-
-fn run_dfa_single(row: &SingleRow) -> Option<bool> {
-    let ast = parse(row.pattern.as_bytes()).ok()?;
-    let program = lower(&ast.body, row.case_insensitive);
-    let dfa = ThompsonDfa::build(program, row.dot).ok()?;
-    let raw = dfa.is_match(&row.path);
-    Some(if ast.is_negated() { !raw } else { raw })
-}
-
 fn run_pikevm_single(row: &SingleRow) -> Option<bool> {
     let ast = parse(row.pattern.as_bytes()).ok()?;
     let program = lower(&ast.body, row.case_insensitive);
@@ -405,28 +383,11 @@ fn run_globstar_multi(row: &MultiRow) -> Option<bool> {
     Some(g.is_match(&row.path))
 }
 
-fn run_segment_multi(row: &MultiRow) -> Option<bool> {
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = SegGlob::union_with(row.patterns.iter().map(|s| s.as_str()), opts).ok()?;
-    Some(g.is_match(&row.path))
-}
-
 fn parse_bodies(patterns: &[String]) -> Option<Vec<Node>> {
     patterns
         .iter()
         .map(|p| parse(p.as_bytes()).ok().map(|ast| ast.body))
         .collect()
-}
-
-fn run_dfa_multi(row: &MultiRow) -> Option<bool> {
-    let bodies = parse_bodies(&row.patterns)?;
-    let merged = factor_branches(bodies);
-    let program = lower(&merged, row.case_insensitive);
-    // Wide-NFA unions blow the DFA state cap → skip; fast-path covers them.
-    let dfa = ThompsonDfa::build(program, row.dot).ok()?;
-    Some(dfa.is_match(&row.path))
 }
 
 fn run_pikevm_multi(row: &MultiRow) -> Option<bool> {
@@ -442,7 +403,7 @@ fn run_pikevm_multi(row: &MultiRow) -> Option<bool> {
 /// `Glob::match_dir` currently does not invert via the prefix `!`
 /// (see `lib.rs::Glob::match_dir`), and engines see only the
 /// negation-stripped body. Until that gap is closed, skip negated rows
-/// in all three runners — they're recorded as `skip`, not `fail`.
+/// in both runners — they're recorded as `skip`, not `fail`.
 fn run_globstar_dir(row: &DirRow) -> Option<DirMatch> {
     let ast = parse(row.pattern.as_bytes()).ok()?;
     if ast.is_negated() {
@@ -453,28 +414,6 @@ fn run_globstar_dir(row: &DirRow) -> Option<DirMatch> {
         .case_insensitive(row.case_insensitive);
     let g = Glob::new_with(&row.pattern, opts).ok()?;
     Some(g.match_dir(&row.path))
-}
-
-fn run_segment_dir(row: &DirRow) -> Option<DirMatch> {
-    let ast = parse(row.pattern.as_bytes()).ok()?;
-    if ast.is_negated() {
-        return None;
-    }
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = SegGlob::new_with(&row.pattern, opts).ok()?;
-    Some(g.match_dir(&row.path))
-}
-
-fn run_dfa_dir(row: &DirRow) -> Option<DirMatch> {
-    let ast = parse(row.pattern.as_bytes()).ok()?;
-    if ast.is_negated() {
-        return None;
-    }
-    let program = lower(&ast.body, row.case_insensitive);
-    let dfa = ThompsonDfa::build(program, row.dot).ok()?;
-    Some(dfa.match_dir(&row.path))
 }
 
 fn run_pikevm_dir(row: &DirRow) -> Option<DirMatch> {
@@ -523,8 +462,6 @@ fn corpus_single_engines_vs_truth() {
     assert!(!rows.is_empty(), "no single-pattern corpus rows loaded");
 
     let mut globstar_stats = Stats::default();
-    let mut segment_stats = Stats::default();
-    let mut dfa_stats = Stats::default();
     let mut pike_stats = Stats::default();
 
     for row in &rows {
@@ -533,18 +470,6 @@ fn corpus_single_engines_vs_truth() {
                 fail_msg_single(row, "globstar", got)
             }),
             None => globstar_stats.skip += 1,
-        }
-        match run_segment_single(row) {
-            Some(got) => segment_stats.record(got == row.expected, || {
-                fail_msg_single(row, "Segment", got)
-            }),
-            None => segment_stats.skip += 1,
-        }
-        match run_dfa_single(row) {
-            Some(got) => dfa_stats.record(got == row.expected, || {
-                fail_msg_single(row, "ThompsonDfa", got)
-            }),
-            None => dfa_stats.skip += 1,
         }
         match run_pikevm_single(row) {
             Some(got) => {
@@ -559,26 +484,15 @@ fn corpus_single_engines_vs_truth() {
         globstar_stats.pass, globstar_stats.fail, globstar_stats.skip
     );
     println!(
-        "corpus=single engine=Segment     pass={} fail={} skip={}",
-        segment_stats.pass, segment_stats.fail, segment_stats.skip
-    );
-    println!(
-        "corpus=single engine=ThompsonDfa pass={} fail={} skip={}",
-        dfa_stats.pass, dfa_stats.fail, dfa_stats.skip
-    );
-    println!(
         "corpus=single engine=PikeVm      pass={} fail={} skip={}",
         pike_stats.pass, pike_stats.fail, pike_stats.skip
     );
 
-    let total_fail =
-        globstar_stats.fail + segment_stats.fail + dfa_stats.fail + pike_stats.fail;
+    let total_fail = globstar_stats.fail + pike_stats.fail;
     if total_fail > 0 {
         for f in globstar_stats
             .failures
             .iter()
-            .chain(segment_stats.failures.iter())
-            .chain(dfa_stats.failures.iter())
             .chain(pike_stats.failures.iter())
         {
             eprintln!("  FAIL: {f}");
@@ -593,8 +507,6 @@ fn corpus_multi_engines_vs_truth() {
     assert!(!rows.is_empty(), "no multi-pattern corpus rows loaded");
 
     let mut globstar_stats = Stats::default();
-    let mut segment_stats = Stats::default();
-    let mut dfa_stats = Stats::default();
     let mut pike_stats = Stats::default();
 
     for row in &rows {
@@ -603,18 +515,6 @@ fn corpus_multi_engines_vs_truth() {
                 globstar_stats.record(got == row.expected, || fail_msg_multi(row, "globstar", got))
             }
             None => globstar_stats.skip += 1,
-        }
-        match run_segment_multi(row) {
-            Some(got) => {
-                segment_stats.record(got == row.expected, || fail_msg_multi(row, "Segment", got))
-            }
-            None => segment_stats.skip += 1,
-        }
-        match run_dfa_multi(row) {
-            Some(got) => dfa_stats.record(got == row.expected, || {
-                fail_msg_multi(row, "ThompsonDfa", got)
-            }),
-            None => dfa_stats.skip += 1,
         }
         match run_pikevm_multi(row) {
             Some(got) => {
@@ -629,26 +529,15 @@ fn corpus_multi_engines_vs_truth() {
         globstar_stats.pass, globstar_stats.fail, globstar_stats.skip
     );
     println!(
-        "corpus=multi  engine=Segment     pass={} fail={} skip={}",
-        segment_stats.pass, segment_stats.fail, segment_stats.skip
-    );
-    println!(
-        "corpus=multi  engine=ThompsonDfa pass={} fail={} skip={}",
-        dfa_stats.pass, dfa_stats.fail, dfa_stats.skip
-    );
-    println!(
         "corpus=multi  engine=PikeVm      pass={} fail={} skip={}",
         pike_stats.pass, pike_stats.fail, pike_stats.skip
     );
 
-    let total_fail =
-        globstar_stats.fail + segment_stats.fail + dfa_stats.fail + pike_stats.fail;
+    let total_fail = globstar_stats.fail + pike_stats.fail;
     if total_fail > 0 {
         for f in globstar_stats
             .failures
             .iter()
-            .chain(segment_stats.failures.iter())
-            .chain(dfa_stats.failures.iter())
             .chain(pike_stats.failures.iter())
         {
             eprintln!("  FAIL: {f}");
@@ -663,27 +552,14 @@ fn corpus_dir_engines_vs_truth() {
     assert!(!rows.is_empty(), "no dir corpus rows loaded");
 
     let mut globstar_stats = Stats::default();
-    let mut segment_stats = Stats::default();
-    let mut dfa_stats = Stats::default();
     let mut pike_stats = Stats::default();
 
     for row in &rows {
         match run_globstar_dir(row) {
-            Some(got) => globstar_stats.record(got == row.expected, || {
-                fail_msg_dir(row, "globstar", got)
-            }),
-            None => globstar_stats.skip += 1,
-        }
-        match run_segment_dir(row) {
-            Some(got) => segment_stats
-                .record(got == row.expected, || fail_msg_dir(row, "Segment", got)),
-            None => segment_stats.skip += 1,
-        }
-        match run_dfa_dir(row) {
             Some(got) => {
-                dfa_stats.record(got == row.expected, || fail_msg_dir(row, "ThompsonDfa", got))
+                globstar_stats.record(got == row.expected, || fail_msg_dir(row, "globstar", got))
             }
-            None => dfa_stats.skip += 1,
+            None => globstar_stats.skip += 1,
         }
         match run_pikevm_dir(row) {
             Some(got) => {
@@ -698,26 +574,15 @@ fn corpus_dir_engines_vs_truth() {
         globstar_stats.pass, globstar_stats.fail, globstar_stats.skip
     );
     println!(
-        "corpus=dir    engine=Segment     pass={} fail={} skip={}",
-        segment_stats.pass, segment_stats.fail, segment_stats.skip
-    );
-    println!(
-        "corpus=dir    engine=ThompsonDfa pass={} fail={} skip={}",
-        dfa_stats.pass, dfa_stats.fail, dfa_stats.skip
-    );
-    println!(
         "corpus=dir    engine=PikeVm      pass={} fail={} skip={}",
         pike_stats.pass, pike_stats.fail, pike_stats.skip
     );
 
-    let total_fail =
-        globstar_stats.fail + segment_stats.fail + dfa_stats.fail + pike_stats.fail;
+    let total_fail = globstar_stats.fail + pike_stats.fail;
     if total_fail > 0 {
         for f in globstar_stats
             .failures
             .iter()
-            .chain(segment_stats.failures.iter())
-            .chain(dfa_stats.failures.iter())
             .chain(pike_stats.failures.iter())
         {
             eprintln!("  FAIL: {f}");

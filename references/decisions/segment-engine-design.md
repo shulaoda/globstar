@@ -1,13 +1,12 @@
 # SSM — Segment-Structured Matcher (design)
 
-**Status:** implemented as the standalone `globstar-segment` crate and
-`@globstar/segment` package (sharing the `globstar` parser/lowering),
-benchmarked head-to-head against the `globstar` engines in
-BENCHMARKS.md; adversarially reviewed against the byte
+**Status:** promoted to the primary engine inside the Rust `globstar` crate
+and JavaScript `@globstar/globstar` package after standalone development
+and head-to-head validation; adversarially reviewed against the byte
 engines (~950 empirical probes, three review agents) and corrected —
 see §10 for the errata the review produced. **Date:** 2026-07-22.
 
-Goal: replace the default match engines (eager ThompsonDfa in Rust, PikeVm
+Goal: replace the former default match engines (an eager DFA in Rust, PikeVm
 in JS) with one algorithm — identical in both runtimes — that preserves
 GLOB_SPEC v0.2.0 semantics byte-for-byte while winning all three axes
 (compile time, memory, match throughput) against both the current engines
@@ -22,7 +21,7 @@ Every construct in the dialect except `**` is segment-local: `*`, `?`,
 keyed on segment starts. `**` is the only construct that crosses
 separators, and after the existing globstar fold it appears in exactly
 four forms (`LeadingSeps+OSS`, `SepRun+OSS`, `SlashAnything`,
-`GlobstarAny`). So a pattern is *naturally* a linear sequence of
+`GlobstarAny`). So a pattern is _naturally_ a linear sequence of
 segment-shaped elements, and matching is naturally segment-at-a-time —
 where every per-segment check is a memcmp/ends_with-class primitive that
 vectorizes, instead of a per-byte automaton step that serializes.
@@ -60,43 +59,41 @@ dot rule (§5).
 
 Ops are scanned linearly, cutting at `Sep` boundaries:
 
-| Op run                          | Elements                  | Notes |
-|---------------------------------|---------------------------|-------|
-| in-segment ops … `Sep` …        | `Lit`/`Wild` per segment  | consecutive `Sep`s ⇒ empty `Lit("")` between them |
-| `LeadingSeps, OSS` (pattern head) | `G0`                    | absorbs leading empty segments (abs/UNC paths) and any further segments |
-| `SepRun, OSS` (mid `/**/`)      | `G0`                      | SepRun's 1+ separator run = the boundary between the previous element and the absorbed run |
-| `OSS` after alternation-head recursion | `G0`               | per-branch `LeadingSeps` handled identically inside forks |
-| `SlashAnything` (trailing `/**`)| *close segment*, then `G1`| the pattern's leading `/` (if any) leaves an empty `Lit` first: `/**` = `[Lit "", G1]` — matches `/`, not `a` |
-| `GlobstarAny` (bare `**`)       | `G0` at a fresh boundary; **`G1` behind a strict `Sep`** (`a/{**,x}` rejects `a`); **upgraded to `G1` when a strict `Sep` follows** (`{**,x}/b` rejects `b`) | brace-spliced `.*` composes with strict separators, which each demand ≥ 1 absorbed segment |
-| adjacent `G` elements           | keep both — ε-skips chain them; never collapse across a strict `Sep` (each surviving `Sep` emits its `Lit ""`): `**//**` = `[G0, Lit "", G1]` | `[G, G]` runs from forks (`{**,x}/**`) are not single-G expressible and take the NFA path or fall back |
+| Op run                                 | Elements                                                                                                                                                     | Notes                                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| in-segment ops … `Sep` …               | `Lit`/`Wild` per segment                                                                                                                                     | consecutive `Sep`s ⇒ empty `Lit("")` between them                                                             |
+| `LeadingSeps, OSS` (pattern head)      | `G0`                                                                                                                                                         | absorbs leading empty segments (abs/UNC paths) and any further segments                                       |
+| `SepRun, OSS` (mid `/**/`)             | `G0`                                                                                                                                                         | SepRun's 1+ separator run = the boundary between the previous element and the absorbed run                    |
+| `OSS` after alternation-head recursion | `G0`                                                                                                                                                         | per-branch `LeadingSeps` handled identically inside forks                                                     |
+| `SlashAnything` (trailing `/**`)       | _close segment_, then `G1`                                                                                                                                   | the pattern's leading `/` (if any) leaves an empty `Lit` first: `/**` = `[Lit "", G1]` — matches `/`, not `a` |
+| `GlobstarAny` (bare `**`)              | `G0` at a fresh boundary; **`G1` behind a strict `Sep`** (`a/{**,x}` rejects `a`); **upgraded to `G1` when a strict `Sep` follows** (`{**,x}/b` rejects `b`) | brace-spliced `.*` composes with strict separators, which each demand ≥ 1 absorbed segment                    |
+| adjacent `G` elements                  | keep both — ε-skips chain them; never collapse across a strict `Sep` (each surviving `Sep` emits its `Lit ""`): `**//**` = `[G0, Lit "", G1]`                | `[G, G]` runs from forks (`{**,x}/**`) are not single-G expressible and take the NFA path or fall back        |
 
 **Equivalence claims** (each verified against the byte engines by the
 corpus + differential fuzzer; reviewers: attack these):
 
-- **C1 (mid `**`)**: `A/**/B` ⇔ elements `[…A, G0, B…]`. The byte form is
-  `A SepRun OSS B`; `SepRun` (1+ seps) followed by `OSS`
-  (`(seg sep-run)*`) generates exactly: one separator, then any sequence
-  of segments each followed by a separator run. In segment terms: the
-  boundary `/` that separates `A` from what follows, then **any (possibly
+- **C1 (mid `**`)**: `A/**/B`⇔ elements`[…A, G0, B…]`. The byte form is
+`A SepRun OSS B`; `SepRun`(1+ seps) followed by`OSS`
+(`(seg sep-run)\*`) generates exactly: one separator, then any sequence
+of segments each followed by a separator run. In segment terms: the
+boundary `/`that separates`A` from what follows, then **any (possibly
   empty) sequence of segments** — empty ones arising from extra
   separators in the run — then `B`. So G0 = "absorb any k ≥ 0 segments".
-  Examples: `a/**/b` matches `a/b` (k=0), `a//b` (k=1, [""]),
-  `a/x//y/b` (k=3, [x,"",y]).
-- **C2 (leading `**/`)**: `**/X` ⇔ `[G0, X…]`. Byte form
-  `LeadingSeps OSS X`: 0+ leading seps (= leading empty segments) then
-  `(seg sep-run)*`. Absorbs any k ≥ 0 segments including leading empty
-  ones: `/a/X` = ["", a] absorbed; `//srv/share/X` = ["", "", srv, share].
-- **C3 (trailing `/**`)**: `A/**` ⇔ `[…A, G1]`. Byte form
-  `A SlashAnything` = `A / .*`: one required separator then anything.
-  Segment terms: at least one more segment after `A` (the first may be
-  empty: `a/` = [a, ""] matches; `a` = [a] does not), then arbitrary
+  Examples: `a/**/b`matches`a/b`(k=0),`a//b`(k=1, [""]),`a/x//y/b` (k=3, [x,"",y]).
+- **C2 (leading `**/`)**: `\*_/X`⇔`[G0, X…]`. Byte form
+`LeadingSeps OSS X`: 0+ leading seps (= leading empty segments) then
+`(seg sep-run)_`. Absorbs any k ≥ 0 segments including leading empty
+ones: `/a/X`= ["", a] absorbed;`//srv/share/X` = ["", "", srv, share].
+- **C3 (trailing `/**`)**: `A/\*_`⇔`[…A, G1]`. Byte form
+`A SlashAnything`=`A / ._`: one required separator then anything.
+Segment terms: at least one more segment after `A`(the first may be
+empty:`a/`= [a, ""] matches;`a` = [a] does not), then arbitrary
   further content = arbitrary further segments.
-- **C4 (bare `**`)**: `**` ⇔ `[G0]` where G0 consumes the whole segment
-  list — matches everything (dot rule aside), including `""` → [""]
-  (one empty segment absorbed… note [""] must be absorbable by G0 for
-  `**` to match the empty path; G0 absorbing "the entire list" vs the
-  fixed-point "empty path has one empty segment" is resolved in §3:
-  a sequence of elements matches the segment LIST, and `[G0]` matches
+- **C4 (bare `**`)**: `**`⇔`[G0]`where G0 consumes the whole segment
+list — matches everything (dot rule aside), including`""`→ [""]
+(one empty segment absorbed… note [""] must be absorbable by G0 for`**`to match the empty path; G0 absorbing "the entire list" vs the
+fixed-point "empty path has one empty segment" is resolved in §3:
+a sequence of elements matches the segment LIST, and`[G0]` matches
   [""] by absorbing the single empty segment).
 - **C5 (strict Sep)**: `a/b` ⇔ `[Lit a, Lit b]` and `a//b` ⇔
   `[Lit a, Lit "", Lit b]` — segment-count equality gives the strict
@@ -149,14 +146,14 @@ everything (it rejects most candidates in walker workloads for ~1-4ns).
 In-segment op runs (over `Lit/AnyChar/Star/Class/Alternation`, all
 sep-free) are classified at compile time:
 
-| Kind        | Shape                | Match primitive |
-|-------------|----------------------|-----------------|
-| `WAny`      | `*`                  | dot-check only |
-| `WSuffix`   | `*lit`               | len ≥ ‖lit‖ ∧ ends_with(lit) ∧ dot-check |
-| `WPrefix`   | `lit*`               | starts_with(lit) |
-| `WPreSuf`   | `lit1*lit2`          | len ≥ ‖lit1‖+‖lit2‖ ∧ starts_with ∧ ends_with |
-| `WSuffixSet`| `*.{a,b,…}` (all-literal trailing alternation) | any-of ends_with ∧ dot-check |
-| `WGeneric`  | anything else        | u64 bitmask position-NFA over in-segment ops (linear time, built without hash maps; > 64 positions → whole-pattern PikeVm fallback) |
+| Kind         | Shape                                          | Match primitive                                                                                                                     |
+| ------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `WAny`       | `*`                                            | dot-check only                                                                                                                      |
+| `WSuffix`    | `*lit`                                         | len ≥ ‖lit‖ ∧ ends_with(lit) ∧ dot-check                                                                                            |
+| `WPrefix`    | `lit*`                                         | starts_with(lit)                                                                                                                    |
+| `WPreSuf`    | `lit1*lit2`                                    | len ≥ ‖lit1‖+‖lit2‖ ∧ starts_with ∧ ends_with                                                                                       |
+| `WSuffixSet` | `*.{a,b,…}` (all-literal trailing alternation) | any-of ends_with ∧ dot-check                                                                                                        |
+| `WGeneric`   | anything else                                  | u64 bitmask position-NFA over in-segment ops (linear time, built without hash maps; > 64 positions → whole-pattern PikeVm fallback) |
 
 Dot-check (§5) applies to any wildcard-led matcher. Case-insensitive mode
 routes every byte compare through the ASCII fold (compile-time expanded
@@ -223,25 +220,15 @@ the first non-Lit, per fork branch, deduped — same output as today's
 
 ## 6. Multi-pattern union
 
-`Glob::union` compiles each pattern independently (Literal / SSM /
-PikeVm), then buckets:
+`Glob::union` parses every positive pattern once, factors common AST
+prefixes/suffixes, and lowers the merged body once. In-segment
+alternations remain inline; separator-crossing alternations expand into
+element sequences under `MAX_FORKS`. If the merged shape exceeds a segment
+budget, the unchanged program falls through to one PikeVm.
 
-- **suffix bucket**: patterns of shape `[G0, Wild∈{WSuffix,WSuffixSet}]`
-  (`**/*.ts`, `**/*.{ts,tsx}`) merge into one suffix-set probe (linear
-  scan of a few suffixes; ext-keyed map if the bucket grows).
-- **first-segment literal map**: patterns with a leading `Lit` bucket by
-  that literal's bytes; match extracts S[0] once and probes.
-- **residual list**: everything else, linear with per-pattern prefilters.
-
-`is_match` = bucket probes, short-circuit. `matches`-style index queries
-push candidate indices. `match_dir` aggregates over all patterns
-(buckets don't apply to dirs) with the existing early-exit combine; each
-per-pattern match_dir is a cheap u64 simulation. The old
-factor/probe/merge path and `NFA_FAST_PATH_LIMIT` decomposition are
-retired for SSM-eligible patterns.
-
-Compile becomes O(Σ pattern bytes) with tiny constants — no probe
-Thompson, no merged subset construction, no re-parses.
+Compile is O(Σ pattern bytes + bounded fork expansion) with no Thompson
+probe, subset construction, or per-pattern `Or` wrapper. `is_match`,
+`match_dir`, and static prefixes all operate on the same merged matcher.
 
 ## 7. JS specifics
 
@@ -256,7 +243,7 @@ Same algorithm, same element structures. Two execution modes:
     multi-unit char's UTF-8 encoding or surrogate pair.
   - `*`/G absorption is safe: runs of non-sep chars ⇔ runs of non-sep
     bytes; dot-led checks inspect ASCII `.` only.
-  - The ONLY divergent constructs are `?` (one *byte* per spec, one
+  - The ONLY divergent constructs are `?` (one _byte_ per spec, one
     UTF-16 unit in string mode) and **negated classes** (match one byte).
     These bail: when such a matcher meets a char code > 0x7F at its
     position, the whole call re-runs in byte mode (rare; correct).
@@ -265,9 +252,8 @@ Same algorithm, same element structures. Two execution modes:
 - **Byte mode**: `toBytes(input)` once, same matchers over `Uint8Array`.
   Also used when the caller passes a `Uint8Array`.
 
-The walker's `__engine: "dfa"` opt-in is replaced by SSM (it serves
-match/matchDir/staticPrefixes natively). PikeVm remains the JS fallback
-for the same shapes as Rust.
+The walker uses SSM directly for match, matchDir, and staticPrefixes.
+PikeVm remains the JS fallback for the same shapes as Rust.
 
 ## 8. Memory layout
 
@@ -278,19 +264,16 @@ objects, shared shapes; no typed-array tables except `WGeneric` masks.
 
 ## 9. Fallback + testing
 
-Dispatch (in the standalone crate/package): Literal → LiteralMatcher
+Production dispatch: Literal → LiteralMatcher
 (shared); segmentizable ∧ elements ≤ 64 ∧ forks ≤ 64 ∧ WGeneric
-positions ≤ 64 → SSM; else the shared PikeVm — the only *total*
-engine, and the O(n·m) ReDoS floor. The eager ThompsonDfa is NOT in
-the fallback chain: it would re-import the subset-construction
-compile cost for a tier that still could not drop the PikeVm (the
-DFA has its own state cap). It remains the `globstar` crate's primary
-engine and the corpus oracle.
+positions ≤ 64 → SSM; else the shared PikeVm — the only _total_
+engine and the non-backtracking ReDoS floor. The former eager DFA was
+removed after SSM became primary: it duplicated compile and maintenance
+cost while PikeVm was still required for total coverage.
 
 Gates, in order, after every change: `cargo test --workspace`,
-`node verify.mjs` (corpus, all engines incl. SSM rows added),
-`node fuzz.mjs` sweeps (JS-SSM ↔ Rust-SSM cross-runtime; plus Rust
-SSM ↔ PikeVm and JS SSM ↔ PikeVm in-process oracles), then
+`node verify.mjs` (public SSM plus forced PikeVm oracle),
+`node fuzz.mjs` sweeps (JS globstar ↔ Rust globstar cross-runtime), then
 `node bench.mjs`.
 
 ## 10. Adversarial-review errata (all folded into §2.1 and the code)
@@ -306,15 +289,15 @@ SSM ↔ PikeVm and JS SSM ↔ PikeVm in-process oracles), then
 Three review agents probed the draft's element mapping against the
 byte engines (difftest + the JS engines, ~950 tuples). Findings:
 
-1. **`/**` and `/**/a`** — a pattern-leading `/` before a globstar
+1. **`/**`and`/**/a`** — a pattern-leading `/` before a globstar
    fold emits an empty `Lit` element first (`[Lit "", G1]`,
    `[Lit "", G0, Lit a]`); the draft's table lost the
    absolute-path requirement.
-2. **Brace-spliced bare `**` composes strictly** — `{**,x}/y`,
-   `x/{**,q}`, `a/{**,q}/b` all behave as `G1`, not `G0`: a strict
-   separator adjacent to a spliced `.*` demands ≥ 1 absorbed segment.
-   Only the native folds (`SepRun`/`LeadingSeps`/`OSS`/
-   `SlashAnything`) absorb their boundary separators.
+2. **Brace-spliced bare `**`composes strictly** —`{**,x}/y`,
+`x/{**,q}`, `a/{\*_,q}/b`all behave as`G1`, not `G0`: a strict
+separator adjacent to a spliced `._` demands ≥ 1 absorbed segment.
+Only the native folds (`SepRun`/`LeadingSeps`/`OSS`/
+`SlashAnything`) absorb their boundary separators.
 3. **No G-collapse across separators** — `**//**` ≡
    `[G0, Lit "", G1]` (each extra `/` between globstar folds is a
    strict `Sep` emitting `Lit ""`); `{**,x}/**` ≡ `[G1, G1]`

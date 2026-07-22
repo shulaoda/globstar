@@ -7,8 +7,8 @@ The matcher exposes two outputs that drive directory-level pruning:
 
 Implementation:
 
-- `engine/ops.rs::compute_static_prefixes` — the prefix extraction pass.
-- `engine/thompson_dfa.rs::ThompsonDfa::match_dir` — DFA realization.
+- `engine/ops/prefixes.rs::compute_static_prefixes` — the prefix extraction pass.
+- `engine/segment/::SegmentMatcher::match_dir` — primary realization.
 - `engine/pikevm.rs::PikeVm::match_dir` — Pike VM realization.
 - `dir_match.rs` — the `DirMatch` algebraic datatype.
 
@@ -102,11 +102,11 @@ pub enum DirMatch {
 }
 ```
 
-Given `P`, a directory path `d`, and the canonicalized form `d' = d ++ "/"` (so `d'` is a path prefix in segment terms), the walker uses
+Given `P` and a directory path `d`, the walker uses
 
 ```
-exact_match(P, d) := d' ∈ L(P)
-prefix_match(P, d) := ∃ w ∈ Σ*. d' ++ w ∈ L(P) ∧ w ≠ ε
+exact_match(P, d) := d ∈ L(P)
+prefix_match(P, d) := ∃ w ∈ Σ+. d ++ "/" ++ w ∈ L(P)
 match_dir(P, d) := combine(exact_match(P, d), prefix_match(P, d))
 ```
 
@@ -121,19 +121,18 @@ combine(false, false) = Pruned
 
 `Pruned` is the only verdict that licenses the walker to skip `readdir(d)`.
 
-### 2.2 DFA realization
+### 2.2 Segment realization
 
-The DFA's state at the end of `d` summarizes the active NFA subset. Append the implicit segment terminator and consult the reach-to-accept mask:
+SegmentMatcher splits `d` at path separators and runs its element-position NFA. The active `u64` position set is then classified with two precomputed masks:
 
 ```
-s₀ ← run d through ThompsonDfa to a final state
-s₁ ← δ_D(s₀, Sep)
-exact   ← accepting[s₀]
-prefix  ← accepting[s₁] ∨ reach_to_accept[s₁]
+S ← run the segments of d
+exact  ← S intersects accepting positions
+prefix ← S intersects positions that can consume at least one descendant
 verdict ← combine(exact, prefix)
 ```
 
-`reach_to_accept` is the backward-BFS mask defined in §03 §6. The implicit `Sep` step is necessary because file-system directory paths typically arrive without trailing separator (`d` ≠ `d'` in the input the walker holds), but the matcher's `OptSegmentsSlash` and `SlashAnything` expect a `Sep` to enter their next segment.
+This is the production path. It answers the directory query without rebuilding a byte-level automaton or allocating per call.
 
 ### 2.3 Pike VM realization
 
@@ -147,15 +146,15 @@ prefix  ← (S₁ ∩ accepts_at_eof ≠ ∅) ∨ (S₁ ∩ reach_to_accept ≠ 
 verdict ← combine(exact, prefix)
 ```
 
-`reach_to_accept` is the bit vector computed eagerly inside `PikeVm::new` (§04 §4).
+`reach_to_accept` is the bit vector described in §04 §5.
 
 ### 2.4 The suffix prefilter is not used
 
-Unlike `is_match`, `match_dir` does not consult `LiteralFacts::accept` (§05). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. Both engines run the byte loop unfiltered for `match_dir`.
+Unlike `is_match`, `match_dir` does not consult `LiteralFacts::accept` (§05). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. Both exact engines run unfiltered for `match_dir`.
 
 ### 2.5 Negated patterns
 
-For multi-pattern matchers (§ `engine/glob.rs::compileMatcher` in the JS port), if any branch of `P` is negated, the verdict is forced conservative:
+For multi-pattern matchers (`matcher/glob.js::compileMatcher` in the JS port), if any branch of `P` is negated, the verdict is forced conservative:
 
 ```
 match_dir(P with negations, d) ∈ {Descend, DescendAndMatch}
@@ -182,7 +181,7 @@ The walker's responsibilities relative to this module are documented in `referen
 match_dir(P, d) = Pruned   ⇒   ∀ w. d' ++ w ∉ L(P)
 ```
 
-_Proof sketch._ `Pruned` is returned only when `exact = false ∧ prefix = false`. `exact = false` means `d' ∉ L(P)`. `prefix = false` means `accepting[s₁] = 0 ∧ reach_to_accept[s₁] = 0`, so no non-empty extension of `d'` reaches an accepting state. Together, no `d' ++ w` (with `w` empty or non-empty) is accepted. ∎
+_Proof sketch._ `Pruned` is returned only when `exact = false ∧ prefix = false`. `exact = false` excludes `d` itself. `prefix = false` means no active segment/NFA position can consume a separator and a non-empty descendant path to acceptance. Together, neither `d` nor any descendant is accepted. ∎
 
 This is the soundness property the walker requires: it may safely prune any subtree whose root receives `Pruned`.
 
@@ -241,10 +240,9 @@ For "components":
   child_rel = "src/components"
   isDirectory = true
   matcher.match_dir("src/components") = ?
-    DFA run:
-      state 1 ('s') → 2 → ('r') → ... → some state s
-      s_after_sep   → reach_to_accept = true (deeper paths can still match)
-      accepting[s]  = false
+    segment-position run:
+      exact = false
+      reach1 intersects the active positions (deeper paths can still match)
     verdict = Descend
   → enqueue frame { absolute: "/proj/src/components", relative: "src/components" }
 
@@ -264,9 +262,7 @@ For "Button.tsx":
   child_rel = "src/components/Button.tsx"
   isDirectory = false
   matcher.match("src/components/Button.tsx"):
-    DFA reaches state where last bytes are "tsx" but the pattern's
-    suffix is ".ts" → ends_with(".ts") fails on the prefilter (LiteralFacts.accept).
-    Actually: the suffix is ".ts" and the path is "...x".
+    suffix is ".ts" → ends_with(".ts") fails in LiteralFacts.accept.
     accept(path) returns false (suffix mismatch on last byte 'x' vs 's').
   → match = false; do not emit
 
@@ -282,13 +278,13 @@ For "run.ts":
   child_rel = "src/cli/run.ts"
   isDirectory = false
   facts.accept("src/cli/run.ts") → ends with ".ts" → true
-  matcher.match runs the DFA → reaches accept
+  matcher.match runs SegmentMatcher → reaches accept
   → emit "src/cli/run.ts"
 ```
 
 Final result: `["src/main.ts", "src/cli/run.ts"]`.
 
-The walker performed exactly 3 `readdir` calls (one per directory under `src/`). The competing naive walk would have done 4 + the lodash subtree (4000+ readdir calls). The savings come entirely from `static_prefixes` (skipping `/proj/tests` and `/proj/node_modules` upfront) and from the suffix prefilter inside `matcher.match` (rejecting `.tsx` files in `O(1)` per file instead of running the DFA).
+The walker performed exactly 3 `readdir` calls (one per directory under `src/`). The competing naive walk would have done 4 + the lodash subtree (4000+ readdir calls). The savings come entirely from `static_prefixes` (skipping `/proj/tests` and `/proj/node_modules` upfront) and from the suffix prefilter inside `matcher.match` (rejecting `.tsx` files in `O(1)` per file instead of running the full matcher).
 
 ### 5.5 With an ignore: `glob("src/**/*.ts", { ignore: ["**/*.test.ts"] })`
 
@@ -307,8 +303,8 @@ If `**/*.test.ts` were instead routed through `match_dir`, the walker could prun
 
 | Symbol                                                                              | File                                                                       |
 | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `compute_static_prefixes`                                                           | `engine/ops.rs`                                                            |
-| `ThompsonDfa::match_dir`                                                            | `engine/thompson_dfa.rs`                                                   |
+| `compute_static_prefixes`                                                           | `engine/ops/prefixes.rs`                                                   |
+| `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                    |
 | `PikeVm::match_dir` / `has_prefix_descent`                                          | `engine/pikevm.rs`                                                         |
 | `compute_reach_to_accept`                                                           | `engine/thompson.rs`                                                       |
 | `DirMatch`, `DirMatch::is_match`, `DirMatch::should_descend`, `DirMatch::is_pruned` | `dir_match.rs`                                                             |

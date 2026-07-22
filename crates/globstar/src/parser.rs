@@ -412,9 +412,9 @@ impl<'a> Parser<'a> {
         let index = self
             .brace_index
             .get_or_insert_with(|| BraceIndex::build(input));
-        index.closing(self.pos).is_none_or(|close| {
-            ctx.boundary_after(input.get(close + 1).copied())
-        })
+        index
+            .closing(self.pos)
+            .is_none_or(|close| ctx.boundary_after(input.get(close + 1).copied()))
     }
 
     fn parse_brace(

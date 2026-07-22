@@ -1,5 +1,5 @@
-// PikeVM — NFA simulator used by the matcher when the DFA path can't
-// fit in its state cap. Bitmask state representation backed by a
+// PikeVM — NFA simulator used when the segment matcher declines a pattern.
+// Bitmask state representation backed by a
 // per-call `Uint32Array` of `nWords = ceil(nStates / 32)` entries; one
 // 32-bit set-bit iteration per word. Static ε-closures are
 // pre-computed at construction so byte-stepping never needs to
@@ -26,8 +26,8 @@ import {
   T_DOT_GUARD,
   T_MATCH,
   T_NULL,
-} from "./thompson.js";
-import { compileNfaSoa } from "./nfa-soa.js";
+  compileNfaSoa,
+} from "./nfa-soa.js";
 import { isPathSep } from "../options.js";
 import { classMatches } from "../ast.js";
 import { DirMatch } from "../dir-match.js";

@@ -10,7 +10,7 @@
 //
 // Picks up the bulk of "wrong file extension" rejects on walker
 // workloads — `**/*.ts` against a `.js` file is a single suffix scan,
-// no NFA / DFA work.
+// no exact-engine work.
 //
 // Correctness invariant: `accept(path) === false` ⇒ no program variant
 // can match `path`. The filter must therefore never reject a path the

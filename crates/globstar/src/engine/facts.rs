@@ -15,13 +15,11 @@
 //! rejection layer in front of the matcher. Typical walker scenarios
 //! see 90%+ of candidate paths rejected by the suffix check alone
 //! (e.g. `src/**/*.ts` rejecting every `.js` file without running the
-//! NFA / DFA).
+//! exact engine).
 //!
 //! Prefix matching used to live here too, but it forced two scans of
-//! the same bytes (sep-aware in `accept` + byte-exact for the DFA's
-//! prefix-skip jump). It moved into the engine, which walks prefix
-//! bytes through `transitions` at the same speed as a separate
-//! byte-compare. Suffix is uniquely valuable because the engine is
+//! the same bytes. It moved into each engine's natural left-to-right
+//! execution path. Suffix is uniquely valuable because the engine is
 //! left-to-right and can't cheaply check a tail anchor without
 //! running the full match.
 //!
@@ -47,10 +45,9 @@ use crate::engine::ops::Op;
 /// Literal facts extracted from one [`OpProgram`]. See module docs.
 ///
 /// Only **suffix** facts are stored — prefix matching is left to the
-/// engines (DFA/NFA) which naturally walk the prefix bytes and reject
+/// engines, which naturally walk the prefix bytes and reject
 /// at the same speed as a separate byte-compare would. Carrying a
-/// prefix in facts forced two scans of the same bytes (one sep-aware
-/// for `accept`, one byte-exact for the DFA's prefix-skip jump). The
+/// prefix in facts forced two scans of the same bytes. The
 /// suffix is uniquely valuable here because the engines are
 /// left-to-right — they can't cheaply check a tail anchor without
 /// running the full match, so a separate ends-with check pre-rejects

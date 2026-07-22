@@ -1,8 +1,8 @@
 # 05 — Literal Suffix Prefilter
 
-The matcher composes a fast prefilter with the exact engine (`ThompsonDfa` or `PikeVm`). The prefilter rejects byte strings that cannot match the pattern by checking a guaranteed literal suffix; it is sound (no false negatives) and approximate (some false positives).
+The matcher composes a fast prefilter with the exact engine (`SegmentMatcher` or `PikeVm`). The prefilter rejects byte strings that cannot match the pattern by checking a guaranteed literal suffix; it is sound (no false negatives) and approximate (some false positives).
 
-Implementation: `impl/crates/globstar/src/engine/facts.rs`.
+Implementations: `crates/globstar/src/engine/facts.rs` and `packages/globstar/src/matcher/engine/facts.js`.
 
 ## 0. Pipeline
 
@@ -70,7 +70,7 @@ This handles common idioms like `**/*.{ts,tsx,js}` whose single longest common s
 
 ## 3. Why suffix and not prefix
 
-The exact engine is left-to-right. A prefix mismatch is detected on the first conflicting byte: the DFA transitions to `DEAD` and the byte loop exits. The cost is identical to a separate prefix-byte comparison.
+The exact engines are left-to-right. A prefix mismatch is detected at the first conflicting segment or byte, so a separate prefix prefilter would duplicate work.
 
 A suffix mismatch is not detected until the engine has consumed the full input, because the engine has no native notion of an end anchor. Adding an end-anchored test at the matcher entry rejects mismatched tails in `O(|suffix(P)|)` without entering the engine at all, which is the win on walker workloads dominated by paths that share a prefix with the pattern's literal head but differ at the extension.
 
@@ -128,7 +128,7 @@ LiteralFacts::accept(w) = 0   ⇒   w ∉ L(P).
 
 _Proof sketch._ Both extraction routines yield sets `S` such that every `w ∈ L(P)` satisfies `∃ s ∈ S. w ends with s` (with `S` a singleton in the suffix case). `accept(w)` returns `1` iff `w` ends with at least one element of `S` under the separator-aware comparison. If `accept(w) = 0`, then `w` ends with none of them, so `w ∉ L(P)`. ∎
 
-The corollary is that the matcher may safely short-circuit `is_match` to `false` whenever `accept(w) = 0`, and the corollary holds independently of whether the exact engine is the DFA or the Pike VM.
+The corollary is that the matcher may safely short-circuit `is_match` to `false` whenever `accept(w) = 0`, independently of whether the exact engine is SegmentMatcher or PikeVm.
 
 `accept` is **not** used by `match_dir`: a directory path in general does not yet end with the pattern's suffix (the pattern's literal tail occurs in the file segment, not the directory segment), so the prefilter would over-reject. `match_dir` therefore runs the engine without the prefilter.
 

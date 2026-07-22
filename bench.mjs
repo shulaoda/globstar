@@ -282,7 +282,6 @@ const rustSingle = {
     rowKey: (l) => `compile_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar-ssm (Rust)", "globstar_segment"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
     ],
@@ -292,7 +291,6 @@ const rustSingle = {
     rowKey: (l) => `match_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar-ssm (Rust)", "globstar_segment"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
       ["fast_glob (Rust)", "fast_glob"],
@@ -304,7 +302,6 @@ const rustSingle = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar-ssm (Rust)", "ssm"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
     ],
@@ -318,7 +315,6 @@ const jsSingle = {
     rowKey: (l) => `compile: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar-ssm (JS)", "globstar-ssm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -329,7 +325,6 @@ const jsSingle = {
     rowKey: (l) => `match: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar-ssm (JS)", "globstar-ssm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -340,7 +335,6 @@ const jsSingle = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar-ssm (JS)", "globstar-ssm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -355,7 +349,6 @@ const rustMulti = {
     rowKey: (l) => `compile_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar-ssm (Rust)", "globstar_segment"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_or"],
     ],
@@ -365,7 +358,6 @@ const rustMulti = {
     rowKey: (l) => `match_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar-ssm (Rust)", "globstar_segment"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_or"],
       ["fast_glob (Rust)", "fast_glob_or"],
@@ -377,7 +369,6 @@ const rustMulti = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (Rust)", "gs_union"],
-      ["globstar-ssm (Rust)", "ssm_union"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_per"],
     ],
@@ -391,7 +382,6 @@ const jsMulti = {
     rowKey: (l) => `compile: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar-ssm (JS)", "globstar-ssm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -402,7 +392,6 @@ const jsMulti = {
     rowKey: (l) => `match: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar-ssm (JS)", "globstar-ssm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -413,7 +402,6 @@ const jsMulti = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar-ssm (JS)", "globstar-ssm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],

@@ -32,7 +32,7 @@
 //! No `#[cold]` wrapper on the CI side: Tier 0 patterns rarely
 //! dominate hot paths (single `Glob::new(literal)` calls are
 //! uncommon; the realistic high-volume case is many literal entries
-//! merged via `Glob::union` into one DFA where heap savings, not
+//! merged via `Glob::union` into one segment matcher where heap savings, not
 //! micro-branch prediction, are the win).
 
 use crate::dir_match::DirMatch;
