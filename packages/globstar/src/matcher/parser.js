@@ -66,7 +66,7 @@ export function parse(input) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
   }
 
-  const state = { input: bytes, pos: 0, brace_depth: 0, braceIndex: null };
+  const state = { input: bytes, pos: 0, brace_depth: 0 };
 
   // Leading `!` flips the result on each. Parity decides final negation.
   let negationCount = 0;
@@ -261,36 +261,8 @@ function parseBraceInto(state, nodes, prevBoundary, nextBoundary) {
   }
 }
 
-// Build matching-brace offsets once, lazily. Pairs use a flat sorted array
-// `[open0, close0, open1, close1, ...]` to avoid one object per brace.
-function buildBraceIndex(input) {
-  const stack = [];
-  const pairs = [];
-  let i = 0;
-  while (i < input.length) {
-    const b = input[i];
-    if (b === BACKSLASH) {
-      i = Math.min(i + 2, input.length);
-    } else if (b === LBRACK) {
-      i = skipClassCandidate(input, i + 1);
-    } else if (b === LBRACE) {
-      stack.push(i++);
-    } else if (b === RBRACE) {
-      if (stack.length > 0) pairs.push([stack.pop(), i]);
-      i++;
-    } else {
-      i++;
-    }
-  }
-  pairs.sort((a, b) => a[0] - b[0]);
-  const flat = new Int32Array(pairs.length * 2);
-  for (let j = 0; j < pairs.length; j++) {
-    flat[j * 2] = pairs[j][0];
-    flat[j * 2 + 1] = pairs[j][1];
-  }
-  return flat;
-}
-
+// Structural class skip: `[!`/`[^`, POSIX first-`]` literal, `\` escapes;
+// stops after `]` or at `/` (which the real parser rejects later anyway).
 function skipClassCandidate(input, start) {
   let i = start;
   if (input[i] === BANG || input[i] === CARET) i++;
@@ -302,23 +274,32 @@ function skipClassCandidate(input, start) {
   return Math.min(i + 1, input.length);
 }
 
-function indexedBraceClose(index, open) {
-  let lo = 0;
-  let hi = index.length >>> 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    const candidate = index[mid * 2];
-    if (candidate < open) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo < index.length >>> 1 && index[lo * 2] === open ? index[lo * 2 + 1] : -1;
-}
-
+// Scan ahead from the current `{` to its matching `}` (honoring
+// escapes, class scopes, and nesting) and report whether the byte
+// after it is a boundary in the expanded form. Read-only — malformed
+// tails error out in the real parse, so their value is a don't-care.
 function braceNextBoundary(state, ctx) {
   const { input } = state;
-  state.braceIndex ??= buildBraceIndex(input);
-  const close = indexedBraceClose(state.braceIndex, state.pos);
-  return close < 0 ? true : boundaryAfter(input[close + 1], ctx);
+  let i = state.pos + 1;
+  let depth = 0;
+  while (i < input.length) {
+    const b = input[i];
+    if (b === BACKSLASH) {
+      i = Math.min(i + 2, input.length);
+    } else if (b === LBRACK) {
+      i = skipClassCandidate(input, i + 1);
+    } else if (b === LBRACE) {
+      depth++;
+      i++;
+    } else if (b === RBRACE) {
+      if (depth === 0) return boundaryAfter(input[i + 1], ctx);
+      depth--;
+      i++;
+    } else {
+      i++;
+    }
+  }
+  return true; // unterminated — errors in the real parse
 }
 
 function parseBrace(state, prevBoundary, nextBoundary) {

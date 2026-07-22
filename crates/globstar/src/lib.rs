@@ -11,9 +11,10 @@
 //! | 1/2  | Segment-expressible wildcards and braces   | `Segment` |
 //! | 1/2  | Segment budget/shape fallback (rare)       | `PikeVm`  |
 //!
-//! Every tier implements both `is_match` and `match_dir` natively via
-//! a precomputed reach-to-accept set — no fallback to recursive
-//! backtracking. ReDoS is eliminated by construction (ADR-007).
+//! Every tier implements both `is_match` and `match_dir` natively
+//! without recursive backtracking — literal byte-compare, per-segment
+//! anchored/NFA stepping, or the Pike VM's reach-to-accept bitset —
+//! so ReDoS is eliminated by construction (ADR-007).
 
 #![forbid(unsafe_code)]
 
@@ -39,7 +40,7 @@ pub use options::CompileOptions;
 
 use ast::{Ast, Node};
 use engine::literal::LiteralMatcher;
-use engine::ops::lower_owned;
+use engine::ops::lower;
 use engine::pikevm::PikeVm;
 use engine::segment::SegmentMatcher;
 use factor::factor_branches;
@@ -180,7 +181,7 @@ impl Glob {
                 Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive))
             }
             Tier::SimpleWildcard | Tier::Globstar => {
-                let program = lower_owned(ast.body, opts.case_insensitive);
+                let program = lower(&ast.body, opts.case_insensitive);
                 match SegmentMatcher::build(program, opts.dot) {
                     Ok(segment) => Engine::Segment(segment),
                     Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),

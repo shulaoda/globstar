@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use super::ir::Op;
 
-pub fn extract_prefix(ops: &[Op]) -> Vec<u8> {
+fn extract_prefix(ops: &[Op]) -> Vec<u8> {
     let mut acc = Vec::new();
     let mut last_boundary = 0usize;
     let mut fully_literal = true;

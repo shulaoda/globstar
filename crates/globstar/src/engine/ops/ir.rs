@@ -51,20 +51,8 @@ impl OpProgram {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.ops.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.ops.is_empty()
-    }
-
     pub fn ops(&self) -> &[Op] {
         &self.ops
-    }
-
-    pub fn facts(&self) -> &LiteralFacts {
-        &self.facts
     }
 
     pub fn case_insensitive(&self) -> bool {

@@ -26,7 +26,6 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
         input,
         pos: 0,
         brace_depth: 0,
-        brace_index: None,
     };
 
     // Leading `!` are negation markers. Each one flips the result;
@@ -111,51 +110,10 @@ struct Parser<'a> {
     input: &'a [u8],
     pos: usize,
     brace_depth: usize,
-    brace_index: Option<BraceIndex>,
 }
 
-/// Matching brace offsets outside escapes and character classes. Built only
-/// when a syntactic `{` is encountered, so brace-free patterns pay nothing.
-struct BraceIndex {
-    pairs: Vec<(usize, usize)>,
-}
-
-impl BraceIndex {
-    fn build(input: &[u8]) -> Self {
-        let mut stack = Vec::new();
-        let mut pairs = Vec::new();
-        let mut i = 0usize;
-        while i < input.len() {
-            match input[i] {
-                b'\\' => i = (i + 2).min(input.len()),
-                b'[' => i = skip_class_candidate(input, i + 1),
-                b'{' => {
-                    stack.push(i);
-                    i += 1;
-                }
-                b'}' => {
-                    if let Some(open) = stack.pop() {
-                        pairs.push((open, i));
-                    }
-                    i += 1;
-                }
-                _ => i += 1,
-            }
-        }
-        pairs.sort_unstable_by_key(|&(open, _)| open);
-        Self { pairs }
-    }
-
-    fn closing(&self, open: usize) -> Option<usize> {
-        self.pairs
-            .binary_search_by_key(&open, |&(candidate, _)| candidate)
-            .ok()
-            .map(|index| self.pairs[index].1)
-    }
-}
-
-/// Structural class skip for brace indexing. Syntax errors remain the real
-/// parser's responsibility; this only ignores braces inside valid classes.
+/// Structural class skip for the brace lookahead. Syntax errors remain the
+/// real parser's responsibility; this only ignores braces inside classes.
 fn skip_class_candidate(input: &[u8], mut i: usize) -> usize {
     if matches!(input.get(i), Some(b'!') | Some(b'^')) {
         i += 1;
@@ -404,17 +362,36 @@ impl<'a> Parser<'a> {
         Ok(resolved)
     }
 
-    /// Find the byte after this brace using the lazily-built structural
-    /// index. Malformed input is still diagnosed by `parse_brace`.
-    fn brace_next_boundary(&mut self, ctx: SequenceContext) -> bool {
+    /// Scan ahead from the current `{` to its matching `}` (honoring
+    /// escapes, class scopes, and nesting) and report whether the
+    /// byte after it is a boundary in the expanded form. Read-only —
+    /// parse errors surface later through the real parse, so any
+    /// malformed tail just yields a don't-care value.
+    fn brace_next_boundary(&self, ctx: SequenceContext) -> bool {
         debug_assert_eq!(self.input[self.pos], b'{');
         let input = self.input;
-        let index = self
-            .brace_index
-            .get_or_insert_with(|| BraceIndex::build(input));
-        index
-            .closing(self.pos)
-            .is_none_or(|close| ctx.boundary_after(input.get(close + 1).copied()))
+        let mut i = self.pos + 1;
+        let mut depth = 0usize;
+        while i < input.len() {
+            match input[i] {
+                b'\\' => i = (i + 2).min(input.len()),
+                b'[' => i = skip_class_candidate(input, i + 1),
+                b'{' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'}' => {
+                    if depth == 0 {
+                        return ctx.boundary_after(input.get(i + 1).copied());
+                    }
+                    depth -= 1;
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        // Unterminated brace — the real parse errors out; don't-care.
+        true
     }
 
     fn parse_brace(

@@ -17,4 +17,4 @@ export {
   OP_ALTERNATION,
 } from "./ops/ir.js";
 export { lower } from "./ops/lower.js";
-export { computeStaticPrefixes, dedupePrefixes } from "./ops/prefixes.js";
+export { computeStaticPrefixes } from "./ops/prefixes.js";

@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 use globstar::ast::{ClassItem, Node};
-use globstar::engine::ops::{Op, lower, lower_owned};
+use globstar::engine::ops::{Op, lower};
 use globstar::parser::parse;
 
 const CASES: &str = include_str!("../../../fixtures/compiler-stages.tsv");
@@ -129,10 +129,5 @@ fn parser_and_lowering_match_shared_golden_cases() {
         let mut actual_ops = String::new();
         ops_dump(program.ops(), &mut actual_ops);
         assert_eq!(actual_ops, expected_ops, "ops for {pattern:?}");
-
-        let owned = lower_owned(parsed.body, false);
-        let mut owned_ops = String::new();
-        ops_dump(owned.ops(), &mut owned_ops);
-        assert_eq!(owned_ops, expected_ops, "owned ops for {pattern:?}");
     }
 }

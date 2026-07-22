@@ -9,5 +9,5 @@ mod normalize;
 mod prefixes;
 
 pub use ir::{Op, OpProgram};
-pub use lower::{lower, lower_owned};
-pub use prefixes::{compute_static_prefixes, extract_prefix};
+pub use lower::lower;
+pub use prefixes::compute_static_prefixes;
