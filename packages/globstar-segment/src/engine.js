@@ -1,5 +1,6 @@
-// SSM — segment-structured matcher. JS port of the Rust
-// `engine/segment.rs`; see `references/decisions/segment-engine-design.md`.
+// SSM — segment-structured matcher. JS port of the Rust crate
+// `globstar-segment` (crates/globstar-segment/src/engine/); see
+// `references/decisions/segment-engine-design.md`.
 //
 // One algorithm, two execution modes:
 //
@@ -15,9 +16,11 @@
 // - **Byte mode**: `toBytes(input)` once, same algorithm over the
 //   `Uint8Array`. Also used for `Uint8Array` inputs.
 //
-// Compile is a linear scan over the lowered ops — no NFA, no subset
-// construction. Patterns the segment model cannot express return
-// `null` from `build` and the caller falls back to the PikeVM.
+// Compile is a linear scan over the lowered ops — no subset
+// construction, no hash maps. Patterns the segment model cannot
+// express (globstars glued mid-segment via braces, escaped
+// separators inside literals, fork/element/state budget overflows)
+// return `null` from `build` and the caller falls back to the PikeVm.
 
 import {
   OP_LIT,
@@ -34,7 +37,7 @@ import {
   OP_ALTERNATION,
   computeStaticPrefixes,
 } from "../../globstar/src/matcher/engine/ops.js";
-import { CI_BYTE, classMatches } from "../../globstar/src/matcher/ast.js";
+import { CI_BYTE, classMatches, klass, classItemByte } from "../../globstar/src/matcher/ast.js";
 import { isPathSep, eqByteCi, asciiCaseAlt } from "../../globstar/src/matcher/options.js";
 import { toBytes } from "../../globstar/src/matcher/utf8.js";
 import { DirMatch } from "../../globstar/src/matcher/dir-match.js";
@@ -50,7 +53,7 @@ const MAX_SEG_NFA_STATES = 32;
 const EL_LIT = 0;
 const EL_WILD = 1;
 const EL_G0 = 2; // absorb >= 0 segments
-const EL_G0S = 3; // absorb >= 0, first absorbed segment nonempty
+const EL_G0_STRICT = 3; // absorb >= 0, first absorbed segment nonempty
 const EL_G1 = 4; // absorb >= 1 segment
 
 // Wild kinds.
@@ -92,7 +95,7 @@ function latin1(bytes) {
 // Engine
 // ---------------------------------------------------------------------------
 
-export class SegmentEngine {
+export class SegmentMatcher {
   constructor(seqs, program, byteOnly, dot) {
     this.seqs = seqs;
     this.facts = program.facts;
@@ -101,10 +104,14 @@ export class SegmentEngine {
     this.byteOnly = byteOnly;
     // Consumes JS strings natively — `makeMatcher` skips `toBytes`.
     this.acceptsStrings = true;
-    // Walker-only; computed on first use so matcher-only callers
-    // don't pay for it at compile.
-    this._ops = program.ops;
-    this.cachedPrefixes = null;
+    // Eager on both runtimes: a cheap leading-literal scan, and it
+    // lets the matcher drop every reference to the op tree (lazy
+    // computation would retain `program.ops` for the matcher's whole
+    // lifetime).
+    this.prefixes = computeStaticPrefixes(program.ops);
+    // On posix without case folding, sep-aware suffix compare is
+    // plain equality — `String.prototype.endsWith` applies.
+    this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
     // String forms of the facts prefilter so string mode never
     // touches bytes.
     const f = program.facts;
@@ -117,27 +124,20 @@ export class SegmentEngine {
   static build(program, dot) {
     const opSeqs = expandForks(program.ops);
     if (opSeqs === null) return null;
-    let byteOnly = false;
-    for (const ops of opSeqs) {
-      if (opsHaveNonAscii(ops)) {
-        byteOnly = true;
-        break;
-      }
-    }
+    // Fork expansion introduces no new bytes — one scan of the
+    // original ops decides the mode.
+    const byteOnly = opsHaveNonAscii(program.ops);
     const seqs = [];
     for (const ops of opSeqs) {
       const seq = segmentize(ops, dot, !!program.caseInsensitive);
       if (seq === null) return null;
       seqs.push(seq);
     }
-    return new SegmentEngine(seqs, program, byteOnly, dot);
+    return new SegmentMatcher(seqs, program, byteOnly, dot);
   }
 
   staticPrefixes() {
-    if (this.cachedPrefixes === null) {
-      this.cachedPrefixes = computeStaticPrefixes(this._ops);
-    }
-    return this.cachedPrefixes;
+    return this.prefixes;
   }
 
   isMatch(input) {
@@ -167,24 +167,13 @@ export class SegmentEngine {
   _isMatchStr(str) {
     if (!this._factsAcceptStr(str)) return NO;
     const seqs = this.seqs;
-    const multi = seqs.length > 1;
+    // Fork-local suffix prefilter (multi-fork only; skipped under ci
+    // — it is an optimization, the full match re-checks everything).
+    const quick = seqs.length > 1 && !this.ci;
     let bailed = false;
     for (let i = 0; i < seqs.length; i++) {
       const seq = seqs[i];
-      if (multi && seq.quickSuffixStr.length > 0) {
-        // Fork-local suffix reject, skipping the tail scan-back.
-        if (this.ci) {
-          if (
-            str.length < seq.quickSuffixStr.length ||
-            affixEqStr(seq.quickSuffixStr, str, str.length - seq.quickSuffixStr.length, true) ===
-              NO
-          ) {
-            continue;
-          }
-        } else if (!str.endsWith(seq.quickSuffixStr)) {
-          continue;
-        }
-      }
+      if (quick && seq.quickSuffixStr.length > 0 && !str.endsWith(seq.quickSuffixStr)) continue;
       const r = seqMatchesStr(seq, str, this.dot, this.ci);
       if (r === YES) return YES;
       if (r === BAIL) bailed = true;
@@ -193,19 +182,22 @@ export class SegmentEngine {
   }
 
   _factsAcceptStr(str) {
+    const plain = this.factsPlain;
     const suf = this.factsSuffixStr;
-    if (suf !== null) return endsWithSepAwareStr(str, suf, this.ci);
+    if (suf !== null) {
+      return plain ? str.endsWith(suf) : endsWithSepAwareStr(str, suf, this.ci);
+    }
     const set = this.factsSuffixSetStr;
     if (set !== null) {
       for (let i = 0; i < set.length; i++) {
-        if (endsWithSepAwareStr(str, set[i], this.ci)) return true;
+        if (plain ? str.endsWith(set[i]) : endsWithSepAwareStr(str, set[i], this.ci)) return true;
       }
       return false;
     }
     return true;
   }
 
-  /// -1 ⇒ bail to byte mode.
+  // -1 ⇒ bail to byte mode.
   _matchDirStr(str) {
     let exact = false;
     let prefix = false;
@@ -225,14 +217,16 @@ export class SegmentEngine {
   _isMatchBytes(bytes) {
     if (!this.facts.accept(bytes)) return false;
     const seqs = this.seqs;
-    const multi = seqs.length > 1;
+    const quick = seqs.length > 1 && !this.ci;
     for (let i = 0; i < seqs.length; i++) {
       const seq = seqs[i];
       const qs = seq.quickSuffixBytes;
-      if (multi && qs.length > 0) {
-        if (bytes.length < qs.length || !affixEqBytes(qs, bytes, bytes.length - qs.length, this.ci)) {
-          continue;
-        }
+      if (
+        quick &&
+        qs.length > 0 &&
+        (bytes.length < qs.length || !affixEqBytes(qs, bytes, bytes.length - qs.length, false))
+      ) {
+        continue;
       }
       if (seqMatchesBytes(seq, bytes, this.dot, this.ci)) return true;
     }
@@ -254,7 +248,7 @@ export class SegmentEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Compilation — fork expansion + segmentizer (ports segment.rs)
+// Compilation — fork expansion + segmentizer (ports engine/compile.rs)
 // ---------------------------------------------------------------------------
 
 function opCrossesSegment(op) {
@@ -435,7 +429,7 @@ function segmentize(ops, dot, ci) {
         if (state === B_FRESH) strictEntry = !leadingSeps && elems.length > 0;
         else if (state === B_STRICT) strictEntry = true;
         else strictEntry = false; // B_LENIENT
-        elems.push(makeElem(strictEntry ? EL_G0S : EL_G0, null, null));
+        elems.push(makeElem(strictEntry ? EL_G0_STRICT : EL_G0, null, null));
         state = B_FRESH;
         leadingSeps = false;
         break;
@@ -605,7 +599,7 @@ function suffixProduct(ops, from) {
 }
 
 // ---------------------------------------------------------------------------
-// Element-NFA metadata (ports `finish` in segment.rs)
+// Element-NFA metadata (ports `finish` in engine/compile.rs)
 // ---------------------------------------------------------------------------
 
 function finishSeq(elems) {
@@ -614,20 +608,31 @@ function finishSeq(elems) {
   let n = 0;
   for (const e of elems) {
     stateOf.push(n);
-    n += e.kind === EL_G0S || e.kind === EL_G1 ? 2 : 1;
+    n += e.kind === EL_G0_STRICT || e.kind === EL_G1 ? 2 : 1;
     if (n >= MAX_SEQ_STATES) return null;
   }
   const accept = n;
   n += 1;
 
-  const eps = new Int32Array(n);
+  // Inverse map: owning element per state (accept slot unused).
+  // Plain array — a tiny typed array costs more in wrapper overhead
+  // than it saves in slot width.
+  const elemOf = new Array(n).fill(0);
+  for (let i = 0; i < m; i++) {
+    const end = i + 1 < m ? stateOf[i + 1] : accept;
+    for (let s = stateOf[i]; s < end; s++) elemOf[s] = i;
+  }
+
+  // Plain exact-length array of SMI masks — cheaper to retain than a
+  // small typed array (no separate backing-buffer object).
+  const eps = new Array(n);
   for (let s = 0; s < n; s++) eps[s] = 1 << s;
   for (let i = m - 1; i >= 0; i--) {
     const s = stateOf[i];
     const nextEntry = i + 1 < m ? stateOf[i + 1] : accept;
     const k = elems[i].kind;
     if (k === EL_G0) eps[s] |= eps[nextEntry];
-    else if (k === EL_G0S) {
+    else if (k === EL_G0_STRICT) {
       eps[s] |= eps[nextEntry];
       eps[s + 1] |= eps[nextEntry];
     } else if (k === EL_G1) {
@@ -643,11 +648,11 @@ function finishSeq(elems) {
   for (let i = 0; i < m; i++) {
     const s = stateOf[i];
     const k = elems[i].kind;
-    const isG = k === EL_G0 || k === EL_G0S || k === EL_G1;
+    const isG = k === EL_G0 || k === EL_G0_STRICT || k === EL_G1;
     const can = isG ? satFrom[i + 1] : satFrom[i];
     if (can) {
       reach1 |= 1 << s;
-      if (k === EL_G0S || k === EL_G1) reach1 |= 1 << (s + 1);
+      if (k === EL_G0_STRICT || k === EL_G1) reach1 |= 1 << (s + 1);
     }
   }
 
@@ -655,12 +660,32 @@ function finishSeq(elems) {
   let singleG = -1;
   for (let i = 0; i < m; i++) {
     const k = elems[i].kind;
-    if (k === EL_G0 || k === EL_G0S || k === EL_G1) {
+    if (k === EL_G0 || k === EL_G0_STRICT || k === EL_G1) {
       gCount++;
       if (singleG === -1) singleG = i;
     }
   }
   if (gCount !== 1) singleG = -1;
+
+  // Pre-join all-literal heads for the single-globstar fast path
+  // (mirrors Rust `finish`): "src/**/…" heads become one prefix
+  // compare instead of a segment iteration. String form only — byte
+  // mode is the rare path and keeps the per-segment loop.
+  let joinedHeadStr = null;
+  if (gCount === 1 && singleG > 0) {
+    let allLit = true;
+    for (let i = 0; i < singleG; i++) {
+      if (elems[i].kind !== EL_LIT) {
+        allLit = false;
+        break;
+      }
+    }
+    if (allLit) {
+      let h = "";
+      for (let i = 0; i < singleG; i++) h += elems[i].litStr + "/";
+      joinedHeadStr = h;
+    }
+  }
 
   // Per-fork quick-reject suffix from the final element (only
   // consulted by multi-fork matchers).
@@ -676,11 +701,13 @@ function finishSeq(elems) {
     singleG,
     gCount,
     stateOf,
+    elemOf,
     numStates: n,
     eps,
     reach1,
     quickSuffixBytes: quickBytes,
     quickSuffixStr: latin1(quickBytes),
+    joinedHeadStr,
   };
 }
 
@@ -699,7 +726,7 @@ function acceptBit(seq) {
 // ---------------------------------------------------------------------------
 
 function seqMatchesStr(seq, str, dot, ci) {
-  if (seq.gCount === 0) return matchFixedStr(seq, str, dot, ci);
+  if (seq.gCount === 0) return matchFixedStr(seq, str, ci);
   if (seq.gCount === 1) return matchSingleGStr(seq, str, dot, ci);
   const active = nfaRunStr(seq, str, dot, ci);
   if (active === -1) return BAIL;
@@ -718,7 +745,7 @@ function nextSepStr(str, from) {
 
 const IS_WINDOWS_SEP = isPathSep(0x5c);
 
-function matchFixedStr(seq, str, dot, ci) {
+function matchFixedStr(seq, str, ci) {
   const elems = seq.elems;
   const m = elems.length;
   let pos = 0;
@@ -731,7 +758,7 @@ function matchFixedStr(seq, str, dot, ci) {
     } else if (!last) {
       return NO; // more segments than elements
     }
-    const r = elemConsumesStr(elems[i], str, pos, end, dot, ci);
+    const r = elemConsumesStr(elems[i], str, pos, end, ci);
     if (r !== YES) return r;
     pos = end + 1;
   }
@@ -750,7 +777,7 @@ function matchSingleGStr(seq, str, dot, ci) {
   for (let j = tailLen - 1; j >= 0; j--) {
     let s = lastSepBeforeStr(str, tailEnd);
     s = s === -1 ? 0 : s + 1;
-    const r = elemConsumesStr(elems[g + 1 + j], str, s, tailEnd, dot, ci);
+    const r = elemConsumesStr(elems[g + 1 + j], str, s, tailEnd, ci);
     if (r !== YES) return r;
     if (j > 0) {
       if (s === 0) return NO;
@@ -759,21 +786,40 @@ function matchSingleGStr(seq, str, dot, ci) {
     ts = s;
   }
 
-  // Head, left-to-right.
-  let pos = 0;
+  // Head: all-literal heads ("src/**/…") compare as one pre-joined
+  // sep-aware prefix (mirrors Rust `match_single_g`).
+  let midStart;
   let headExhausted = false;
-  for (let i = 0; i < g; i++) {
-    if (headExhausted) return NO;
-    let end = nextSepStr(str, pos);
-    if (end === -1) {
-      end = str.length;
-      headExhausted = true;
+  const jh = seq.joinedHeadStr;
+  if (jh !== null) {
+    // The joined head includes the separator after each head
+    // segment; a shorter path can never match.
+    if (str.length < jh.length) return NO;
+    if (!ci && !IS_WINDOWS_SEP) {
+      if (!str.startsWith(jh)) return NO;
+    } else {
+      for (let i = 0; i < jh.length; i++) {
+        const hb = jh.charCodeAt(i);
+        const pb = str.charCodeAt(i);
+        if (hb === 0x2f ? !isPathSep(pb) : ci ? !eqByteCi(hb, pb) : hb !== pb) return NO;
+      }
     }
-    const r = elemConsumesStr(elems[i], str, pos, end, dot, ci);
-    if (r !== YES) return r;
-    pos = end + 1;
+    midStart = jh.length;
+  } else {
+    let pos = 0;
+    for (let i = 0; i < g; i++) {
+      if (headExhausted) return NO;
+      let end = nextSepStr(str, pos);
+      if (end === -1) {
+        end = str.length;
+        headExhausted = true;
+      }
+      const r = elemConsumesStr(elems[i], str, pos, end, ci);
+      if (r !== YES) return r;
+      pos = end + 1;
+    }
+    midStart = pos;
   }
-  const midStart = pos;
 
   let midExists;
   let midEnd;
@@ -789,7 +835,7 @@ function matchSingleGStr(seq, str, dot, ci) {
   const gk = elems[g].kind;
   if (gk === EL_G1) {
     if (!midExists) return NO;
-  } else if (gk === EL_G0S) {
+  } else if (gk === EL_G0_STRICT) {
     if (midExists && (midStart >= str.length || isPathSep(str.charCodeAt(midStart)))) {
       return NO;
     }
@@ -846,9 +892,7 @@ function nfaStepStr(seq, active, str, s0, e0, dot, ci) {
     const s = ctz32(bits);
     bits &= bits - 1;
     if (s === seq.numStates - 1) continue; // accept
-    // Element owning state s (stateOf is ascending & tiny).
-    let i = m - 1;
-    while (stateOf[i] > s) i--;
+    const i = seq.elemOf[s];
     const entry = stateOf[i];
     const nextEntry = i + 1 < m ? stateOf[i + 1] : seq.numStates - 1;
     const e = elems[i];
@@ -859,7 +903,7 @@ function nfaStepStr(seq, active, str, s0, e0, dot, ci) {
         break;
       }
       case EL_WILD: {
-        const r = wildConsumesStr(e.wild, str, s0, e0, dot, ci);
+        const r = wildConsumesStr(e.wild, str, s0, e0, ci);
         if (r === BAIL) return -1;
         if (r === YES) next |= eps[nextEntry];
         break;
@@ -868,7 +912,7 @@ function nfaStepStr(seq, active, str, s0, e0, dot, ci) {
         if (absorbOk) next |= eps[entry];
         break;
       }
-      case EL_G0S: {
+      case EL_G0_STRICT: {
         if (absorbOk && !(s === entry && segEmpty)) next |= eps[entry + 1];
         break;
       }
@@ -881,9 +925,9 @@ function nfaStepStr(seq, active, str, s0, e0, dot, ci) {
   return next;
 }
 
-function elemConsumesStr(e, str, s, t, dot, ci) {
+function elemConsumesStr(e, str, s, t, ci) {
   if (e.kind === EL_LIT) return litEqStr(e.litStr, str, s, t, ci);
-  if (e.kind === EL_WILD) return wildConsumesStr(e.wild, str, s, t, dot, ci);
+  if (e.kind === EL_WILD) return wildConsumesStr(e.wild, str, s, t, ci);
   return NO;
 }
 
@@ -911,7 +955,7 @@ function segHasNonAsciiStr(str, s, t) {
   return false;
 }
 
-function wildConsumesStr(w, str, s, t, dot, ci) {
+function wildConsumesStr(w, str, s, t, ci) {
   if (w.dotProtect && t > s && str.charCodeAt(s) === 0x2e) return NO;
   const len = t - s;
   switch (w.kind) {
@@ -974,7 +1018,7 @@ function endsWithSepAwareStr(str, suffix, ci) {
 // ---------------------------------------------------------------------------
 
 function seqMatchesBytes(seq, bytes, dot, ci) {
-  if (seq.gCount === 0) return matchFixedBytes(seq, bytes, dot, ci);
+  if (seq.gCount === 0) return matchFixedBytes(seq, bytes, ci);
   if (seq.gCount === 1) return matchSingleGBytes(seq, bytes, dot, ci);
   return (nfaRunBytes(seq, bytes, dot, ci) & acceptBit(seq)) !== 0;
 }
@@ -986,7 +1030,7 @@ function nextSepBytes(bytes, from) {
   return -1;
 }
 
-function matchFixedBytes(seq, bytes, dot, ci) {
+function matchFixedBytes(seq, bytes, ci) {
   const elems = seq.elems;
   const m = elems.length;
   let pos = 0;
@@ -999,7 +1043,7 @@ function matchFixedBytes(seq, bytes, dot, ci) {
     } else if (!last) {
       return false;
     }
-    if (!elemConsumesBytes(elems[i], bytes, pos, end, dot, ci)) return false;
+    if (!elemConsumesBytes(elems[i], bytes, pos, end, ci)) return false;
     pos = end + 1;
   }
   return true;
@@ -1016,7 +1060,7 @@ function matchSingleGBytes(seq, bytes, dot, ci) {
   for (let j = tailLen - 1; j >= 0; j--) {
     let s = tailEnd;
     while (s > 0 && !isPathSep(bytes[s - 1])) s--;
-    if (!elemConsumesBytes(elems[g + 1 + j], bytes, s, tailEnd, dot, ci)) return false;
+    if (!elemConsumesBytes(elems[g + 1 + j], bytes, s, tailEnd, ci)) return false;
     if (j > 0) {
       if (s === 0) return false;
       tailEnd = s - 1;
@@ -1033,7 +1077,7 @@ function matchSingleGBytes(seq, bytes, dot, ci) {
       end = bytes.length;
       headExhausted = true;
     }
-    if (!elemConsumesBytes(elems[i], bytes, pos, end, dot, ci)) return false;
+    if (!elemConsumesBytes(elems[i], bytes, pos, end, ci)) return false;
     pos = end + 1;
   }
   const midStart = pos;
@@ -1052,7 +1096,7 @@ function matchSingleGBytes(seq, bytes, dot, ci) {
   const gk = elems[g].kind;
   if (gk === EL_G1) {
     if (!midExists) return false;
-  } else if (gk === EL_G0S) {
+  } else if (gk === EL_G0_STRICT) {
     if (midExists && (midStart >= bytes.length || isPathSep(bytes[midStart]))) {
       return false;
     }
@@ -1098,8 +1142,7 @@ function nfaStepBytes(seq, active, bytes, s0, e0, dot, ci) {
     const s = ctz32(bits);
     bits &= bits - 1;
     if (s === seq.numStates - 1) continue;
-    let i = m - 1;
-    while (stateOf[i] > s) i--;
+    const i = seq.elemOf[s];
     const entry = stateOf[i];
     const nextEntry = i + 1 < m ? stateOf[i + 1] : seq.numStates - 1;
     const e = elems[i];
@@ -1109,14 +1152,14 @@ function nfaStepBytes(seq, active, bytes, s0, e0, dot, ci) {
         break;
       }
       case EL_WILD: {
-        if (wildConsumesBytes(e.wild, bytes, s0, e0, dot, ci)) next |= eps[nextEntry];
+        if (wildConsumesBytes(e.wild, bytes, s0, e0, ci)) next |= eps[nextEntry];
         break;
       }
       case EL_G0: {
         if (absorbOk) next |= eps[entry];
         break;
       }
-      case EL_G0S: {
+      case EL_G0_STRICT: {
         if (absorbOk && !(s === entry && segEmpty)) next |= eps[entry + 1];
         break;
       }
@@ -1129,9 +1172,9 @@ function nfaStepBytes(seq, active, bytes, s0, e0, dot, ci) {
   return next;
 }
 
-function elemConsumesBytes(e, bytes, s, t, dot, ci) {
+function elemConsumesBytes(e, bytes, s, t, ci) {
   if (e.kind === EL_LIT) return litEqBytes(e.litBytes, bytes, s, t, ci);
-  if (e.kind === EL_WILD) return wildConsumesBytes(e.wild, bytes, s, t, dot, ci);
+  if (e.kind === EL_WILD) return wildConsumesBytes(e.wild, bytes, s, t, ci);
   return false;
 }
 
@@ -1154,7 +1197,7 @@ function affixEqBytes(part, bytes, at, ci) {
   return true;
 }
 
-function wildConsumesBytes(w, bytes, s, t, dot, ci) {
+function wildConsumesBytes(w, bytes, s, t, ci) {
   if (w.dotProtect && t > s && bytes[s] === 0x2e) return false;
   const len = t - s;
   switch (w.kind) {
@@ -1188,7 +1231,7 @@ function wildConsumesBytes(w, bytes, s, t, dot, ci) {
 }
 
 // ---------------------------------------------------------------------------
-// In-segment mini NFA (Generic wilds) — ports SegNfa in segment.rs
+// In-segment mini NFA (Generic wilds) — ports engine/seg_nfa.rs
 // ---------------------------------------------------------------------------
 
 const S_BYTE = 0;
@@ -1219,7 +1262,7 @@ class SegNfa {
     for (let s = 0; s < n; s++) memoClosure(kinds, nexts, splitBs, closures, s);
     this.closures = closures;
     this.init = closures[entry];
-    this.initDotBlocked = closureOf(kinds, nexts, splitBs, entry, false);
+    this.initDotBlocked = closureOfDotBlocked(kinds, nexts, splitBs, entry);
     this.acceptMask = 1 << (n - 1);
 
     // wildLed: no entry-closure state can consume `.` as a literal or
@@ -1247,7 +1290,7 @@ class SegNfa {
     }
     this.needsAsciiSeg = needs;
 
-    this.satisfiable = computeSatisfiable(this, entry);
+    this.satisfiable = computeSatisfiable(this);
   }
 
   static compile(ops, dot, ci) {
@@ -1257,6 +1300,9 @@ class SegNfa {
     const accept = b.alloc(S_MATCH, 0, UNSET, 0);
     if (accept === -1) return null;
     for (const t of b.tails) b.patch(t, accept);
+    // Builder arrays stay plain packed-SMI: at ≤ 32 states an exact
+    // typed copy costs compile time and its wrapper overhead cancels
+    // the narrower slots.
     return new SegNfa(b.kinds, b.byteVals, b.nexts, b.dps, b.splitBs, b.clsRefs, entry, dot);
   }
 
@@ -1349,7 +1395,9 @@ function memoClosure(kinds, nexts, splitBs, memo, s) {
   return out;
 }
 
-function closureOf(kinds, nexts, splitBs, start, guardsPass) {
+// ε-closure with DotGuard edges BLOCKED — the entry closure for a
+// protected leading `.` (guard-passing closures come from memoClosure).
+function closureOfDotBlocked(kinds, nexts, splitBs, start) {
   let seen = 0;
   let out = 0;
   const stack = [start];
@@ -1363,7 +1411,7 @@ function closureOf(kinds, nexts, splitBs, start, guardsPass) {
     } else if (k === S_JUMP) {
       stack.push(nexts[cur]);
     } else if (k === S_DOT_GUARD) {
-      if (guardsPass) stack.push(nexts[cur]);
+      // blocked
     } else {
       out |= 1 << cur;
     }
@@ -1371,7 +1419,7 @@ function closureOf(kinds, nexts, splitBs, start, guardsPass) {
   return out;
 }
 
-function computeSatisfiable(nfa, entry) {
+function computeSatisfiable(nfa) {
   const kinds = nfa.kinds;
   const n = kinds.length;
   // Per-state "some byte fires this consumer", computed once (a
@@ -1530,7 +1578,10 @@ class SegBuilder {
   litState(b) {
     const alt = asciiCaseAlt(b);
     if (this.ci && alt !== b) {
-      const cls = { neg: false, items: [{ tag: CI_BYTE, b }, { tag: CI_BYTE, b: alt }] };
+      // Shared makers keep the synthesized class on the same hidden
+      // class as parser-produced ones — `classMatches` stays
+      // monomorphic in the per-byte loop.
+      const cls = klass(false, [classItemByte(b), classItemByte(alt)]);
       return this.alloc(S_CLASS, 0, UNSET, 0, UNSET, cls);
     }
     return this.alloc(S_BYTE, b, UNSET, 0);

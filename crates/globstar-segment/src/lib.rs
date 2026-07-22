@@ -11,7 +11,7 @@
 //! | Tier | Pattern shape                       | Engine                 |
 //! |------|-------------------------------------|------------------------|
 //! | 0    | Pure literal                        | `LiteralMatcher` (shared) |
-//! | 1    | Segment-expressible (≈ all real patterns) | SSM ([`engine`]) |
+//! | 1    | Segment-expressible (≈ all real patterns) | SSM (`engine` module) |
 //! | 2    | Glued globstars, budget overflows (rare) | `PikeVm` (shared)  |
 //!
 //! The fallback is deliberately just the Pike VM: it is the only
@@ -28,7 +28,7 @@
 
 #![forbid(unsafe_code)]
 
-pub mod engine;
+mod engine;
 
 pub use globstar::{CompileOptions, DirMatch, GlobError, Matcher, Tier};
 
@@ -85,9 +85,11 @@ impl SegGlob {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let mut branches: Vec<Node> = Vec::new();
-        let mut count = 0usize;
+        // `first` holds a lone pattern's full Ast (degenerate one-
+        // pattern union = plain compile); with a second pattern both
+        // move into `branches` for the merged brace.
         let mut first: Option<Ast> = None;
+        let mut branches: Vec<Node> = Vec::new();
         for (i, p) in patterns.into_iter().enumerate() {
             let p = p.as_ref();
             let parsed = parser::parse(p.as_bytes())?;
@@ -97,8 +99,7 @@ impl SegGlob {
                     pattern: p.to_string(),
                 });
             }
-            count += 1;
-            if count == 1 {
+            if first.is_none() && branches.is_empty() {
                 first = Some(parsed);
             } else {
                 if let Some(f) = first.take() {
@@ -107,17 +108,17 @@ impl SegGlob {
                 branches.push(parsed.body);
             }
         }
-        if count == 0 {
-            return Err(GlobError::EmptyPatternSet);
+        match first {
+            Some(f) => Self::from_ast(f, opts),
+            None if branches.is_empty() => Err(GlobError::EmptyPatternSet),
+            None => Self::from_ast(
+                Ast {
+                    negation_count: 0,
+                    body: factor_branches(branches),
+                },
+                opts,
+            ),
         }
-        if count == 1 {
-            return Self::from_ast(first.expect("count == 1"), opts);
-        }
-        let merged = Ast {
-            negation_count: 0,
-            body: factor_branches(branches),
-        };
-        Self::from_ast(merged, opts)
     }
 
     fn from_ast(ast: Ast, opts: CompileOptions) -> Result<Self, GlobError> {

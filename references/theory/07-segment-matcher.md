@@ -1,6 +1,6 @@
 # 07 — Segment-Structured Matcher (SSM)
 
-Source: `crates/globstar-segment/src/engine.rs` (Rust),
+Source: `crates/globstar-segment/src/engine/` (Rust),
 `packages/globstar-segment/src/engine.js` (JS).
 Design + errata: `references/decisions/segment-engine-design.md`.
 

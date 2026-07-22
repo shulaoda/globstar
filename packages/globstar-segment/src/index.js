@@ -11,7 +11,7 @@
 //   compileMatcher(patterns, options?) → { match, matchDir, staticPrefixes }
 //
 // Engine pick: pure literal → LiteralMatcher (string fast path);
-// segment-expressible (≈ all real patterns) → SegmentEngine; the
+// segment-expressible (≈ all real patterns) → SegmentMatcher; the
 // remainder → PikeVm. The segment engine consumes JS strings natively
 // (zero-copy, no UTF-8 encode); byte inputs work everywhere.
 
@@ -24,7 +24,7 @@ import { factorBranches } from "../../globstar/src/matcher/factor.js";
 import { GlobError } from "../../globstar/src/matcher/error.js";
 import { DirMatch } from "../../globstar/src/matcher/dir-match.js";
 import { toBytes } from "../../globstar/src/matcher/utf8.js";
-import { SegmentEngine } from "./engine.js";
+import { SegmentMatcher } from "./engine.js";
 
 const DEFAULT_OPTIONS = { dot: true, caseInsensitive: false };
 
@@ -61,8 +61,9 @@ function buildEngine(bodies, opts) {
   const factored = bodies.length === 1 ? bodies[0] : factorBranches(bodies);
   const program = lower(factored, ci);
   // SSM-first; segment-inexpressible patterns (globstars glued
-  // mid-segment via braces, fork budgets exceeded) take the PikeVm.
-  const seg = SegmentEngine.build(program, dot);
+  // mid-segment via braces, escaped separators, fork/state budget
+  // overflows) take the PikeVm.
+  const seg = SegmentMatcher.build(program, dot);
   if (seg !== null) return seg;
   return PikeVm.build(program, dot);
 }
@@ -70,17 +71,21 @@ function buildEngine(bodies, opts) {
 function makeMatcher(positiveEngine, negativeEngines) {
   const hasNegatives = negativeEngines.length > 0;
 
-  // The segment engine (and the shared LiteralMatcher) consume JS
-  // strings natively; the PikeVm needs one UTF-8 encode. `argFor`
-  // converts lazily, at most once per call.
+  // The segment matcher (and the shared LiteralMatcher) consume JS
+  // strings natively; the PikeVm needs one UTF-8 encode — done lazily
+  // and at most once per call, without a per-call helper closure.
   const match = (input) => {
+    const isStr = typeof input === "string";
     let bytes = null;
-    const argFor = (e) =>
-      e.acceptsStrings || typeof input !== "string" ? input : (bytes ??= toBytes(input));
-    if (positiveEngine !== null && positiveEngine.isMatch(argFor(positiveEngine))) return true;
+    if (positiveEngine !== null) {
+      const arg =
+        positiveEngine.acceptsStrings || !isStr ? input : (bytes ??= toBytes(input));
+      if (positiveEngine.isMatch(arg)) return true;
+    }
     for (let i = 0; i < negativeEngines.length; i++) {
       const e = negativeEngines[i];
-      if (!e.isMatch(argFor(e))) return true; // `!body.match(p) === true`
+      const arg = e.acceptsStrings || !isStr ? input : (bytes ??= toBytes(input));
+      if (!e.isMatch(arg)) return true; // `!body.match(p) === true`
     }
     return false;
   };
