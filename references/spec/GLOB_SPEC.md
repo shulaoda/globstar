@@ -299,11 +299,11 @@ L( pre{A,B,…}post ) = L( preApost ) ∪ L( preBpost ) ∪ …
 ```
 
 Each expansion is interpreted as a standalone pattern under every rule
-of this specification — in particular, **`**` segment ownership (§8.1)
-is judged on the expanded form**: a brace neither grants `**` powers
-it lacks outside (`a{**,x}b` ≡ `a{*,x}b` ∪ `axb` — the `**` degrades
-because its expanded neighbors are `a`/`b`) nor takes away powers it
-has (`{**,x}/b` ≡ `**/b` ∪ `x/b`, which matches `b`).
+of this specification — in particular, **`**`segment ownership (§8.1)
+is judged on the expanded form**: a brace neither grants`**` powers
+it lacks outside (`a{**,x}b`≡`a{\*,x}b`∪`axb`— the`**`degrades
+because its expanded neighbors are`a`/`b`) nor takes away powers it
+has (`{**,x}/b`≡`\*\*/b`∪`x/b`, which matches `b`).
 
 Two exceptions, without which the equation would over-apply:
 
@@ -732,7 +732,7 @@ Callers needing Unicode case folding MUST normalize both pattern and path before
 
 - Class items are expanded at lower time: `[A-Z]` gets a `[a-z]` Range added (the parser already validated it as a legal range).
 - `Op::Lit` bytes stay as-is, but the comparator becomes `eq_ignore_ascii_case` (single-byte fold, ~1 ns).
-- The Glushkov / Thompson DFA byte-class table includes the case-alt byte alongside each literal.
+- A case-insensitive literal byte compiles to a two-item Thompson-NFA class state `{byte, case-alt}` rather than a bare byte state.
 - The `LiteralFacts` prefilter stores raw bytes and does the fold at comparison time; the `case_insensitive` flag is propagated.
 
 **Default:** `false` (strict byte-level match) at both the matcher and walker layers. Callers MUST opt in explicitly.
@@ -1068,28 +1068,28 @@ The POSIX first-`]` rule (consistent with bash / fnmatch / fast-glob / picomatch
 
 ## 16. Differences from Other Tools
 
-| Behavior                       | Us                                  | Bash               | picomatch       | globset                    | fast-glob                  | doublestar    |
-| ------------------------------ | ----------------------------------- | ------------------ | --------------- | -------------------------- | -------------------------- | ------------- |
-| `dot` default                  | `true` (matcher) / `false` (walker) | `false`            | `false`         | `true` (no concept)        | `true` (no concept)        | `false`       |
-| `case_insensitive`             | ASCII-only, default `false`         | `shopt nocaseglob` | `nocase` option | `case_insensitive` builder | `caseSensitiveMatch=false` | Unicode-aware |
-| `**` must own a segment        | enforced                            | ✅                 | ✅              | ✅                         | ✅                         | ✅            |
-| `a/**` matches `a`             | ❌                                  | ⚠️                 | ⚠️              | ❌                         | ❌                         | ❌            |
-| `**` in braces judged on expansion (§7.0: `a{**,x}b` ≡ `a{*,x}b`) | ✅ | ✅ (expands first) | ❌ (branch-local `.*`) | ❌ (demotes to `*` even at boundaries) | ❌ | n/a |
-| `**/X` matches absolute `/a/X` | ✅ (§8.5)                           | n/a                | ✅              | ✅                         | ✅                         | ❌            |
-| Extglobs                       | ❌ (literal)                        | ✅ (`shopt`)       | ✅              | ❌                         | ❌                         | ✅            |
-| POSIX character classes        | ❌                                  | ✅                 | ✅              | ❌                         | ❌                         | ⚠️            |
-| `[/]` inside a class           | parse error (§6.2)                  | literal            | literal         | literal                    | literal                    | ⚠️            |
-| POSIX first-`]` rule           | ✅ (§6.5)                           | ✅                 | ✅              | ❌                         | ❌                         | ⚠️            |
-| Brace `{1..10}`                | ❌                                  | ✅                 | ✅              | ❌                         | ❌                         | ❌            |
-| Brace nesting                  | ≤ 32                                | ✅                 | ✅              | ✅                         | ≤ 10                       | ✅            |
-| Leading-`!` negation           | ✅                                  | n/a                | ✅              | ⚠️                         | ✅                         | ✅            |
-| `/` required in patterns       | ✅                                  | n/a                | ⚠️              | ⚠️                         | ⚠️                         | ⚠️            |
-| `\` is always escape           | ✅                                  | ✅                 | ✅              | ⚠️                         | ⚠️                         | ⚠️            |
-| `\` in path = sep              | platform-conditional (§12.3)        | ❌                 | ✅ (JS paths)   | platform                   | ❌                         | platform      |
-| Stray `]`, `}`, `)`            | literal (§9.1)                      | literal            | literal         | literal                    | literal                    | literal       |
-| Unclosed constructs            | parse error                         | literal            | ⚠️              | error                      | error                      | literal       |
-| Trailing `/` = directory       | ✅                                  | ⚠️                 | ⚠️              | ❌                         | ❌                         | ⚠️            |
-| `match_dir` API                | ✅ (first-class)                    | n/a                | ❌              | ✅                         | ❌                         | ❌            |
+| Behavior                                                          | Us                                  | Bash               | picomatch              | globset                                | fast-glob                  | doublestar    |
+| ----------------------------------------------------------------- | ----------------------------------- | ------------------ | ---------------------- | -------------------------------------- | -------------------------- | ------------- |
+| `dot` default                                                     | `true` (matcher) / `false` (walker) | `false`            | `false`                | `true` (no concept)                    | `true` (no concept)        | `false`       |
+| `case_insensitive`                                                | ASCII-only, default `false`         | `shopt nocaseglob` | `nocase` option        | `case_insensitive` builder             | `caseSensitiveMatch=false` | Unicode-aware |
+| `**` must own a segment                                           | enforced                            | ✅                 | ✅                     | ✅                                     | ✅                         | ✅            |
+| `a/**` matches `a`                                                | ❌                                  | ⚠️                 | ⚠️                     | ❌                                     | ❌                         | ❌            |
+| `**` in braces judged on expansion (§7.0: `a{**,x}b` ≡ `a{*,x}b`) | ✅                                  | ✅ (expands first) | ❌ (branch-local `.*`) | ❌ (demotes to `*` even at boundaries) | ❌                         | n/a           |
+| `**/X` matches absolute `/a/X`                                    | ✅ (§8.5)                           | n/a                | ✅                     | ✅                                     | ✅                         | ❌            |
+| Extglobs                                                          | ❌ (literal)                        | ✅ (`shopt`)       | ✅                     | ❌                                     | ❌                         | ✅            |
+| POSIX character classes                                           | ❌                                  | ✅                 | ✅                     | ❌                                     | ❌                         | ⚠️            |
+| `[/]` inside a class                                              | parse error (§6.2)                  | literal            | literal                | literal                                | literal                    | ⚠️            |
+| POSIX first-`]` rule                                              | ✅ (§6.5)                           | ✅                 | ✅                     | ❌                                     | ❌                         | ⚠️            |
+| Brace `{1..10}`                                                   | ❌                                  | ✅                 | ✅                     | ❌                                     | ❌                         | ❌            |
+| Brace nesting                                                     | ≤ 32                                | ✅                 | ✅                     | ✅                                     | ≤ 10                       | ✅            |
+| Leading-`!` negation                                              | ✅                                  | n/a                | ✅                     | ⚠️                                     | ✅                         | ✅            |
+| `/` required in patterns                                          | ✅                                  | n/a                | ⚠️                     | ⚠️                                     | ⚠️                         | ⚠️            |
+| `\` is always escape                                              | ✅                                  | ✅                 | ✅                     | ⚠️                                     | ⚠️                         | ⚠️            |
+| `\` in path = sep                                                 | platform-conditional (§12.3)        | ❌                 | ✅ (JS paths)          | platform                               | ❌                         | platform      |
+| Stray `]`, `}`, `)`                                               | literal (§9.1)                      | literal            | literal                | literal                                | literal                    | literal       |
+| Unclosed constructs                                               | parse error                         | literal            | ⚠️                     | error                                  | error                      | literal       |
+| Trailing `/` = directory                                          | ✅                                  | ⚠️                 | ⚠️                     | ❌                                     | ❌                         | ⚠️            |
+| `match_dir` API                                                   | ✅ (first-class)                    | n/a                | ❌                     | ✅                                     | ❌                         | ❌            |
 
 **Reading.** Our spec is closest to picomatch + doublestar. It is more strict on **input conventions** (mandatory `/` in patterns), more explicit on **`match_dir` as a first-class operation**, and more rigorous on **syntax-level errors** (unterminated classes / braces are hard errors, never silently degraded).
 

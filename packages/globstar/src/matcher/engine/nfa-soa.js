@@ -331,9 +331,10 @@ export function compileNfaSoa(program, dot) {
   };
 }
 
-// Same fixed-point as thompson.js's `computeAcceptsAtEof`, but reads
-// SoA arrays. ε-only states (T_SPLIT / T_JUMP / T_DOT_GUARD) propagate
-// the "reaches accept on no more bytes" property through their ε-edges.
+// Forward fixed-point over the SoA arrays: ε-only states (T_SPLIT /
+// T_JUMP / T_DOT_GUARD) propagate the "reaches accept on no more
+// bytes" property through their ε-edges. (Rust twin: thompson.rs
+// `compute_accepts_at_eof`.)
 function computeAcceptsAtEof(tags, nexts, splitsB, n) {
   const acc = new Uint8Array(n);
   for (let i = 0; i < n; i++) if (tags[i] === T_MATCH) acc[i] = 1;

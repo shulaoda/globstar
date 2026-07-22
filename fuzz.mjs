@@ -315,7 +315,7 @@ function runSeed(seed) {
 
 // ── main ─────────────────────────────────────────────────────────────
 console.log(
-  `[fuzz] mode=${MODE} engine=segment count=${COUNT} seeds=[${SEEDS[0]}..${SEEDS[SEEDS.length - 1]}]`,
+  `[fuzz] mode=${MODE} engine=globstar count=${COUNT} seeds=[${SEEDS[0]}..${SEEDS[SEEDS.length - 1]}]`,
 );
 const t0 = Date.now();
 let totalDiff = 0;
