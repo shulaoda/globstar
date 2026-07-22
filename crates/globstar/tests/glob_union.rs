@@ -65,6 +65,19 @@ fn negated_pattern_rejected() {
 }
 
 #[test]
+fn single_negated_pattern_rejected() {
+    // Deliberate Rust/JS asymmetry: `Glob::union` is a pure OR of
+    // positive patterns, so even a lone `!foo` is rejected — while the
+    // JS `globstar()`/`compileMatcher()` factory accepts negation as
+    // part of its include/exclude contract.
+    let result = Glob::union(["!foo"]);
+    assert!(matches!(
+        result,
+        Err(GlobError::NegatedInUnion { index: 0, .. })
+    ));
+}
+
+#[test]
 fn brace_meta_in_patterns_safe() {
     // Patterns with literal `,` `{` `}` must not be re-interpreted by the
     // AST-level merge — `union(["a,b.txt", "{x}.log"])` matches the

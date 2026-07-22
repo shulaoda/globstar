@@ -34,9 +34,11 @@ fix:
     pnpm fix
     cargo fmt --all
 
-# Rust tests (single-pattern + multi-pattern + err corpus + walker integration).
+# Rust tests (single-pattern + multi-pattern + err corpus + walker
+# integration) + the JS compiler-stages golden (shared TSV fixture).
 test:
     cargo test --workspace
+    node packages/globstar/tests/compiler-stages.mjs
 
 # Wipe build artifacts (Rust target + JS workspace node_modules + bench output).
 clean:

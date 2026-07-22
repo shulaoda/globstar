@@ -37,6 +37,10 @@ export function globstar(patterns, options) {
   return compileMatcher(patterns, options).match;
 }
 
+// Note: unlike Rust `Glob::union` (a pure OR of positive patterns,
+// which rejects any `!`-prefixed input), this factory deliberately
+// accepts negated patterns — include/exclude is part of the JS
+// package's public contract.
 export function compileMatcher(patterns, options) {
   const opts = options == null ? DEFAULT_OPTIONS : { ...DEFAULT_OPTIONS, ...options };
   const list = Array.isArray(patterns) ? patterns : [patterns];
