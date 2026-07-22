@@ -150,8 +150,8 @@ impl ThompsonDfa {
         // facts and the walker prefixes), then drop the rest of the
         // op tree — for wide brace patterns the `Op::Alternation`
         // subtree alone can be 4-6 KB, dwarfing the DFA tables.
-        let prefixes = compute_static_prefixes(&program.ops);
-        let facts = program.facts;
+        let prefixes = compute_static_prefixes(program.ops());
+        let (_, facts, _) = program.into_parts();
 
         Ok(Box::new(Self {
             transitions: builder.transitions.into_boxed_slice(),

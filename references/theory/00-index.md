@@ -18,7 +18,7 @@ These notes record the formal foundations of the engine modules under `impl/crat
 | ------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------- |
 | `engine/literal.rs`      | —           | Tier 0 byte-equality matcher for pure-literal patterns.                                                       |
 | `globstar-segment` crate | §07         | Segment-structured matcher — standalone experimental engine, benchmarked against this crate's tiers.          |
-| `engine/ops.rs`          | §06         | AST-to-linear lowering, globstar fold passes, static-prefix extraction.                                       |
+| `engine/ops/`            | §06         | IR, AST-to-linear lowering, normalization, and static-prefix analysis.                                        |
 | `engine/facts.rs`        | §05         | Suffix prefilter.                                                                                             |
 | `engine/thompson.rs`     | §02         | Thompson NFA.                                                                                                 |
 | `engine/thompson_dfa.rs` | §03         | Subset-constructed DFA — primary Tier 1/2 engine.                                                             |

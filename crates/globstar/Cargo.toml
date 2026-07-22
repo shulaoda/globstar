@@ -31,5 +31,9 @@ harness = false
 name = "matcher_multi"
 harness = false
 
+[[bench]]
+name = "compiler_stages"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"

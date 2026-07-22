@@ -1,0 +1,9 @@
+# pattern<TAB>canonical AST<TAB>canonical normalized ops
+foo	L(foo)	L(foo)
+src/**/*.ts	C(L(src),S,G,S,T,L(.ts))	L(src),R,O,T,L(.ts)
+**/foo	C(G,S,L(foo))	H,O,L(foo)
+a/**	C(L(a),S,G)	L(a),A
+{src/lib,tests}/**/*.ts	C(B(C(L(src),S,L(lib))|L(tests)),S,G,S,T,L(.ts))	B([L(src),S,L(lib)]|[L(tests)]),R,O,T,L(.ts)
+{**,x}/b	C(B(G|L(x)),S,L(b))	B([H,O]|[L(x),S]),L(b)
+a//b	C(L(a),S,S,L(b))	L(a),S,S,L(b)
+a**b	C(L(a),T,T,L(b))	L(a),T,L(b)

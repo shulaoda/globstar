@@ -171,15 +171,15 @@ impl SegmentMatcher {
     /// pattern is not segment-expressible so the caller can fall
     /// through to the Pike VM without re-lowering.
     pub(crate) fn build(program: OpProgram, dot: bool) -> Result<Box<Self>, OpProgram> {
-        let ci = program.case_insensitive;
-        let Some(seqs) = compile::compile_seqs(&program.ops, dot, ci) else {
+        let ci = program.case_insensitive();
+        let Some(seqs) = compile::compile_seqs(program.ops(), dot, ci) else {
             return Err(program);
         };
         // Eager on both runtimes: the walker prefixes are a cheap
         // leading-literal scan, and computing them here lets the
         // matcher drop every reference to the op tree.
-        let prefixes = compute_static_prefixes(&program.ops);
-        let facts = program.facts;
+        let prefixes = compute_static_prefixes(program.ops());
+        let (_, facts, _) = program.into_parts();
         Ok(Box::new(Self {
             seqs: seqs.into_boxed_slice(),
             facts,

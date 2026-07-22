@@ -39,7 +39,7 @@ pub use options::CompileOptions;
 
 use ast::{Ast, Node};
 use engine::literal::LiteralMatcher;
-use engine::ops::lower;
+use engine::ops::{lower, lower_owned};
 use engine::pikevm::PikeVm;
 use engine::thompson::Thompson;
 use engine::thompson_dfa::ThompsonDfa;
@@ -226,7 +226,7 @@ impl Glob {
                 Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive))
             }
             Tier::SimpleWildcard | Tier::Globstar => {
-                let program = lower(&ast.body, opts.case_insensitive);
+                let program = lower_owned(ast.body, opts.case_insensitive);
                 match ThompsonDfa::build(program, opts.dot) {
                     Ok(dfa) => Engine::ThompsonDfa(dfa),
                     Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),

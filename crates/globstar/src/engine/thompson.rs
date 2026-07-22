@@ -135,10 +135,10 @@ impl Thompson {
     /// Compile the program into an NFA. Never fails — every op in
     /// [`super::ops`] has a Thompson translation.
     pub(crate) fn compile(program: &OpProgram, dot: bool) -> Self {
-        let mut builder = Builder::new(program.case_insensitive);
+        let mut builder = Builder::new(program.case_insensitive());
         let initial = builder.alloc(Trans::Jump { next: UNSET });
         // `accept` is built after the body so the body's tail can patch to it.
-        let body_entry = builder.compile_ops(&program.ops, dot);
+        let body_entry = builder.compile_ops(program.ops(), dot);
         let accept = builder.alloc(Trans::Match);
         // Entry jumps into the body; the body's tail is patched to accept.
         builder.patch(initial, body_entry);

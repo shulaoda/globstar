@@ -35,7 +35,7 @@ pub use globstar::{CompileOptions, DirMatch, GlobError, Matcher, Tier};
 use engine::SegmentMatcher;
 use globstar::ast::{Ast, Node};
 use globstar::engine::literal::LiteralMatcher;
-use globstar::engine::ops::lower;
+use globstar::engine::ops::lower_owned;
 use globstar::engine::pikevm::PikeVm;
 use globstar::factor::factor_branches;
 use globstar::parser;
@@ -133,7 +133,7 @@ impl SegGlob {
                 Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive))
             }
             Tier::SimpleWildcard | Tier::Globstar => {
-                let program = lower(&ast.body, opts.case_insensitive);
+                let program = lower_owned(ast.body, opts.case_insensitive);
                 match SegmentMatcher::build(program, opts.dot) {
                     Ok(seg) => Engine::Segment(seg),
                     // Not segment-expressible (glued globstars via

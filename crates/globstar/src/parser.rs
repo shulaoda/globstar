@@ -26,6 +26,7 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
         input,
         pos: 0,
         brace_depth: 0,
+        brace_index: None,
     };
 
     // Leading `!` are negation markers. Each one flips the result;
@@ -72,7 +73,14 @@ impl SequenceContext {
     /// sequences are handled correctly.
     fn boundary_before(self, last: Option<&Node>) -> bool {
         match last {
-            None => matches!(self, Self::Top | Self::Brace { prev_boundary: true, .. }),
+            None => matches!(
+                self,
+                Self::Top
+                    | Self::Brace {
+                        prev_boundary: true,
+                        ..
+                    }
+            ),
             Some(Node::Separator) => true,
             _ => false,
         }
@@ -86,7 +94,13 @@ impl SequenceContext {
         match next {
             None | Some(b'/') => true,
             Some(b',') | Some(b'}') => {
-                matches!(self, Self::Brace { next_boundary: true, .. })
+                matches!(
+                    self,
+                    Self::Brace {
+                        next_boundary: true,
+                        ..
+                    }
+                )
             }
             _ => false,
         }
@@ -97,6 +111,65 @@ struct Parser<'a> {
     input: &'a [u8],
     pos: usize,
     brace_depth: usize,
+    brace_index: Option<BraceIndex>,
+}
+
+/// Matching brace offsets outside escapes and character classes. Built only
+/// when a syntactic `{` is encountered, so brace-free patterns pay nothing.
+struct BraceIndex {
+    pairs: Vec<(usize, usize)>,
+}
+
+impl BraceIndex {
+    fn build(input: &[u8]) -> Self {
+        let mut stack = Vec::new();
+        let mut pairs = Vec::new();
+        let mut i = 0usize;
+        while i < input.len() {
+            match input[i] {
+                b'\\' => i = (i + 2).min(input.len()),
+                b'[' => i = skip_class_candidate(input, i + 1),
+                b'{' => {
+                    stack.push(i);
+                    i += 1;
+                }
+                b'}' => {
+                    if let Some(open) = stack.pop() {
+                        pairs.push((open, i));
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        pairs.sort_unstable_by_key(|&(open, _)| open);
+        Self { pairs }
+    }
+
+    fn closing(&self, open: usize) -> Option<usize> {
+        self.pairs
+            .binary_search_by_key(&open, |&(candidate, _)| candidate)
+            .ok()
+            .map(|index| self.pairs[index].1)
+    }
+}
+
+/// Structural class skip for brace indexing. Syntax errors remain the real
+/// parser's responsibility; this only ignores braces inside valid classes.
+fn skip_class_candidate(input: &[u8], mut i: usize) -> usize {
+    if matches!(input.get(i), Some(b'!') | Some(b'^')) {
+        i += 1;
+    }
+    if input.get(i) == Some(&b']') {
+        i += 1;
+    }
+    while i < input.len() && input[i] != b']' && input[i] != b'/' {
+        if input[i] == b'\\' {
+            i += 1;
+        }
+        i += 1;
+    }
+    (i + 1).min(input.len())
 }
 
 impl<'a> Parser<'a> {
@@ -110,7 +183,15 @@ impl<'a> Parser<'a> {
 
     fn parse_sequence(&mut self, ctx: SequenceContext) -> Result<Node, GlobError> {
         let remaining = self.input.len() - self.pos;
-        let mut nodes: Vec<Node> = Vec::with_capacity(remaining / 2 + 1);
+        // The top level owns the whole remainder, so the byte-based estimate
+        // is useful. A brace branch usually ends at the next `,`/`}`; sizing
+        // every nested branch from the whole pattern remainder over-allocates
+        // by O(depth * input) on adversarial nesting.
+        let node_capacity = match ctx {
+            SequenceContext::Top => remaining / 2 + 1,
+            SequenceContext::Brace { .. } => (remaining / 2 + 1).min(8),
+        };
+        let mut nodes: Vec<Node> = Vec::with_capacity(node_capacity);
         let mut lit_buf: Vec<u8> = Vec::with_capacity(remaining.min(32));
 
         while self.pos < self.input.len() {
@@ -243,7 +324,7 @@ impl<'a> Parser<'a> {
             self.pos += 1;
         }
 
-        let mut items: Vec<ClassItem> = Vec::new();
+        let mut items: Vec<ClassItem> = Vec::with_capacity(4);
 
         // POSIX convention (GLOB_SPEC §6.5): when `]` appears as the FIRST
         // character inside `[…]` (or after `[!`/`[^`), treat it as a literal
@@ -323,52 +404,17 @@ impl<'a> Parser<'a> {
         Ok(resolved)
     }
 
-    /// Scan ahead from the current `{` to its matching `}` (honoring
-    /// escapes, class scopes, and nesting) and report whether the
-    /// byte after it is a boundary in the expanded form. Read-only —
-    /// parse errors surface later through the real parse, so any
-    /// malformed tail just yields a don't-care value.
-    fn brace_next_boundary(&self, ctx: SequenceContext) -> bool {
+    /// Find the byte after this brace using the lazily-built structural
+    /// index. Malformed input is still diagnosed by `parse_brace`.
+    fn brace_next_boundary(&mut self, ctx: SequenceContext) -> bool {
         debug_assert_eq!(self.input[self.pos], b'{');
-        let mut i = self.pos + 1;
-        let mut depth = 0usize;
-        while i < self.input.len() {
-            match self.input[i] {
-                b'\\' => i += 1,
-                b'[' => {
-                    // Class sub-scanner: `[!`/`[^` then POSIX first-`]`
-                    // literal, `\` escapes; stops at `]` or a `/`
-                    // (which the real parser rejects later anyway).
-                    i += 1;
-                    if matches!(self.input.get(i), Some(b'!') | Some(b'^')) {
-                        i += 1;
-                    }
-                    if self.input.get(i) == Some(&b']') {
-                        i += 1;
-                    }
-                    while i < self.input.len()
-                        && self.input[i] != b']'
-                        && self.input[i] != b'/'
-                    {
-                        if self.input[i] == b'\\' {
-                            i += 1;
-                        }
-                        i += 1;
-                    }
-                }
-                b'{' => depth += 1,
-                b'}' => {
-                    if depth == 0 {
-                        return ctx.boundary_after(self.input.get(i + 1).copied());
-                    }
-                    depth -= 1;
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        // Unterminated brace — the real parse errors out; don't-care.
-        true
+        let input = self.input;
+        let index = self
+            .brace_index
+            .get_or_insert_with(|| BraceIndex::build(input));
+        index.closing(self.pos).is_none_or(|close| {
+            ctx.boundary_after(input.get(close + 1).copied())
+        })
     }
 
     fn parse_brace(
@@ -387,7 +433,7 @@ impl<'a> Parser<'a> {
             });
         }
 
-        let mut branches = Vec::new();
+        let mut branches = Vec::with_capacity(2);
         loop {
             let branch = self.parse_sequence(SequenceContext::Brace {
                 prev_boundary,
