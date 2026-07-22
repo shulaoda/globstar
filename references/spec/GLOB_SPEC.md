@@ -289,6 +289,39 @@ NOT supported. `[[:alpha:]]` is parsed as `[` opening a class, then `[`, `:`, `a
 
 ## 7. Brace Expansion Semantics
 
+### 7.0 Normative definition: the expansion equation
+
+A brace is **pure union**. For any pattern fragments `pre`, `post` and
+branches `A`, `B`, …:
+
+```
+L( pre{A,B,…}post ) = L( preApost ) ∪ L( preBpost ) ∪ …
+```
+
+Each expansion is interpreted as a standalone pattern under every rule
+of this specification — in particular, **`**` segment ownership (§8.1)
+is judged on the expanded form**: a brace neither grants `**` powers
+it lacks outside (`a{**,x}b` ≡ `a{*,x}b` ∪ `axb` — the `**` degrades
+because its expanded neighbors are `a`/`b`) nor takes away powers it
+has (`{**,x}/b` ≡ `**/b` ∪ `x/b`, which matches `b`).
+
+Two exceptions, without which the equation would over-apply:
+
+1. **Leading `!` is processed before expansion** (§9.3). `{!a,b}`
+   expands to the body `!a` whose `!` is a literal byte — expansion
+   never re-triggers pattern-level negation.
+2. **An empty expansion denotes ε, not a parse error.** `{a,}`'s empty
+   branch contributes the empty string to the union; the `Empty`
+   error (§10) applies only to the user-supplied pattern itself.
+
+Implementation note: the equation defines the **semantics**; §7.2's
+no-pre-expansion rule still governs the implementation, which must
+merely be equivalent. One corner is resolved textually rather than by
+full expansion: a single separator flanked by TWO globstar-edged
+braces (`{a,**}/{**,b}`) is owned by the left brace's branch tails;
+implementations MAY deviate from the pure equation on that shape as
+long as both reference runtimes agree.
+
 ### 7.1 Basic forms
 
 ```
@@ -361,6 +394,17 @@ Examples:
 - `a**b` — NOT a globstar; degrades to `a*b`.
 - `a/**b` — `**` becomes `*`; equivalent to `a/*b`.
 - `a**/b` — `**` becomes `*`; equivalent to `a*/b`.
+
+At a brace-branch edge, the boundary test uses the **expanded form**
+(§7.0): the effective neighbor of a branch-leading `**` is whatever
+precedes the `{`, and of a branch-trailing `**` whatever follows the
+matching `}` (chained through nested braces).
+
+- `a{**,x}b` — neighbors `a`/`b` → degrades: ≡ `a{*,x}b`.
+- `{**,x}/b` — pattern start / `/` → real globstar: ≡ `**/b ∪ x/b`.
+- `{a/**,x}c` — trailing neighbor `c` → degrades: ≡ `a/*c ∪ xc`.
+- `a/{**/x,y}` — real globstar with the same lenient `/**/` boundary
+  as `a/**/x` (matches `a//x`).
 
 ### 8.2 Match semantics
 
@@ -1030,6 +1074,7 @@ The POSIX first-`]` rule (consistent with bash / fnmatch / fast-glob / picomatch
 | `case_insensitive`             | ASCII-only, default `false`         | `shopt nocaseglob` | `nocase` option | `case_insensitive` builder | `caseSensitiveMatch=false` | Unicode-aware |
 | `**` must own a segment        | enforced                            | ✅                 | ✅              | ✅                         | ✅                         | ✅            |
 | `a/**` matches `a`             | ❌                                  | ⚠️                 | ⚠️              | ❌                         | ❌                         | ❌            |
+| `**` in braces judged on expansion (§7.0: `a{**,x}b` ≡ `a{*,x}b`) | ✅ | ✅ (expands first) | ❌ (branch-local `.*`) | ❌ (demotes to `*` even at boundaries) | ❌ | n/a |
 | `**/X` matches absolute `/a/X` | ✅ (§8.5)                           | n/a                | ✅              | ✅                         | ✅                         | ❌            |
 | Extglobs                       | ❌ (literal)                        | ✅ (`shopt`)       | ✅              | ❌                         | ❌                         | ✅            |
 | POSIX character classes        | ❌                                  | ✅                 | ✅              | ❌                         | ❌                         | ⚠️            |
@@ -1071,6 +1116,13 @@ The POSIX first-`]` rule (consistent with bash / fnmatch / fast-glob / picomatch
 - **v0.1.6** (2026-04-14, **rolled back**): briefly tried paired-strict (stray `]`/`}` as errors). Reverted in favor of the symmetric-loose rule because real filename matching needs `]`/`}` as plain bytes more often than typo detection helps.
 - **v0.1.7** (2026-04-14): ASCII `case_insensitive` matcher option added. Compile-time class fold; runtime branchless. Walker `static_prefixes` retains a documented case-insensitive caveat.
 - **v0.2.0** (2026-04-23): bash extglob removed. `@()`, `?()`, `*()`, `+()`, `!(...)` are pure literal byte sequences. Grammar / error enum / engine layering all slimmed accordingly. See ADR-003 (Superseded).
+- **v0.2.1** (2026-07-23): braces defined by the expansion equation (§7.0).
+  `**` segment ownership is judged on the expanded form — `a{**,x}b`
+  now degrades its `**` (previously a branch-local `.*` that crossed
+  separators, matching picomatch), `{**,x}/b` now matches `b`, and
+  `a/{**/x,y}` gains `/**/`-boundary leniency. Aligns with bash /
+  minimatch; deliberate divergence from picomatch recorded in §16.
+  Corpus group `brace.globstar-expansion` pins the behavior.
 - Awaiting owner approval before freezing as v1.0.
 
 ---

@@ -150,7 +150,18 @@ impl OpProgram {
 /// runtime compare helpers to consult.
 pub fn lower(node: &Node, case_insensitive: bool) -> OpProgram {
     let mut ops = Vec::new();
-    lower_into(node, &mut ops, case_insensitive);
+    // §7 expansion equation: a separator adjacent to a brace whose
+    // branch edge holds a globstar belongs to EVERY expansion, so it
+    // is distributed into the branches before lowering — this is what
+    // lets `{**,x}/b` mean `**/b ∪ x/b` (matching `b`) and gives
+    // `a/{**/x,y}` the same lenient `/**/` boundary as `a/**/x`.
+    // Cheap scan first: virtually all patterns skip the clone.
+    if needs_sep_distribution(node) {
+        let distributed = distribute_seps(node.clone());
+        lower_into(&distributed, &mut ops, case_insensitive);
+    } else {
+        lower_into(node, &mut ops, case_insensitive);
+    }
     fold_globstars_inplace(&mut ops);
     // Pattern-start `**/` semantics (GLOB_SPEC §8.4): `**/X` means "X at
     // any depth", covering relative, Unix-absolute, and UNC paths.
@@ -312,6 +323,107 @@ fn push_op(out: &mut Vec<Op>, op: Op) {
         return;
     }
     out.push(op);
+}
+
+/// Does any brace in the tree sit next to a separator while holding a
+/// branch-edge globstar? (Trigger for [`distribute_seps`].)
+fn needs_sep_distribution(node: &Node) -> bool {
+    match node {
+        Node::Concat(children) => {
+            for (i, child) in children.iter().enumerate() {
+                if let Node::Brace(branches) = child {
+                    let prev_sep = i > 0 && matches!(children[i - 1], Node::Separator);
+                    let next_sep = matches!(children.get(i + 1), Some(Node::Separator));
+                    if (prev_sep && branches.iter().any(leads_globstar))
+                        || (next_sep && branches.iter().any(trails_globstar))
+                    {
+                        return true;
+                    }
+                }
+                if needs_sep_distribution(child) {
+                    return true;
+                }
+            }
+            false
+        }
+        Node::Brace(branches) => branches.iter().any(needs_sep_distribution),
+        _ => false,
+    }
+}
+
+fn leads_globstar(node: &Node) -> bool {
+    match node {
+        Node::Globstar => true,
+        Node::Concat(xs) => xs.first().is_some_and(leads_globstar),
+        Node::Brace(bs) => bs.iter().any(leads_globstar),
+        _ => false,
+    }
+}
+
+fn trails_globstar(node: &Node) -> bool {
+    match node {
+        Node::Globstar => true,
+        Node::Concat(xs) => xs.last().is_some_and(trails_globstar),
+        Node::Brace(bs) => bs.iter().any(trails_globstar),
+        _ => false,
+    }
+}
+
+/// Push separators that flank globstar-edged braces into every branch
+/// (recursively — an absorbed separator next to a nested brace keeps
+/// sinking). A separator shared by two qualifying braces goes to the
+/// LEFT brace's tails (deterministic; the pathological
+/// `{a,**}/{**,b}` shape keeps the splice semantics for its right
+/// side).
+fn distribute_seps(node: Node) -> Node {
+    match node {
+        Node::Concat(children) => {
+            let mut out: Vec<Node> = Vec::with_capacity(children.len());
+            let mut iter = children.into_iter().peekable();
+            while let Some(child) = iter.next() {
+                let Node::Brace(branches) = child else {
+                    out.push(distribute_seps(child));
+                    continue;
+                };
+                let absorb_prev = matches!(out.last(), Some(Node::Separator))
+                    && branches.iter().any(leads_globstar);
+                let absorb_next = matches!(iter.peek(), Some(Node::Separator))
+                    && branches.iter().any(trails_globstar);
+                if !absorb_prev && !absorb_next {
+                    out.push(distribute_seps(Node::Brace(branches)));
+                    continue;
+                }
+                if absorb_prev {
+                    out.pop();
+                }
+                if absorb_next {
+                    iter.next();
+                }
+                let branches = branches
+                    .into_iter()
+                    .map(|b| {
+                        let mut seq = Vec::with_capacity(3);
+                        if absorb_prev {
+                            seq.push(Node::Separator);
+                        }
+                        seq.push(b);
+                        if absorb_next {
+                            seq.push(Node::Separator);
+                        }
+                        // Re-distribute: the absorbed separator may
+                        // now flank a nested globstar-edged brace.
+                        distribute_seps(Node::Concat(seq))
+                    })
+                    .collect();
+                out.push(Node::Brace(branches));
+            }
+            Node::Concat(out)
+        }
+        Node::Brace(branches) => {
+            Node::Brace(branches.into_iter().map(distribute_seps).collect())
+        }
+        other => other,
+    }
 }
 
 fn lower_into(node: &Node, out: &mut Vec<Op>, case_insensitive: bool) {

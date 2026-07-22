@@ -112,19 +112,21 @@ enum Boundary {
 /// segment-expressible (caller falls back to the Pike VM).
 ///
 /// The tricky rows are splices — fork expansion creates adjacencies
-/// the globstar fold never saw, and their semantics follow the byte
-/// engines' strict-`Sep` composition rather than the lenient native
-/// boundaries:
+/// the globstar fold never saw. Since GLOB_SPEC §7.0 (expansion
+/// equation) the lowering distributes brace-flanking separators into
+/// globstar-edged branches, so these shapes now only arise from the
+/// shared-separator corner (`{a,**}/{**,b}`: the middle `/` is owned
+/// by the left brace, leaving the right branch's absorber bare):
 ///
-/// - `[…, Sep, GlobstarAny]` (`a/{**,x}`) — the strict separator
-///   demands ≥ 1 absorbed segment: **G1** (`a/` matches, `a` not).
-/// - `[GlobstarAny, Sep, …]` (`{**,x}/b`) — the separator after `.*`
-///   likewise forces ≥ 1 absorbed segment: upgrade to **G1**.
-/// - `[…, Sep, OSS, …]` (`a/{**/b,c}`) — OSS behind a strict `Sep`
-///   has no separator-run leniency: **G0Strict** (no leading empty
-///   absorbed segment: `a//b` does not match).
-/// - `GlobstarAny`/`SlashAnything` glued to in-segment ops
-///   (`a{**,x}b`, `{a/**,x}c`) — `.*` ends mid-segment: fallback.
+/// - `[…, Sep, GlobstarAny]` — the strict separator demands ≥ 1
+///   absorbed segment: **G1**.
+/// - `[GlobstarAny, Sep, …]` — the separator after `.*` likewise
+///   forces ≥ 1 absorbed segment: upgrade to **G1**.
+/// - `[…, Sep, OSS, …]` — OSS behind a strict `Sep` has no
+///   separator-run leniency: **G0Strict** (no leading empty absorbed
+///   segment).
+/// - `GlobstarAny`/`SlashAnything` glued to in-segment ops — `.*`
+///   ends mid-segment: fallback.
 fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
     let mut elems: Vec<Elem> = Vec::with_capacity(8);
     let mut buf: Vec<Op> = Vec::new();

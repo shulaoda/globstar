@@ -27,6 +27,9 @@ import {
   N_CONCAT,
   N_BRACE,
   classExpandedAsciiCi,
+  sep,
+  brace,
+  concat,
 } from "../ast.js";
 import { LiteralFacts } from "./facts.js";
 
@@ -61,11 +64,103 @@ const LEADING_SEPS_OP = Object.freeze({ kind: OP_LEADING_SEPS });
 // prefilter pre-extracted.
 export function lower(node, caseInsensitive) {
   const ops = [];
-  lowerInto(node, ops, caseInsensitive);
+  // §7 expansion equation: a separator flanking a globstar-edged
+  // brace belongs to every expansion — distribute it into the
+  // branches so `{**,x}/b` means `**/b ∪ x/b` and `a/{**/x,y}` gets
+  // the same lenient `/**/` boundary as `a/**/x`. Cheap scan first:
+  // virtually all patterns skip the rebuild.
+  const root = needsSepDistribution(node) ? distributeSeps(node) : node;
+  lowerInto(root, ops, caseInsensitive);
   foldGlobstars(ops);
   applyLeadingSepsAtStart(ops);
   const facts = LiteralFacts.extract(ops, !!caseInsensitive);
   return { ops, facts, caseInsensitive: !!caseInsensitive };
+}
+
+// Does any brace sit next to a separator while holding a branch-edge
+// globstar? (Trigger for `distributeSeps`.)
+function needsSepDistribution(node) {
+  if (node.tag === N_CONCAT) {
+    const cs = node.children;
+    for (let i = 0; i < cs.length; i++) {
+      const c = cs[i];
+      if (c.tag === N_BRACE) {
+        const prevSep = i > 0 && cs[i - 1].tag === N_SEPARATOR;
+        const nextSep = i + 1 < cs.length && cs[i + 1].tag === N_SEPARATOR;
+        if (
+          (prevSep && c.branches.some(leadsGlobstar)) ||
+          (nextSep && c.branches.some(trailsGlobstar))
+        ) {
+          return true;
+        }
+      }
+      if (needsSepDistribution(c)) return true;
+    }
+    return false;
+  }
+  if (node.tag === N_BRACE) return node.branches.some(needsSepDistribution);
+  return false;
+}
+
+function leadsGlobstar(node) {
+  if (node.tag === N_GLOBSTAR) return true;
+  if (node.tag === N_CONCAT) return node.children.length > 0 && leadsGlobstar(node.children[0]);
+  if (node.tag === N_BRACE) return node.branches.some(leadsGlobstar);
+  return false;
+}
+
+function trailsGlobstar(node) {
+  if (node.tag === N_GLOBSTAR) return true;
+  if (node.tag === N_CONCAT) {
+    const cs = node.children;
+    return cs.length > 0 && trailsGlobstar(cs[cs.length - 1]);
+  }
+  if (node.tag === N_BRACE) return node.branches.some(trailsGlobstar);
+  return false;
+}
+
+// Push separators flanking globstar-edged braces into every branch
+// (recursively — an absorbed separator next to a nested brace keeps
+// sinking). A separator shared by two qualifying braces goes to the
+// LEFT brace's tails (deterministic). Never mutates input nodes.
+function distributeSeps(node) {
+  if (node.tag === N_CONCAT) {
+    const out = [];
+    const cs = node.children;
+    let i = 0;
+    while (i < cs.length) {
+      const c = cs[i];
+      if (c.tag !== N_BRACE) {
+        out.push(distributeSeps(c));
+        i += 1;
+        continue;
+      }
+      const absorbPrev =
+        out.length > 0 && out[out.length - 1].tag === N_SEPARATOR && c.branches.some(leadsGlobstar);
+      const absorbNext =
+        i + 1 < cs.length && cs[i + 1].tag === N_SEPARATOR && c.branches.some(trailsGlobstar);
+      if (!absorbPrev && !absorbNext) {
+        out.push(distributeSeps(c));
+        i += 1;
+        continue;
+      }
+      if (absorbPrev) out.pop();
+      const branches = c.branches.map((b) => {
+        const seq = [];
+        if (absorbPrev) seq.push(sep());
+        seq.push(b);
+        if (absorbNext) seq.push(sep());
+        // Re-distribute: the absorbed separator may now flank a
+        // nested globstar-edged brace.
+        return distributeSeps(concat(seq));
+      });
+      out.push(brace(branches));
+      i += absorbNext ? 2 : 1;
+    }
+    return concat(out);
+  }
+  if (node.tag === N_BRACE) return brace(node.branches.map(distributeSeps));
+  return node;
 }
 
 function lowerInto(node, out, caseInsensitive) {

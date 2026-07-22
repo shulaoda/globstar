@@ -1647,3 +1647,38 @@ src/**/*.{ts,tsx,js,jsx}	other/main.ts	no-match
 {src,lib}/**/[A-Z]*.{ts,rs}	lib/sub/Util.rs	match
 {src,lib}/**/[A-Z]*.{ts,rs}	src/main.ts	no-match
 {src,lib}/**/[A-Z]*.{ts,rs}	docs/Main.ts	no-match
+
+## brace.globstar-expansion — GLOB_SPEC §7 expansion equation: braces are
+## pure union; `**` segment ownership is judged on the EXPANDED form, so
+## a brace never grants `**` powers it lacks outside (`a{**,x}b` ≡
+## `a{*,x}b`) and never takes away powers it has (`{**,x}/b` ≡ `**/b ∪ x/b`).
+a{**,x}b	a/x/b	no-match
+a{**,x}b	a/b	no-match
+a{**,x}b	ab	match
+a{**,x}b	axb	match
+a{**,x}b	aQQQb	match
+{**,x}/b	b	match
+{**,x}/b	x/b	match
+{**,x}/b	deep/er/b	match
+{**,x}/b	.d/b	no-match	dot=false
+{a/**,x}c	a/Qc	match
+{a/**,x}c	xc	match
+{a/**,x}c	a/deep/pc	no-match
+a/{**/x,y}	a/x	match
+a/{**/x,y}	a//x	match
+a/{**/x,y}	a/d/e/x	match
+a/{**/x,y}	a/y	match
+a/{**/x,y}	a/.d/x	no-match	dot=false
+a/{**,x}	a/	match
+a/{**,x}	a	no-match
+a/{**,x}	a/deep/p	match
+{**/a,b}	/a	match
+{**/a,b}	a	match
+{**/a,b}	/b	no-match
+{{**,y},z}/b	b	match
+{{**,y},z}/b	d/e/b	match
+a{/**/,x}b	a/b	match
+a{/**/,x}b	a/y/b	match
+a{/**/,x}b	axb	match
+{a,**}/{**,b}	a/b	match
+{a,**}/{**,b}	x/y	match

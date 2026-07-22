@@ -295,6 +295,14 @@ SSM ↔ PikeVm and JS SSM ↔ PikeVm in-process oracles), then
 
 ## 10. Adversarial-review errata (all folded into §2.1 and the code)
 
+> **2026-07-23 update:** GLOB_SPEC v0.2.1 adopted the §7.0 expansion
+> equation — `**` ownership is now judged on the brace-expanded form,
+> and the lowering distributes brace-flanking separators into
+> globstar-edged branches. Errata 2 and 3 below documented the OLD
+> splice semantics; those op shapes now only arise from the
+> shared-separator corner (`{a,**}/{**,b}`), for which the G0Strict /
+> strict-G1 rules remain in force.
+
 Three review agents probed the draft's element mapping against the
 byte engines (difftest + the JS engines, ~950 tuples). Findings:
 

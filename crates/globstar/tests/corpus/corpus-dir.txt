@@ -127,3 +127,7 @@ x*/	x	descend
 {a,b}*/	foo	pruned
 */	.hidden	pruned
 **/	a	descend
+
+## brace.globstar-expansion dir rows (dot=false walker default)
+{**,x}/b	q	descend
+a{**,x}b	q	pruned

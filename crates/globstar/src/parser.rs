@@ -43,13 +43,54 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
     })
 }
 
-/// Stop tokens differ depending on where we're parsing.
+/// Stop tokens differ depending on where we're parsing, and — for
+/// the globstar segment-ownership test (§8.1) — the context carries
+/// the brace's *expanded-form* neighbors: `{A,B}` is defined as the
+/// union of the patterns with the brace replaced by each branch
+/// (GLOB_SPEC §7), so a `**` at a branch edge is judged against what
+/// sits outside the brace, not against the branch edge itself.
 #[derive(Clone, Copy)]
 enum SequenceContext {
     /// Top-level: stop at end of input.
     Top,
     /// Inside `{...}`: stop at `,` or `}` at the matching depth.
-    Brace,
+    Brace {
+        /// Expanded-form neighbor before the `{`: pattern start or a
+        /// separator (chained through nested braces).
+        prev_boundary: bool,
+        /// Expanded-form neighbor after the matching `}`.
+        next_boundary: bool,
+    },
+}
+
+impl SequenceContext {
+    /// Is the point before the next atom a segment boundary in the
+    /// expanded form? Start-of-pattern and after-`/` are boundaries;
+    /// a branch start inherits from outside the `{` — so `a{**,x}b`
+    /// degrades its `**` while `{**,x}/b` keeps a real globstar.
+    /// Judged on parsed `nodes` rather than raw bytes so escape
+    /// sequences are handled correctly.
+    fn boundary_before(self, last: Option<&Node>) -> bool {
+        match last {
+            None => matches!(self, Self::Top | Self::Brace { prev_boundary: true, .. }),
+            Some(Node::Separator) => true,
+            _ => false,
+        }
+    }
+
+    /// Mirror of `boundary_before` for the byte after an atom: pattern
+    /// end and `/` are boundaries; a branch end (`,` / `}`) inherits
+    /// from outside the `}`. `None` also covers unterminated braces,
+    /// whose errors surface later — the value is then a don't-care.
+    fn boundary_after(self, next: Option<u8>) -> bool {
+        match next {
+            None | Some(b'/') => true,
+            Some(b',') | Some(b'}') => {
+                matches!(self, Self::Brace { next_boundary: true, .. })
+            }
+            _ => false,
+        }
+    }
 }
 
 struct Parser<'a> {
@@ -78,7 +119,7 @@ impl<'a> Parser<'a> {
             // Check stop conditions for our context.
             match ctx {
                 SequenceContext::Top => {}
-                SequenceContext::Brace => {
+                SequenceContext::Brace { .. } => {
                     if b == b',' || b == b'}' {
                         break;
                     }
@@ -112,7 +153,7 @@ impl<'a> Parser<'a> {
                 }
                 b'*' => {
                     flush_literal(&mut lit_buf, &mut nodes);
-                    self.parse_star(&mut nodes, ctx)?;
+                    self.parse_star(&mut nodes, ctx);
                 }
                 b'[' => {
                     flush_literal(&mut lit_buf, &mut nodes);
@@ -121,10 +162,14 @@ impl<'a> Parser<'a> {
                 }
                 b'{' => {
                     flush_literal(&mut lit_buf, &mut nodes);
+                    // Expanded-form neighbors for branch-edge globstar
+                    // ownership (§7 expansion equation / §8.1).
+                    let prev_boundary = ctx.boundary_before(nodes.last());
+                    let next_boundary = self.brace_next_boundary(ctx);
                     // Single-branch `{a}` is treated as the literal `{a}`
                     // (GLOB_SPEC §7.4). `<[Node; 1]>::try_from` both checks
                     // the length AND moves the single element out in one step.
-                    match <[Node; 1]>::try_from(self.parse_brace()?) {
+                    match <[Node; 1]>::try_from(self.parse_brace(prev_boundary, next_boundary)?) {
                         Ok([single]) => {
                             nodes.push(Node::Literal(b"{".to_vec()));
                             if let Some(bytes) = single.to_literal_bytes() {
@@ -160,54 +205,32 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_star(&mut self, nodes: &mut Vec<Node>, ctx: SequenceContext) -> Result<(), GlobError> {
+    fn parse_star(&mut self, nodes: &mut Vec<Node>, ctx: SequenceContext) {
         debug_assert_eq!(self.input[self.pos], b'*');
 
-        // Check for `**` (globstar).
-        if self.peek_at(1) == Some(b'*') {
-            // Globstar must occupy a full segment (GLOB_SPEC §8.1):
-            // - preceded by a segment boundary
-            // - followed by a segment boundary
-            //
-            // "Segment boundary" means `/`, the start/end of the current
-            // sequence (pattern start, or the start/end of a brace branch
-            // like in `{**/a,**/b}`). We detect start-of-sequence by
-            // checking `nodes` (empty / last is Separator) rather than
-            // raw bytes, which correctly handles escape sequences.
-            let prev_ok = nodes.is_empty() || matches!(nodes.last(), Some(Node::Separator));
-            let after_star_pos = self.pos + 2;
-            let at_end = after_star_pos == self.input.len();
-            let next_byte = self.input.get(after_star_pos).copied();
-            let next_ok = at_end
-                || next_byte == Some(b'/')
-                || (matches!(ctx, SequenceContext::Brace)
-                    && matches!(next_byte, Some(b'}' | b',')));
-
-            if prev_ok && next_ok {
-                // Real globstar.
-                nodes.push(Node::Globstar);
-                self.pos += 2;
-                // Collapse consecutive `/**/`.
-                while self.pos + 3 <= self.input.len()
-                    && &self.input[self.pos..self.pos + 3] == b"/**"
-                    && (self.pos + 3 == self.input.len() || self.input[self.pos + 3] == b'/')
-                {
-                    self.pos += 3;
-                }
-                return Ok(());
-            } else {
-                // Degenerate `**` — treat as a single `*` (the second `*` will be
-                // consumed in the next loop iteration as another `Star`, but
-                // they collapse semantically to one).
-                nodes.push(Node::Star);
-                self.pos += 1;
-                return Ok(());
+        // `**` is a globstar only when both sides are segment boundaries
+        // in the EXPANDED form (GLOB_SPEC §8.1, §7 equation) — see
+        // `boundary_before` / `boundary_after`.
+        if self.peek_at(1) == Some(b'*')
+            && ctx.boundary_before(nodes.last())
+            && ctx.boundary_after(self.peek_at(2))
+        {
+            nodes.push(Node::Globstar);
+            self.pos += 2;
+            // Collapse consecutive `/**/`.
+            while self.pos + 3 <= self.input.len()
+                && &self.input[self.pos..self.pos + 3] == b"/**"
+                && (self.pos + 3 == self.input.len() || self.input[self.pos + 3] == b'/')
+            {
+                self.pos += 3;
             }
+            return;
         }
 
+        // Single `*`, or degenerate `**` mid-segment — the second `*`
+        // is consumed next iteration and folds into one Star.
         nodes.push(Node::Star);
         self.pos += 1;
-        Ok(())
     }
 
     fn parse_class(&mut self) -> Result<CharClass, GlobError> {
@@ -300,7 +323,59 @@ impl<'a> Parser<'a> {
         Ok(resolved)
     }
 
-    fn parse_brace(&mut self) -> Result<Vec<Node>, GlobError> {
+    /// Scan ahead from the current `{` to its matching `}` (honoring
+    /// escapes, class scopes, and nesting) and report whether the
+    /// byte after it is a boundary in the expanded form. Read-only —
+    /// parse errors surface later through the real parse, so any
+    /// malformed tail just yields a don't-care value.
+    fn brace_next_boundary(&self, ctx: SequenceContext) -> bool {
+        debug_assert_eq!(self.input[self.pos], b'{');
+        let mut i = self.pos + 1;
+        let mut depth = 0usize;
+        while i < self.input.len() {
+            match self.input[i] {
+                b'\\' => i += 1,
+                b'[' => {
+                    // Class sub-scanner: `[!`/`[^` then POSIX first-`]`
+                    // literal, `\` escapes; stops at `]` or a `/`
+                    // (which the real parser rejects later anyway).
+                    i += 1;
+                    if matches!(self.input.get(i), Some(b'!') | Some(b'^')) {
+                        i += 1;
+                    }
+                    if self.input.get(i) == Some(&b']') {
+                        i += 1;
+                    }
+                    while i < self.input.len()
+                        && self.input[i] != b']'
+                        && self.input[i] != b'/'
+                    {
+                        if self.input[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                b'{' => depth += 1,
+                b'}' => {
+                    if depth == 0 {
+                        return ctx.boundary_after(self.input.get(i + 1).copied());
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        // Unterminated brace — the real parse errors out; don't-care.
+        true
+    }
+
+    fn parse_brace(
+        &mut self,
+        prev_boundary: bool,
+        next_boundary: bool,
+    ) -> Result<Vec<Node>, GlobError> {
         let start_pos = self.pos;
         debug_assert_eq!(self.input[self.pos], b'{');
         self.pos += 1;
@@ -314,7 +389,10 @@ impl<'a> Parser<'a> {
 
         let mut branches = Vec::new();
         loop {
-            let branch = self.parse_sequence(SequenceContext::Brace)?;
+            let branch = self.parse_sequence(SequenceContext::Brace {
+                prev_boundary,
+                next_boundary,
+            })?;
             branches.push(branch);
 
             match self.peek() {
