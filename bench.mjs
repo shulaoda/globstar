@@ -175,11 +175,15 @@ function formatCell(val, opts = {}) {
     return nsToString(scaled);
   }
   // Bare integer (Rust memory tools).
-  if (/^\d+$/.test(val) && opts.isMem) return `${val} B`;
-  // JS memory: `424 B` style — round + ensure integer.
+  if (/^\d+$/.test(val) && opts.isMem) return bytesToKb(parseInt(val, 10));
+  // JS memory: `424 B` style.
   const m = val.match(/^([\d.]+)\s*B$/);
-  if (m) return `${Math.round(parseFloat(m[1]))} B`;
+  if (m) return bytesToKb(parseFloat(m[1]));
   return val;
+}
+
+function bytesToKb(bytes) {
+  return `${(bytes / 1024).toFixed(2)} KB`;
 }
 
 // ── runners ──────────────────────────────────────────────────────
@@ -517,7 +521,7 @@ ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.compile, jsSingle.compil
 
 ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.match, jsSingle.match])}
 
-### Memory (B / matcher)
+### Memory (KB / matcher)
 
 ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.mem, jsSingle.mem])}
 `);
@@ -532,7 +536,7 @@ ${combinedTable("Set", MULTI_SETS, [rustMulti.compile, jsMulti.compile])}
 
 ${combinedTable("Set", MULTI_SETS, [rustMulti.match, jsMulti.match])}
 
-### Memory (B / matcher)
+### Memory (KB / matcher)
 
 ${combinedTable("Set", MULTI_SETS, [rustMulti.mem, jsMulti.mem])}
 `);
