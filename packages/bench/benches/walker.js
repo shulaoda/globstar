@@ -5,7 +5,7 @@ import { bench, run, group, summary, do_not_optimize } from "mitata";
 import fastGlob from "fast-glob";
 import { globby } from "globby";
 import { glob as tinyGlob } from "tinyglobby";
-import { glob } from "@globstar/globstar";
+import { glob } from "@globstar/walk";
 
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";

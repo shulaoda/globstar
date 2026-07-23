@@ -1,7 +1,7 @@
 # SSM — Segment-Structured Matcher (design)
 
 **Status:** promoted to the primary engine inside the Rust `globstar` crate
-and JavaScript `@globstar/globstar` package after standalone development
+and JavaScript `@globstar/core` package after standalone development
 and head-to-head validation; adversarially reviewed against the byte
 engines (~950 empirical probes, three review agents) and corrected —
 see §10 for the errata the review produced. **Date:** 2026-07-22.

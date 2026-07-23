@@ -13,8 +13,8 @@ import {
   N_LITERAL,
   N_SEPARATOR,
   N_STAR,
-} from "../src/matcher/ast.js";
-import { parse } from "../src/matcher/parser.js";
+} from "../src/ast.js";
+import { parse } from "../src/parser.js";
 import {
   OP_ALTERNATION,
   OP_ANYCHAR,
@@ -29,9 +29,9 @@ import {
   OP_SLASH_ANYTHING,
   OP_STAR,
   lower,
-} from "../src/matcher/engine/ops.js";
-import { assertNormalizedProgram } from "../src/matcher/engine/ops/ir.js";
-import { dedupePrefixes } from "../src/matcher/engine/ops/prefixes.js";
+} from "../src/engine/ops.js";
+import { assertNormalizedProgram } from "../src/engine/ops/ir.js";
+import { dedupePrefixes } from "../src/engine/ops/prefixes.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cases = readFileSync(resolve(here, "../../../fixtures/compiler-stages.tsv"), "utf8");

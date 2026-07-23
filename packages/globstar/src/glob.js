@@ -1,11 +1,11 @@
 // Matcher factory.
 //
-// Public:    globstar(patterns, options?)       → (input) => boolean
-// Internal:  compileMatcher(patterns, options?) → { match, matchDir, staticPrefixes }
+// Public: globstar(patterns, options?)       → (input) => boolean
+//         compileMatcher(patterns, options?) → { match, matchDir, staticPrefixes }
 //
-// `compileMatcher` is exported here but never re-exported from
-// `src/index.js`, so `matchDir` / `staticPrefixes` stay
-// package-private. Walker imports `compileMatcher` directly.
+// Both are re-exported from `src/index.js`. `compileMatcher` is the
+// walker-facing surface (`@globstar/walk` consumes `matchDir` /
+// `staticPrefixes`), mirroring the Rust crate's `Glob` methods.
 //
 // Multi-pattern combines via OR. Each pattern's own `!`-prefix
 // applies independently; auto-splitting `!` into ignores is the

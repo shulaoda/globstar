@@ -5,7 +5,7 @@ PikeVm is the total fallback for patterns that the bounded segment matcher canno
 Implementations:
 
 - Rust: `crates/globstar/src/engine/pikevm.rs` over `engine/thompson.rs`.
-- JavaScript: `packages/globstar/src/matcher/engine/pikevm.js` over `engine/nfa-soa.js`.
+- JavaScript: `packages/globstar/src/engine/pikevm.js` over `engine/nfa-soa.js`.
 
 ## 1. Dispatch and ownership
 

@@ -7,7 +7,7 @@ import { bench, run, group, summary, do_not_optimize } from "mitata";
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
-import { compileMatcher } from "../../globstar/src/matcher/glob.js";
+import { compileMatcher } from "../../globstar/src/glob.js";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");

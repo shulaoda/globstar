@@ -125,9 +125,9 @@ function record(stats, ok, msgFn) {
 
 async function runJsVerify() {
   const { globstar } = await import("./packages/globstar/src/index.js");
-  const { compileMatcher } = await import("./packages/globstar/src/matcher/glob.js");
-  const { GlobError } = await import("./packages/globstar/src/matcher/error.js");
-  const { parse } = await import("./packages/globstar/src/matcher/parser.js");
+  const { compileMatcher } = await import("./packages/globstar/src/glob.js");
+  const { GlobError } = await import("./packages/globstar/src/error.js");
+  const { parse } = await import("./packages/globstar/src/parser.js");
 
   // ── single-pattern corpus
   const filenames = new Set(readdirSync(CORPUS_DIR));

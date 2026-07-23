@@ -8,8 +8,8 @@
 //
 // Run: node packages/globstar/tests/string-mode.mjs [count]
 
-import { compileMatcher } from "../src/matcher/glob.js";
-import { toBytes } from "../src/matcher/utf8.js";
+import { compileMatcher } from "../src/glob.js";
+import { toBytes } from "../src/utf8.js";
 
 const COUNT = Number(process.argv[2] ?? 200000);
 

@@ -2,7 +2,7 @@
 
 The fallback matcher's NFA is built from the linear `Op` program produced by the lowering pass (`engine/ops/`) using Thompson's classical construction (Thompson, 1968), augmented with a `DotGuard` state that captures glob's segment-start dot rule.
 
-Implementations: `crates/globstar/src/engine/thompson.rs` and `packages/globstar/src/matcher/engine/nfa-soa.js`.
+Implementations: `crates/globstar/src/engine/thompson.rs` and `packages/globstar/src/engine/nfa-soa.js`.
 
 ## 0. Pipeline
 

@@ -27,9 +27,12 @@ importers:
 
   packages/bench:
     dependencies:
-      '@globstar/globstar':
+      '@globstar/core':
         specifier: workspace:*
         version: link:../globstar
+      '@globstar/walk':
+        specifier: workspace:*
+        version: link:../globstar-walk
       fast-glob:
         specifier: ^3.3.3
         version: 3.3.3
@@ -54,6 +57,12 @@ importers:
         version: 1.0.34
 
   packages/globstar: {}
+
+  packages/globstar-walk:
+    dependencies:
+      '@globstar/core':
+        specifier: workspace:*
+        version: link:../globstar
 
 packages:
 

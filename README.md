@@ -5,7 +5,8 @@ A glob library purpose-built for [Vite][vite]'s `import.meta.glob` feature.
 ```
 crates/globstar          — Rust crate (canonical implementation)
 crates/globstar-walk     — Rust filesystem walker built on globstar
-packages/globstar        — JavaScript port published as @globstar/globstar
+packages/globstar        — JavaScript matcher published as @globstar/core
+packages/globstar-walk   — JavaScript walker published as @globstar/walk
 ```
 
 Both `globstar` implementations use the segment-structured matcher (SSM)

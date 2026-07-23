@@ -21,8 +21,8 @@
 import { spawnSync } from "node:child_process";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMatcher } from "./packages/globstar/src/matcher/glob.js";
-import { GlobError } from "./packages/globstar/src/matcher/error.js";
+import { compileMatcher } from "./packages/globstar/src/glob.js";
+import { GlobError } from "./packages/globstar/src/error.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 process.chdir(ROOT);

@@ -1,6 +1,6 @@
 # GLOB_SPEC — Authoritative Syntax and Semantics
 
-> This document is the **source of truth** for the glob dialect implemented by the `globstar` Rust crate (`impl/crates/globstar`) and the `@globstar/globstar` JS package (`impl/packages/globstar`). Any discrepancy between code, tests, documentation, and this spec is resolved by changing the code. Changes to the spec itself follow the discussion + revision procedure recorded in `decisions/`. **Version:** v0.2.0 (draft) **Status:** active — not yet released, still mutable. **Baseline:** `picomatch` + `fast-glob` mainline behavior, with the rigor of `doublestar`. We do NOT aim for bit-exact compatibility with any single tool. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
+> This document is the **source of truth** for the glob dialect implemented by the `globstar` Rust crate (`impl/crates/globstar`) and the `@globstar/core` JS package (`impl/packages/globstar`). Any discrepancy between code, tests, documentation, and this spec is resolved by changing the code. Changes to the spec itself follow the discussion + revision procedure recorded in `decisions/`. **Version:** v0.2.0 (draft) **Status:** active — not yet released, still mutable. **Baseline:** `picomatch` + `fast-glob` mainline behavior, with the rigor of `doublestar`. We do NOT aim for bit-exact compatibility with any single tool. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
 
 ## Table of Contents
 

@@ -1,4 +1,3 @@
-export { globstar } from "./matcher/glob.js";
-export { GlobError } from "./matcher/error.js";
-export { glob, globSync } from "./walker/walk.js";
-export { WalkError } from "./walker/error.js";
+export { globstar, compileMatcher } from "./glob.js";
+export { DirMatch } from "./dir-match.js";
+export { GlobError } from "./error.js";

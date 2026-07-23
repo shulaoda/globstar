@@ -30,9 +30,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { compileMatcher } from "../matcher/glob.js";
-import { DirMatch } from "../matcher/dir-match.js";
-import { GlobError } from "../matcher/error.js";
+import { compileMatcher, DirMatch, GlobError } from "@globstar/core";
 import { WalkError } from "./error.js";
 import { normalizeOptions, toMatcherOptions } from "./options.js";
 

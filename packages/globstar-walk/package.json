@@ -1,5 +1,5 @@
 {
-  "name": "@globstar/core",
+  "name": "@globstar/walk",
   "version": "0.0.0",
   "private": true,
   "files": [
@@ -12,5 +12,8 @@
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
     }
+  },
+  "dependencies": {
+    "@globstar/core": "workspace:*"
   }
 }

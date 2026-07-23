@@ -301,14 +301,14 @@ If `**/*.test.ts` were instead routed through `match_dir`, the walker could prun
 
 ## 6. Source map
 
-| Symbol                                                                              | File                                                                       |
-| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `compute_static_prefixes`                                                           | `engine/ops/prefixes.rs`                                                   |
-| `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                    |
-| `PikeVm::match_dir` / `has_prefix_descent`                                          | `engine/pikevm.rs`                                                         |
-| `compute_reach_to_accept`                                                           | `engine/thompson.rs`                                                       |
-| `DirMatch`, `DirMatch::is_match`, `DirMatch::should_descend`, `DirMatch::is_pruned` | `dir_match.rs`                                                             |
-| Walker glue (JS)                                                                    | `packages/globstar/src/walker/walk.js::initFromPrefixes`, `processDirents` |
+| Symbol                                                                              | File                                                                     |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `compute_static_prefixes`                                                           | `engine/ops/prefixes.rs`                                                 |
+| `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                  |
+| `PikeVm::match_dir` / `has_prefix_descent`                                          | `engine/pikevm.rs`                                                       |
+| `compute_reach_to_accept`                                                           | `engine/thompson.rs`                                                     |
+| `DirMatch`, `DirMatch::is_match`, `DirMatch::should_descend`, `DirMatch::is_pruned` | `dir_match.rs`                                                           |
+| Walker glue (JS)                                                                    | `packages/globstar-walk/src/walk.js::initFromPrefixes`, `processDirents` |
 
 ## 7. References
 

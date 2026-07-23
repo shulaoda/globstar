@@ -1,69 +1,8 @@
-// Type definitions for `@globstar/globstar`.
+// Type definitions for `@globstar/core`.
 //
-// Two layers:
-//   - Walker  (`glob` / `globSync`): traverse the filesystem and
-//                                     return matching file paths.
-//   - Matcher (`globstar`):           compile patterns into a
-//                                     `(input) => boolean` predicate.
-
-export interface GlobOptions {
-  /** Working directory the patterns and ignore globs resolve against. Default `"."`. */
-  cwd?: string;
-  /** Match dot-files (paths starting with `.`). Default `false`. */
-  dot?: boolean;
-  /** ASCII-case-insensitive byte comparison. Default `false`. */
-  caseInsensitive?: boolean;
-  /**
-   * Follow symlinks when walking directories. Cycles are detected via
-   * `fs.realpathSync` on the symlink target and skipped. When `false`,
-   * symlinks are dropped entirely (neither emitted nor descended).
-   * Default `true` — matches tinyglobby's `followSymbolicLinks`.
-   */
-  followSymlinks?: boolean;
-  /** Extra patterns to exclude (in addition to any `!`-prefixed entries). */
-  ignore?: readonly string[];
-}
-
-/**
- * Concurrent async glob. Each discovered directory schedules its own
- * `fs.readdir` callback immediately, so syscalls overlap on libuv's
- * threadpool — the right choice for any non-trivial corpus.
- *
- * Multi-pattern combines via OR. `!`-prefixed patterns auto-split into
- * the ignore set (globby-style):
- *
- * ```ts
- * await glob("**​/*.ts", { cwd: "./src" });
- * await glob(["**​/*.ts", "!**​/*.test.ts"]);
- * await glob("**​/*.ts", { ignore: ["**​/*.test.ts"] });
- * ```
- *
- * Output is always **absolute file paths** rooted at the resolved
- * `cwd`. Directory matches aren't emitted. Callers wanting paths
- * relative to `cwd` should `path.relative(cwd, p)` at their boundary.
- * Errors throw a {@link WalkError} (the returned Promise rejects;
- * never silent).
- */
-export function glob(
-  patterns: string | readonly string[],
-  options?: GlobOptions,
-): Promise<string[]>;
-
-/**
- * Sync DFS glob. Use when blocking traversal is OK and the corpus is
- * small enough that I/O concurrency wouldn't pay for itself (a few
- * hundred files or fewer). For everything else prefer {@link glob}.
- *
- * Same options, same `!`-split behavior, same file-only output.
- * Errors throw a {@link WalkError} synchronously.
- *
- * ```ts
- * for (const p of globSync("**​/*.ts", { cwd: "./src" })) {
- *   compile(p);
- * }
- * ```
- */
-export function globSync(patterns: string | readonly string[], options?: GlobOptions): string[];
+// Pure glob matcher — compile patterns into path predicates. No
+// filesystem access, no `node:` imports; runs in any JS runtime.
+// The filesystem walker lives in `@globstar/walk`.
 
 export interface GlobstarOptions {
   /** Match dot-files. Default `true` at the matcher layer. */
@@ -78,7 +17,7 @@ export interface GlobstarOptions {
  *
  * Multi-pattern combines via OR; each pattern's own `!`-prefix
  * negation applies independently. Auto-splitting `!`-patterns into
- * ignores is the {@link glob} layer's job, not the matcher's.
+ * ignores is the walker layer's job, not the matcher's.
  *
  * ```ts
  * const m = globstar("**​/*.ts");
@@ -102,47 +41,53 @@ export function globstar(
 ): (input: string | Uint8Array) => boolean;
 
 /**
- * Thrown by {@link glob} / {@link globSync}. Discriminate via
- * `.kind`:
- *
- * - `"InvalidPattern"` — a pattern failed to compile. `.pattern` is
- *   the offending pattern (or comma-joined list), `.reason` is the
- *   parser's message.
- * - `"Io"` — a `readdir` / `stat` failed during traversal (missing
- *   `cwd`, EACCES, ENOENT on a vanished dir, …). `.path` is the
- *   directory we tried to read, `.cause` is the underlying Node error.
- *
- * The async path rejects the returned Promise; the sync path throws.
- *
- * ```ts
- * try {
- *   await glob("**​/*.ts", { cwd: "./does-not-exist" });
- * } catch (e) {
- *   if (e instanceof WalkError && e.kind === "Io") {
- *     console.error(`cannot read ${e.path}:`, e.cause?.message);
- *   } else {
- *     throw e;
- *   }
- * }
- * ```
+ * Result of {@link Matcher.matchDir} — what a directory path means
+ * for the pattern set. Walkers consult this per-directory to decide
+ * whether to yield the dir, descend into it, or prune the subtree.
+ * Mirrors the Rust crate's `DirMatch`.
  */
-export class WalkError extends Error {
-  readonly name: "WalkError";
-  readonly kind: "InvalidPattern" | "Io";
-  /** Path that triggered the error (set when `kind === "Io"`). */
-  readonly path?: string;
-  /** Pattern that failed to compile (set when `kind === "InvalidPattern"`). */
-  readonly pattern?: string;
-  /** Compile reason (set when `kind === "InvalidPattern"`). */
-  readonly reason?: string;
-  /** Underlying Node error (set when `kind === "Io"`). */
-  readonly cause?: Error;
-  constructor(kind: "InvalidPattern" | "Io", info?: Record<string, unknown>);
+export type DirMatchValue = 0 | 1 | 2 | 3;
+
+export declare const DirMatch: {
+  readonly Pruned: 0;
+  readonly Descend: 1;
+  readonly Match: 2;
+  readonly DescendAndMatch: 3;
+  /** `Match` or `DescendAndMatch`. */
+  isMatch(d: DirMatchValue): boolean;
+  /** `Descend` or `DescendAndMatch`. */
+  shouldDescend(d: DirMatchValue): boolean;
+  isPruned(d: DirMatchValue): boolean;
+  /** Combine the exact-match and prefix-match axes into one value. */
+  fromExactPrefix(exact: boolean, prefix: boolean): DirMatchValue;
+};
+
+/** Compiled pattern set returned by {@link compileMatcher}. */
+export interface Matcher {
+  /** Full-path match — same predicate {@link globstar} returns. */
+  match(input: string | Uint8Array): boolean;
+  /** Directory-level verdict for walker pruning (see {@link DirMatch}). */
+  matchDir(input: string | Uint8Array): DirMatchValue;
+  /** Literal path prefixes a walker can seed traversal from. */
+  staticPrefixes(): Uint8Array[];
 }
 
 /**
- * Thrown by {@link globstar} when a pattern fails to compile.
- * `.kind` carries the specific failure mode.
+ * Compile one or more glob patterns into a {@link Matcher} — the
+ * walker-facing surface with directory pruning (`matchDir`) and
+ * traversal seeding (`staticPrefixes`) alongside the plain `match`
+ * predicate. `@globstar/walk` is built on this.
+ *
+ * Throws a {@link GlobError} if any pattern fails to compile.
+ */
+export function compileMatcher(
+  patterns: string | readonly string[],
+  options?: GlobstarOptions,
+): Matcher;
+
+/**
+ * Thrown by {@link globstar} / {@link compileMatcher} when a pattern
+ * fails to compile. `.kind` carries the specific failure mode.
  *
  * ```ts
  * try {
