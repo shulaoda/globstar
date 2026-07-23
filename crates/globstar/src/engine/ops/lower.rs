@@ -9,9 +9,14 @@ use super::normalize::{
 
 /// Lower an AST into one normalized [`OpProgram`]. Brace alternatives remain
 /// nested, so ordinary in-segment braces never incur cartesian expansion.
-pub fn lower(node: &Node, case_insensitive: bool) -> OpProgram {
+///
+/// `maybe_sep_distribution` is the parser's hint (see `Ast`): when
+/// `false` no `**` sits inside a brace, so the separator-distribution
+/// walk is provably a no-op and is skipped. When `true` the precise
+/// check still decides — the hint is a superset, never the decider.
+pub fn lower(node: &Node, maybe_sep_distribution: bool, case_insensitive: bool) -> OpProgram {
     let mut ops = Vec::new();
-    if needs_sep_distribution(node) {
+    if maybe_sep_distribution && needs_sep_distribution(node) {
         let distributed = distribute_seps(node.clone());
         lower_into(&distributed, &mut ops, case_insensitive);
     } else {

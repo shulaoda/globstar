@@ -60,7 +60,7 @@ const DOT: bool = true;
 
 fn build_pikevm(pattern: &str) -> PikeVm {
     let ast = parser::parse(pattern.as_bytes()).expect("parse");
-    let program = lower(&ast.body, false);
+    let program = lower(&ast.body, ast.maybe_sep_distribution, false);
     PikeVm::new(program, DOT)
 }
 

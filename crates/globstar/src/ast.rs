@@ -11,6 +11,10 @@
 pub struct Ast {
     /// Outer negation count. Even = no negation, odd = negated.
     pub negation_count: u32,
+    /// Parser hint: a `**` was parsed inside `{}`. `false` proves the
+    /// lowering's separator-distribution check cannot trigger, letting
+    /// it skip the AST walk entirely (§7 expansion equation).
+    pub maybe_sep_distribution: bool,
     /// The pattern body.
     pub body: Node,
 }

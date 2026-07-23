@@ -66,7 +66,7 @@ export function parse(input) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
   }
 
-  const state = { input: bytes, pos: 0, brace_depth: 0 };
+  const state = { input: bytes, pos: 0, brace_depth: 0, maybe_sep_distribution: false };
 
   // Leading `!` flips the result on each. Parity decides final negation.
   let negationCount = 0;
@@ -76,7 +76,13 @@ export function parse(input) {
   }
 
   const body = parseSequence(state, CTX_TOP);
-  return { body, isNegated: (negationCount & 1) === 1 };
+  return {
+    body,
+    isNegated: (negationCount & 1) === 1,
+    // Parser hint: a `**` was parsed inside `{}`; false proves the
+    // lowering's separator-distribution check cannot trigger (§7).
+    maybeSepDistribution: state.maybe_sep_distribution,
+  };
 }
 
 function parseSequence(state, ctx) {
@@ -91,11 +97,12 @@ function parseSequence(state, ctx) {
     }
   }
 
+  const inBrace = ctx.brace;
   while (state.pos < input.length) {
     const b = input[state.pos];
 
-    // Brace context stops at the brace's separator (`,`) or closer (`}`).
-    if (ctx.brace && (b === COMMA || b === RBRACE)) break;
+    // Brace context stops at the branch separator (`,`) or closer (`}`).
+    if (inBrace && (b === COMMA || b === RBRACE)) break;
 
     switch (b) {
       case BACKSLASH: {
@@ -157,6 +164,7 @@ function parseStar(state, nodes, ctx) {
     boundaryBefore(nodes, ctx) &&
     boundaryAfter(input[state.pos + 2], ctx)
   ) {
+    if (state.brace_depth > 0) state.maybe_sep_distribution = true;
     nodes.push(globstar());
     state.pos += 2;
     // Collapse `/**/**` runs to a single globstar.

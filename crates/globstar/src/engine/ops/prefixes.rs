@@ -49,6 +49,10 @@ fn extract_prefixes_per_branch(ops: &[Op]) -> Vec<Vec<u8>> {
 }
 
 pub(crate) fn dedupe_prefixes(mut prefixes: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    // 0/1 prefixes: dedup is the identity.
+    if prefixes.len() <= 1 {
+        return prefixes;
+    }
     // Ancestors are considered before descendants. The ordered set owns each
     // accepted buffer once and supports borrowed-slice lookups at every `/`
     // boundary, avoiding the old all-accepted × all-candidate scan.

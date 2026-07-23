@@ -66,7 +66,7 @@ fn time_ns(mut f: impl FnMut()) -> f64 {
 
 fn build_pikevm(pattern: &str, dot: bool) -> PikeVm {
     let ast = parser::parse(pattern.as_bytes()).expect("parse");
-    let program = lower(&ast.body, false);
+    let program = lower(&ast.body, ast.maybe_sep_distribution, false);
     PikeVm::new(program, dot)
 }
 

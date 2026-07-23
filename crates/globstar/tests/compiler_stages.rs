@@ -125,7 +125,7 @@ fn parser_and_lowering_match_shared_golden_cases() {
         ast_dump(&parsed.body, &mut actual_ast);
         assert_eq!(actual_ast, expected_ast, "AST for {pattern:?}");
 
-        let program = lower(&parsed.body, false);
+        let program = lower(&parsed.body, parsed.maybe_sep_distribution, false);
         let mut actual_ops = String::new();
         ops_dump(program.ops(), &mut actual_ops);
         assert_eq!(actual_ops, expected_ops, "ops for {pattern:?}");

@@ -159,6 +159,9 @@ impl Glob {
             None => Self::from_ast(
                 Ast {
                     negation_count: 0,
+                    // factor_branches can move a top-level `**` into the
+                    // synthetic Brace, so the walk must stay enabled.
+                    maybe_sep_distribution: true,
                     body: factor_branches(branches),
                 },
                 opts,
@@ -181,7 +184,7 @@ impl Glob {
                 Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive))
             }
             Tier::SimpleWildcard | Tier::Globstar => {
-                let program = lower(&ast.body, opts.case_insensitive);
+                let program = lower(&ast.body, ast.maybe_sep_distribution, opts.case_insensitive);
                 match SegmentMatcher::build(program, opts.dot) {
                     Ok(segment) => Engine::Segment(segment),
                     Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),

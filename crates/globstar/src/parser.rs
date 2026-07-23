@@ -26,6 +26,7 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
         input,
         pos: 0,
         brace_depth: 0,
+        maybe_sep_distribution: false,
     };
 
     // Leading `!` are negation markers. Each one flips the result;
@@ -39,6 +40,7 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
     let body = p.parse_sequence(SequenceContext::Top)?;
     Ok(Ast {
         negation_count,
+        maybe_sep_distribution: p.maybe_sep_distribution,
         body,
     })
 }
@@ -110,6 +112,7 @@ struct Parser<'a> {
     input: &'a [u8],
     pos: usize,
     brace_depth: usize,
+    maybe_sep_distribution: bool,
 }
 
 /// Structural class skip for the brace lookahead. Syntax errors remain the
@@ -152,17 +155,13 @@ impl<'a> Parser<'a> {
         let mut nodes: Vec<Node> = Vec::with_capacity(node_capacity);
         let mut lit_buf: Vec<u8> = Vec::with_capacity(remaining.min(32));
 
+        let in_brace = matches!(ctx, SequenceContext::Brace { .. });
         while self.pos < self.input.len() {
             let b = self.input[self.pos];
 
-            // Check stop conditions for our context.
-            match ctx {
-                SequenceContext::Top => {}
-                SequenceContext::Brace { .. } => {
-                    if b == b',' || b == b'}' {
-                        break;
-                    }
-                }
+            // Brace context stops at the branch separator (`,`) or closer (`}`).
+            if in_brace && (b == b',' || b == b'}') {
+                break;
             }
 
             match b {
@@ -254,6 +253,9 @@ impl<'a> Parser<'a> {
             && ctx.boundary_before(nodes.last())
             && ctx.boundary_after(self.peek_at(2))
         {
+            if self.brace_depth > 0 {
+                self.maybe_sep_distribution = true;
+            }
             nodes.push(Node::Globstar);
             self.pos += 2;
             // Collapse consecutive `/**/`.
@@ -410,7 +412,9 @@ impl<'a> Parser<'a> {
             });
         }
 
-        let mut branches = Vec::with_capacity(2);
+        // Capacity 4 matches Vec's first growth step for small elements,
+        // so common 2-4 branch braces allocate exactly once.
+        let mut branches = Vec::with_capacity(4);
         loop {
             let branch = self.parse_sequence(SequenceContext::Brace {
                 prev_boundary,

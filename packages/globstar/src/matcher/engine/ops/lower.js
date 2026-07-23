@@ -29,9 +29,14 @@ import {
   needsSepDistribution,
 } from "./normalize.js";
 
-export function lower(node, caseInsensitive) {
+// `maybeSepDistribution` is the parser's hint (see parse()): when false
+// no `**` sits inside a brace, so the separator-distribution walk is
+// provably a no-op and is skipped. When true the precise check still
+// decides — the hint is a superset, never the decider. Defaults to
+// true so direct callers (tests) keep exact full-check behavior.
+export function lower(node, caseInsensitive, maybeSepDistribution = true) {
   const ops = [];
-  const root = needsSepDistribution(node) ? distributeSeps(node) : node;
+  const root = maybeSepDistribution && needsSepDistribution(node) ? distributeSeps(node) : node;
   lowerInto(root, ops, caseInsensitive);
   foldGlobstars(ops);
   applyLeadingSepsAtStart(ops);

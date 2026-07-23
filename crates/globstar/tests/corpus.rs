@@ -352,7 +352,7 @@ fn run_globstar_single(row: &SingleRow) -> Option<bool> {
 
 fn run_pikevm_single(row: &SingleRow) -> Option<bool> {
     let ast = parse(row.pattern.as_bytes()).ok()?;
-    let program = lower(&ast.body, row.case_insensitive);
+    let program = lower(&ast.body, ast.maybe_sep_distribution, row.case_insensitive);
     let pike = PikeVm::new(program, row.dot);
     let raw = pike.is_match(&row.path);
     Some(if ast.is_negated() { !raw } else { raw })
@@ -393,7 +393,7 @@ fn parse_bodies(patterns: &[String]) -> Option<Vec<Node>> {
 fn run_pikevm_multi(row: &MultiRow) -> Option<bool> {
     let bodies = parse_bodies(&row.patterns)?;
     let merged = factor_branches(bodies);
-    let program = lower(&merged, row.case_insensitive);
+    let program = lower(&merged, true, row.case_insensitive);
     let pike = PikeVm::new(program, row.dot);
     Some(pike.is_match(&row.path))
 }
@@ -421,7 +421,7 @@ fn run_pikevm_dir(row: &DirRow) -> Option<DirMatch> {
     if ast.is_negated() {
         return None;
     }
-    let program = lower(&ast.body, row.case_insensitive);
+    let program = lower(&ast.body, ast.maybe_sep_distribution, row.case_insensitive);
     let pike = PikeVm::new(program, row.dot);
     Some(pike.match_dir(&row.path))
 }

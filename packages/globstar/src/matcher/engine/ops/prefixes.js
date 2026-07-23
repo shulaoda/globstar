@@ -38,6 +38,8 @@ function extractLeadingPrefix(ops) {
 }
 
 export function dedupePrefixes(prefixes) {
+  // 0/1 prefixes: dedup is the identity.
+  if (prefixes.length <= 1) return prefixes;
   // Parents precede descendants. A byte trie answers exact and directory-
   // boundary ancestor queries in O(prefix length), replacing the previous
   // O(number of accepted prefixes) scan for every candidate.

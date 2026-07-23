@@ -46,33 +46,36 @@ export function compileMatcher(patterns, options) {
   const list = Array.isArray(patterns) ? patterns : [patterns];
   if (list.length === 0) throw new GlobError("EmptyPatternSet");
 
-  const positiveBodies = [];
-  const negativeBodies = [];
+  const positiveAsts = [];
+  const negativeAsts = [];
   for (let i = 0; i < list.length; i++) {
     const ast = parse(String(list[i]));
-    if (ast.isNegated) negativeBodies.push(ast.body);
-    else positiveBodies.push(ast.body);
+    if (ast.isNegated) negativeAsts.push(ast);
+    else positiveAsts.push(ast);
   }
 
   // Positive branches collapse into one engine via `factorBranches`
   // (shared prefix/suffix → smaller segment program or fallback NFA).
-  const positiveEngine = positiveBodies.length > 0 ? buildEngine(positiveBodies, opts) : null;
+  const positiveEngine = positiveAsts.length > 0 ? buildEngine(positiveAsts, opts) : null;
   // Negative branches stay as N independent engines, each contributing
   // `!body.match(input)` to the OR. Rare path; not worth factoring.
-  const negativeEngines = negativeBodies.map((body) => buildEngine([body], opts));
+  const negativeEngines = negativeAsts.map((ast) => buildEngine([ast], opts));
 
   return makeMatcher(positiveEngine, negativeEngines);
 }
 
-function buildEngine(bodies, opts) {
+function buildEngine(asts, opts) {
   const ci = !!opts.caseInsensitive;
   const dot = !!opts.dot;
-  if (bodies.length === 1) {
-    const literalBytes = nodeToLiteralBytes(bodies[0]);
+  if (asts.length === 1) {
+    const literalBytes = nodeToLiteralBytes(asts[0].body);
     if (literalBytes !== null) return new LiteralMatcher(literalBytes, ci);
   }
-  const factored = bodies.length === 1 ? bodies[0] : factorBranches(bodies);
-  const program = lower(factored, ci);
+  // factorBranches can move a top-level `**` into the synthetic brace,
+  // so multi-pattern merges keep the distribution walk enabled.
+  const maybe = asts.length > 1 ? true : asts[0].maybeSepDistribution;
+  const factored = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
+  const program = lower(factored, ci, maybe);
 
   if (opts.__engine === "pikevm") return PikeVm.build(program, dot);
   return SegmentMatcher.build(program, dot) ?? PikeVm.build(program, dot);

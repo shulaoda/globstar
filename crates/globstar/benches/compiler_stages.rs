@@ -28,7 +28,7 @@ fn bench_stages(c: &mut Criterion) {
     let mut lower_group = c.benchmark_group("stage_lower");
     for (name, body) in &parsed {
         lower_group.bench_with_input(BenchmarkId::from_parameter(*name), body, |b, ast| {
-            b.iter(|| lower(black_box(ast), false));
+            b.iter(|| lower(black_box(ast), true, false));
         });
     }
     lower_group.finish();
