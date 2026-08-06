@@ -342,7 +342,13 @@ Braces are embedded into the matcher (NFA / backtracker / brace-aware DFA); they
 
 ### 7.4 Single-branch braces
 
-`{a}` (no comma) is NOT a brace. It is parsed as the literal four-byte sequence `{a}`. This is the consensus of Bash, picomatch, and fast-glob.
+`{a}` (no comma) is NOT a brace. It is parsed as the literal three-byte sequence `{a}` — the `{` and `}` are ordinary bytes. This is the consensus of Bash, picomatch, and fast-glob.
+
+**Rationale.** Brace expansion is a Cartesian product over alternatives, so it requires at least two branches (a comma) or a range (`{1..3}`, out of scope §5). A single-branch `{X}` would expand to just `X` — a no-op — so Bash (and every glob library that follows it) treats it as literal instead: `bash -c 'echo {a}'` prints `{a}`, while `echo {a,b}` prints `a b`. To match a filename that literally contains braces, write them bare (a `{…}` with no comma never forms a brace) or escape them (`\{a\}`).
+
+Note the asymmetry with character classes: a single-member `[a]` IS still a class (§6). Bracket expressions — inherited from POSIX / regex — never had a minimum-member rule, whereas brace expansion — inherited from csh / bash — was defined to require alternatives. The two constructs come from different lineages, and this dialect keeps each one's inherited behavior rather than forcing symmetry.
+
+**Interaction with `**` (§8.1).** Because the braces become literal, a `**` inside a single-branch brace is flanked by the literal `{` / `}` — not segment boundaries — so it degrades to `*`: `{**}` ≡ `{*}` (matches `{a}`, not `{a/b}`); `{a/**}` ≡ `{a/*}`. This is consistent with the "`**` must own a segment" rule and matches minimatch; it is a **deliberate divergence from picomatch / fast-glob**, which keep the globstar inside literal braces (see §16).
 
 ### 7.5 Unclosed braces
 
@@ -470,12 +476,12 @@ where `SEP` is one separator and `seg` is a non-empty non-separator byte run. Th
 
 Comparison of the four `**`-related forms:
 
-| Pattern      | Semantics                                  | `path = "/"`                     | `path = "/a"` | `path = "a/b"` |
+| Pattern | Semantics | `path = "/"` | `path = "/a"` | `path = "a/b"` |
 | ------------ | ------------------------------------------ | -------------------------------- | ------------- | -------------- | --- |
-| `**` (alone) | `.*`                                       | ✅                               | ✅            | ✅             |
-| `**/`        | `(SEP                                      | seg/)\*`, must end at a boundary | ✅            | ❌             | ❌  |
-| `**/X`       | X at any depth                             | —                                | —             | ✅ (X = `b`)   |
-| `/**/X`      | X at any depth, **absolute path required** | —                                | —             | —              |
+| `**` (alone) | `.*` | ✅ | ✅ | ✅ |
+| `**/` | `(SEP                                      | seg/)\*`, must end at a boundary | ✅ | ❌ | ❌ |
+| `**/X` | X at any depth | — | — | ✅ (X = `b`) |
+| `/**/X` | X at any depth, **absolute path required** | — | — | — |
 
 **User mental model:** `**/*.rs` means "every `.rs` file" — relative, absolute, or UNC. To restrict to absolute paths only, write `/**/*.rs` explicitly.
 
@@ -905,7 +911,10 @@ pub struct GlobSet { globs: Vec<Glob> }
 
 ```ts
 // JS
-function globstar(patterns: string | readonly string[], opts?): (input) => boolean;
+function globstar(
+  patterns: string | readonly string[],
+  opts?,
+): (input) => boolean;
 ```
 
 For a path, `globset.matches(path)` returns the set of glob indices that match. A non-empty set means "at least one glob matched".
@@ -1075,11 +1084,13 @@ The POSIX first-`]` rule (consistent with bash / fnmatch / fast-glob / picomatch
 | `**` must own a segment                                           | enforced                            | ✅                 | ✅                     | ✅                                     | ✅                         | ✅            |
 | `a/**` matches `a`                                                | ❌                                  | ⚠️                 | ⚠️                     | ❌                                     | ❌                         | ❌            |
 | `**` in braces judged on expansion (§7.0: `a{**,x}b` ≡ `a{*,x}b`) | ✅                                  | ✅ (expands first) | ❌ (branch-local `.*`) | ❌ (demotes to `*` even at boundaries) | ❌                         | n/a           |
+| `**` in single-branch brace `{**}` (§7.4)                         | degrades to `*`                     | literal            | keeps globstar         | ⚠️                                     | keeps globstar             | ⚠️            |
 | `**/X` matches absolute `/a/X`                                    | ✅ (§8.5)                           | n/a                | ✅                     | ✅                                     | ✅                         | ❌            |
 | Extglobs                                                          | ❌ (literal)                        | ✅ (`shopt`)       | ✅                     | ❌                                     | ❌                         | ✅            |
 | POSIX character classes                                           | ❌                                  | ✅                 | ✅                     | ❌                                     | ❌                         | ⚠️            |
 | `[/]` inside a class                                              | parse error (§6.2)                  | literal            | literal                | literal                                | literal                    | ⚠️            |
 | POSIX first-`]` rule                                              | ✅ (§6.5)                           | ✅                 | ✅                     | ❌                                     | ❌                         | ⚠️            |
+| Negated class `[!a]` ≡ `[^a]`                                     | ✅ (both negate, POSIX)             | ✅                 | ❌ (only `[^a]`)       | ⚠️                                     | ❌ (only `[^a]`)           | ⚠️            |
 | Brace `{1..10}`                                                   | ❌                                  | ✅                 | ✅                     | ❌                                     | ❌                         | ❌            |
 | Brace nesting                                                     | ≤ 32                                | ✅                 | ✅                     | ✅                                     | ≤ 10                       | ✅            |
 | Leading-`!` negation                                              | ✅                                  | n/a                | ✅                     | ⚠️                                     | ✅                         | ✅            |
