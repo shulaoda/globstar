@@ -205,7 +205,8 @@ function pathBytes(s) {
 const pathWire = (s) => escapeBytes(pathBytes(s));
 
 // ── JS reference results ─────────────────────────────────────────────
-const DIR_TOKEN = ["pruned", "descend", "match", "descend-match"];
+// Indexed by JS `DirMatch` value (Match=0, Pruned=1, Descend=2, DescendAndMatch=3).
+const DIR_TOKEN = ["match", "pruned", "descend", "descend-match"];
 
 function jsResult(c) {
   const opts = { dot: c.dot, caseInsensitive: c.ci };

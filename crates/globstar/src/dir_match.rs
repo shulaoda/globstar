@@ -6,15 +6,15 @@
 /// entire subtrees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirMatch {
+    /// The directory itself matches, and no descendant can match further.
+    /// Walker may yield it.
+    Match,
     /// No string with this directory as prefix can match. Walker should prune
     /// the entire subtree.
     Pruned,
     /// The directory itself does not match, but some descendant might. Walker
     /// should descend.
     Descend,
-    /// The directory itself matches, and no descendant can match further.
-    /// Walker may yield it.
-    Match,
     /// The directory itself matches, AND some descendant might also match.
     /// Walker should yield it AND descend.
     DescendAndMatch,
@@ -22,16 +22,21 @@ pub enum DirMatch {
 
 impl DirMatch {
     /// Whether the directory should be yielded as a match.
+    #[inline]
     pub fn is_match(self) -> bool {
         matches!(self, Self::Match | Self::DescendAndMatch)
     }
 
     /// Whether the walker should descend into this directory.
+    #[inline]
     pub fn should_descend(self) -> bool {
         matches!(self, Self::Descend | Self::DescendAndMatch)
     }
 
-    /// Whether the entire subtree can be pruned.
+    /// Whether the entire subtree can be pruned. Convenience inverse of
+    /// [`Self::should_descend`] for callers that only care about the
+    /// prune case.
+    #[inline]
     pub fn is_pruned(self) -> bool {
         matches!(self, Self::Pruned)
     }

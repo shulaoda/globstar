@@ -270,7 +270,8 @@ async function runJsVerify() {
   // Mirrors the Rust `corpus_dir_engines_vs_truth` test: rows default to
   // `dot=false` (the walker convention), and negated patterns are skipped
   // because `match_dir` does not invert a leading `!`.
-  const DIR_TOKEN = ["pruned", "descend", "match", "descend-match"];
+  // Indexed by JS `DirMatch` value (Match=0, Pruned=1, Descend=2, DescendAndMatch=3).
+  const DIR_TOKEN = ["match", "pruned", "descend", "descend-match"];
   function* dirRows() {
     const text = readFileSync(join(CORPUS_DIR, "corpus-dir.txt"), "utf8");
     let lineNo = 0;

@@ -48,15 +48,25 @@ export function globstar(
  */
 export type DirMatchValue = 0 | 1 | 2 | 3;
 
+/** Directory matches; yield it (no descendant can match further). */
+export declare const MATCH: 0;
+/** Nothing under this directory can match; prune the subtree. */
+export declare const PRUNED: 1;
+/** Directory itself doesn't match, but some descendant might; descend. */
+export declare const DESCEND: 2;
+/** Directory matches AND some descendant might too; yield and descend. */
+export declare const DESCEND_AND_MATCH: 3;
+
 export declare const DirMatch: {
-  readonly Pruned: 0;
-  readonly Descend: 1;
-  readonly Match: 2;
+  readonly Match: 0;
+  readonly Pruned: 1;
+  readonly Descend: 2;
   readonly DescendAndMatch: 3;
   /** `Match` or `DescendAndMatch`. */
   isMatch(d: DirMatchValue): boolean;
   /** `Descend` or `DescendAndMatch`. */
   shouldDescend(d: DirMatchValue): boolean;
+  /** `Pruned` — the whole subtree can be skipped. */
   isPruned(d: DirMatchValue): boolean;
   /** Combine the exact-match and prefix-match axes into one value. */
   fromExactPrefix(exact: boolean, prefix: boolean): DirMatchValue;

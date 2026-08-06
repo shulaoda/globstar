@@ -2,15 +2,18 @@
 // per-directory to decide whether to yield the dir, descend, or prune
 // the subtree. Mirrors the Rust crate's `DirMatch` (ADR-005).
 
-const PRUNED = 0;
-const DESCEND = 1;
-const MATCH = 2;
-const DESCEND_AND_MATCH = 3;
+// Discriminants, exported so consumers can compare `matchDir(...)`
+// results against a named constant directly. Mirrors the Rust enum's
+// variant order (`Match` first).
+export const MATCH = 0;
+export const PRUNED = 1;
+export const DESCEND = 2;
+export const DESCEND_AND_MATCH = 3;
 
 export const DirMatch = {
+  Match: MATCH,
   Pruned: PRUNED,
   Descend: DESCEND,
-  Match: MATCH,
   DescendAndMatch: DESCEND_AND_MATCH,
 
   isMatch(d) {
