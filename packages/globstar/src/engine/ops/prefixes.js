@@ -7,12 +7,22 @@ export function computeStaticPrefixes(ops) {
 }
 
 function extractPrefixesPerBranch(ops) {
+  // Only recurse into a HEAD alternation when it owns a whole segment —
+  // i.e. it is the entire program or is immediately followed by a
+  // separator. Otherwise its branches are mid-segment and their bodies
+  // are NOT valid directory prefixes: `{package,tsconfig}.json` must not
+  // seed the walker at `package`/`tsconfig` (which don't exist, so the
+  // walk would return nothing). Fall back to the segment-bounded scan,
+  // which stops at the alternation and truncates to the last boundary.
   if (ops.length > 0 && ops[0].kind === OP_ALTERNATION) {
-    const out = [];
-    for (const branch of ops[0].branches) {
-      for (const prefix of extractPrefixesPerBranch(branch)) out.push(prefix);
+    const next = ops[1];
+    if (next === undefined || next.kind === OP_SEP || next.kind === OP_SEP_RUN) {
+      const out = [];
+      for (const branch of ops[0].branches) {
+        for (const prefix of extractPrefixesPerBranch(branch)) out.push(prefix);
+      }
+      return out;
     }
-    return out;
   }
   return [extractLeadingPrefix(ops)];
 }

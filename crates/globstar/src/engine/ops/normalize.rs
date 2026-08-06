@@ -68,7 +68,16 @@ pub(super) fn distribute_seps(node: Node) -> Node {
                     out.push(distribute_seps(child));
                     continue;
                 };
-                let absorb_prev = matches!(out.last(), Some(Node::Separator))
+                // A `/` that is the trailing slash of a preceding `**`
+                // (`**/{...}`) belongs to the globstar's `**/` unit
+                // (OptSegmentsSlash — "any depth incl. zero"). Stealing
+                // it degrades the leading `**` to `.*` and breaks `**/X`
+                // matching X at depth 0 (§8.5), so leave it in place.
+                let prev_is_sep = matches!(out.last(), Some(Node::Separator));
+                let prev_sep_owned_by_globstar =
+                    prev_is_sep && matches!(out.iter().rev().nth(1), Some(Node::Globstar));
+                let absorb_prev = prev_is_sep
+                    && !prev_sep_owned_by_globstar
                     && branches.iter().any(leads_globstar);
                 let absorb_next = matches!(iter.peek(), Some(Node::Separator))
                     && branches.iter().any(trails_globstar);

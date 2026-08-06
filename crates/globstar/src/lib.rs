@@ -243,6 +243,13 @@ impl Glob {
     /// A return value of `[b""]` means "no useful prefix" — the walker
     /// should start from the user-supplied root with no shortcut.
     pub fn static_prefixes(&self) -> Vec<Vec<u8>> {
+        // A negated pattern `!P` matches (almost) everything, so the
+        // body's prefixes describe the exact set a match must AVOID —
+        // the inverse of a useful seed. Fall back to "no prefix" so a
+        // walker starts from the root (§13.4 conservative direction).
+        if self.negated {
+            return vec![Vec::new()];
+        }
         match &self.engine {
             Engine::Literal(m) => {
                 // Pure literal: the literal IS the prefix. Strip any
@@ -268,6 +275,15 @@ impl Glob {
     /// hypothetical `/` step followed by a reach-to-accept lookup
     /// precomputed at build time — no recursive descent.
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
+        // Whole-pattern negation `!P` yields almost no pruning
+        // information: a negated pattern normally means "every path NOT
+        // matching P", whose descendants are unbounded. Conservatively
+        // descend rather than inverting the body's verdict (which would
+        // prune subtrees that in fact contain matches) — GLOB_SPEC
+        // §13.4, matching the JS `matchDir` reference.
+        if self.negated {
+            return DirMatch::Descend;
+        }
         match &self.engine {
             Engine::Literal(m) => m.match_dir(dir_path),
             Engine::Segment(m) => m.match_dir(dir_path),

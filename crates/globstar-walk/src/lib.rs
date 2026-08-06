@@ -258,6 +258,16 @@ impl Walk {
                 continue;
             }
 
+            // A `..` segment escapes `base` when joined: the lexical
+            // `strip_prefix` guard below treats `base/../secret` as
+            // still under `base`, then the OS resolves the `..` and the
+            // walk leaks outside the sandbox. Such a prefix also cannot
+            // match any real walked path — `read_dir` never yields `..`
+            // — so skip it, keeping the walk inside `base`.
+            if prefix.split(|&b| b == b'/').any(|seg| seg == b"..") {
+                continue;
+            }
+
             let absolute = match std::str::from_utf8(&prefix) {
                 Ok(s) => {
                     // Defense-in-depth: `compile_set` already strips
@@ -273,6 +283,15 @@ impl Walk {
                 }
                 Err(_) => continue,
             };
+
+            // `follow_links: false` drops symlinks entirely (§10). A
+            // root walk would drop a symlink dirent and never reach a
+            // prefix that lies on or beyond it, so seeding must not
+            // jump through one either — otherwise the seed yields paths
+            // the root walk never would.
+            if !self.follow_links && self.seed_crosses_symlink(&absolute) {
+                continue;
+            }
 
             // Depth of the prefix from the base: one per segment.
             let depth = 1 + prefix.iter().filter(|&&b| b == b'/').count();
@@ -305,6 +324,27 @@ impl Walk {
                 }
             }
         }
+    }
+
+    /// Does any component of `joined` (from `base` down) resolve to a
+    /// symlink? Used under `follow_links: false` to keep static-prefix
+    /// seeding observationally equivalent to a root walk, which drops
+    /// symlinks entirely (§10).
+    fn seed_crosses_symlink(&self, joined: &Path) -> bool {
+        let Ok(rel) = joined.strip_prefix(&self.base) else {
+            return false;
+        };
+        let mut cur = self.base.clone();
+        for comp in rel.components() {
+            cur.push(comp);
+            if fs::symlink_metadata(&cur)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Build a [`DirEntry`] from an already-stat'd prefix path. The

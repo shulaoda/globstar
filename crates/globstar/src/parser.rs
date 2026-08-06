@@ -83,6 +83,11 @@ impl SequenceContext {
                     }
             ),
             Some(Node::Separator) => true,
+            // A preceding brace all of whose branches end at a boundary
+            // supplies one in the expanded form: `{src/,lib/}**` ≡
+            // `src/** ∪ lib/**` (§7.0 / §8.1), so the `**` stays a real
+            // globstar.
+            Some(node @ Node::Brace(_)) => node_trails_boundary(node),
             _ => false,
         }
     }
@@ -200,10 +205,18 @@ impl<'a> Parser<'a> {
                 }
                 b'{' => {
                     flush_literal(&mut lit_buf, &mut nodes);
-                    // Expanded-form neighbors for branch-edge globstar
-                    // ownership (§7 expansion equation / §8.1).
-                    let prev_boundary = ctx.boundary_before(nodes.last());
-                    let next_boundary = self.brace_next_boundary(ctx);
+                    // A single-branch brace is the literal `{...}` (§7.4):
+                    // the branch's outer edges neighbor the literal `{`/`}`,
+                    // never a boundary, so any edge `**` inside it degrades
+                    // (§8.1). Judge branch-edge globstars with non-boundary
+                    // neighbors in that case. For a real (multi-branch)
+                    // brace, use the expanded-form neighbors (§7.0 / §8.1).
+                    let (single, next_after_brace) = self.scan_brace(ctx);
+                    let (prev_boundary, next_boundary) = if single {
+                        (false, false)
+                    } else {
+                        (ctx.boundary_before(nodes.last()), next_after_brace)
+                    };
                     // Single-branch `{a}` is treated as the literal `{a}`
                     // (GLOB_SPEC §7.4). `<[Node; 1]>::try_from` both checks
                     // the length AND moves the single element out in one step.
@@ -365,15 +378,18 @@ impl<'a> Parser<'a> {
     }
 
     /// Scan ahead from the current `{` to its matching `}` (honoring
-    /// escapes, class scopes, and nesting) and report whether the
-    /// byte after it is a boundary in the expanded form. Read-only —
-    /// parse errors surface later through the real parse, so any
-    /// malformed tail just yields a don't-care value.
-    fn brace_next_boundary(&self, ctx: SequenceContext) -> bool {
+    /// escapes, class scopes, and nesting). Returns `(single, next)`:
+    /// whether the brace has exactly one branch — no top-level `,`, so
+    /// §7.4 makes it the literal `{...}` — and whether the byte after
+    /// the matching `}` is a boundary in the expanded form (§8.1).
+    /// Read-only — parse errors surface later through the real parse,
+    /// so any malformed tail just yields a don't-care value.
+    fn scan_brace(&self, ctx: SequenceContext) -> (bool, bool) {
         debug_assert_eq!(self.input[self.pos], b'{');
         let input = self.input;
         let mut i = self.pos + 1;
         let mut depth = 0usize;
+        let mut single = true;
         while i < input.len() {
             match input[i] {
                 b'\\' => i = (i + 2).min(input.len()),
@@ -382,9 +398,13 @@ impl<'a> Parser<'a> {
                     depth += 1;
                     i += 1;
                 }
+                b',' if depth == 0 => {
+                    single = false;
+                    i += 1;
+                }
                 b'}' => {
                     if depth == 0 {
-                        return ctx.boundary_after(input.get(i + 1).copied());
+                        return (single, ctx.boundary_after(input.get(i + 1).copied()));
                     }
                     depth -= 1;
                     i += 1;
@@ -393,7 +413,7 @@ impl<'a> Parser<'a> {
             }
         }
         // Unterminated brace — the real parse errors out; don't-care.
-        true
+        (single, true)
     }
 
     fn parse_brace(
@@ -441,5 +461,20 @@ impl<'a> Parser<'a> {
 fn flush_literal(buf: &mut Vec<u8>, nodes: &mut Vec<Node>) {
     if !buf.is_empty() {
         nodes.push(Node::Literal(std::mem::take(buf)));
+    }
+}
+
+/// Does every branch of `node` end at a segment boundary in the
+/// expanded form? A trailing `Separator` (or a nested brace all of
+/// whose branches do) makes a following `**` a real globstar —
+/// `{src/,lib/}**` ≡ `src/** ∪ lib/**` (§7.0 / §8.1). Empty or
+/// non-`/`-terminated branches are conservatively non-boundaries, so a
+/// mixed brace such as `{a,b/}**` degrades its `**`.
+fn node_trails_boundary(node: &Node) -> bool {
+    match node {
+        Node::Separator => true,
+        Node::Concat(children) => children.last().is_some_and(node_trails_boundary),
+        Node::Brace(branches) => !branches.is_empty() && branches.iter().all(node_trails_boundary),
+        _ => false,
     }
 }

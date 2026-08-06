@@ -61,10 +61,14 @@ export function distributeSeps(node) {
         i++;
         continue;
       }
-      const absorbPrev =
-        out.length > 0 &&
-        out[out.length - 1].tag === N_SEPARATOR &&
-        child.branches.some(leadsGlobstar);
+      // A `/` that is the trailing slash of a preceding `**` (`**/{...}`)
+      // belongs to the globstar's `**/` unit (OptSegmentsSlash — "any
+      // depth incl. zero"). Stealing it degrades the leading `**` to `.*`
+      // and breaks `**/X` matching X at depth 0 (§8.5), so leave it.
+      const prevIsSep = out.length > 0 && out[out.length - 1].tag === N_SEPARATOR;
+      const prevSepOwnedByGlobstar =
+        prevIsSep && out.length >= 2 && out[out.length - 2].tag === N_GLOBSTAR;
+      const absorbPrev = prevIsSep && !prevSepOwnedByGlobstar && child.branches.some(leadsGlobstar);
       const absorbNext =
         i + 1 < children.length &&
         children[i + 1].tag === N_SEPARATOR &&

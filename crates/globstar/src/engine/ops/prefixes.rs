@@ -39,13 +39,23 @@ pub fn compute_static_prefixes(ops: &[Op]) -> Box<[Box<[u8]>]> {
 }
 
 fn extract_prefixes_per_branch(ops: &[Op]) -> Vec<Vec<u8>> {
-    match ops.first() {
-        Some(Op::Alternation(branches)) => branches
-            .iter()
-            .flat_map(|branch| extract_prefixes_per_branch(branch))
-            .collect(),
-        _ => vec![extract_prefix(ops)],
+    // Only recurse into a HEAD alternation when it owns a whole segment
+    // — i.e. it is the entire program or is immediately followed by a
+    // separator. Otherwise its branches are mid-segment and their
+    // bodies are NOT valid directory prefixes: `{package,tsconfig}.json`
+    // must not seed the walker at `package`/`tsconfig` (which don't
+    // exist, so the walk would return nothing). In that case fall back
+    // to the segment-bounded scan, which stops at the alternation and
+    // truncates to the last boundary.
+    if let Some(Op::Alternation(branches)) = ops.first() {
+        if matches!(ops.get(1), None | Some(Op::Sep) | Some(Op::SepRun)) {
+            return branches
+                .iter()
+                .flat_map(|branch| extract_prefixes_per_branch(branch))
+                .collect();
+        }
     }
+    vec![extract_prefix(ops)]
 }
 
 pub(crate) fn dedupe_prefixes(mut prefixes: Vec<Vec<u8>>) -> Vec<Vec<u8>> {

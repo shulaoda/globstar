@@ -13,14 +13,68 @@ use super::{Elem, ElemSeq, MAX_FORKS, MAX_SEQ_STATES, Wild, WildKind, is_sep};
 /// only genuine forks pay for expansion copies.
 pub(super) fn compile_seqs(ops: &[Op], dot: bool, ci: bool) -> Option<Vec<ElemSeq>> {
     if !ops.iter().any(op_is_crossing_alt) {
-        return Some(vec![segmentize(ops, dot, ci)?]);
+        return Some(vec![segmentize_fork(ops, dot, ci)?]);
     }
     let op_seqs = expand_forks(ops)?;
     let mut seqs = Vec::with_capacity(op_seqs.len());
     for fork in &op_seqs {
-        seqs.push(segmentize(fork, dot, ci)?);
+        seqs.push(segmentize_fork(fork, dot, ci)?);
     }
     Some(seqs)
+}
+
+/// Segmentize one flat fork, first collapsing open-globstar
+/// adjacencies that fork-splicing / separator distribution can create.
+/// Both rewrites are language-preserving:
+///
+/// - `OptSegmentsSlash GlobstarAny` = `(?:[^/]*/)* .*` = `.*` → `GlobstarAny`
+/// - `SepRun GlobstarAny`           = `/+ .*`         = `/.*` → `SlashAnything`
+///
+/// Without them the segmentizer turns the `**` fork of `x/{**,a}/**`
+/// (`SepRun OSS GlobstarAny`) into `[Lit, G0, G0]`, dropping the
+/// mandatory separator and matching `x` (GLOB_SPEC §8.3). The PikeVM,
+/// which never flattens, is unaffected — this keeps the two engines in
+/// agreement.
+fn segmentize_fork(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
+    if has_open_globstar_adjacency(ops) {
+        let mut flat = ops.to_vec();
+        collapse_open_globstars(&mut flat);
+        segmentize(&flat, dot, ci)
+    } else {
+        segmentize(ops, dot, ci)
+    }
+}
+
+fn has_open_globstar_adjacency(ops: &[Op]) -> bool {
+    ops.windows(2).any(|w| {
+        matches!(w[1], Op::GlobstarAny) && matches!(w[0], Op::OptSegmentsSlash | Op::SepRun)
+    })
+}
+
+fn collapse_open_globstars(ops: &mut Vec<Op>) {
+    let mut i = 0;
+    while i < ops.len() {
+        if i > 0 && matches!(ops[i], Op::GlobstarAny) {
+            match ops[i - 1] {
+                Op::OptSegmentsSlash => {
+                    // `(?:[^/]*/)* .*` = `.*`: drop the OSS, then
+                    // re-examine the GlobstarAny against its new
+                    // predecessor (a SepRun can now sit right behind it).
+                    ops.remove(i - 1);
+                    i -= 1;
+                    continue;
+                }
+                Op::SepRun => {
+                    // `/+ .*` = `/.*`.
+                    ops[i - 1] = Op::SlashAnything;
+                    ops.remove(i);
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
 }
 
 /// Expand separator-crossing brace alternations into flat op

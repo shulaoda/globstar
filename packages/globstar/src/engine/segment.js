@@ -35,6 +35,7 @@ import {
   OP_GLOBSTAR_ANY,
   OP_LEADING_SEPS,
   OP_ALTERNATION,
+  SLASH_ANY_OP,
   computeStaticPrefixes,
 } from "./ops.js";
 import { CI_BYTE, classMatches, klass, classItemByte } from "../ast.js";
@@ -127,7 +128,12 @@ export class SegmentMatcher {
     // original ops decides the mode.
     const byteOnly = opsHaveNonAscii(program.ops);
     const seqs = [];
-    for (const ops of opSeqs) {
+    for (let ops of opSeqs) {
+      // Collapse open-globstar adjacencies fork-splicing / separator
+      // distribution can create, before segmentizing (ports
+      // `segmentize_fork` in engine/compile.rs). Copy first — the
+      // no-crossing path returns `program.ops` verbatim.
+      if (hasOpenGlobstarAdjacency(ops)) ops = collapseOpenGlobstars(ops.slice());
       const seq = segmentize(ops, dot, !!program.caseInsensitive);
       if (seq === null) return null;
       seqs.push(seq);
@@ -276,6 +282,44 @@ function opIsCrossingAlt(op) {
     for (const o of b) if (opCrossesSegment(o)) return true;
   }
   return false;
+}
+
+function hasOpenGlobstarAdjacency(ops) {
+  for (let i = 1; i < ops.length; i++) {
+    if (
+      ops[i].kind === OP_GLOBSTAR_ANY &&
+      (ops[i - 1].kind === OP_OPT_SEGMENTS_SLASH || ops[i - 1].kind === OP_SEP_RUN)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `(?:[^/]*/)* .*` = `.*` → GlobstarAny; `/+ .*` = `/.*` → SlashAnything.
+// Both language-preserving. Without them the segmentizer turns the `**`
+// fork of `x/{**,a}/**` (`SepRun OSS GlobstarAny`) into `[Lit, G0, G0]`,
+// dropping the mandatory separator and matching `x` (§8.3). Mutates and
+// returns `ops` (caller passes a copy).
+function collapseOpenGlobstars(ops) {
+  let i = 0;
+  while (i < ops.length) {
+    if (i > 0 && ops[i].kind === OP_GLOBSTAR_ANY) {
+      const prev = ops[i - 1].kind;
+      if (prev === OP_OPT_SEGMENTS_SLASH) {
+        ops.splice(i - 1, 1); // drop OSS, re-examine GlobstarAny
+        i -= 1;
+        continue;
+      }
+      if (prev === OP_SEP_RUN) {
+        ops[i - 1] = SLASH_ANY_OP;
+        ops.splice(i, 1);
+        continue;
+      }
+    }
+    i += 1;
+  }
+  return ops;
 }
 
 function expandForks(ops) {

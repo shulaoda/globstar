@@ -164,7 +164,18 @@ function initFromPrefixes(ctx) {
     }
 
     const prefixStr = bytesToString(prefixBytes);
+
+    // A `..` segment escapes cwd when joined (the OS resolves it) and
+    // cannot match any real walked path — readdir never yields `..` —
+    // so skip it, keeping the walk inside cwd.
+    if (prefixStr.split("/").includes("..")) continue;
+
     const joined = joinAbs(ctx.cwd, prefixStr);
+
+    // `followSymlinks: false` drops symlinks entirely (§10). A root
+    // walk would drop a symlink dirent and never reach a prefix on or
+    // beyond it, so seeding must not jump through one either.
+    if (!ctx.followSymlinks && seedCrossesSymlink(ctx.cwd, prefixStr)) continue;
 
     let stat;
     try {
@@ -182,6 +193,24 @@ function initFromPrefixes(ctx) {
       ctx.seedResults.push(joined);
     }
   }
+}
+
+// Does any component of `cwd + "/" + prefixStr` (from cwd down) resolve
+// to a symlink? Used under `followSymlinks: false` to keep static-prefix
+// seeding observationally equivalent to a root walk, which drops
+// symlinks entirely (§10).
+function seedCrossesSymlink(cwd, prefixStr) {
+  let cur = cwd;
+  for (const seg of prefixStr.split("/")) {
+    if (seg === "") continue;
+    cur = joinAbs(cur, seg);
+    try {
+      if (fs.lstatSync(cur).isSymbolicLink()) return true;
+    } catch {
+      // Missing / inaccessible component — the later statSync handles it.
+    }
+  }
+  return false;
 }
 
 // Per-frame match loop, shared by sync and async paths. `results` and

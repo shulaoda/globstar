@@ -15,6 +15,7 @@ export {
   OP_GLOBSTAR_ANY,
   OP_LEADING_SEPS,
   OP_ALTERNATION,
+  SLASH_ANY_OP,
 } from "./ops/ir.js";
 export { lower } from "./ops/lower.js";
 export { computeStaticPrefixes } from "./ops/prefixes.js";

@@ -3,6 +3,8 @@
 
 import {
   N_SEPARATOR,
+  N_BRACE,
+  N_CONCAT,
   lit,
   sep,
   anyChar,
@@ -46,7 +48,29 @@ const CTX_TOP = Object.freeze({ brace: false, prevBoundary: true, nextBoundary: 
 // than raw bytes so escape sequences are handled correctly.
 function boundaryBefore(nodes, ctx) {
   if (nodes.length === 0) return ctx.prevBoundary;
-  return nodes[nodes.length - 1].tag === N_SEPARATOR;
+  const last = nodes[nodes.length - 1];
+  if (last.tag === N_SEPARATOR) return true;
+  // A preceding brace all of whose branches end at a boundary supplies
+  // one in the expanded form: `{src/,lib/}**` ≡ `src/** ∪ lib/**`
+  // (§7.0 / §8.1), so the `**` stays a real globstar.
+  if (last.tag === N_BRACE) return nodeTrailsBoundary(last);
+  return false;
+}
+
+// Does every branch of `node` end at a segment boundary in the expanded
+// form? A trailing `/` (or a nested brace all of whose branches do)
+// makes a following `**` a real globstar. Empty or non-`/`-terminated
+// branches are conservatively non-boundaries, so a mixed brace such as
+// `{a,b/}**` degrades its `**`.
+function nodeTrailsBoundary(node) {
+  if (node.tag === N_SEPARATOR) return true;
+  if (node.tag === N_CONCAT) {
+    return node.children.length > 0 && nodeTrailsBoundary(node.children[node.children.length - 1]);
+  }
+  if (node.tag === N_BRACE) {
+    return node.branches.length > 0 && node.branches.every(nodeTrailsBoundary);
+  }
+  return false;
 }
 
 // Mirror of `boundaryBefore` for the byte after an atom: pattern end
@@ -133,10 +157,14 @@ function parseSequence(state, ctx) {
         break;
       case LBRACE: {
         flushLit();
-        // Expanded-form neighbors for branch-edge globstar ownership
-        // (§7 expansion equation / §8.1).
-        const prevBoundary = boundaryBefore(nodes, ctx);
-        const nextBoundary = braceNextBoundary(state, ctx);
+        // A single-branch brace is the literal `{...}` (§7.4): the
+        // branch's outer edges neighbor the literal `{`/`}`, never a
+        // boundary, so any edge `**` inside it degrades (§8.1). Judge
+        // branch-edge globstars with non-boundary neighbors in that
+        // case; otherwise use the expanded-form neighbors (§7.0 / §8.1).
+        const [single, nextAfterBrace] = scanBrace(state, ctx);
+        const prevBoundary = single ? false : boundaryBefore(nodes, ctx);
+        const nextBoundary = single ? false : nextAfterBrace;
         parseBraceInto(state, nodes, prevBoundary, nextBoundary);
         break;
       }
@@ -283,13 +311,16 @@ function skipClassCandidate(input, start) {
 }
 
 // Scan ahead from the current `{` to its matching `}` (honoring
-// escapes, class scopes, and nesting) and report whether the byte
-// after it is a boundary in the expanded form. Read-only — malformed
+// escapes, class scopes, and nesting). Returns `[single, next]`:
+// whether the brace has exactly one branch (no top-level `,`, so §7.4
+// makes it the literal `{...}`) and whether the byte after the matching
+// `}` is a boundary in the expanded form (§8.1). Read-only — malformed
 // tails error out in the real parse, so their value is a don't-care.
-function braceNextBoundary(state, ctx) {
+function scanBrace(state, ctx) {
   const { input } = state;
   let i = state.pos + 1;
   let depth = 0;
+  let single = true;
   while (i < input.length) {
     const b = input[i];
     if (b === BACKSLASH) {
@@ -299,15 +330,18 @@ function braceNextBoundary(state, ctx) {
     } else if (b === LBRACE) {
       depth++;
       i++;
+    } else if (b === COMMA && depth === 0) {
+      single = false;
+      i++;
     } else if (b === RBRACE) {
-      if (depth === 0) return boundaryAfter(input[i + 1], ctx);
+      if (depth === 0) return [single, boundaryAfter(input[i + 1], ctx)];
       depth--;
       i++;
     } else {
       i++;
     }
   }
-  return true; // unterminated — errors in the real parse
+  return [single, true]; // unterminated — errors in the real parse
 }
 
 function parseBrace(state, prevBoundary, nextBoundary) {

@@ -51,6 +51,33 @@ pub fn factor_branches(branches: Vec<Node>) -> Node {
 
 // ── Internal helpers ─────────────────────────────────────────────────────
 
+/// Structural equality for the node kinds we lift. `Literal`s compare
+/// byte-for-byte; the valueless singletons (`Separator` / `Globstar` /
+/// `AnyChar` / `Star`) compare by kind. `Class` / `Brace` / `Concat`
+/// deliberately compare as unequal so they are never lifted.
+///
+/// Lifting a whole `Brace` out of every branch (which derived
+/// `PartialEq` would happily do) tears it away from a flanking `/` that
+/// `distribute_seps` needs to keep a globstar-edged branch adjacent to
+/// its separator, so `union` stops equalling the OR of its members
+/// (e.g. `union(["{**,a}/**","{**,a}/"])`). Matching the JS port's
+/// narrow `nodeEq` keeps the two runtimes in lock-step.
+fn node_eq(a: &Node, b: &Node) -> bool {
+    match (a, b) {
+        (Node::Literal(x), Node::Literal(y)) => x == y,
+        (Node::Separator, Node::Separator)
+        | (Node::Globstar, Node::Globstar)
+        | (Node::AnyChar, Node::AnyChar)
+        | (Node::Star, Node::Star) => true,
+        _ => false,
+    }
+}
+
+/// Element-wise [`node_eq`] over two equal-length node slices.
+fn slice_eq(a: &[Node], b: &[Node]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| node_eq(x, y))
+}
+
 fn into_seq(node: Node) -> Vec<Node> {
     match node {
         Node::Concat(xs) => xs,
@@ -123,7 +150,7 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
         let same = seqs
             .iter()
             .skip(1)
-            .all(|s| fold_group_at_start(s, 0) == size && s[..size] == *head);
+            .all(|s| fold_group_at_start(s, 0) == size && slice_eq(&s[..size], head));
         if !same {
             break;
         }
@@ -183,7 +210,7 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
         let same = seqs
             .iter()
             .skip(1)
-            .all(|s| fold_group_at_end(s) == size && s[s.len() - size..] == *tail);
+            .all(|s| fold_group_at_end(s) == size && slice_eq(&s[s.len() - size..], tail));
         if !same {
             break;
         }
