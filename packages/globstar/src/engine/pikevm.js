@@ -28,35 +28,10 @@ import {
   T_NULL,
   compileThompson,
 } from "./thompson.js";
-import { isPathSep } from "../options.js";
+import { isPathSep, ctz32 } from "../options.js";
 import { classMatches } from "../ast.js";
 import { DirMatch } from "../dir-match.js";
 import { computeStaticPrefixes } from "./ops/index.js";
-
-function ctz32(v) {
-  if (v === 0) return 32;
-  let c = 0;
-  if ((v & 0x0000ffff) === 0) {
-    v >>>= 16;
-    c += 16;
-  }
-  if ((v & 0x000000ff) === 0) {
-    v >>>= 8;
-    c += 8;
-  }
-  if ((v & 0x0000000f) === 0) {
-    v >>>= 4;
-    c += 4;
-  }
-  if ((v & 0x00000003) === 0) {
-    v >>>= 2;
-    c += 2;
-  }
-  if ((v & 0x00000001) === 0) {
-    c += 1;
-  }
-  return c;
-}
 
 // Reach-to-accept fixed-point over byte-consumer states. reach[s] = true
 // iff from state s the matcher can reach the accept state via at least

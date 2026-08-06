@@ -13,6 +13,15 @@ export function isPathSep(b) {
   return false;
 }
 
+// Is `\` a path separator on this platform? (Windows only.) Consulted by
+// the separator-aware suffix compare in the matchers.
+export const IS_WINDOWS_SEP = isPathSep(0x5c);
+
+// Trailing-zero count of a nonzero 32-bit word (Rust uses the
+// `u32::trailing_zeros` intrinsic; JS needs the helper). Undefined for 0
+// — every caller iterates set bits under a `word !== 0` guard.
+export const ctz32 = (v) => 31 - Math.clz32(v & -v);
+
 // ASCII case-insensitive byte equality. Non-ASCII bytes compare
 // verbatim. Toggling both sides via `asciiCaseAlt` was a bug: it just
 // swaps them, so two letters that differ only in case (e.g. `r` 0x72

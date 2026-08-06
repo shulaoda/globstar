@@ -6,10 +6,9 @@
 //! segment start inside a segment, so DotGuards block there when the
 //! first byte is `.`, and dot-protected consumers refuse that `.`.
 
-use crate::ast::{CharClass, ClassItem};
+use crate::ast::CharClass;
 use crate::engine::eq_byte;
 use crate::engine::ops::Op;
-use crate::options::ascii_case_alt;
 
 /// In-segment NFA state budget (active set is one `u64`).
 const MAX_SEG_NFA_STATES: usize = 64;
@@ -374,15 +373,10 @@ impl SegBuilder {
     }
 
     fn lit_state(&mut self, b: u8) -> Option<u8> {
-        let alt = ascii_case_alt(b);
-        if self.ci && alt != b {
-            let cls = CharClass {
-                negated: false,
-                items: vec![ClassItem::Byte(b), ClassItem::Byte(alt)],
-            };
-            self.alloc(SegState::Class(Box::new(cls), UNSET, false))
-        } else {
-            self.alloc(SegState::Byte(b, UNSET))
+        let class = self.ci.then(|| CharClass::ci_letter(b)).flatten();
+        match class {
+            Some(cls) => self.alloc(SegState::Class(Box::new(cls), UNSET, false)),
+            None => self.alloc(SegState::Byte(b, UNSET)),
         }
     }
 }

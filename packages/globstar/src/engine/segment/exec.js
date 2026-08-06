@@ -13,11 +13,8 @@ import {
   NO,
   YES,
   BAIL,
-  IS_WINDOWS_SEP,
 } from "./index.js";
-import { isPathSep, eqByteCi } from "../../options.js";
-
-const ctz32 = (v) => 31 - Math.clz32(v & -v);
+import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../options.js";
 
 export function acceptBit(seq) {
   return 1 << (seq.numStates - 1);

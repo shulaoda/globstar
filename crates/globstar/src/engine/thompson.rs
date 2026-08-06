@@ -26,9 +26,8 @@
 //! per OSS/SlashAnything/GlobstarAny), so a typical pattern compiles to
 //! 2-5× its op count in states.
 
-use crate::ast::{CharClass, ClassItem};
+use crate::ast::CharClass;
 use crate::engine::ops::{Op, OpProgram};
-use crate::options::ascii_case_alt;
 
 /// NFA state identifier. `u32` accommodates any pattern that can reasonably
 /// be passed to `Glob::new` — `MAX_PATTERN_LEN` is 64 KB and each byte
@@ -114,7 +113,7 @@ pub(crate) struct Thompson {
     /// on the next byte; this separate mask captures the EOF semantics so
     /// callers can check acceptance without re-walking the ε graph.
     ///
-    /// Used by [`super::pikevm::PikeVm::has_accept`].
+    /// Folded into `PikeVm`'s accept-bit mask at construction (see `PikeVm::new`).
     pub(crate) accepts_at_eof: Vec<bool>,
 }
 
@@ -296,23 +295,16 @@ impl Builder {
     /// for ASCII letters. Factored out of [`Self::compile_lit`] so the
     /// chain-building stays readable.
     fn alloc_lit_byte(&mut self, b: u8) -> StateId {
-        let alt = ascii_case_alt(b);
-        if self.case_insensitive && alt != b {
-            // ASCII letter under CI: emit a 2-item positive class.
-            // `negated=false` → `dot_protected=false` (letters are never
-            // `.` anyway, but the class API still demands the flag be set
-            // consistently with non-CI Class compilation).
-            let class = CharClass {
-                negated: false,
-                items: vec![ClassItem::Byte(b), ClassItem::Byte(alt)],
-            };
-            self.alloc(Trans::Class {
+        // ASCII letter under CI folds to a 2-item positive class
+        // (`dot_protected=false` — letters are never `.`).
+        let class = self.case_insensitive.then(|| CharClass::ci_letter(b)).flatten();
+        match class {
+            Some(class) => self.alloc(Trans::Class {
                 class: Box::new(class),
                 next: UNSET,
                 dot_protected: false,
-            })
-        } else {
-            self.alloc(Trans::Byte { b, next: UNSET })
+            }),
+            None => self.alloc(Trans::Byte { b, next: UNSET }),
         }
     }
 

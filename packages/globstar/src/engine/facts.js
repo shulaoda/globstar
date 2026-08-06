@@ -20,12 +20,7 @@
 //      byte from the platform's `Seps` set (GLOB_SPEC §12.3).
 
 import { isPathSep, eqByteCi } from "../options.js";
-
-// Op kinds — duplicated from `./ops.js` to break the import cycle.
-const OP_LIT = 0;
-const OP_SEP = 4;
-const OP_SEP_RUN = 5;
-const OP_ALTERNATION = 11;
+import { OP_LIT, OP_SEP, OP_SEP_RUN, OP_ALTERNATION } from "./ops/ir.js";
 
 export class LiteralFacts {
   constructor(suffix, suffixSet, caseInsensitive) {

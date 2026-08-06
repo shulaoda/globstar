@@ -19,6 +19,7 @@ import {
 } from "../ops/index.js";
 import { CI_BYTE } from "../../ast.js";
 import { isPathSep } from "../../options.js";
+import { latin1 } from "../../utf8.js";
 import {
   EL_LIT,
   EL_WILD,
@@ -30,7 +31,6 @@ import {
   WK_GENERIC,
   MAX_FORKS,
   MAX_SEQ_STATES,
-  latin1,
 } from "./index.js";
 import { SegNfa } from "./seg-nfa.js";
 

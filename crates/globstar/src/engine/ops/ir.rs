@@ -59,10 +59,11 @@ impl OpProgram {
         self.case_insensitive
     }
 
-    /// Consume the immutable normalized program after a backend has derived
-    /// any structural metadata it needs.
-    pub fn into_parts(self) -> (Vec<Op>, LiteralFacts, bool) {
-        (self.ops, self.facts, self.case_insensitive)
+    /// Consume the immutable normalized program, returning just its
+    /// facts — a backend calls this once it has derived any structural
+    /// metadata it needs from `ops()` / `case_insensitive()`.
+    pub fn into_facts(self) -> LiteralFacts {
+        self.facts
     }
 }
 

@@ -20,7 +20,7 @@ export const N_BRACE = 7;
 
 // ClassItem tags (used by N_CLASS payload).
 export const CI_BYTE = 0;
-export const CI_RANGE = 1;
+const CI_RANGE = 1;
 
 const SEP_NODE = Object.freeze({ tag: N_SEPARATOR });
 const ANYCHAR_NODE = Object.freeze({ tag: N_ANYCHAR });
@@ -57,6 +57,16 @@ export function classItemByte(b) {
 }
 export function classItemRange(lo, hi) {
   return { tag: CI_RANGE, lo, hi };
+}
+
+// The 2-item positive class a case-insensitive ASCII letter folds to —
+// `{b, alt}` where `alt` is the opposite-case byte — or `null` when `b`
+// is not a foldable letter (callers emit a plain byte match instead).
+// Shared by the Thompson and segment NFA builders; mirrors Rust
+// `CharClass::ci_letter`.
+export function ciLetter(b) {
+  const alt = asciiCaseAlt(b);
+  return alt !== b ? klass(false, [classItemByte(b), classItemByte(alt)]) : null;
 }
 
 // `cls.matches(b)` semantics. Path separators are never class members

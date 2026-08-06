@@ -182,7 +182,7 @@ impl SegmentMatcher {
         // leading-literal scan, and computing them here lets the
         // matcher drop every reference to the op tree.
         let prefixes = compute_static_prefixes(program.ops());
-        let (_, facts, _) = program.into_parts();
+        let facts = program.into_facts();
         Ok(Box::new(Self {
             seqs: seqs.into_boxed_slice(),
             facts,

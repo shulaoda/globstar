@@ -2,11 +2,10 @@
 // Rust module `crates/globstar/src/engine/segment/seg_nfa.rs`.
 
 import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION } from "../ops/index.js";
-import { classMatches, klass, classItemByte } from "../../ast.js";
-import { asciiCaseAlt } from "../../options.js";
+import { classMatches, ciLetter } from "../../ast.js";
+import { ctz32 } from "../../options.js";
 
 const MAX_SEG_NFA_STATES = 32;
-const ctz32 = (v) => 31 - Math.clz32(v & -v);
 
 const S_BYTE = 0;
 const S_CLASS = 1;
@@ -350,13 +349,12 @@ class SegBuilder {
   }
 
   litState(b) {
-    const alt = asciiCaseAlt(b);
-    if (this.ci && alt !== b) {
-      // Shared makers keep the synthesized class on the same hidden
+    if (this.ci) {
+      // Shared maker keeps the synthesized class on the same hidden
       // class as parser-produced ones — `classMatches` stays
       // monomorphic in the per-byte loop.
-      const cls = klass(false, [classItemByte(b), classItemByte(alt)]);
-      return this.alloc(S_CLASS, 0, UNSET, 0, UNSET, cls);
+      const cls = ciLetter(b);
+      if (cls !== null) return this.alloc(S_CLASS, 0, UNSET, 0, UNSET, cls);
     }
     return this.alloc(S_BYTE, b, UNSET, 0);
   }

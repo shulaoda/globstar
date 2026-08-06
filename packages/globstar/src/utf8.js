@@ -21,3 +21,10 @@ export function toBytes(input) {
   for (let i = 0; i < n; i++) out[i] = input.charCodeAt(i);
   return out;
 }
+
+// Bytes → a Latin-1 string (each byte becomes one char code). The inverse
+// of the ASCII/byte path above, used to hold short pattern literals as
+// strings for the string-mode matcher. `[]` yields `""`.
+export function latin1(bytes) {
+  return bytes.length === 0 ? "" : String.fromCharCode.apply(null, bytes);
+}

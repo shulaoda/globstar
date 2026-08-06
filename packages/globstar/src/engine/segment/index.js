@@ -16,8 +16,8 @@
 // and the caller falls back to the PikeVm.
 
 import { computeStaticPrefixes } from "../ops/index.js";
-import { isPathSep } from "../../options.js";
-import { toBytes } from "../../utf8.js";
+import { IS_WINDOWS_SEP } from "../../options.js";
+import { toBytes, latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import {
   expandForks,
@@ -57,14 +57,6 @@ export const WK_GENERIC = 2;
 export const NO = 0;
 export const YES = 1;
 export const BAIL = 2;
-
-export const IS_WINDOWS_SEP = isPathSep(0x5c);
-
-export function latin1(bytes) {
-  // Pattern literals are short; `apply` accepts the typed array as an
-  // arguments list directly.
-  return bytes.length === 0 ? "" : String.fromCharCode.apply(null, bytes);
-}
 
 export class SegmentMatcher {
   constructor(seqs, program, byteOnly, dot) {

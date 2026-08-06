@@ -95,6 +95,18 @@ impl CharClass {
         listed ^ self.negated
     }
 
+    /// The 2-item positive class a case-insensitive ASCII letter folds
+    /// to — `{b, alt}` where `alt` is the opposite-case byte — or `None`
+    /// when `b` is not a foldable letter (callers emit a plain byte
+    /// match instead). Shared by the Thompson and segment NFA builders.
+    pub(crate) fn ci_letter(b: u8) -> Option<Self> {
+        let alt = crate::options::ascii_case_alt(b);
+        (alt != b).then(|| CharClass {
+            negated: false,
+            items: vec![ClassItem::Byte(b), ClassItem::Byte(alt)],
+        })
+    }
+
     /// Return a copy of this class with ASCII case-alternate members added
     /// so that `[A]` matches both `A` and `a`, `[A-Z]` matches `[A-Za-z]`,
     /// etc. Used by `ops::lower` when `case_insensitive` is set.

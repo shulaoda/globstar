@@ -53,7 +53,7 @@ use crate::engine::ops::Op;
 /// running the full match, so a separate ends-with check pre-rejects
 /// huge swathes of mismatched paths (`**/*.md` against a `.ts` file
 /// rejects in O(suffix.len()) without ever entering the engine).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LiteralFacts {
     /// The longest byte suffix every matching path must end with.
     /// `Box<[u8]>` rather than `Vec<u8>` — saves 8 B inline (no `cap`

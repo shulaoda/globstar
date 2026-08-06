@@ -37,8 +37,7 @@ import {
   OP_LEADING_SEPS,
   OP_ALTERNATION,
 } from "./ops/index.js";
-import { CI_BYTE } from "../ast.js";
-import { asciiCaseAlt } from "../options.js";
+import { ciLetter } from "../ast.js";
 
 // NFA transition tags. `T_NULL` is a packed-runtime sentinel for ε-only
 // states whose closures have already been absorbed by PikeVm.
@@ -107,16 +106,9 @@ class Builder {
   }
 
   allocLitByte(b) {
-    const alt = asciiCaseAlt(b);
-    if (this.caseInsensitive && alt !== b) {
-      const cls = {
-        neg: false,
-        items: [
-          { tag: CI_BYTE, b },
-          { tag: CI_BYTE, b: alt },
-        ],
-      };
-      return this.allocClass(cls, false);
+    if (this.caseInsensitive) {
+      const cls = ciLetter(b);
+      if (cls !== null) return this.allocClass(cls, false);
     }
     return this.allocByte(b);
   }

@@ -3,11 +3,9 @@
 // platform-separator normalization (GLOB_SPEC §12.3): each `/` in the
 // pattern consumes exactly one separator byte from the path.
 
-import { isPathSep, eqByteCi } from "../options.js";
+import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../options.js";
 import { DirMatch } from "../dir-match.js";
-import { toBytes } from "../utf8.js";
-
-const IS_WINDOWS_SEP = isPathSep(0x5c);
+import { toBytes, latin1 } from "../utf8.js";
 
 export class LiteralMatcher {
   constructor(literal, caseInsensitive) {
@@ -26,7 +24,7 @@ export class LiteralMatcher {
         break;
       }
     }
-    this.litStr = ascii ? String.fromCharCode.apply(null, literal) : null;
+    this.litStr = ascii ? latin1(literal) : null;
     this.exactStr = ascii && !caseInsensitive && !IS_WINDOWS_SEP ? this.litStr : null;
   }
 
