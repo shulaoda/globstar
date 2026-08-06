@@ -71,7 +71,7 @@ function rangeEq(seqA, offA, seqB, offB, len) {
 }
 
 // Size of the fold group anchored at `seq[i]` looking forward. Mirrors
-// the `foldGlobstars` passes in `engine/ops.js`. Lifting a partial
+// the `foldGlobstars` passes in `engine/ops/index.js`. Lifting a partial
 // group would change the lowered semantics, so the lift loops below
 // only consume whole groups.
 //

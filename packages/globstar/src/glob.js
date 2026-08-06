@@ -21,9 +21,9 @@
 // production callers and the walker use SSM.
 
 import { parse } from "./parser.js";
-import { lower } from "./engine/ops.js";
+import { lower } from "./engine/ops/index.js";
 import { LiteralMatcher } from "./engine/literal.js";
-import { SegmentMatcher } from "./engine/segment.js";
+import { SegmentMatcher } from "./engine/segment/index.js";
 import { PikeVm } from "./engine/pikevm.js";
 import { nodeToLiteralBytes } from "./ast.js";
 import { factorBranches } from "./factor.js";

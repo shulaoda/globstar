@@ -26,12 +26,12 @@ import {
   T_DOT_GUARD,
   T_MATCH,
   T_NULL,
-  compileNfaSoa,
-} from "./nfa-soa.js";
+  compileThompson,
+} from "./thompson.js";
 import { isPathSep } from "../options.js";
 import { classMatches } from "../ast.js";
 import { DirMatch } from "../dir-match.js";
-import { computeStaticPrefixes } from "./ops.js";
+import { computeStaticPrefixes } from "./ops/index.js";
 
 function ctz32(v) {
   if (v === 0) return 32;
@@ -109,7 +109,7 @@ function reachFromClosures(closures, infoOff, acceptOff, nWords) {
 // constructor can co-locate `initBits` + `acceptBits` after the
 // closures region without paying for separate TypedArray wrappers.
 //
-// Input is the SoA shape from `nfa-soa.js`: parallel arrays for tag,
+// Input is the SoA shape from `thompson.js`: parallel arrays for tag,
 // next-state, and split-second-branch. SPLIT/JUMP states are ε-only
 // and walked transparently; everything else (byte-consumers, MATCH,
 // DOT_GUARD) is a closure leaf and gets its bit set in `out`.
@@ -243,7 +243,7 @@ export class PikeVm {
   }
 
   static build(program, dot) {
-    const nfa = compileNfaSoa(program, dot);
+    const nfa = compileThompson(program, dot);
     return new PikeVm(nfa, program.facts, computeStaticPrefixes(program.ops));
   }
 

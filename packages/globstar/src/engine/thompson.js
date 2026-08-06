@@ -1,5 +1,6 @@
-// SoA-direct Thompson NFA builder for PikeVm. State data lives in parallel
-// `number[]` arrays
+// Struct-of-arrays Thompson NFA builder for the PikeVM. JS port of the
+// Rust module `crates/globstar/src/engine/thompson.rs`. Compiles to
+// parallel `number[]` arrays
 // instead of a `Trans` object per state — Builder skips ~N V8 object
 // allocations per compile, freezes to typed arrays at the end, and
 // hands PikeVm a ready-to-consume SoA shape.
@@ -35,7 +36,7 @@ import {
   OP_GLOBSTAR_ANY,
   OP_LEADING_SEPS,
   OP_ALTERNATION,
-} from "./ops.js";
+} from "./ops/index.js";
 import { CI_BYTE } from "../ast.js";
 import { asciiCaseAlt } from "../options.js";
 
@@ -301,7 +302,7 @@ class Builder {
 
 // Build the SoA-form NFA. Returns the working data PikeVm needs to
 // finish constructing its run state (closures, scratch, etc.).
-export function compileNfaSoa(program, dot) {
+export function compileThompson(program, dot) {
   const builder = new Builder(program.caseInsensitive);
   const initial = builder.allocJump(UNSET);
   const bodyEntry = builder.compileOps(program.ops, dot);

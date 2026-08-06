@@ -29,7 +29,7 @@ import {
   OP_SLASH_ANYTHING,
   OP_STAR,
   lower,
-} from "../src/engine/ops.js";
+} from "../src/engine/ops/index.js";
 import { assertNormalizedProgram } from "../src/engine/ops/ir.js";
 import { dedupePrefixes } from "../src/engine/ops/prefixes.js";
 
