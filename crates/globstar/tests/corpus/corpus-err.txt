@@ -1,8 +1,8 @@
 # ============================================================================
-# corpus-err.txt — Parse error 黄金测试语料
+# corpus-err.txt — parse-error golden test corpus
 # Format: PATTERN<TAB>ERROR_KIND
-# ERROR_KIND 对应 GlobError 枚举变体名(见 spec §10)
-# 每条 pattern 必须在编译期报出对应错误
+# ERROR_KIND maps to a GlobError enum variant name (see spec §10).
+# Every pattern MUST raise the corresponding error at compile time.
 # ============================================================================
 
 ## empty

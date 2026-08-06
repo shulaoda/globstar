@@ -98,3 +98,19 @@
 ## or.solo (degenerate single-pattern array)
 ["**/*.ts"]	src/main.ts	match
 ["**/*.ts"]	src/main.rs	no-match
+
+# ============================================================================
+# regression.audit-2026-08 — M4: Glob::union must equal the OR of its members.
+# Covers the sep-distribution corner (globstar-edged brace shared across
+# branches) plus a discriminating class-suffix case (union must NOT collapse
+# to "match everything").
+# ============================================================================
+["{**,a}/**","{**,a}/"]		match
+["{**,a}/**","{**,a}/"]	x	match
+["{**,a}/**","{**,a}/"]	a/b	match
+["**/a","**/b"]	q/a	match
+["**/a","**/b"]	q/b	match
+["**/a","**/b"]	q/c	no-match
+["a[x]","b[x]"]	ax	match
+["a[x]","b[x]"]	bx	match
+["a[x]","b[x]"]	cx	no-match

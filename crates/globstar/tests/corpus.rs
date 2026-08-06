@@ -400,15 +400,10 @@ fn run_pikevm_multi(row: &MultiRow) -> Option<bool> {
 
 // ── match_dir engine runners ──────────────────────────────────────────
 
-/// `Glob::match_dir` currently does not invert via the prefix `!`
-/// (see `lib.rs::Glob::match_dir`), and engines see only the
-/// negation-stripped body. Until that gap is closed, skip negated rows
-/// in both runners — they're recorded as `skip`, not `fail`.
+/// Public-API runner. `Glob::match_dir` honors leading-`!` negation
+/// (conservatively `Descend`, GLOB_SPEC §13.4), so negated rows ARE
+/// exercised here.
 fn run_globstar_dir(row: &DirRow) -> Option<DirMatch> {
-    let ast = parse(row.pattern.as_bytes()).ok()?;
-    if ast.is_negated() {
-        return None;
-    }
     let opts = CompileOptions::default()
         .dot(row.dot)
         .case_insensitive(row.case_insensitive);
@@ -416,10 +411,17 @@ fn run_globstar_dir(row: &DirRow) -> Option<DirMatch> {
     Some(g.match_dir(&row.path))
 }
 
+/// Forced raw-`PikeVm` runner, to catch any Segment↔PikeVm divergence on
+/// the SAME row. Negation is a `Glob`-wrapper concern, orthogonal to the
+/// engine: `Glob::match_dir` short-circuits to `Descend` BEFORE dispatching
+/// to any engine, so the engine choice never changes a negated pattern's
+/// verdict. We model that same short-circuit here (rather than skipping),
+/// so the raw-engine column agrees with the public API on every row —
+/// negated or not — and there are no unexplained skips.
 fn run_pikevm_dir(row: &DirRow) -> Option<DirMatch> {
     let ast = parse(row.pattern.as_bytes()).ok()?;
     if ast.is_negated() {
-        return None;
+        return Some(DirMatch::Descend);
     }
     let program = lower(&ast.body, ast.maybe_sep_distribution, row.case_insensitive);
     let pike = PikeVm::new(program, row.dot);

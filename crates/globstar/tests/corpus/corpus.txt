@@ -1,5 +1,5 @@
 # ============================================================================
-# corpus.txt — is_match 黄金测试语料
+# corpus.txt — is_match golden test corpus
 # Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
 # EXPECTED: match | no-match
 # Default flags: dot=true (matches CompileOptions::default()),
@@ -105,10 +105,10 @@ a?c	a/c	no-match
 **/foo	fo	no-match
 
 ## globstar.suffix
-# L(a/**) = a/.*  — 即必须以 "a/" 开头,后面可以空或任意内容
-# - a     ← 无 "a/" 前缀,no-match
-# - a/    ← "a/" + 空,match (与用户 fast-glob test.rs:994 一致)
-# - a/b   ← "a/" + 内容,match
+# L(a/**) = a/.*  — must start with "a/", then empty or anything.
+# - a     ← no "a/" prefix, no-match
+# - a/    ← "a/" + empty, match (agrees with fast-glob test.rs:994)
+# - a/b   ← "a/" + content, match
 a/**	a	no-match
 a/**	a/	match
 a/**	a/b	match
@@ -553,3 +553,148 @@ x=y	x=y	match
 [\]abc]	]	match
 [\]abc]	a	match
 [\]abc]	z	no-match
+
+# ============================================================================
+# regression.audit-2026-08 — is_match coverage for the audit fixes.
+# Each pattern is covered across ALL its branches and match depths, the
+# near-miss / impossible paths just outside its language, AND both `dot`
+# settings wherever a segment-start wildcard could expose a dotfile.
+# corpus.txt default is dot=true; dot=false rows are marked explicitly.
+# ============================================================================
+
+## M3.single-branch-brace-is-literal-globstar-degrades (§7.4 + §8.1)
+# {**} degrades to literal {*}: a single-segment wildcard flanked by { }.
+{**}	{a}	match
+{**}	{}	match
+{**}	{ab}	match
+{**}	{a/b}	no-match
+{**}	{a}x	no-match
+{**}	a	no-match
+{*}	{a/b}	no-match
+# {a/**} degrades to {a/*}; {**/a} to {*/a}.
+{a/**}	{a/b}	match
+{a/**}	{a/}	match
+{a/**}	{a/b/c}	no-match
+{**/a}	{x/a}	match
+{**/a}	{/a}	match
+{**/a}	{x/y/a}	no-match
+# dot: the `*` after a literal `{` is NOT a segment start, so a leading `.`
+# is consumed under BOTH settings — contrast with {a/**} below, where the
+# `*` follows a real `/` and IS protected under dot=false.
+{**}	{.x}	match	dot=true
+{**}	{.x}	match	dot=false
+{**/a}	{.x/a}	match	dot=true
+{**/a}	{.x/a}	match	dot=false
+{a/**}	{a/.x}	match	dot=true
+{a/**}	{a/.x}	no-match	dot=false
+
+## M5.globstar-boundary-chained-outward-across-brace (§7.0 + §8.1)
+# {src/,lib/}** is src/** union lib/** — the trailing `/` inside each branch
+# makes the following `**` a real globstar.
+{src/,lib/}**	src/a/b	match
+{src/,lib/}**	src/	match
+{src/,lib/}**	src	no-match
+{src/,lib/}**	lib/x	match
+{src/,lib/}**	lib	no-match
+{src/,lib/}**	srcx	no-match
+{src/,lib/}**	docs	no-match
+{src/,lib/}**		no-match
+# `**` in the middle keeps the lenient boundary: zero or more segments.
+{src/,lib/}**/c	src/c	match
+{src/,lib/}**/c	src/x/c	match
+{src/,lib/}**/c	src/x/y/c	match
+{src/,lib/}**/c	src/c/d	no-match
+# {a/,b/}** — same shape, both branches.
+{a/,b/}**	a/x/y	match
+{a/,b/}**	a/	match
+{a/,b/}**	a	no-match
+{a/,b/}**	b/z	match
+{a/,b/}**	c	no-match
+# Mixed brace (one branch lacks the trailing `/`) conservatively degrades.
+{src,lib/}**	src/a/b	no-match
+# dot: the trailing `**` opens a segment start, so a dotfile there is
+# protected under dot=false but matched under dot=true.
+{src/,lib/}**	src/a	match	dot=true
+{src/,lib/}**	src/a	match	dot=false
+{src/,lib/}**	src/.x	match	dot=true
+{src/,lib/}**	src/.x	no-match	dot=false
+{src/,lib/}**	src/a/.y	match	dot=true
+{src/,lib/}**	src/a/.y	no-match	dot=false
+{src/,lib/}**	.src/x	no-match	dot=true
+{src/,lib/}**	.src/x	no-match	dot=false
+{a/,b/}**	a/.x	match	dot=true
+{a/,b/}**	a/.x	no-match	dot=false
+
+## M2.leading-globstar-keeps-its-slash-across-a-brace (§8.5)
+# **/{**/a,b} is **/a union **/b : the leading **/ still matches X at depth 0.
+**/{**/a,b}	b	match
+**/{**/a,b}	a	match
+**/{**/a,b}	q/b	match
+**/{**/a,b}	q/a	match
+**/{**/a,b}	q/r/a	match
+**/{**/a,b}	q/r/b	match
+**/{**/a,b}	c	no-match
+**/{**/a,b}	q/c	no-match
+**/{**/a,b}		no-match
+# **/{x,**}: the ** branch degrades to `.*`, matching anything.
+**/{x,**}	x	match
+**/{x,**}	q/r	match
+# Control: no globstar-leading branch, plain "/b at any depth".
+**/{a,b}	b	match
+**/{a,b}	q/b	match
+# dot: `**/` exposes segment starts at every depth, so leading/interior
+# dotfiles are protected under dot=false.
+**/{**/a,b}	q/b	match	dot=true
+**/{**/a,b}	q/b	match	dot=false
+**/{**/a,b}	.a/b	match	dot=true
+**/{**/a,b}	.a/b	no-match	dot=false
+**/{**/a,b}	q/.r/b	match	dot=true
+**/{**/a,b}	q/.r/b	no-match	dot=false
+**/{x,**}	.x	match	dot=true
+**/{x,**}	.x	no-match	dot=false
+
+## M1.segment-engine-preserves-the-mandatory-separator (§8.3)
+# x/{**,a}/** is x/** union x/a/** — both require the x/ prefix (NOT bare x).
+x/{**,a}/**	x	no-match
+x/{**,a}/**	x/	match
+x/{**,a}/**	x/y	match
+x/{**,a}/**	x/y/z	match
+x/{**,a}/**	x/a	match
+x/{**,a}/**	x/a/z	match
+x/{**,a}/**	y	no-match
+x/{**,a}/**	xy	no-match
+# {a/**,b}/** is a/** union b/** — cover BOTH branches and the impossible root.
+{a/**,b}/**	a	no-match
+{a/**,b}/**	a/x	match
+{a/**,b}/**	a/x/y	match
+{a/**,b}/**	b	no-match
+{a/**,b}/**	b/x	match
+{a/**,b}/**	c	no-match
+{a/**,b}/**	ab	no-match
+# /{**,}/** is /** union //** — needs a leading separator.
+/{**,}/**		no-match
+/{**,}/**	/	match
+/{**,}/**	/x/y	match
+/{**,}/**	//x	match
+/{**,}/**	x	no-match
+# */{**,*}/** is */** union */*/** — needs a first segment then a separator.
+*/{**,*}/**		no-match
+*/{**,*}/**	a	no-match
+*/{**,*}/**	a/b	match
+*/{**,*}/**	a/b/c	match
+# dot: the trailing `**` (and the leading `*` of */...) exposes segment
+# starts; dotfiles there are protected under dot=false, on BOTH branches.
+x/{**,a}/**	x/y	match	dot=true
+x/{**,a}/**	x/y	match	dot=false
+x/{**,a}/**	x/.y	match	dot=true
+x/{**,a}/**	x/.y	no-match	dot=false
+x/{**,a}/**	x/a/.z	match	dot=true
+x/{**,a}/**	x/a/.z	no-match	dot=false
+{a/**,b}/**	a/.x	match	dot=true
+{a/**,b}/**	a/.x	no-match	dot=false
+{a/**,b}/**	b/.y	match	dot=true
+{a/**,b}/**	b/.y	no-match	dot=false
+/{**,}/**	/.x	match	dot=true
+/{**,}/**	/.x	no-match	dot=false
+*/{**,*}/**	a/.b	match	dot=true
+*/{**,*}/**	a/.b	no-match	dot=false

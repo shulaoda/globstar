@@ -1016,3 +1016,98 @@ fn walker_follow_links_on_breaks_cycles() {
         "cycle protection must cap depth at one re-entry; got {got:?}"
     );
 }
+
+// ── Regression: audit 2026-08 ───────────────────────────────────────────
+
+/// C1: a union of literal patterns that share a trailing byte (e.g. the
+/// same extension) must not seed the walker at the un-terminated prefix
+/// (`package`/`tsconfig`) — that directory doesn't exist, so the walk
+/// used to return nothing.
+#[test]
+fn walker_c1_multi_literal_shared_suffix() {
+    let t = TmpTree::new("c1-multi-lit");
+    t.touch("package.json");
+    t.touch("tsconfig.json");
+    t.touch("readme.md");
+    let got = collect_rel(
+        Walk::from_patterns(["package.json", "tsconfig.json"], t.root()).unwrap(),
+        t.root(),
+    );
+    let expected: BTreeSet<String> = ["package.json", "tsconfig.json"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(got, expected);
+}
+
+/// C1: same hazard via a leading brace whose branches share a suffix.
+#[test]
+fn walker_c1_brace_shared_suffix() {
+    let t = TmpTree::new("c1-brace");
+    t.touch("index.ts");
+    t.touch("main.ts");
+    t.touch("other.ts");
+    let got = collect_rel(Walk::new("{index,main}.ts", t.root()).unwrap(), t.root());
+    let expected: BTreeSet<String> = ["index.ts", "main.ts"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(got, expected);
+}
+
+/// C2: a `..` in a pattern must not let the walk escape `base`, even
+/// though the sibling directory exists on disk.
+#[test]
+fn walker_c2_dotdot_stays_in_base() {
+    let outer = TmpTree::new("c2-outer");
+    outer.mkdir("sandbox");
+    outer.touch("secret/passwd.txt");
+    outer.touch("sandbox/ok.txt");
+    let base = outer.root().join("sandbox");
+
+    for pat in ["../secret/*.txt", "../**/*.txt", "a/../../secret/*.txt"] {
+        let got = collect_rel(Walk::new(pat, base.clone()).unwrap(), &base);
+        assert!(
+            got.is_empty(),
+            "pattern {pat:?} escaped the sandbox: {got:?}"
+        );
+    }
+    // A normal in-base pattern still works.
+    let got = collect_rel(Walk::new("*.txt", base.clone()).unwrap(), &base);
+    assert_eq!(got, ["ok.txt"].iter().map(|s| s.to_string()).collect());
+}
+
+/// Seed-jump must honor `follow_links = false`: a static-prefix that
+/// lies on or beyond a symlink is never reached by a root walk (which
+/// drops symlinks), so seeding must not jump through it either.
+#[test]
+#[cfg(unix)]
+fn walker_seed_symlink_follow_false() {
+    use std::os::unix::fs::symlink;
+    let t = TmpTree::new("seed-symlink");
+    t.touch("real/a.txt");
+    symlink(t.root().join("real"), t.root().join("link")).unwrap();
+    symlink(t.root().join("real/a.txt"), t.root().join("flink.txt")).unwrap();
+
+    let opts = |follow: bool| WalkOptions {
+        base: t.root().to_path_buf(),
+        follow_links: follow,
+        ..Default::default()
+    };
+
+    // follow = false: seeding through the symlinked prefix is suppressed.
+    for pat in ["link/*.txt", "flink.txt"] {
+        let got = collect_rel(Walk::new(pat, opts(false)).unwrap(), t.root());
+        assert!(
+            got.is_empty(),
+            "follow=false seeded through symlink {pat:?}: {got:?}"
+        );
+    }
+    // A root walk (empty prefix) reaches only the real file, not the links.
+    let got = collect_rel(Walk::new("**/*.txt", opts(false)).unwrap(), t.root());
+    assert_eq!(got, ["real/a.txt"].iter().map(|s| s.to_string()).collect());
+
+    // follow = true: the seed IS allowed to jump through the symlink.
+    let got = collect_rel(Walk::new("link/*.txt", opts(true)).unwrap(), t.root());
+    assert_eq!(got, ["link/a.txt"].iter().map(|s| s.to_string()).collect());
+}

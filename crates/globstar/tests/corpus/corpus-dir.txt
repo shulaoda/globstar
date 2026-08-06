@@ -1,11 +1,11 @@
 # ============================================================================
-# corpus-dir.txt — match_dir 黄金测试语料
+# corpus-dir.txt — match_dir golden test corpus
 # Format: PATTERN<TAB>DIR_PATH<TAB>EXPECTED[<TAB>FLAGS]
 # EXPECTED: pruned | descend | match | descend-match
-#   pruned        = 整棵子树不可能匹配,walker 跳过
-#   descend       = 子孙可能匹配,需要继续向下走
-#   match         = 该目录本身匹配 pattern,但子孙不再匹配
-#   descend-match = 该目录匹配 pattern,且子孙也可能匹配
+#   pruned        = no descendant can match; the walker skips the whole subtree
+#   descend       = descendants may match; keep walking down
+#   match         = the directory itself matches; no descendant matches
+#   descend-match = the directory matches AND descendants may match too
 # See tests/README.md for format details
 # ============================================================================
 
@@ -131,3 +131,70 @@ x*/	x	descend
 ## brace.globstar-expansion dir rows (dot=false walker default)
 {**,x}/b	q	descend
 a{**,x}b	q	pruned
+
+# ============================================================================
+# regression.audit-2026-08 — match_dir coverage for the audit fixes.
+# Each pattern exercises every reachable DirMatch state (pruned / descend /
+# match / descend-match) across its branches, plus the dot=true/false matrix
+# where a segment-start wildcard could expose a dotfile directory.
+# corpus-dir.txt default is dot=false; rows carry an explicit flag.
+# ============================================================================
+
+## M1.segment-engine-preserves-the-mandatory-separator (§8.3, dir view)
+# x/{**,a}/** : x descends (x itself no match), deeper matches, wrong root prunes.
+x/{**,a}/**	x	descend	dot=true
+x/{**,a}/**	x/y	descend-match	dot=true
+x/{**,a}/**	x/a	descend-match	dot=true
+x/{**,a}/**	y	pruned	dot=true
+x/{**,a}/**	xy	pruned	dot=true
+# {a/**,b}/** — BOTH branches descend, deeper matches, non-a/b prunes.
+{a/**,b}/**	a	descend	dot=true
+{a/**,b}/**	a/x	descend-match	dot=true
+{a/**,b}/**	b	descend	dot=true
+{a/**,b}/**	b/x	descend-match	dot=true
+{a/**,b}/**	c	pruned	dot=true
+{a/**,b}/**	ab	pruned	dot=true
+
+## M5.globstar-boundary-chained-outward-across-brace (§7.0 + §8.1, dir view)
+{src/,lib/}**	src	descend	dot=true
+{src/,lib/}**	src/a	descend-match	dot=true
+{src/,lib/}**	lib	descend	dot=true
+{src/,lib/}**	srcx	pruned	dot=true
+{src/,lib/}**	docs	pruned	dot=true
+
+## M2.leading-globstar-brace (§8.5) — a `**`-led pattern never prunes (dot=true).
+**/{**/a,b}	a	descend-match	dot=true
+**/{**/a,b}	q	descend	dot=true
+**/{**/a,b}	c	descend	dot=true
+
+## M3.single-branch-brace-literal (§7.4) — the exact `match` state.
+{**}	{a}	match	dot=true
+{**}	{a/b}	pruned	dot=true
+{a/**}	{a/b}	match	dot=true
+{**/a}	{x/a}	match	dot=true
+{**/a}	{a}	descend	dot=true
+
+## H3.negated-pattern-match_dir-conservatively-descends (§13.4)
+!src/**	docs	descend	dot=true
+!src/**	src	descend	dot=true
+!a	a	descend	dot=true
+!a	b	descend	dot=true
+
+## dot matrix — a dotfile directory at a segment start prunes under
+## dot=false but descend-matches under dot=true (the `**`/`*` cannot open it).
+{src/,lib/}**	src/.x	descend-match	dot=true
+{src/,lib/}**	src/.x	pruned	dot=false
+{src/,lib/}**	src/a	descend-match	dot=true
+{src/,lib/}**	src/a	descend-match	dot=false
+x/{**,a}/**	x/.y	descend-match	dot=true
+x/{**,a}/**	x/.y	pruned	dot=false
+{a/**,b}/**	a/.x	descend-match	dot=true
+{a/**,b}/**	a/.x	pruned	dot=false
+{a/**,b}/**	b/.y	descend-match	dot=true
+{a/**,b}/**	b/.y	pruned	dot=false
+**/{**/a,b}	.a/b	descend-match	dot=true
+**/{**/a,b}	.a/b	pruned	dot=false
+# is_match(.b) is no-match under both, yet match_dir still differs: dot=true
+# descends into `.b/` (a match may lie deeper), dot=false prunes it.
+**/{**/a,b}	.b	descend	dot=true
+**/{**/a,b}	.b	pruned	dot=false

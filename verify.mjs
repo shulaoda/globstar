@@ -296,13 +296,10 @@ async function runJsVerify() {
   }
 
   function runDirEngine(row, engineName) {
-    let ast;
-    try {
-      ast = parse(row.pattern);
-    } catch {
-      return null;
-    }
-    if (ast.isNegated) return null; // match_dir doesn't invert `!`; skip like Rust
+    // Both variants go through `compileMatcher`, whose `matchDir` inverts
+    // leading-`!` negation at the wrapper level (conservative Descend,
+    // §13.4) regardless of which engine `__engine` forces the body onto —
+    // so negated rows are exercised on BOTH engines and no row is skipped.
     try {
       const dm = compileMatcher(row.pattern, {
         dot: row.dot,
