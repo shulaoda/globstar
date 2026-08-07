@@ -303,10 +303,9 @@ fn classify(ast: &Ast) -> Tier {
 }
 
 fn contains_brace(node: &ast::Node) -> bool {
-    use ast::Node::*;
     match node {
-        Brace(_) => true,
-        Concat(xs) => xs.iter().any(contains_brace),
+        ast::Node::Brace(_) => true,
+        ast::Node::Concat(xs) => xs.iter().any(contains_brace),
         _ => false,
     }
 }
