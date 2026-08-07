@@ -48,10 +48,12 @@ function fromSeq(seq) {
 }
 
 // Structural equality for the node kinds we lift. Singletons (Sep,
-// Globstar, AnyChar, Star) compare by reference; Literals compare
-// byte-for-byte. Class / Concat / Brace fall through to false — rare
-// enough that the full-node fast path wins what it can and the rest
-// pays no extra work.
+// Globstar, AnyChar, Star) compare by reference; Literals byte-for-byte.
+// Class / Concat / Brace deliberately compare unequal so they're never
+// lifted: pulling a whole Brace out would tear it from a flanking `/`
+// that distributeSeps must keep next to a globstar-edged branch, so
+// `union` would stop equalling the OR of its members (e.g.
+// `union(["{**,a}/**", "{**,a}/"])`).
 function nodeEq(a, b) {
   if (a === b) return true;
   if (a.tag !== b.tag || a.tag !== N_LITERAL) return false;

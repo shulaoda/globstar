@@ -56,12 +56,10 @@ pub fn factor_branches(branches: Vec<Node>) -> Node {
 /// `AnyChar` / `Star`) compare by kind. `Class` / `Brace` / `Concat`
 /// deliberately compare as unequal so they are never lifted.
 ///
-/// Lifting a whole `Brace` out of every branch (which derived
-/// `PartialEq` would happily do) tears it away from a flanking `/` that
-/// `distribute_seps` needs to keep a globstar-edged branch adjacent to
-/// its separator, so `union` stops equalling the OR of its members
-/// (e.g. `union(["{**,a}/**","{**,a}/"])`). Matching the JS port's
-/// narrow `nodeEq` keeps the two runtimes in lock-step.
+/// Lifting a whole `Brace` out (which a derived `PartialEq` would do)
+/// tears it from a flanking `/` that `distribute_seps` must keep next to
+/// a globstar-edged branch, so `union` would stop equalling the OR of
+/// its members (e.g. `union(["{**,a}/**", "{**,a}/"])`).
 fn node_eq(a: &Node, b: &Node) -> bool {
     match (a, b) {
         (Node::Literal(x), Node::Literal(y)) => x == y,
