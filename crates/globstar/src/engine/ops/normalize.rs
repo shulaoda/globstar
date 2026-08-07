@@ -16,31 +16,10 @@ pub(super) fn apply_leading_seps_at_start(ops: &mut Vec<Op>) {
     }
 }
 
-pub(super) fn needs_sep_distribution(node: &Node) -> bool {
-    match node {
-        Node::Concat(children) => {
-            for (i, child) in children.iter().enumerate() {
-                if let Node::Brace(branches) = child {
-                    let prev_sep = i > 0 && matches!(children[i - 1], Node::Separator);
-                    let next_sep = matches!(children.get(i + 1), Some(Node::Separator));
-                    if (prev_sep && branches.iter().any(leads_globstar))
-                        || (next_sep && branches.iter().any(trails_globstar))
-                    {
-                        return true;
-                    }
-                }
-                if needs_sep_distribution(child) {
-                    return true;
-                }
-            }
-            false
-        }
-        Node::Brace(branches) => branches.iter().any(needs_sep_distribution),
-        _ => false,
-    }
-}
-
-fn leads_globstar(node: &Node) -> bool {
+/// Whether some brace branch starts with a globstar (`{**,…}`) — used by
+/// the lowering walk to spot a brace edge that needs a preceding `/`
+/// distributed into it, and by [`distribute_seps`] to do it.
+pub(super) fn leads_globstar(node: &Node) -> bool {
     match node {
         Node::Globstar => true,
         Node::Concat(children) => children.first().is_some_and(leads_globstar),
@@ -49,7 +28,9 @@ fn leads_globstar(node: &Node) -> bool {
     }
 }
 
-fn trails_globstar(node: &Node) -> bool {
+/// Whether some brace branch ends with a globstar (`{…,**}`) — the
+/// trailing-`/` counterpart of [`leads_globstar`].
+pub(super) fn trails_globstar(node: &Node) -> bool {
     match node {
         Node::Globstar => true,
         Node::Concat(children) => children.last().is_some_and(trails_globstar),

@@ -88,7 +88,7 @@ fn build_pikevm_union(patterns: &[&str]) -> PikeVm {
         .map(|p| parser::parse(p.as_bytes()).expect("parse").body)
         .collect();
     let merged = factor_branches(bodies);
-    let program = lower(&merged, true, false);
+    let program = lower(&merged, false);
     PikeVm::new(program, true)
 }
 
@@ -98,7 +98,7 @@ fn build_pikevm_or(patterns: &[&str]) -> Vec<PikeVm> {
         .iter()
         .map(|p| {
             let ast = parser::parse(p.as_bytes()).expect("parse");
-            let program = lower(&ast.body, ast.maybe_sep_distribution, false);
+            let program = lower(&ast.body, false);
             PikeVm::new(program, true)
         })
         .collect()

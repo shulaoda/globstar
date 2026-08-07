@@ -71,11 +71,8 @@ function buildEngine(asts, opts) {
     const literalBytes = nodeToLiteralBytes(asts[0].body);
     if (literalBytes !== null) return new LiteralMatcher(literalBytes, ci);
   }
-  // factorBranches can move a top-level `**` into the synthetic brace,
-  // so multi-pattern merges keep the distribution walk enabled.
-  const maybe = asts.length > 1 ? true : asts[0].maybeSepDistribution;
   const factored = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
-  const program = lower(factored, ci, maybe);
+  const program = lower(factored, ci);
 
   if (opts.__engine === "pikevm") return PikeVm.build(program, dot);
   return SegmentMatcher.build(program, dot) ?? PikeVm.build(program, dot);

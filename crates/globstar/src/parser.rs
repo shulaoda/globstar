@@ -26,7 +26,6 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
         input,
         pos: 0,
         brace_depth: 0,
-        maybe_sep_distribution: false,
     };
 
     // Leading `!` are negation markers. Each one flips the result;
@@ -40,7 +39,6 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
     let body = p.parse_sequence(SequenceContext::Top)?;
     Ok(Ast {
         negation_count,
-        maybe_sep_distribution: p.maybe_sep_distribution,
         body,
     })
 }
@@ -117,7 +115,6 @@ struct Parser<'a> {
     input: &'a [u8],
     pos: usize,
     brace_depth: usize,
-    maybe_sep_distribution: bool,
 }
 
 /// Structural class skip for the brace lookahead. Syntax errors remain the
@@ -266,9 +263,6 @@ impl<'a> Parser<'a> {
             && ctx.boundary_before(nodes.last())
             && ctx.boundary_after(self.peek_at(2))
         {
-            if self.brace_depth > 0 {
-                self.maybe_sep_distribution = true;
-            }
             nodes.push(Node::Globstar);
             self.pos += 2;
             // Collapse consecutive `/**/`.

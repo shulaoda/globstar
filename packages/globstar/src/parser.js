@@ -90,7 +90,7 @@ export function parse(input) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
   }
 
-  const state = { input: bytes, pos: 0, brace_depth: 0, maybe_sep_distribution: false };
+  const state = { input: bytes, pos: 0, brace_depth: 0 };
 
   // Leading `!` flips the result on each. Parity decides final negation.
   let negationCount = 0;
@@ -103,9 +103,6 @@ export function parse(input) {
   return {
     body,
     isNegated: (negationCount & 1) === 1,
-    // Parser hint: a `**` was parsed inside `{}`; false proves the
-    // lowering's separator-distribution check cannot trigger (§7).
-    maybeSepDistribution: state.maybe_sep_distribution,
   };
 }
 
@@ -192,7 +189,6 @@ function parseStar(state, nodes, ctx) {
     boundaryBefore(nodes, ctx) &&
     boundaryAfter(input[state.pos + 2], ctx)
   ) {
-    if (state.brace_depth > 0) state.maybe_sep_distribution = true;
     nodes.push(globstar());
     state.pos += 2;
     // Collapse `/**/**` runs to a single globstar.

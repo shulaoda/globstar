@@ -26,25 +26,33 @@ import {
   applyLeadingSepsAtStart,
   distributeSeps,
   foldGlobstars,
-  needsSepDistribution,
+  leadsGlobstar,
+  trailsGlobstar,
 } from "./normalize.js";
 
-// `maybeSepDistribution` is the parser's hint (see parse()): when false
-// no `**` sits inside a brace, so the separator-distribution walk is
-// provably a no-op and is skipped. When true the precise check still
-// decides — the hint is a superset, never the decider. Defaults to
-// true so direct callers (tests) keep exact full-check behavior.
-export function lower(node, caseInsensitive, maybeSepDistribution = true) {
+// Optimistic single pass: lowerInto emits ops directly and, in the same
+// walk, flags whether any brace edge abuts a separator — the sole shape
+// that needs §7 separator distribution. Only when that trips (rare) do we
+// redo on the distributed tree. The common pattern pays exactly one walk.
+export function lower(node, caseInsensitive) {
   const ops = [];
-  const root = maybeSepDistribution && needsSepDistribution(node) ? distributeSeps(node) : node;
-  lowerInto(root, ops, caseInsensitive);
+  const flag = { needsDistribution: false };
+  lowerInto(node, ops, caseInsensitive, flag);
+  if (flag.needsDistribution) {
+    // The flag is a conservative superset of what distributeSeps actually
+    // rewrites (it leaves e.g. a `/` owned by a preceding `**` in place),
+    // so the flag can re-trip on the distributed tree even though that
+    // tree is already the fixpoint. Re-lower on it and ignore the re-trip.
+    ops.length = 0;
+    lowerInto(distributeSeps(node), ops, caseInsensitive, flag);
+  }
   foldGlobstars(ops);
   applyLeadingSepsAtStart(ops);
   const ci = !!caseInsensitive;
   return { ops, facts: LiteralFacts.extract(ops, ci), caseInsensitive: ci };
 }
 
-function lowerInto(node, out, caseInsensitive) {
+function lowerInto(node, out, caseInsensitive, flag) {
   switch (node.tag) {
     case N_LITERAL:
       pushOp(out, { kind: OP_LIT, bytes: node.bytes });
@@ -64,14 +72,33 @@ function lowerInto(node, out, caseInsensitive) {
     case N_CLASS:
       pushOp(out, { kind: OP_CLASS, cls: caseInsensitive ? classExpandedAsciiCi(node) : node });
       return;
-    case N_CONCAT:
-      for (const child of node.children) lowerInto(child, out, caseInsensitive);
+    case N_CONCAT: {
+      const children = node.children;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        // Flag a brace edge abutting a separator — the only shape that
+        // needs §7 separator distribution. `lower` then redoes the walk on
+        // the distributed tree. Detected here so the common no-brace
+        // pattern needs no separate pre-check walk.
+        if (child.tag === N_BRACE) {
+          const prevSep = i > 0 && children[i - 1].tag === N_SEPARATOR;
+          const nextSep = i + 1 < children.length && children[i + 1].tag === N_SEPARATOR;
+          if (
+            (prevSep && child.branches.some(leadsGlobstar)) ||
+            (nextSep && child.branches.some(trailsGlobstar))
+          ) {
+            flag.needsDistribution = true;
+          }
+        }
+        lowerInto(child, out, caseInsensitive, flag);
+      }
       return;
+    }
     case N_BRACE: {
       const branches = [];
       for (const branch of node.branches) {
         const branchOps = [];
-        lowerInto(branch, branchOps, caseInsensitive);
+        lowerInto(branch, branchOps, caseInsensitive, flag);
         foldGlobstars(branchOps);
         branches.push(branchOps);
       }

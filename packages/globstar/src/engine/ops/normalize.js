@@ -13,35 +13,18 @@ import {
   SLASH_ANY_OP,
 } from "./ir.js";
 
-export function needsSepDistribution(node) {
-  if (node.tag === N_CONCAT) {
-    const children = node.children;
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i];
-      if (child.tag === N_BRACE) {
-        const prevSep = i > 0 && children[i - 1].tag === N_SEPARATOR;
-        const nextSep = i + 1 < children.length && children[i + 1].tag === N_SEPARATOR;
-        if (
-          (prevSep && child.branches.some(leadsGlobstar)) ||
-          (nextSep && child.branches.some(trailsGlobstar))
-        ) {
-          return true;
-        }
-      }
-      if (needsSepDistribution(child)) return true;
-    }
-    return false;
-  }
-  return node.tag === N_BRACE && node.branches.some(needsSepDistribution);
-}
-
-function leadsGlobstar(node) {
+// Whether some brace branch starts with a globstar (`{**,…}`) — used by
+// the lowering walk to spot a brace edge that needs a preceding `/`
+// distributed into it, and by distributeSeps to do it.
+export function leadsGlobstar(node) {
   if (node.tag === N_GLOBSTAR) return true;
   if (node.tag === N_CONCAT) return node.children.length > 0 && leadsGlobstar(node.children[0]);
   return node.tag === N_BRACE && node.branches.some(leadsGlobstar);
 }
 
-function trailsGlobstar(node) {
+// Whether some brace branch ends with a globstar (`{…,**}`) — the
+// trailing-`/` counterpart of leadsGlobstar.
+export function trailsGlobstar(node) {
   if (node.tag === N_GLOBSTAR) return true;
   if (node.tag === N_CONCAT) {
     return node.children.length > 0 && trailsGlobstar(node.children[node.children.length - 1]);
