@@ -1,11 +1,5 @@
-//! Recursive-descent parser for glob patterns.
-//!
-//! Converts a `&[u8]` pattern into an [`Ast`]. Implements the BNF in
-//! GLOB_SPEC.md §3 with the byte-level conventions of §2.
-//!
-//! The parser is written by hand (no parser combinator library) for two
-//! reasons: (1) the grammar is small and performance-sensitive, (2) error
-//! reporting needs precise byte offsets.
+//! Recursive-descent parser: a `&[u8]` pattern into an [`Ast`].
+//! Implements the BNF in GLOB_SPEC.md §3 with the byte conventions of §2.
 
 use crate::ast::*;
 use crate::error::*;
@@ -214,9 +208,8 @@ impl<'a> Parser<'a> {
                     } else {
                         (ctx.boundary_before(nodes.last()), next_after_brace)
                     };
-                    // Single-branch `{a}` is treated as the literal `{a}`
-                    // (GLOB_SPEC §7.4). `<[Node; 1]>::try_from` both checks
-                    // the length AND moves the single element out in one step.
+                    // `<[Node; 1]>::try_from` checks the length and moves the
+                    // single element out in one step.
                     match <[Node; 1]>::try_from(self.parse_brace(prev_boundary, next_boundary)?) {
                         Ok([single]) => {
                             nodes.push(Node::Literal(b"{".to_vec()));
@@ -312,11 +305,9 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 return Ok(CharClass { negated, items });
             }
-            // Raw `/` at class-body top means the class never closed inside
-            // its segment (GLOB_SPEC §6.2) — semantically identical to EOF
-            // from the class parser's POV. `\` at this position is an escape
-            // prefix, so we defer its check to parse_class_byte (where the
-            // *resolved* byte is inspected).
+            // Raw `/` at the class top means the class never closed in its
+            // segment (§6.2). `\` is an escape prefix, so its check is
+            // deferred to parse_class_byte (which sees the resolved byte).
             if b == b'/' {
                 return Err(GlobError::UnterminatedClass { at: start_pos });
             }
@@ -358,13 +349,9 @@ impl<'a> Parser<'a> {
             self.pos += 1;
             b
         };
-        // Only `/` is a pattern-level segment separator. Encountering it
-        // (either raw — caught earlier in the loop — or via `\/` escape
-        // here) means the class never closed inside its segment (§6.2).
-        // `\` is an escape character in pattern syntax, NOT a separator;
-        // it may legitimately appear as a literal class member (`[\\b]` ≡
-        // `[\, b]`). Runtime `CharClass::matches` short-circuits `\` for
-        // path matching because §12.3 normalizes path-side `\` to `/`.
+        // A `/` (raw, or via `\/`) means the class never closed inside its
+        // segment (§6.2). `\` itself is an escape, not a separator, so it
+        // can be a literal class member (`[\\b]` ≡ `[\, b]`).
         if resolved == b'/' {
             return Err(GlobError::UnterminatedClass { at: class_start });
         }
