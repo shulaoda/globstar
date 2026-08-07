@@ -1,73 +1,44 @@
-//! Compile-time literal facts for fast pre-filtering in `is_match`.
+//! Suffix-anchored pre-filter consulted before every engine's `is_match`.
 //!
 //! Every [`OpProgram`](super::ops::OpProgram) carries a [`LiteralFacts`]
-//! that records the byte **suffix** (or set of suffixes for trailing
-//! brace alternations) every matching path must end with. Before
-//! invoking the engine, the matcher short-circuits on a cheap `accept`
-//! check:
+//! recording the byte suffix (or a set of them, for a trailing brace
+//! alternation) every matching path must end with. The matcher
+//! short-circuits on a separator-aware `ends_with` before running the
+//! engine:
 //!
 //! ```text
-//! path.ends_with(suffix)  →  maybe match
-//!         otherwise        →  definitely not
+//! path ends with suffix  →  maybe match (run engine)
+//!         otherwise       →  definitely not
 //! ```
 //!
-//! This is the filter-then-verify idea from ADR-004: a constant-time
-//! rejection layer in front of the matcher. Typical walker scenarios
-//! see 90%+ of candidate paths rejected by the suffix check alone
-//! (e.g. `src/**/*.ts` rejecting every `.js` file without running the
-//! exact engine).
-//!
-//! Prefix matching used to live here too, but it forced two scans of
-//! the same bytes. It moved into each engine's natural left-to-right
-//! execution path. Suffix is uniquely valuable because the engine is
-//! left-to-right and can't cheaply check a tail anchor without
-//! running the full match.
+//! On walker workloads this rejects the bulk of candidates outright —
+//! `src/**/*.ts` drops every `.js` file in one suffix scan.
 //!
 //! ## Correctness invariant
 //!
-//! `accept(path)` returns `false` → no program variant can match `path`.
-//! `accept(path)` returns `true` → match is possible; run the real matcher.
+//! `accept(path) == false` ⇒ no program variant can match `path`, so the
+//! filter must never reject a path the engine would accept. That drives:
 //!
-//! The filter must therefore **never** reject a path that the matcher
-//! would accept. This drives two design choices:
-//!
-//! 1. **Conservative extraction**: at a brace / wildcard boundary,
-//!    suffix extraction stops. We do not try to factor common literals
-//!    out of sibling branches (a future optimization).
-//! 2. **Separator-aware byte matching**: `/` in the suffix matches any
-//!    run of `/` or `\` in the path (GLOB_SPEC §12.3). A strict byte
-//!    `ends_with` would incorrectly reject `src\main.ts` for pattern
-//!    `**/main.ts` on Windows.
+//! 1. **Conservative extraction** — stop at the first non-literal op.
+//! 2. **Separator-aware compare** — a `/` in the suffix matches any single
+//!    separator byte, `/` or `\` (GLOB_SPEC §12.3), so `**/main.ts` still
+//!    matches `src\main.ts` on Windows.
 
 use crate::engine::eq_byte;
 use crate::engine::ops::Op;
 
-/// Literal facts extracted from one [`OpProgram`]. See module docs.
-///
-/// Only **suffix** facts are stored — prefix matching is left to the
-/// engines, which naturally walk the prefix bytes and reject
-/// at the same speed as a separate byte-compare would. Carrying a
-/// prefix in facts forced two scans of the same bytes. The
-/// suffix is uniquely valuable here because the engines are
-/// left-to-right — they can't cheaply check a tail anchor without
-/// running the full match, so a separate ends-with check pre-rejects
-/// huge swathes of mismatched paths (`**/*.md` against a `.ts` file
-/// rejects in O(suffix.len()) without ever entering the engine).
+/// The suffix facts extracted from one [`OpProgram`] (see module docs).
 #[derive(Debug, Clone)]
 pub struct LiteralFacts {
     /// The longest byte suffix every matching path must end with.
-    /// `Box<[u8]>` rather than `Vec<u8>` — saves 8 B inline (no `cap`
-    /// field) and signals the post-construction immutability.
     pub suffix: Box<[u8]>,
-    /// For patterns ending with `Op::Alternation` of literal branches:
-    /// the path must end with at least one of these suffixes. Populated
-    /// by `extract_suffix_set` when a single `suffix` can't cover all
-    /// branches. Empty means no set-based check (use `suffix` only).
-    /// Same `Box<[…]>` rationale as [`Self::suffix`] — the outer slice
-    /// and each inner suffix are both immutable post-build.
+
+    /// One suffix per branch, for a pattern ending with an
+    /// `Op::Alternation` of literal branches that a single `suffix` can't
+    /// cover. Empty means no set-based check (use `suffix` only).
     pub suffix_set: Box<[Box<[u8]>]>,
-    /// ASCII case-insensitive compare flag — mirrors the program flag so
-    /// `accept` can compare with case folding when the matcher would.
+
+    /// ASCII case-insensitive compares, mirroring the program flag.
     pub case_insensitive: bool,
 }
 
@@ -91,12 +62,9 @@ impl LiteralFacts {
         }
     }
 
-    /// Cheap pre-filter: is `path` possibly a match?
-    ///
-    /// Strict path is the function fall-through and inlines into the
-    /// calling matcher; CI path goes via a `#[cold]` dispatcher so LLVM
-    /// keeps the CI body out of the hot icache region (same pattern as
-    /// [`LiteralMatcher::is_match`](crate::engine::literal::LiteralMatcher)).
+    /// Cheap pre-filter: could `path` be a match? The case-sensitive path
+    /// inlines into the caller; the CI path goes through a `#[cold]`
+    /// dispatcher to keep it off the hot instruction cache.
     #[inline(always)]
     pub fn accept(&self, path: &[u8]) -> bool {
         if self.case_insensitive {
@@ -119,9 +87,8 @@ impl LiteralFacts {
         true
     }
 
-    /// Cold dispatcher for the CI-side [`Self::accept_inner`] invocation.
-    /// Same `#[cold]` rationale as
-    /// [`LiteralMatcher::is_match`](crate::engine::literal::LiteralMatcher).
+    /// `#[cold]` CI dispatcher — keeps the case-insensitive body off the
+    /// hot path.
     #[cold]
     fn accept_ci_cold(&self, path: &[u8]) -> bool {
         self.accept_inner::<true>(path)
