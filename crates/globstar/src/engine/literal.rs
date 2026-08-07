@@ -1,39 +1,12 @@
-//! Tier 0 — pure literal matcher.
+//! Tier 0 — pure literal matcher, used when the parsed pattern has no
+//! metacharacters. A byte-by-byte compare with path-separator
+//! normalization (GLOB_SPEC §12.3): each pattern `/` consumes exactly one
+//! separator byte (`\` too on Windows), and `//` is not collapsed, so
+//! `a//b` and `a/b` stay distinct (matches picomatch / bash). No
+//! allocation per `is_match`.
 //!
-//! For patterns that contain no metacharacters (after parse). Implementation
-//! is a single byte comparison with path-separator normalization.
-//!
-//! The literal-facts pre-filter for other tiers lives in [`super::facts`].
-//!
-//! ## Path separator handling (GLOB_SPEC §12.3)
-//!
-//! `\` is always an escape on the pattern side (never a separator). On the
-//! match side we treat any [`std::path::is_separator`] byte (`/` always, `\`
-//! on Windows only — the `Seps` set from §12.3) as a separator. Each `/` in
-//! the pattern consumes **exactly one** separator byte from the path —
-//! aligned with `picomatch` / `globset` / `bash` / `fast-glob`. Pattern-side
-//! `//` is NOT collapsed: `a//b` and `a/b` are distinct patterns. Paths
-//! with redundant separator runs (`a//b`) are not silently equated to the
-//! canonical form; callers that want lenient handling should normalize
-//! before matching.
-//!
-//! These rules are applied **byte-by-byte without allocation**, so a single
-//! `is_match` call has no heap traffic.
-//!
-//! ## case_insensitive specialization
-//!
-//! Each helper is generic over `const CI: bool`. The compiler monomorphizes
-//! into two specialized functions where `CI` is a compile-time constant —
-//! the `if CI { ... } else { ... }` choice in the byte-equality helper
-//! ([`super::eq_byte`]) is dead-code-eliminated per instantiation, leaving
-//! a tight single-mode loop with zero per-byte branch on case mode.
-//!
-//! `is_match` / `match_dir` dispatch inline on `case_insensitive`.
-//! No `#[cold]` wrapper on the CI side: Tier 0 patterns rarely
-//! dominate hot paths (single `Glob::new(literal)` calls are
-//! uncommon; the realistic high-volume case is many literal entries
-//! merged via `Glob::union` into one segment matcher where heap savings, not
-//! micro-branch prediction, are the win).
+//! Helpers are const-generic over `CI`, monomorphized into two branch-free
+//! loops (case-sensitive / case-insensitive).
 
 use crate::dir_match::DirMatch;
 use crate::engine::eq_byte;
@@ -42,9 +15,8 @@ use crate::engine::eq_byte;
 #[derive(Debug, Clone)]
 pub struct LiteralMatcher {
     pub(crate) literal: Vec<u8>,
-    /// ASCII case-insensitive compare flag — propagated from
-    /// [`crate::options::CompileOptions`]. When `true`, byte compares use
-    /// `eq_ignore_ascii_case`; non-ASCII bytes still compare verbatim.
+    /// ASCII case-insensitive compares when `true`; non-ASCII bytes still
+    /// compare verbatim.
     pub(crate) case_insensitive: bool,
 }
 
@@ -56,10 +28,7 @@ impl LiteralMatcher {
         }
     }
 
-    /// Whether `path` matches the compiled literal (per §12.3 normalization).
-    ///
-    /// Dispatches to a const-generic monomorphization of [`path_eq`];
-    /// `#[inline(always)]` keeps the chosen body inside `Glob::is_match`.
+    /// Whether `path` matches the compiled literal (§12.3 normalization).
     #[inline(always)]
     pub fn is_match(&self, path: &[u8]) -> bool {
         if self.case_insensitive {
@@ -83,10 +52,8 @@ impl LiteralMatcher {
     }
 }
 
-/// Compare a parser-normalized literal against a raw path with
-/// separator-equivalent semantics (§12.3). `CI=true` switches to
-/// ASCII case-insensitive byte equality via the const-folded
-/// [`eq_byte`].
+/// Whole-path equality with separator normalization (§12.3). `CI=true`
+/// uses ASCII case-insensitive byte equality.
 #[inline]
 pub(crate) fn path_eq<const CI: bool>(literal: &[u8], path: &[u8]) -> bool {
     let mut lit_i = 0usize;
