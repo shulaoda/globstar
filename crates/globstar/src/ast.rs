@@ -27,19 +27,26 @@ impl Ast {
 pub enum Node {
     /// Concatenation of zero or more nodes.
     Concat(Vec<Node>),
-    /// Literal byte sequence (no metacharacters; merged across consecutive literal bytes).
+
+    /// Literal bytes — no metacharacters; consecutive literals are merged.
     Literal(Vec<u8>),
+
     /// Path separator `/`.
     Separator,
-    /// `?` — single non-separator byte.
+
+    /// `?` — one non-separator byte.
     AnyChar,
+
     /// `*` — zero or more non-separator bytes.
     Star,
-    /// `**` — zero or more bytes including separators (must occupy a full segment).
+
+    /// `**` — zero or more bytes across separators; must own a whole segment.
     Globstar,
+
     /// `[...]` character class.
     Class(CharClass),
-    /// `{a,b,c}` brace expansion.
+
+    /// `{a,b,c}` brace alternation.
     Brace(Vec<Node>),
 }
 
@@ -58,7 +65,6 @@ pub enum ClassItem {
 }
 
 impl ClassItem {
-    /// Whether this item matches the given byte.
     pub fn matches(self, b: u8) -> bool {
         match self {
             Self::Byte(x) => x == b,
@@ -68,21 +74,11 @@ impl ClassItem {
 }
 
 impl CharClass {
-    /// Whether this class matches the given byte (taking [`negated`] into account).
-    ///
-    /// §6.2 / §12.3: classes are **segment-local** — no member of the
-    /// platform's `Seps` set (path separators) ever matches, regardless
-    /// of class polarity. `/` is always in `Seps` (spec-forced); `\` is
-    /// in `Seps` iff `std::path::is_separator` returns true (Windows).
-    ///
-    /// This guard uniformly protects both polarities:
-    /// - Negated `[^abc]`: would otherwise sneak through via
-    ///   `!any ^ true = true` — guard prevents that.
-    /// - Positive `[\\]` / `[\\abc]`: on Unix `\ ∉ Seps`, so the class
-    ///   happily matches a literal `\`. On Windows `\ ∈ Seps`, so the
-    ///   class silently doesn't match `\` — a literal-`\` positive
-    ///   class is fundamentally incompatible with segment-local on
-    ///   Windows (same reason parser rejects `[/]` everywhere).
+    /// Whether byte `b` is in the class, honoring `negated`. Path
+    /// separators are never members, either polarity (§6.2 / §12.3 —
+    /// classes are segment-local), so the leading guard rejects them
+    /// before the polarity flip. `/` is always a separator; `\` is one on
+    /// Windows, so a positive `[\]` matches `\` on Unix but not Windows.
     pub fn matches(&self, b: u8) -> bool {
         if std::path::is_separator(b as char) {
             return false;
@@ -92,9 +88,8 @@ impl CharClass {
     }
 
     /// The 2-item positive class a case-insensitive ASCII letter folds
-    /// to — `{b, alt}` where `alt` is the opposite-case byte — or `None`
-    /// when `b` is not a foldable letter (callers emit a plain byte
-    /// match instead). Shared by the Thompson and segment NFA builders.
+    /// to — `{b, alt}` with `alt` the opposite-case byte — or `None` when
+    /// `b` isn't a foldable letter (caller emits a plain byte match).
     pub(crate) fn ci_letter(b: u8) -> Option<Self> {
         let alt = crate::options::ascii_case_alt(b);
         (alt != b).then(|| CharClass {
@@ -103,12 +98,10 @@ impl CharClass {
         })
     }
 
-    /// Return a copy of this class with ASCII case-alternate members added
-    /// so that `[A]` matches both `A` and `a`, `[A-Z]` matches `[A-Za-z]`,
-    /// etc. Used by `ops::lower` when `case_insensitive` is set.
-    ///
-    /// Non-letter bytes are left unchanged; non-ASCII bytes (≥ 0x80) are
-    /// not case-folded — ASCII-only by design (spec §11.3 / §12.5).
+    /// A copy of this class with ASCII case-alternates added, so `[A]`
+    /// matches `A` and `a`, `[A-Z]` matches `[A-Za-z]`, etc. Non-letters
+    /// and non-ASCII bytes are left as-is — ASCII-only by design
+    /// (spec §11.3 / §12.5).
     pub fn expanded_ascii_case_insensitive(&self) -> Self {
         let mut items = Vec::with_capacity(self.items.len() * 2);
         for item in &self.items {
@@ -121,10 +114,8 @@ impl CharClass {
                     }
                 }
                 ClassItem::Range(lo, hi) => {
-                    // Pure-upper range → add the symmetric lower range;
-                    // pure-lower → add the symmetric upper. Mixed / partial
-                    // ranges fall back to per-letter Byte items to stay
-                    // strictly correct.
+                    // Pure-upper / pure-lower ranges fold to a symmetric
+                    // range; mixed ones fall back to per-letter items.
                     if lo >= b'A' && hi <= b'Z' {
                         items.push(ClassItem::Range(lo | 0x20, hi | 0x20));
                     } else if lo >= b'a' && hi <= b'z' {

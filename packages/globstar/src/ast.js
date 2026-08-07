@@ -60,10 +60,9 @@ export function classItemRange(lo, hi) {
 }
 
 // The 2-item positive class a case-insensitive ASCII letter folds to —
-// `{b, alt}` where `alt` is the opposite-case byte — or `null` when `b`
-// is not a foldable letter (callers emit a plain byte match instead).
-// Shared by the Thompson and segment NFA builders; mirrors Rust
-// `CharClass::ci_letter`.
+// `{b, alt}` with `alt` the opposite-case byte — or `null` when `b`
+// isn't a foldable letter (caller emits a plain byte match). Mirrors
+// Rust `CharClass::ci_letter`.
 export function ciLetter(b) {
   const alt = asciiCaseAlt(b);
   return alt !== b ? klass(false, [classItemByte(b), classItemByte(alt)]) : null;
@@ -115,9 +114,8 @@ export function classExpandedAsciiCi(cls) {
   return { neg: cls.neg, items };
 }
 
-// Render a pure-literal AST to its byte sequence. Returns null for any
-// non-literal subtree — caller routes to the literal matcher iff
-// non-null. Single-pass: skips the separate predicate-then-render walk.
+// Render a pure-literal AST to its bytes, or null if any node isn't a
+// literal or separator.
 export function nodeToLiteralBytes(n) {
   const out = [];
   return appendLiteralBytes(n, out) ? Uint8Array.from(out) : null;
