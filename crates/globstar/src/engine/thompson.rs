@@ -21,17 +21,14 @@
 //!
 //! # State count
 //!
-//! Thompson construction has a known bound: ~2× the op count for most
-//! constructions. Our segment-aware ops are slightly heavier (up to 4 states
-//! per OSS/SlashAnything/GlobstarAny), so a typical pattern compiles to
-//! 2-5× its op count in states.
+//! Segment-aware ops cost up to 4 states each, so a pattern compiles to
+//! roughly 2–5× its op count in states.
 
 use crate::ast::CharClass;
 use crate::engine::ops::{Op, OpProgram};
 
-/// NFA state identifier. `u32` accommodates any pattern that can reasonably
-/// be passed to `Glob::new` — `MAX_PATTERN_LEN` is 64 KB and each byte
-/// produces at most a handful of states.
+/// NFA state identifier. `u32` is ample — `MAX_PATTERN_LEN` is 64 KB and
+/// each byte yields only a handful of states.
 pub(crate) type StateId = u32;
 
 /// Sentinel for "no state yet"; used during construction to patch forward
@@ -100,20 +97,14 @@ pub(crate) struct Thompson {
     /// `Trans::Match` state id. Stored so [`super::pikevm::PikeVm`] can
     /// derive its own `reach_to_accept` during construction.
     pub(crate) accept: StateId,
-    /// Mask of states from which [`Trans::Match`] is reachable via **zero**
-    /// byte steps, i.e. through any chain of [`Trans::Split`] /
-    /// [`Trans::Jump`] / [`Trans::DotGuard`] ε-like transitions.
+    /// States from which [`Trans::Match`] is reachable via **zero** byte
+    /// steps (through `Split` / `Jump` / `DotGuard` ε-edges).
     ///
-    /// `DotGuard` is included here because at end-of-input there is no
-    /// "upcoming byte" to trip its guard — conceptually `Star`'s zero-match
-    /// branch must succeed at EOF (e.g. pattern `[^.]*` on path `main.rs`:
-    /// the star consumes nothing beyond the class, and the DotGuard→Match
-    /// tail should finish the match). The per-step [`epsilon_closure`]
-    /// deliberately does NOT expand `DotGuard` because the decision depends
-    /// on the next byte; this separate mask captures the EOF semantics so
-    /// callers can check acceptance without re-walking the ε graph.
-    ///
-    /// Folded into `PikeVm`'s accept-bit mask at construction (see `PikeVm::new`).
+    /// `DotGuard` counts as ε here because at EOF there's no upcoming byte
+    /// to trip its guard, so `Star`'s zero-match branch must still succeed
+    /// (e.g. `[^.]*` on `main.rs`). The per-step closure deliberately does
+    /// NOT expand `DotGuard` — mid-run the decision depends on the next
+    /// byte — so this separate mask captures the EOF case.
     pub(crate) accepts_at_eof: Vec<bool>,
 }
 
@@ -292,8 +283,7 @@ impl Builder {
     }
 
     /// Allocate a single-byte consuming state, honoring `case_insensitive`
-    /// for ASCII letters. Factored out of [`Self::compile_lit`] so the
-    /// chain-building stays readable.
+    /// for ASCII letters.
     fn alloc_lit_byte(&mut self, b: u8) -> StateId {
         // ASCII letter under CI folds to a 2-item positive class
         // (`dot_protected=false` — letters are never `.`).
@@ -679,11 +669,9 @@ pub(crate) fn compute_static_closures(thompson: &Thompson, n_words: usize) -> Ve
     let mut closures = vec![0u64; n * n_words];
     let mut seen = vec![false; n];
 
-    /// Top bit of the work-item word. Set ⇒ "exit phase" (children
-    /// already processed, fold their closures); clear ⇒ "enter phase".
-    /// Safe because Thompson construction caps `StateId` well below
-    /// `1 << 31` (`MAX_PATTERN_LEN` is 64 KB and each byte yields
-    /// only a handful of states).
+    /// Top bit of the work-item word: set ⇒ "exit phase" (fold children's
+    /// closures), clear ⇒ "enter phase". Safe — `StateId` is capped well
+    /// below `1 << 31`.
     const EXIT_BIT: u32 = 1 << 31;
     let mut stack: Vec<u32> = Vec::new();
 
