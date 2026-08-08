@@ -490,10 +490,9 @@ function finishSeq(elems) {
   }
   if (gCount !== 1) singleG = -1;
 
-  // Pre-join all-literal heads for the single-globstar fast path
-  // (mirrors Rust `finish`): "src/**/…" heads become one prefix
-  // compare instead of a segment iteration. String form only — byte
-  // mode is the rare path and keeps the per-segment loop.
+  // Pre-join all-literal heads for the single-globstar fast path (mirrors
+  // Rust `finish`). "src/**/.." heads become one prefix compare instead of a
+  // segment loop. String form only. Byte mode is rare and keeps the loop.
   let joinedHeadStr = null;
   if (gCount === 1 && singleG > 0) {
     let allLit = true;

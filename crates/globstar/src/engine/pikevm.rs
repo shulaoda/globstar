@@ -1,36 +1,29 @@
 //! Pike VM interpreter over a compiled [`super::thompson::Thompson`] NFA.
 //!
-//! Linear-time O(n·m) matcher, used as the Tier-1/2 fallback when the
-//! primary [`super::segment`] engine cannot represent a pattern within
-//! its bounded fork/state model. It is also retained as a standalone
-//! reference engine.
+//! Linear-time O(n·m) matcher, the fallback when the segment engine can't
+//! represent a pattern. Also kept as a standalone reference engine.
 //!
 //! # Algorithm
 //!
-//! Active NFA states are tracked as a `u64` bitmap (`n_words = ceil(n
-//! / 64)`). Per byte: iterate set bits via `trailing_zeros`, apply
-//! the byte test of each leaf state, OR the successor's pre-computed
-//! ε-closure bitmap into a `next` bitmap. Static ε-closures (over
-//! Split/Jump only — DotGuard is byte-conditional) are baked at
-//! build time, so per-step ε expansion is `O(active × n_words)`
-//! bitmap ORs rather than a recursive BFS.
+//! Active states are a `u64` bitmap (`n_words = ceil(n / 64)`). For each byte
+//! it walks the set bits with `trailing_zeros`, applies each leaf state's byte
+//! test, and ORs the successor's pre-computed ε-closure into a `next` bitmap.
+//! Static ε-closures (over Split and Jump, since DotGuard is byte-conditional)
+//! are baked at build time, so per-step ε expansion is bitmap ORs instead of a
+//! recursive walk.
 //!
 //! # Two run paths
 //!
-//! - [`PikeVm::run_fast`] — single sweep per byte. Used when the NFA
-//!   has no [`Trans::DotGuard`] (default `dot=true` compile).
-//! - [`PikeVm::run_dot_guard`] — work-queue with `processed` dedup
-//!   for the byte-conditional ε of DotGuard. Used when `dot=false`
-//!   produces DotGuard states.
+//! - [`PikeVm::run_fast`] does one sweep per byte, when the NFA has no
+//!   [`Trans::DotGuard`] (the default `dot=true` compile).
+//! - [`PikeVm::run_dot_guard`] uses a work queue with `processed` dedup for
+//!   DotGuard's byte-conditional ε, when `dot=false` produces DotGuard states.
 //!
 //! # Scratch on the stack
 //!
-//! Scratch (`current` / `next` / optional `processed` / optional
-//! `after_sep`) is allocated as ONE contiguous `[u64; STACK_WORDS *
-//! N]` array on the call stack. No `Mutex`, no heap allocation, no
-//! `Sync` concerns. Patterns whose NFA exceeds `STACK_WORDS * 64`
-//! states fall back to a single per-call `Vec<u64>` allocation —
-//! rare path.
+//! Scratch is one contiguous `[u64; STACK_WORDS * N]` array on the call stack,
+//! with no heap and no `Sync` concerns. An NFA larger than `STACK_WORDS * 64`
+//! states falls back to a per-call `Vec<u64>`.
 
 use crate::dir_match::DirMatch;
 use crate::engine::facts::LiteralFacts;
@@ -43,20 +36,17 @@ use crate::engine::thompson::{
 /// states; larger ones heap-allocate.
 const STACK_WORDS: usize = 4;
 
-/// Slot count for `is_match` scratch: `current`, `next`, `processed`.
+/// Scratch slots for `is_match` (current, next, processed).
 const RUN_SLOTS: usize = 3;
-/// Slot count for `match_dir` scratch: same as `RUN_SLOTS` plus an
-/// `after_sep` slot for the prefix-descent probe.
+/// Scratch slots for `match_dir`, `RUN_SLOTS` plus `after_sep` for the
+/// prefix-descent probe.
 const DIR_SLOTS: usize = 4;
 
-/// Pike VM matcher. Compiled once per pattern; `Send + Sync` (no
-/// interior mutability — scratch is per-call on the stack).
+/// Pike VM matcher, compiled once per pattern and `Send + Sync` (no interior
+/// mutability, scratch is per-call on the stack).
 ///
-/// Stores only what the runtime byte-step actually needs. The full
-/// [`Thompson`] structure is consulted during construction and then
-/// dropped: `Thompson::initial`, `accept`, and `accepts_at_eof` get
-/// folded into `init_bits` / `accept_bits` / `reach_to_accept` so
-/// their backing storage can be reclaimed.
+/// Stores only what the byte-step needs. The full [`Thompson`] is consulted
+/// during construction and then dropped.
 #[derive(Debug, Clone)]
 pub struct PikeVm {
     /// Trans table.
@@ -73,8 +63,8 @@ pub struct PikeVm {
     /// `u64` bitmaps. `static_closures[s * n_words .. (s+1) * n_words]`
     /// is the bitmap of leaves reachable from `s`.
     static_closures: Box<[u64]>,
-    /// ε-closure of the initial NFA state — copied into `current` at
-    /// the start of every match.
+    /// ε-closure of the initial state, copied into `current` at the start of
+    /// each match.
     init_bits: Box<[u64]>,
     /// `accepts_at_eof` packed as a bitmap so the EOF accept check is
     /// one AND across `n_words` words.
@@ -85,9 +75,8 @@ pub struct PikeVm {
 }
 
 impl PikeVm {
-    /// Compile the program into a Pike VM. Folds every Thompson field
-    /// the runtime needs into compact bitmaps / boxed slices and then
-    /// drops the rest — no NFA metadata lingers past construction.
+    /// Compile the program into a Pike VM. Folds the Thompson fields the
+    /// runtime needs into bitmaps, then drops the rest.
     pub fn new(program: OpProgram, dot: bool) -> Self {
         let thompson = Thompson::compile(&program, dot);
         let reach_flags = compute_reach_to_accept(&thompson.states, thompson.accept);
@@ -122,9 +111,8 @@ impl PikeVm {
             .iter()
             .any(|t| matches!(t, Trans::DotGuard { .. }));
 
-        // Destructure to keep only `states`; `initial`, `accept`, and
-        // `accepts_at_eof` are now redundant — their content lives in
-        // `init_bits`, `reach_to_accept`, and `accept_bits` above.
+        // Keep only `states`. `initial`, `accept`, and `accepts_at_eof` now
+        // live in `init_bits`, `reach_to_accept`, and `accept_bits`.
         let Thompson { states, .. } = thompson;
 
         Self {
@@ -197,21 +185,20 @@ impl PikeVm {
         }
         let exact = bitmap_intersects(&active[..nw], &self.accept_bits);
 
-        // Hypothetical descendant '/' step + reach-to-accept check.
-        // The descendant '/' is consumed after a non-separator byte
-        // (the dir's trailing byte), so `at_seg_start = false`.
+        // Probe a hypothetical descendant `/` step, then a reach-to-accept
+        // check. That `/` follows a non-separator byte (the dir's last byte),
+        // so `at_seg_start` is false.
         let after_sep = &mut after_sep[..nw];
         after_sep.fill(0);
         let states = &self.states;
         let closures = &self.static_closures;
 
-        // ε-expand DotGuard states before the hypothetical '/' step. A
-        // separator is never a segment-start dot, so every DotGuard passes
-        // here. Static closures stop AT a DotGuard (byte-conditional ε-leaf),
-        // so a Sep/AnyByte consumer sitting behind one (e.g. the trailing `/`
-        // of `*/` under dot=false, whose active set is `{AnyNonSep,
-        // DotGuard→Sep}`) is invisible to the raw active scan and the subtree
-        // is wrongly pruned. No-op when the NFA has no DotGuard.
+        // ε-expand DotGuard states before the hypothetical `/`. A separator is
+        // never a segment-start dot, so every DotGuard passes here. Static
+        // closures stop at a DotGuard, so a Sep or AnyByte consumer behind one
+        // (the trailing `/` of `*/` under dot=false, active set `{AnyNonSep,
+        // DotGuard→Sep}`) is invisible to the raw scan and the subtree would be
+        // wrongly pruned. No-op when the NFA has no DotGuard.
         if self.has_dot_guard {
             let cur = &mut active[..nw];
             loop {
@@ -247,10 +234,8 @@ impl PikeVm {
                 }
             }
         }
-        // Prefix-mode descent qualifier: some state in `after_sep` is
-        // either Match itself or can reach Match via more bytes. The
-        // reach-to-accept check is a single bitmap AND; the Match
-        // check is a tiny loop over the (typically 1-3) set bits.
+        // Prefix-mode descent qualifier. A state in `after_sep` either is
+        // Match or can reach Match with more bytes.
         let reach_hit = bitmap_intersects(after_sep, &self.reach_to_accept);
         let match_hit =
             !reach_hit && iter_set_states(after_sep).any(|s| matches!(states[s], Trans::Match));
@@ -261,9 +246,9 @@ impl PikeVm {
 
     // ── Per-byte run loops ──────────────────────────────────────────
 
-    /// Fast path (no DotGuard): one sweep per byte. The two slots in
-    /// `buf` (current and next) flip via `mem::swap` of the offsets;
-    /// the final active set is copied back to slot 0 before return.
+    /// Fast path with no DotGuard, one sweep per byte. `current` and `next`
+    /// flip by swapping offsets, and the final active set is copied back to
+    /// slot 0.
     fn run_fast(&self, path: &[u8], buf: &mut [u64], nw: usize) {
         // Hoist field reads out of the hot loop.
         let states = &self.states;
@@ -304,10 +289,10 @@ impl PikeVm {
         }
     }
 
-    /// DotGuard path: byte-conditional ε can re-fill `current` mid-
-    /// step. We drain it via a work-queue with `processed` dedup
-    /// before swapping into `next`. Slots are fixed at `[current,
-    /// next, processed]` since `current` mutates in place.
+    /// DotGuard path. A byte-conditional ε can re-fill `current` mid-step, so
+    /// we drain it with a `processed`-deduped work queue before swapping to
+    /// `next`. Slots are fixed as [current, next, processed] since `current`
+    /// mutates in place.
     fn run_dot_guard(&self, path: &[u8], buf: &mut [u64], nw: usize) {
         let states = &self.states;
         let closures = &self.static_closures;
@@ -336,9 +321,8 @@ impl PikeVm {
                     while word != 0 {
                         let s = w_idx * 64 + word.trailing_zeros() as usize;
                         word &= word - 1;
-                        // Byte-consumers fire to `next`; DotGuard
-                        // ε-additions land in `current` to be re-
-                        // processed by the outer drain loop.
+                        // Byte-consumers fire to `next`. DotGuard ε-additions
+                        // land in `current` for the drain loop to re-process.
                         let (target, n) = match &states[s] {
                             Trans::DotGuard { next: n } if !dot_mask => (cur, *n),
                             Trans::DotGuard { .. } => continue, // guard fails
@@ -375,11 +359,9 @@ fn bitmap_intersects(a: &[u64], b: &[u64]) -> bool {
     a.iter().zip(b.iter()).any(|(x, y)| (x & y) != 0)
 }
 
-/// Iterate set bits of `bits` as flat NFA-state indices.
-///
-/// For each word, repeatedly extracts the lowest set bit via
-/// `trailing_zeros` and clears it with `word &= word - 1`, so the
-/// per-word work scales with `popcount` rather than 64.
+/// Iterate the set bits of `bits` as flat NFA-state indices. Each step clears
+/// the lowest set bit (`word &= word - 1`), so the work scales with the
+/// popcount, not 64.
 fn iter_set_states(bits: &[u64]) -> impl Iterator<Item = usize> + '_ {
     bits.iter().enumerate().flat_map(|(w_idx, &word)| {
         let base = w_idx * 64;
@@ -397,16 +379,13 @@ fn iter_set_states(bits: &[u64]) -> impl Iterator<Item = usize> + '_ {
     })
 }
 
-/// Apply the byte test of one NFA leaf state `t` against `c`.
-/// Returns the successor state id if the transition fires, else
-/// `None`. The caller owns ε-closure expansion of the result.
+/// Apply one leaf state's byte test against `c`. Returns the successor state
+/// if the transition fires, else `None`. The caller expands the ε-closure.
 ///
-/// `DotGuard` is intentionally returned as `None` here — its
-/// byte-conditional ε action writes to the *current* slot (not next), and
-/// is handled inline in [`PikeVm::run_dot_guard`]. Match / Split / Jump
-/// never appear in the active set after ε-closure (closures filter to
-/// leaves: byte-consumers + DotGuard + Match), and Match doesn't fire on
-/// any byte.
+/// `DotGuard` returns `None` because its byte-conditional ε writes to the
+/// current slot, not next, and is handled inline in [`PikeVm::run_dot_guard`].
+/// Match, Split, and Jump never appear in the active set after ε-closure, and
+/// Match consumes no byte.
 #[inline]
 fn byte_step(t: &Trans, c: u8, sep: bool, dot_mask: bool) -> Option<StateId> {
     match t {

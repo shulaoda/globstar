@@ -1,32 +1,30 @@
-//! Suffix-anchored pre-filter consulted before every engine's `is_match`.
+//! Suffix-anchored pre-filter run before every engine's `is_match`.
 //!
 //! Every [`OpProgram`](super::ops::OpProgram) carries a [`LiteralFacts`]
 //! recording the byte suffix (or a set of them, for a trailing brace
-//! alternation) every matching path must end with. The matcher
-//! short-circuits on a separator-aware `ends_with` before running the
-//! engine:
+//! alternation) that every matching path must end with. The matcher checks
+//! it with a separator-aware `ends_with` before running the engine:
 //!
 //! ```text
-//! path ends with suffix  →  maybe match (run engine)
+//! path ends with suffix  →  maybe a match, run the engine
 //!         otherwise       →  definitely not
 //! ```
 //!
-//! On walker workloads this rejects the bulk of candidates outright —
-//! `src/**/*.ts` drops every `.js` file in one suffix scan.
-//!
-//! Only suffixes are recorded: a prefix would just duplicate the engines'
-//! left-to-right scan, whereas the tail anchor is exactly what they can't
-//! cheaply check up front.
+//! On walker workloads this rejects most candidates outright. `src/**/*.ts`
+//! drops every `.js` file in one suffix scan. Only the suffix is recorded,
+//! not a prefix, because the engines already scan left to right and the tail
+//! is the one anchor they can't check up front.
 //!
 //! ## Correctness invariant
 //!
-//! `accept(path) == false` ⇒ no program variant can match `path`, so the
-//! filter must never reject a path the engine would accept. That drives:
+//! `accept(path) == false` must mean no program variant can match `path`, so
+//! the filter must never reject a path the engine would accept. Two rules
+//! keep it safe.
 //!
-//! 1. **Conservative extraction** — stop at the first non-literal op.
-//! 2. **Separator-aware compare** — a `/` in the suffix matches any single
-//!    separator byte, `/` or `\` (GLOB_SPEC §12.3), so `**/main.ts` still
-//!    matches `src\main.ts` on Windows.
+//! 1. Conservative extraction. Stop at the first non-literal op.
+//! 2. Separator-aware compare. A `/` in the suffix matches any one separator
+//!    byte, `/` or `\` (GLOB_SPEC §12.3), so `**/main.ts` still matches
+//!    `src\main.ts` on Windows.
 
 use crate::engine::eq_byte;
 use crate::engine::ops::Op;
@@ -37,9 +35,9 @@ pub struct LiteralFacts {
     /// The longest byte suffix every matching path must end with.
     pub suffix: Box<[u8]>,
 
-    /// One suffix per branch, for a pattern ending with an
-    /// `Op::Alternation` of literal branches that a single `suffix` can't
-    /// cover. Empty means no set-based check (use `suffix` only).
+    /// One suffix per branch, for a pattern ending in an `Op::Alternation` of
+    /// literal branches that a single `suffix` can't cover. Empty means no
+    /// set check, use `suffix` alone.
     pub suffix_set: Box<[Box<[u8]>]>,
 
     /// ASCII case-insensitive compares, mirroring the program flag.
@@ -66,9 +64,7 @@ impl LiteralFacts {
         }
     }
 
-    /// Cheap pre-filter: could `path` be a match? The case-sensitive path
-    /// inlines into the caller; the CI path goes through a `#[cold]`
-    /// dispatcher to keep it off the hot instruction cache.
+    /// Cheap pre-filter: could `path` be a match?
     #[inline(always)]
     pub fn accept(&self, path: &[u8]) -> bool {
         if self.case_insensitive {
@@ -91,16 +87,14 @@ impl LiteralFacts {
         true
     }
 
-    /// `#[cold]` CI dispatcher — keeps the case-insensitive body off the
-    /// hot path.
     #[cold]
     fn accept_ci_cold(&self, path: &[u8]) -> bool {
         self.accept_inner::<true>(path)
     }
 }
 
-/// Walk ops right-to-left, prepending `Lit` / `Sep` bytes up to the first
-/// non-literal op. The result is the guaranteed byte suffix of any match.
+/// Walk ops right-to-left, collecting `Lit` and `Sep` bytes until the first
+/// non-literal op. The result is the byte suffix every match must end with.
 fn extract_suffix(ops: &[Op]) -> Vec<u8> {
     let mut acc: Vec<u8> = Vec::new();
     for op in ops.iter().rev() {
@@ -111,10 +105,8 @@ fn extract_suffix(ops: &[Op]) -> Vec<u8> {
                 new_acc.extend_from_slice(&acc);
                 acc = new_acc;
             }
-            // Both strict `Sep` and lenient `SepRun` contribute a
-            // single `/` to the suffix — the tail-anchored
-            // `ends_with_glob` checker matches `/` against any one
-            // separator byte, so the canonical single `/` is enough.
+            // Sep and SepRun both contribute one `/`. `ends_with_glob` matches
+            // it against any single separator byte, so one is enough.
             Op::Sep | Op::SepRun => {
                 let mut new_acc = Vec::with_capacity(1 + acc.len());
                 new_acc.push(b'/');
@@ -127,39 +119,29 @@ fn extract_suffix(ops: &[Op]) -> Vec<u8> {
     acc
 }
 
-/// If the ops end with `Op::Alternation` where every branch is a pure
-/// literal sequence, extract a suffix set: one suffix per branch,
-/// each built by concatenating the branch's Lit ops with any trailing
-/// Lit ops from the MAIN ops stream (before the Alternation).
+/// When the ops end in an `Op::Alternation` of pure-literal branches, build
+/// one suffix per branch by gluing the branch's literals to any literal tail
+/// before the alternation.
 ///
-/// For `**/*.{ts,tsx,js,jsx}` → ops `[OSS, Star, Lit("."), Alt([..])]`:
-///   - common_tail (before Alt) contributes `"."`
-///   - branches contribute `"ts"`, `"tsx"`, `"js"`, `"jsx"`
-///   - result: `[".ts", ".tsx", ".js", ".jsx"]`
+/// `**/*.{ts,tsx,js,jsx}` lowers to `[OSS, Star, Lit("."), Alt([..])]`, whose
+/// common tail `"."` glues to each branch to give `[".ts", ".tsx", ".js",
+/// ".jsx"]`.
 fn extract_suffix_set(ops: &[Op]) -> Vec<Vec<u8>> {
-    // Find trailing Alternation.
     let alt_branches = match ops.last() {
         Some(Op::Alternation(branches)) => branches,
         _ => return Vec::new(),
     };
 
-    // Extract the literal tail from ops BEFORE the Alternation.
     let pre_alt = &ops[..ops.len() - 1];
     let common_tail = extract_suffix(pre_alt);
 
-    // Build a per-branch required path suffix.
+    // common_tail is only safe to prepend when the whole branch is Lit/Sep.
+    // Otherwise non-literal content (Star, Class) sits between it and the
+    // branch's trailing literal, so `common_tail + branch_suffix` is not a
+    // real suffix. `test.{j*g,abc}` yields `["g", "test.abc"]`, since the `*`
+    // breaks adjacency and only `"g"` stays reliable.
     //
-    // Two early-return checks (distinct, don't collapse):
-    //   (A) non-literal branch whose trailing lit is empty
-    //       (e.g. `{..Star}`): can't extract any reliable suffix, bail.
-    //   (B) empty final suffix across the board: useless as a filter.
-    //
-    // Common_tail can only be safely prepended when the **entire branch**
-    // is Lit/Sep — otherwise the branch has non-literal content (Star,
-    // Class…) between common_tail and the branch's trailing literal,
-    // and `common_tail + branch_suffix` is not a real path suffix.
-    // Example: `test.{j*g,abc}` should yield `["g", "test.abc"]` (the
-    // `*` in `j*g` breaks adjacency, so only `"g"` is reliable).
+    // (A) and (B) bail when a branch yields no reliable suffix.
     let mut set = Vec::with_capacity(alt_branches.len());
     for branch in alt_branches {
         let branch_suffix = extract_suffix(branch);
@@ -187,12 +169,9 @@ fn extract_suffix_set(ops: &[Op]) -> Vec<Vec<u8>> {
     set
 }
 
-/// Separator-aware `ends_with`.
-///
-/// A `/` in `suffix` matches any single separator byte in `path`
-/// (i.e. `/` always, plus `\` on Windows). `CI=true` enables ASCII
-/// case-insensitive byte equality. Strict — one `/` in the suffix
-/// consumes exactly one separator byte from the path's tail.
+/// Separator-aware `ends_with`. A `/` in `suffix` matches any single separator
+/// byte (`/` always, `\` on Windows). `CI=true` compares ASCII
+/// case-insensitively.
 #[inline]
 fn ends_with_glob<const CI: bool>(path: &[u8], suffix: &[u8]) -> bool {
     let mut suffix_i = suffix.len();

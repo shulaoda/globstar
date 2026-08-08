@@ -1,19 +1,13 @@
-// PikeVM — NFA simulator used when the segment matcher declines a pattern.
-// Bitmask state representation backed by a
-// per-call `Uint32Array` of `nWords = ceil(nStates / 32)` entries; one
-// 32-bit set-bit iteration per word. Static ε-closures are
-// pre-computed at construction so byte-stepping never needs to
-// expand SPLIT/JUMP edges.
+// PikeVM. NFA simulator used when the segment matcher declines a pattern.
+// State is a bitmask over a per-call `Uint32Array` of
+// `nWords = ceil(nStates / 32)` words. Static ε-closures are precomputed at
+// construction so byte-stepping never expands SPLIT/JUMP edges.
 //
-// Two byte-step variants picked at construction:
-//   - `_runFast`     — single pass, no work queue. Used when the NFA
-//                       has no `T_DOT_GUARD` (i.e. `dot=true`).
-//   - `_runDotGuard` — work-queue with `processed` dedup, handles the
-//                       byte-conditional ε of `T_DOT_GUARD`. Used when
-//                       `dot=false` and the NFA has `T_DOT_GUARD`.
-//
-// Replaced the previous "Wide" array-based PikeVM (commit history) —
-// per-byte cost is 3-5x lower thanks to bitmask + precomputed closures.
+// Two byte-step variants, picked at construction:
+//   _runFast      single pass, no work queue. Used when the NFA has no
+//                 T_DOT_GUARD (dot=true).
+//   _runDotGuard  work queue with `processed` dedup for the byte-conditional
+//                 ε of T_DOT_GUARD. Used when dot=false and a guard is present.
 
 import {
   T_BYTE,
@@ -89,14 +83,12 @@ function reachFromClosures(closures, infoOff, acceptOff, nWords) {
 // and walked transparently; everything else (byte-consumers, MATCH,
 // DOT_GUARD) is a closure leaf and gets its bit set in `out`.
 //
-// Algorithm: memoized recursion over the ε-graph. Thompson's NFA
-// guarantees the ε-graph is acyclic — every loop in the source
-// pattern (Star, SepRun, OptSegmentsSlash, …) is broken by a
-// byte-consumer state, which is a closure leaf. So each state's
-// closure depends only on already-computed sub-closures, and we can
-// fold them with a single OR into `out`. Visits each state exactly
-// once: O(n × nWords) total instead of the per-state BFS that re-
-// walks ε-paths n times.
+// Algorithm: memoized recursion over the ε-graph. Thompson's NFA keeps the
+// ε-graph acyclic, since every loop in the source pattern (Star, SepRun,
+// OptSegmentsSlash, ..) is broken by a byte-consumer state that is a closure
+// leaf. Each state's closure then depends only on already-computed
+// sub-closures, folded with a single OR into `out`. Visits each state once,
+// O(n × nWords) total, versus the per-state BFS that rewalks ε-paths n times.
 function staticClosuresN(tags, nexts, splitsB, n, nWords, out) {
   const computed = new Uint8Array(n);
   for (let s = 0; s < n; s++) {
@@ -142,8 +134,8 @@ export class PikeVm {
     // Co-allocate closures + initBits + acceptBits + per-state `info`
     // into one `Uint32Array`. Saves three TypedArray wrappers + their
     // backing-store metadata vs separate arrays. Layout (each closure /
-    // bits region is `nWords` words; the `info` region is `n` words —
-    // one packed word per state):
+    // bits region is `nWords` words, the `info` region is `n` words, one
+    // packed word per state):
     //   [0,                       n*nWords)    closures (inner-loop hot)
     //   [n*nWords,            (n+1)*nWords)    initBits (read once/match)
     //   [(n+1)*nWords,        (n+2)*nWords)    acceptBits (read once/match)
@@ -154,8 +146,8 @@ export class PikeVm {
     //   bits  4..7   flags    (bit 0 = dotProtected)
     //   bits  8..15  byte     (T_BYTE byte value)
     //   bits 16..31  next     (next-state index, ≤ 65535)
-    // ε-only T_SPLIT / T_JUMP slots get tag = T_NULL — closures already
-    // absorbed their edges so they're never consumed at byte-step.
+    // ε-only T_SPLIT / T_JUMP slots get tag = T_NULL. Closures already
+    // absorbed their edges, so they're never consumed at byte-step.
     // `clsRefs` stays an Object array (only ~10% of states use it, and
     // `cls` is a structured value we can't inline into bits).
     const initOff = n * nWords;
@@ -203,10 +195,9 @@ export class PikeVm {
     //   [2*nWords,3*nWords)    processed (only if hasDotGuard)
     this._scratch = new Uint32Array(nWords * (hasDotGuard ? 3 : 2));
 
-    // Lazy reach-to-accept (matchDir prefix mode). Computed on first
-    // matchDir call from `closures` + `acceptBits`; never needs the
-    // dropped ε-only states. The compile-time `nfa` SoA isn't retained
-    // — its tags/nexts/splitsB drop out of scope after this constructor.
+    // Lazy reach-to-accept (matchDir prefix mode). Computed on the first
+    // matchDir call from `closures` + `acceptBits`. The compile-time `nfa`
+    // SoA is not retained, so its tags/nexts/splitsB drop out of scope here.
     this._reachToAccept = null;
   }
 
@@ -246,15 +237,14 @@ export class PikeVm {
     const nWords = this.nWords;
     const scratch = this._scratch;
 
-    // The hypothetical separator step below consumes a `/`, which is never a
-    // segment-start dot — so every `T_DOT_GUARD` in the live set always
-    // passes here. Static closures stop AT a dot-guard (it is a byte-
-    // conditional ε-leaf), so a separator consumer sitting behind one (e.g.
-    // the `SEP` of `*/` under `dot=false`, whose live set is
+    // The separator step below consumes a `/`, never a segment-start dot, so
+    // every `T_DOT_GUARD` in the live set passes here. Static closures stop at
+    // a dot-guard (a byte-conditional ε-leaf), so a separator consumer behind
+    // one (e.g. the `SEP` of `*/` under `dot=false`, whose live set is
     // `{ANY_NON_SEP, DOT_GUARD→SEP}`) is invisible to the raw `scratch` scan.
     // ε-expand the guards to a fixpoint first, or the subtree is wrongly
-    // pruned. `_runFast`/`dot=true` programs have no guards, so `cur` just
-    // equals the live set and this is a no-op.
+    // pruned. `_runFast`/`dot=true` programs have no guards, so `cur` equals
+    // the live set and this is a no-op.
     const cur = new Uint32Array(nWords);
     for (let w = 0; w < nWords; w++) cur[w] = scratch[w];
     let changed = true;
@@ -270,11 +260,11 @@ export class PikeVm {
           if ((word2 & 0xf) === T_DOT_GUARD) {
             const base = (word2 >>> 16) * nWords;
             for (let j = 0; j < nWords; j++) {
-              // `>>> 0` — bitwise OR yields a SIGNED int32, but reads
-              // from the Uint32Array are unsigned; with bit 31 set the
-              // signed/unsigned compare never stabilizes and the
-              // fixpoint loops forever (found by the segment-engine
-              // string-mode fuzzer on a 37-state dot=false pattern).
+              // `>>> 0` forces unsigned. A bitwise OR yields a signed int32,
+              // but Uint32Array reads are unsigned. With bit 31 set the
+              // signed/unsigned compare never stabilizes and the fixpoint
+              // loops forever (found by the string-mode fuzzer on a 37-state
+              // dot=false pattern).
               const merged = (cur[j] | closures[base + j]) >>> 0;
               if (merged !== cur[j]) {
                 cur[j] = merged;

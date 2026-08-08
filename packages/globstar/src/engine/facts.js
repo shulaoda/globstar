@@ -1,23 +1,24 @@
-// Suffix-anchored prefilter consulted by every engine's `isMatch`.
+// Suffix-anchored prefilter run before every engine's `isMatch`.
 //
-// Every `OpProgram` carries a `LiteralFacts` recording the byte suffix
-// (or set of suffixes for trailing brace alternations) every matching
-// path must end with. Before invoking the engine, the matcher
-// short-circuits on a separator-aware `endsWith` check:
+// Every `OpProgram` carries a `LiteralFacts` recording the byte suffix (or a
+// set of them, for a trailing brace alternation) that every matching path
+// must end with. The matcher checks it with a separator-aware `endsWith`
+// before running the engine:
 //
-//   path ends with suffix  → maybe match (run engine)
-//   otherwise              → definitely not (return false)
+//   path ends with suffix  →  maybe a match, run the engine
+//   otherwise              →  definitely not
 //
-// Picks up the bulk of "wrong file extension" rejects on walker
-// workloads — `**/*.ts` against a `.js` file is a single suffix scan,
-// no exact-engine work.
+// On walker workloads this rejects most candidates outright. `**/*.ts` drops
+// every `.js` file in one suffix scan. Only the suffix is recorded, not a
+// prefix, because the engines already scan left to right and the tail is the
+// one anchor they can't check up front.
 //
-// Correctness invariant: `accept(path) === false` ⇒ no program variant
-// can match `path`. The filter must therefore never reject a path the
-// engine would accept; this drives:
-//   1. Conservative extraction — stop at any non-literal op.
-//   2. Separator-aware compare — a `/` in the suffix matches any single
-//      byte from the platform's `Seps` set (GLOB_SPEC §12.3).
+// Correctness invariant. `accept(path) === false` must mean no program
+// variant can match `path`, so the filter must never reject a path the engine
+// would accept. Two rules keep it safe.
+//   1. Conservative extraction. Stop at the first non-literal op.
+//   2. Separator-aware compare. A `/` in the suffix matches any single
+//      separator byte, `/` or `\` (GLOB_SPEC §12.3).
 
 import { isPathSep, eqByteCi } from "../options.js";
 import { OP_LIT, OP_SEP, OP_SEP_RUN, OP_ALTERNATION } from "./ops/ir.js";
@@ -46,14 +47,14 @@ export class LiteralFacts {
   }
 }
 
-// Right-to-left scan: collect Lit / Sep bytes until the first
-// non-literal op. Returns the guaranteed byte suffix of any match.
+// Walk ops right-to-left, collecting Lit and Sep bytes until the first
+// non-literal op. Returns the byte suffix every match must end with.
 function extractSuffix(ops) {
   return Uint8Array.from(suffixArray(ops, ops.length));
 }
 
-// Plain-array core shared by `extractSuffix` and the suffix-set glue
-// (skips intermediate typed arrays). Scans `ops[0 .. end)`.
+// Plain-array core shared by `extractSuffix` and the suffix-set builder.
+// Scans `ops[0 .. end)`.
 function suffixArray(ops, end) {
   const acc = [];
   for (let i = end - 1; i >= 0; i--) {
@@ -70,10 +71,10 @@ function suffixArray(ops, end) {
   return acc;
 }
 
-// If the program ends with `Alternation` of literal-only branches, build
-// one suffix per branch (e.g. `**/*.{ts,tsx,js}` → ["ts", "tsx", "js"]
-// extended with the common tail "."). Returns [] when any branch is
-// non-literal or the result would be empty (useless filter).
+// When the program ends in an `Alternation` of literal-only branches, build
+// one suffix per branch. `**/*.{ts,tsx,js}` glues the common tail "." onto
+// each to give [".ts", ".tsx", ".js"]. Returns [] when a branch is
+// non-literal or the result would be empty.
 function extractSuffixSet(ops) {
   if (ops.length === 0) return [];
   const last = ops[ops.length - 1];
@@ -86,13 +87,13 @@ function extractSuffixSet(ops) {
   const set = [];
   for (const branch of last.branches) {
     const branchSuffix = suffixArray(branch, branch.length);
-    // (a) Branch contributes no literal at the tail (e.g. `{..Star}`)
-    //     — abandon the suffix-set strategy entirely.
+    // (a) Branch has no literal tail (e.g. `{..Star}`), so no reliable
+    //     suffix. Abandon the set.
     if (branchSuffix.length === 0 && branch.length > 0) return [];
 
-    // commonTail can only safely glue when the WHOLE branch is literal —
-    // otherwise non-literal content sits between commonTail and the
-    // branch tail and `commonTail + branchSuffix` is not a real suffix.
+    // commonTail is only safe to glue when the whole branch is literal.
+    // Otherwise non-literal content sits between it and the branch tail, so
+    // `commonTail + branchSuffix` is not a real suffix.
     let allLiteral = true;
     for (const op of branch) {
       if (op.kind !== OP_LIT && op.kind !== OP_SEP && op.kind !== OP_SEP_RUN) {
@@ -104,16 +105,15 @@ function extractSuffixSet(ops) {
     const full = allLiteral
       ? Uint8Array.from(commonTail.concat(branchSuffix))
       : Uint8Array.from(branchSuffix);
-    // (b) Empty final suffix — useless as a filter.
+    // (b) Empty final suffix, useless as a filter.
     if (full.length === 0) return [];
     set.push(full);
   }
   return set;
 }
 
-// Separator-aware `endsWith`. A `/` in `suffix` matches any single
-// platform-separator byte in `path`. `path` is a `Uint8Array` (encoded
-// at the public `compileMatcher` boundary).
+// Separator-aware `endsWith`. A `/` in `suffix` matches any single separator
+// byte in `path` (`/` always, `\` on Windows).
 function endsWith(path, suffix, ci) {
   let si = suffix.length;
   let pi = path.length;
