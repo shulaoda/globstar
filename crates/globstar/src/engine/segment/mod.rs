@@ -59,16 +59,20 @@ enum Elem {
     /// patterns produce empty literal segments). Never contains a
     /// separator byte.
     Lit(Box<[u8]>),
+
     /// In-segment wildcard matcher.
     Wild(Wild),
+
     /// Globstar absorbing ≥ 0 segments of any content (empty segments
     /// included). From `**/…`, mid `/**/`, and pattern-level `**`.
     G0,
+
     /// `G0` whose absorbed run may not *begin* with an empty segment.
     /// Arises when a brace fork splices a branch-internal `**/` behind
     /// a strict `Sep` (`a/{**/b,c}`), where the separator-run leniency
     /// of a native `/**/` boundary is absent.
     G0Strict,
+
     /// Globstar absorbing ≥ 1 segment. From trailing `/**`
     /// (`a/**` matches `a/` but not `a`) and from spliced bare `**`
     /// that sits behind or in front of a mandatory separator.
@@ -88,12 +92,15 @@ impl Elem {
 #[derive(Debug, Clone)]
 struct Wild {
     kind: WildKind,
+
     /// Minimum segment byte length (literal parts + `?` count). For
     /// [`WildKind::AffixSet`] this excludes the per-branch suffix.
     /// Unused by [`WildKind::Generic`] (the NFA owns its bounds).
     min_len: u32,
+
     /// `false` ⇒ the length must equal the minimum exactly (no `*`).
     variable: bool,
+
     /// Reject dot-led segments (only ever set on `dot=false`
     /// compiles, and only when the matcher is wildcard-led — its
     /// first byte cannot come from a literal or a positive class).
@@ -109,16 +116,17 @@ enum WildKind {
         prefix: Box<[u8]>,
         suffix: Box<[u8]>,
     },
+
     /// `lit (*|?)+ {lit,…}` — segment must carry the prefix and end
     /// with one of the suffixes (`*.{ts,tsx}`).
     AffixSet {
         prefix: Box<[u8]>,
         suffixes: Box<[Box<[u8]>]>,
     },
+
     /// Everything else (classes, non-tail alternations, interior
     /// literal islands): a mini Thompson NFA over the in-segment ops,
-    /// simulated with a `u64` active set. Boxed so the rare slow-path
-    /// variant doesn't size every [`Elem`] in the element table.
+    /// simulated with a `u64` active set.
     Generic(Box<SegNfa>),
 }
 
@@ -126,32 +134,41 @@ enum WildKind {
 #[derive(Debug, Clone)]
 struct ElemSeq {
     elems: Box<[Elem]>,
+
     /// Index of the single globstar element when the sequence has
     /// exactly one (fast anchored path); `usize::MAX` otherwise.
     single_g: usize,
+
     /// Number of globstar elements.
     g_count: usize,
+
     /// Single-globstar fast path: when every head element is a `Lit`,
     /// the joined head bytes (`"src/"` — each segment plus one `/`),
     /// so the head check is one sep-aware compare instead of a
     /// segment iteration. Empty ⇒ not applicable (no head, or a head
     /// element is non-literal).
     joined_head: Box<[u8]>,
+
     /// Element-NFA: per-element entry state id (ascending). Two-state
     /// elements (`G0Strict`, `G1`) own `entry` and `entry + 1`
     /// (body). The accept state is `num_states - 1`.
     state_of: Box<[u8]>,
+
     /// Inverse of `state_of`: owning element index per state (the
     /// accept state's slot is unused). Replaces a per-transition
     /// search in the element-NFA step.
     elem_of: Box<[u8]>,
+
     num_states: u8,
+
     /// `eps[s]` — states reachable from `s` via zero segment
     /// consumption (globstar "absorb nothing" skips), incl. `s`.
     eps: Box<[u64]>,
+
     /// States from which ≥ 1 further segment can be consumed on a
     /// path to accept. Drives `match_dir`'s prefix bit.
     reach1: u64,
+
     /// Per-fork quick reject: a byte suffix every match of THIS fork
     /// must end with (from a trailing `Lit` or `Affix` suffix; empty
     /// = no fact). Only consulted for multi-fork matchers, where the

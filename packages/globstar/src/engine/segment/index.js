@@ -82,7 +82,7 @@ export class SegmentMatcher {
     this.factsSuffixSetStr = f.suffixSet.length > 0 ? f.suffixSet.map(latin1) : null;
   }
 
-  /// `null` ⇒ not segment-expressible; caller falls back.
+  // `null` ⇒ not segment-expressible; caller falls back.
   static build(program, dot) {
     const opSeqs = expandForks(program.ops);
     if (opSeqs === null) return null;
