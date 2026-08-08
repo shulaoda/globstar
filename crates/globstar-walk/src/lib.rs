@@ -93,15 +93,18 @@ pub struct Walk {
     /// Compiled positive-pattern union. `None` if no positive patterns
     /// were given (walker yields nothing).
     matcher: Option<Glob>,
+
     /// Compiled ignore-pattern union (combines `opts.ignore` and any
     /// `!`-prefixed patterns auto-split out of the input). `None` if
     /// nothing should be ignored.
     ignore: Option<Glob>,
+
     base: PathBuf,
     follow_links: bool,
 
     /// LIFO stack of directories seen but not yet expanded.
     stack: Vec<Frame>,
+
     /// Buffer of entries from the most recently expanded directory that
     /// are ready to yield. Drained before the next frame is expanded.
     ready: Vec<Result<DirEntry, WalkError>>,
@@ -111,19 +114,21 @@ pub struct Walk {
 struct Frame {
     /// Absolute (or user-provided) path to read via `fs::read_dir`.
     absolute: PathBuf,
+
     /// Relative path from the walker's base directory, encoded with `/`
     /// separators. Empty for the base directory itself.
     relative: Vec<u8>,
+
     /// Depth of this frame relative to `base`. The base frame is depth 0;
     /// each level of descent adds 1. Cached in the frame so yielded
     /// [`DirEntry`]s don't have to recompute from path bytes.
     depth: usize,
+
     /// Canonicalized targets of every symlink we descended through to
     /// reach this frame. A new symlink-to-dir descent canonicalizes its
     /// target and skips the descent if the target is already in this
     /// chain — that's our cycle break (matches `fdir`'s `isRecursive`).
-    /// Empty for non-symlink descents; cloned on each descent (Vec
-    /// clone of an empty vec doesn't allocate).
+    /// Empty for non-symlink descents.
     symlink_ancestors: Vec<PathBuf>,
 }
 

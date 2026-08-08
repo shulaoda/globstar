@@ -18,6 +18,7 @@ pub enum WalkError {
         /// Human-readable reason (from the underlying parser).
         reason: String,
     },
+
     /// An I/O error while reading a directory entry.
     Io {
         /// Path where the error occurred.

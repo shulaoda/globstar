@@ -31,16 +31,9 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// A single entry yielded by [`Walk`](crate::Walk).
-///
-/// Holds the entry's absolute path (locked at walker construction), its
-/// [`FileType`](std::fs::FileType) cached from the readdir call, and the
-/// depth relative to the walker's base (`base` → 0, its direct children
-/// → 1, and so on).
-///
-/// On Windows the full [`Metadata`](std::fs::Metadata) is also cached,
-/// so [`DirEntry::metadata`] returns without any syscall. On Unix it's
-/// lazy — a fresh `symlink_metadata` call on demand.
+/// A single entry yielded by [`Walk`](crate::Walk): its absolute path,
+/// the [`FileType`](std::fs::FileType) cached at readdir, and its depth
+/// below `base`. (See the module docs for the caching rationale.)
 #[derive(Debug, Clone)]
 pub struct DirEntry {
     pub(crate) path: PathBuf,

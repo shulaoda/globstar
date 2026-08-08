@@ -24,9 +24,11 @@ pub struct WalkOptions {
     /// (that's [`std::fs::canonicalize`]'s job) — pre-canonicalize the
     /// path yourself if you need that.
     pub base: PathBuf,
+
     /// Whether `*` / `?` / negated classes can consume a leading `.` at
     /// segment boundaries. Default: `false` (Unix-style dotfile protection).
     pub dot: bool,
+
     /// ASCII case-insensitive matching for main and ignore patterns.
     /// Default: `false`.
     ///
@@ -36,6 +38,7 @@ pub struct WalkOptions {
     /// miss the seek. Workaround: normalize the pattern to match the
     /// filesystem case, or write `[Ss]rc/...` for the prefix portion.
     pub case_insensitive: bool,
+
     /// Follow symbolic links when descending. Cycles are detected via
     /// `fs::canonicalize` on the symlink's resolved target and skipped
     /// (the offending descent is dropped, not the entire walk). When
@@ -43,6 +46,7 @@ pub struct WalkOptions {
     /// descended (matches `tinyglobby` / `fdir`'s `excludeSymlinks`).
     /// Default: `true`.
     pub follow_links: bool,
+
     /// Ignore patterns — entries matching any of these are skipped
     /// (files) or pruned (directories). Default: empty.
     pub ignore: Vec<String>,
