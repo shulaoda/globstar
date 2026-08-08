@@ -37,8 +37,6 @@ import { SegNfa } from "./seg-nfa.js";
 const MAX_SUFFIX_PRODUCT = 16;
 
 function makeElem(kind, litBytes, wild) {
-  // One hidden class for every element keeps the match loops
-  // monomorphic.
   return { kind, litBytes, litStr: litBytes !== null ? latin1(litBytes) : null, wild };
 }
 
@@ -444,16 +442,12 @@ function finishSeq(elems) {
   n += 1;
 
   // Inverse map: owning element per state (accept slot unused).
-  // Plain array — a tiny typed array costs more in wrapper overhead
-  // than it saves in slot width.
   const elemOf = new Array(n).fill(0);
   for (let i = 0; i < m; i++) {
     const end = i + 1 < m ? stateOf[i + 1] : accept;
     for (let s = stateOf[i]; s < end; s++) elemOf[s] = i;
   }
 
-  // Plain exact-length array of SMI masks — cheaper to retain than a
-  // small typed array (no separate backing-buffer object).
   const eps = new Array(n);
   for (let s = 0; s < n; s++) eps[s] = 1 << s;
   for (let i = m - 1; i >= 0; i--) {

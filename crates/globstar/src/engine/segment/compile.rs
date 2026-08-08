@@ -154,10 +154,13 @@ enum Boundary {
     /// Sequence start, or right after a globstar boundary — at a
     /// segment start with no pending separator obligation.
     Fresh,
+
     /// A strict `Sep` was just consumed.
     Strict,
+
     /// A lenient `SepRun` was just consumed (native `**` boundary).
     Lenient,
+
     /// Accumulating in-segment ops.
     InSegment,
 }
@@ -329,7 +332,6 @@ fn close_segment(buf: &mut Vec<Op>, dot: bool, ci: bool) -> Option<Elem> {
     let mut ops = std::mem::take(buf);
     if ops.len() == 1 {
         if let Op::Lit(bytes) = &mut ops[0] {
-            // Move, don't clone — `ops` is owned and dropped here.
             return Some(Elem::Lit(std::mem::take(bytes).into_boxed_slice()));
         }
     }
