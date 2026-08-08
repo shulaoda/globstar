@@ -14,6 +14,10 @@
 //! On walker workloads this rejects the bulk of candidates outright —
 //! `src/**/*.ts` drops every `.js` file in one suffix scan.
 //!
+//! Only suffixes are recorded: a prefix would just duplicate the engines'
+//! left-to-right scan, whereas the tail anchor is exactly what they can't
+//! cheaply check up front.
+//!
 //! ## Correctness invariant
 //!
 //! `accept(path) == false` ⇒ no program variant can match `path`, so the
