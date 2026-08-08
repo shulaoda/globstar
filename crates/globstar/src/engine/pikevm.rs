@@ -39,9 +39,8 @@ use crate::engine::thompson::{
     StateId, Thompson, Trans, compute_reach_to_accept, compute_static_closures,
 };
 
-/// Stack-allocated bitmap word budget. `STACK_WORDS = 4` covers NFAs
-/// up to 256 states — fits every pattern in our corpus, including
-/// the 223-state `huge-set-pos` union. Larger NFAs heap-allocate.
+/// Stack-allocated bitmap word budget: `4` words cover NFAs up to 256
+/// states; larger ones heap-allocate.
 const STACK_WORDS: usize = 4;
 
 /// Slot count for `is_match` scratch: `current`, `next`, `processed`.
@@ -60,17 +59,13 @@ const DIR_SLOTS: usize = 4;
 /// their backing storage can be reclaimed.
 #[derive(Debug, Clone)]
 pub struct PikeVm {
-    /// Trans table. `Box<[Trans]>` rather than `Vec<Trans>` — saves
-    /// 8 B inline (no `cap` field) and signals the fixed-size nature.
+    /// Trans table.
     states: Box<[Trans]>,
     facts: LiteralFacts,
     prefixes: Box<[Box<[u8]>]>,
-    /// Bitmap of states from which a non-empty byte sequence can
-    /// reach [`Trans::Match`]. Length `n_words`, bit `s` set iff
-    /// state `s` qualifies. Drives the prefix-mode descent test in
-    /// [`PikeVm::match_dir_inner`]. Packed (vs `Box<[bool]>`) so the
-    /// per-state flag costs 1 bit instead of 1 byte — saves
-    /// `~N - 8·n_words` bytes per matcher.
+    /// Bitmap of states from which a non-empty byte sequence can reach
+    /// [`Trans::Match`] (bit `s` set iff state `s` qualifies). Drives the
+    /// prefix-mode descent test in [`PikeVm::match_dir_inner`].
     reach_to_accept: Box<[u64]>,
     /// `ceil(states.len() / 64)`. Length of every bitmap below.
     n_words: usize,
@@ -270,10 +265,7 @@ impl PikeVm {
     /// `buf` (current and next) flip via `mem::swap` of the offsets;
     /// the final active set is copied back to slot 0 before return.
     fn run_fast(&self, path: &[u8], buf: &mut [u64], nw: usize) {
-        // Hoist field reads outside the hot loop so the inner code
-        // compiles to direct slice access without re-resolving `self`
-        // per iteration. Measurable on short paths where per-byte
-        // overhead dominates.
+        // Hoist field reads out of the hot loop.
         let states = &self.states;
         let closures = &self.static_closures;
         let mut cur = 0usize;
@@ -410,15 +402,11 @@ fn iter_set_states(bits: &[u64]) -> impl Iterator<Item = usize> + '_ {
 /// `None`. The caller owns ε-closure expansion of the result.
 ///
 /// `DotGuard` is intentionally returned as `None` here — its
-/// byte-conditional ε action writes to the *current* slot (not
-/// next), and is handled inline in [`PikeVm::run_dot_guard`]. Match
-/// / Split / Jump never appear in the active set after ε-closure
-/// (closures filter to leaves: byte-consumers + DotGuard + Match),
-/// and Match doesn't fire on any byte.
-///
-/// A deterministic construction would evaluate the same transition
-/// relation eagerly for every reachable subset; PikeVm evaluates it only
-/// for the current active set and uses `static_closures` for ε-extension.
+/// byte-conditional ε action writes to the *current* slot (not next), and
+/// is handled inline in [`PikeVm::run_dot_guard`]. Match / Split / Jump
+/// never appear in the active set after ε-closure (closures filter to
+/// leaves: byte-consumers + DotGuard + Match), and Match doesn't fire on
+/// any byte.
 #[inline]
 fn byte_step(t: &Trans, c: u8, sep: bool, dot_mask: bool) -> Option<StateId> {
     match t {

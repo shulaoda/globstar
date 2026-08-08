@@ -148,11 +148,6 @@ export class PikeVm {
     //   [n*nWords,            (n+1)*nWords)    initBits (read once/match)
     //   [(n+1)*nWords,        (n+2)*nWords)    acceptBits (read once/match)
     //   [(n+2)*nWords, (n+2)*nWords + n)       info (per state, hot loop)
-    // `closures` retains its `[0..)` origin so the inner loop's
-    // `closures[base + j]` access is unchanged; init/accept/info gain a
-    // constant-offset add. `info[s]` becomes `combined[infoOff + s]`
-    // — V8 hoists `infoOff` as a const across the inner loop, so the
-    // extra add is folded into the addressing mode.
     //
     // Each state's `info` word packs:
     //   bits  0..3   tag      (T_MATCH..T_NULL = 0..9 fit in 4 bits)
@@ -201,10 +196,8 @@ export class PikeVm {
     this.clsRefs = clsRefs;
     this.hasDotGuard = hasDotGuard;
 
-    // Scratch buffers reused across match calls (single-threaded).
-    // Pack `cur`, `nxt`, and (if dot-guard) `processed` into ONE
-    // Uint32Array — one TypedArray wrapper instead of 2-3, saves
-    // ~50 B per matcher in V8 wrapper overhead. Layout (nWords each):
+    // Scratch buffers reused across match calls (single-threaded), packed
+    // into one Uint32Array. Layout (nWords each):
     //   [0,         nWords)    cur
     //   [nWords,  2*nWords)    nxt
     //   [2*nWords,3*nWords)    processed (only if hasDotGuard)
@@ -346,13 +339,9 @@ export class PikeVm {
     for (let p = 0; p < path.length; p++) {
       const c = path[p];
       const sep = isPathSep(c);
-      // `info[s]` packs `dotProtected` at bit 4 (0x10). When the
-      // current byte is a segment-start dot, set `dotMaskFlag = 0x10`
-      // so the inner loop's `!(word2 & dotMaskFlag)` short-circuits
-      // to `false` for dot-protected states. When it isn't, the flag
-      // is `0` and the same expression is unconditionally `true` —
-      // collapses the original `!((word2 & 0x10) && dotMask)` to one
-      // bitwise AND + bool coerce per state-step.
+      // `info[s]` packs `dotProtected` at bit 4 (0x10). At a segment-start
+      // dot, `dotMaskFlag = 0x10` so `!(word2 & dotMaskFlag)` rejects
+      // dot-protected states; otherwise it's `0` and always passes.
       const dotMaskFlag = atSegStart && c === 0x2e ? 0x10 : 0;
 
       for (let w = 0; w < nWords; w++) scratch[nxtBase + w] = 0;
@@ -365,8 +354,6 @@ export class PikeVm {
           word &= word - 1;
           const word2 = closures[infoOff + s];
           let matched = false;
-          // Dense int `tag` (1..5 for byte-step states); `switch` lets
-          // V8 generate a jump table cleaner than an if-else chain.
           switch (word2 & 0xf) {
             case T_BYTE:
               matched = ((word2 >>> 8) & 0xff) === c;
