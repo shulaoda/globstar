@@ -14,20 +14,28 @@ pub const MAX_BRACE_NESTING: usize = 32;
 pub enum GlobError {
     /// Empty pattern (`""`).
     Empty,
+
     /// Pattern length exceeds [`MAX_PATTERN_LEN`].
     TooLong { len: usize, max: usize },
+
     /// Unterminated character class `[...`.
     UnterminatedClass { at: usize },
+
     /// Unterminated brace `{...`.
     UnterminatedBrace { at: usize },
+
     /// Pattern ends with a lone backslash.
     TrailingBackslash,
+
     /// Brace nesting exceeds [`MAX_BRACE_NESTING`].
     BraceNestingTooDeep { max: usize },
+
     /// Character class range with right endpoint smaller than left.
     InvalidRange { at: usize, low: u8, high: u8 },
+
     /// `Glob::union` was called with an empty iterator.
     EmptyPatternSet,
+
     /// A negated (`!`-prefixed) pattern was passed to `Glob::union`.
     NegatedInUnion { index: usize, pattern: String },
 }

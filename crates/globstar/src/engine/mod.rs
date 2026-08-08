@@ -15,11 +15,8 @@ pub mod pikevm;
 pub(crate) mod segment;
 pub(crate) mod thompson;
 
-/// Per-byte equality with compile-time choice of strict vs. ASCII-case-fold.
-///
-/// The const-generic `CI` lets each call site (`eq_byte::<true>` vs.
-/// `eq_byte::<false>`) monomorphize into a single instruction — the
-/// `if CI { ... } else { ... }` branch is dead-code-eliminated at MIR.
+/// Per-byte equality, strict or ASCII-case-folding by the const-generic
+/// `CI` — chosen at each call site, so the loop carries no per-byte branch.
 #[inline(always)]
 pub fn eq_byte<const CI: bool>(a: u8, b: u8) -> bool {
     if CI {
