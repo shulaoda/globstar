@@ -73,9 +73,6 @@ export class SegNfa {
     const accept = b.alloc(S_MATCH, 0, UNSET, 0);
     if (accept === -1) return null;
     for (const t of b.tails) b.patch(t, accept);
-    // Builder arrays stay plain packed-SMI: at ≤ 32 states an exact
-    // typed copy costs compile time and its wrapper overhead cancels
-    // the narrower slots.
     return new SegNfa(b.kinds, b.byteVals, b.nexts, b.dps, b.splitBs, b.clsRefs, entry, dot);
   }
 
@@ -350,9 +347,6 @@ class SegBuilder {
 
   litState(b) {
     if (this.ci) {
-      // Shared maker keeps the synthesized class on the same hidden
-      // class as parser-produced ones — `classMatches` stays
-      // monomorphic in the per-byte loop.
       const cls = ciLetter(b);
       if (cls !== null) return this.alloc(S_CLASS, 0, UNSET, 0, UNSET, cls);
     }

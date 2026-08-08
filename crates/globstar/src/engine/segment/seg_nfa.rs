@@ -18,22 +18,29 @@ const UNSET: u8 = u8::MAX;
 #[derive(Debug, Clone)]
 pub(super) struct SegNfa {
     states: Box<[SegState]>,
+
     /// ε-closure of the entry with DotGuards passable (used for all
     /// non-dot-led segments, and for the EOF/empty-segment accept).
     init: u64,
+
     /// ε-closure of the entry with DotGuards blocked (dot-led segment
     /// under a dot=false compile).
     init_dot_blocked: u64,
+
     /// Per-state successor ε-closure (guards pass — positions ≥ 1 are
     /// never segment starts).
     closures: Box<[u64]>,
+
     accept_mask: u64,
+
     /// Does the NFA accept any segment at all? (`match_dir`
     /// satisfiability.)
     pub(super) satisfiable: bool,
+
     /// No entry-closure state can consume a leading `.` as a literal
     /// or positive class ⇒ the matcher is fully dot-protected.
     pub(super) wild_led: bool,
+
     /// Compile-time dot option (drives the offset-0 gates).
     dot: bool,
 }
