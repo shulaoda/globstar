@@ -1,7 +1,7 @@
 //! `globstar` — pure glob matcher engine.
 //!
 //! No filesystem dependencies. Implements the syntax defined in
-//! `spec/GLOB_SPEC.md`, with the architecture from `decisions/ADR-001`.
+//! `spec/GLOB_SPEC.md`.
 //!
 //! ## Engine tiers
 //!
@@ -14,7 +14,7 @@
 //! Every tier implements both `is_match` and `match_dir` natively
 //! without recursive backtracking — literal byte-compare, per-segment
 //! anchored/NFA stepping, or the Pike VM's reach-to-accept bitset —
-//! so ReDoS is eliminated by construction (ADR-007).
+//! so ReDoS is eliminated by construction.
 
 #![forbid(unsafe_code)]
 
@@ -46,7 +46,7 @@ use engine::segment::SegmentMatcher;
 use factor::factor_branches;
 
 /// Tier classification for compiled patterns. Each glob is routed at
-/// compile time to exactly one tier. See ADR-001.
+/// compile time to exactly one tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
     /// Pure literal (no metacharacter). Routed to a byte-compare
@@ -54,8 +54,10 @@ pub enum Tier {
     /// frequent in ignore-list contexts where many literal entries
     /// are merged via `Glob::union`.
     Literal,
+
     /// Simple wildcards (`*`, `?`, `[]`) without `**` or brace.
     SimpleWildcard,
+
     /// Contains `**` or brace expansion.
     Globstar,
 }
@@ -65,20 +67,22 @@ pub enum Tier {
 pub struct Glob {
     /// Tier classification.
     tier: Tier,
+
     /// Tier-specific matcher engine.
     engine: Engine,
+
     /// Whether the overall pattern is negated (odd `!` count prefix).
     negated: bool,
 }
 
 #[derive(Debug, Clone)]
 enum Engine {
-    /// Tier 0 — pure literal byte comparison. Inline rather than
-    /// boxed: it is the smallest variant, and `LiteralMatcher`'s
-    /// `Vec<u8>` already owns its bytes on the heap.
+    /// Tier 0 — pure literal byte comparison.
     Literal(LiteralMatcher),
+
     /// Tier 1/2 — segment-structured matcher for the dominant shapes.
     Segment(Box<SegmentMatcher>),
+
     /// Linear-time O(n·m) fallback for shapes or bounded expansions
     /// the segment representation cannot express.
     PikeVm(Box<PikeVm>),
@@ -289,7 +293,7 @@ impl Glob {
     }
 }
 
-/// Compile-time tier waterfall (ADR-001 §2 "编译期 waterfall").
+/// Compile-time tier waterfall.
 fn classify(ast: &Ast) -> Tier {
     if ast.body.has_globstar() || contains_brace(&ast.body) {
         // `contains_brace` implies !is_pure_literal (any Brace node
