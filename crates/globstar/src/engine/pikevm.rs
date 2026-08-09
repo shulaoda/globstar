@@ -80,8 +80,8 @@ impl PikeVm {
     pub fn new(program: OpProgram, dot: bool) -> Self {
         let thompson = Thompson::compile(&program, dot);
         let reach_flags = compute_reach_to_accept(&thompson.states, thompson.accept);
-        let prefixes = compute_static_prefixes(program.ops());
-        let facts = program.into_facts();
+        let prefixes = compute_static_prefixes(&program.ops);
+        let facts = program.facts;
 
         let n = thompson.states.len();
         let n_words = n.div_ceil(64);

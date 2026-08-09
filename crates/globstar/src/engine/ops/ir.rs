@@ -1,54 +1,39 @@
-//! Linear instructions consumed by every non-literal matcher backend.
-
 use crate::ast::CharClass;
 use crate::engine::facts::LiteralFacts;
 
-/// One executable instruction in a compiled glob program.
 #[derive(Debug, Clone)]
 pub enum Op {
     /// Match a literal byte sequence verbatim.
     Lit(Vec<u8>),
-
     /// Match a single non-separator byte.
     AnyChar,
-
     /// Match zero or more non-separator bytes.
     Star,
-
     /// Match one byte against the class.
     Class(CharClass),
-
     /// Match exactly one path separator.
     Sep,
-
     /// Match one or more path separators at a lenient globstar boundary.
     SepRun,
-
     /// Raw `**`; internal to lowering and normalized before publication.
     Globstar,
-
     /// `(?:[^/]*/)*`, used for leading and middle `**/`.
     OptSegmentsSlash,
-
     /// `/.*`, used for strict trailing `/**`.
     SlashAnything,
-
     /// `.*`, used for a bare `**`.
     GlobstarAny,
-
     /// Zero or more leading platform separators for pattern-head `**/`.
     LeadingSeps,
-
     /// Brace alternation. Branches remain nested rather than cartesian-expanded.
     Alternation(Vec<Vec<Op>>),
 }
 
-/// Normalized executable program plus compile-time literal facts.
 #[derive(Debug, Clone)]
 pub struct OpProgram {
-    ops: Vec<Op>,
-    facts: LiteralFacts,
-    case_insensitive: bool,
+    pub(crate) ops: Vec<Op>,
+    pub(crate) facts: LiteralFacts,
+    pub(crate) case_insensitive: bool,
 }
 
 impl OpProgram {
@@ -65,19 +50,9 @@ impl OpProgram {
     pub fn ops(&self) -> &[Op] {
         &self.ops
     }
-
-    pub fn case_insensitive(&self) -> bool {
-        self.case_insensitive
-    }
-
-    /// Consume the immutable normalized program, returning just its
-    /// facts — a backend calls this once it has derived any structural
-    /// metadata it needs from `ops()` / `case_insensitive()`.
-    pub fn into_facts(self) -> LiteralFacts {
-        self.facts
-    }
 }
 
+#[cfg(debug_assertions)]
 fn is_normalized(ops: &[Op]) -> bool {
     let mut previous_lit = false;
     let mut previous_star = false;

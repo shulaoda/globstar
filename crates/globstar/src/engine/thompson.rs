@@ -77,9 +77,9 @@ pub(crate) struct Thompson {
 impl Thompson {
     /// Compile the program into an NFA. Always succeeds.
     pub(crate) fn compile(program: &OpProgram, dot: bool) -> Self {
-        let mut builder = Builder::new(program.case_insensitive());
+        let mut builder = Builder::new(program.case_insensitive);
         let initial = builder.alloc(Trans::Jump { next: UNSET });
-        let body_entry = builder.compile_ops(program.ops(), dot);
+        let body_entry = builder.compile_ops(&program.ops, dot);
         let accept = builder.alloc(Trans::Match);
         builder.patch(initial, body_entry);
         let tails = std::mem::take(&mut builder.tail_patches);
