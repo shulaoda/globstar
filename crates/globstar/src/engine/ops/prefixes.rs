@@ -1,10 +1,12 @@
-//! Static path-prefix analysis used by filesystem walkers.
-
 use std::collections::BTreeSet;
 
 use super::ir::Op;
 
-fn extract_prefix(ops: &[Op]) -> Vec<u8> {
+pub fn compute_static_prefixes(ops: &[Op]) -> Box<[Box<[u8]>]> {
+    dedupe_prefixes(extract_prefixes_per_branch(ops))
+}
+
+fn extract_prefix(ops: &[Op]) -> Box<[u8]> {
     let mut acc = Vec::new();
     let mut last_boundary = 0usize;
     let mut fully_literal = true;
@@ -27,81 +29,40 @@ fn extract_prefix(ops: &[Op]) -> Vec<u8> {
     while acc.last() == Some(&b'/') {
         acc.pop();
     }
-    acc
+    acc.into_boxed_slice()
 }
 
-pub fn compute_static_prefixes(ops: &[Op]) -> Box<[Box<[u8]>]> {
-    dedupe_prefixes(extract_prefixes_per_branch(ops))
-        .into_iter()
-        .map(Vec::into_boxed_slice)
-        .collect::<Vec<_>>()
-        .into_boxed_slice()
-}
-
-fn extract_prefixes_per_branch(ops: &[Op]) -> Vec<Vec<u8>> {
-    // Only recurse into a HEAD alternation when it owns a whole segment
-    // — i.e. it is the entire program or is immediately followed by a
-    // separator. Otherwise its branches are mid-segment and their
-    // bodies are NOT valid directory prefixes: `{package,tsconfig}.json`
-    // must not seed the walker at `package`/`tsconfig` (which don't
-    // exist, so the walk would return nothing). In that case fall back
-    // to the segment-bounded scan, which stops at the alternation and
-    // truncates to the last boundary.
+fn extract_prefixes_per_branch(ops: &[Op]) -> Box<[Box<[u8]>]> {
     if let Some(Op::Alternation(branches)) = ops.first() {
         if matches!(ops.get(1), None | Some(Op::Sep) | Some(Op::SepRun)) {
             return branches
                 .iter()
                 .flat_map(|branch| extract_prefixes_per_branch(branch))
-                .collect();
+                .collect::<Box<_>>();
         }
     }
-    vec![extract_prefix(ops)]
+    Box::new([extract_prefix(ops)])
 }
 
-pub(crate) fn dedupe_prefixes(mut prefixes: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
-    // 0/1 prefixes: dedup is the identity.
+fn dedupe_prefixes(mut prefixes: Box<[Box<[u8]>]>) -> Box<[Box<[u8]>]> {
     if prefixes.len() <= 1 {
         return prefixes;
     }
-    // Ancestors are considered before descendants. The ordered set owns each
-    // accepted buffer once and supports borrowed-slice lookups at every `/`
-    // boundary, avoiding the old all-accepted × all-candidate scan.
     prefixes.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
-    let mut accepted: BTreeSet<Vec<u8>> = BTreeSet::new();
+    let mut accepted = BTreeSet::new();
     for prefix in prefixes {
-        let duplicate = accepted.contains(prefix.as_slice());
-        let covered = accepted.contains(&[][..])
-            || prefix
-                .iter()
-                .enumerate()
-                .any(|(i, &b)| b == b'/' && accepted.contains(&prefix[..i]));
-        if !duplicate && !covered {
+        if prefix.is_empty() {
+            return Box::new([prefix]);
+        }
+        let covered = prefix
+            .iter()
+            .enumerate()
+            .any(|(i, &b)| b == b'/' && accepted.contains(&prefix[..i]));
+        if !covered {
             accepted.insert(prefix);
         }
     }
-    let mut result: Vec<_> = accepted.into_iter().collect();
+    let mut result = accepted.into_iter().collect::<Box<_>>();
     result.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::dedupe_prefixes;
-
-    #[test]
-    fn dedupe_respects_directory_boundaries() {
-        let got = dedupe_prefixes(
-            ["src", "src/cli", "src-other", "src2", "src"]
-                .into_iter()
-                .map(|s| s.as_bytes().to_vec())
-                .collect(),
-        );
-        assert_eq!(
-            got,
-            ["src", "src2", "src-other"]
-                .into_iter()
-                .map(|s| s.as_bytes().to_vec())
-                .collect::<Vec<_>>()
-        );
-    }
 }
