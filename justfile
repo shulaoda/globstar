@@ -35,10 +35,12 @@ fix:
     cargo fmt --all
 
 # Rust tests (single-pattern + multi-pattern + err corpus + walker
-# integration) + the JS compiler-stages golden (shared TSV fixture).
+# integration) + JS goldens: the compiler-stages TSV fixture and the
+# segment↔pikevm string-mode differential (fixed-seed, deterministic).
 test:
     cargo test --workspace
     node packages/globstar/tests/compiler-stages.mjs
+    node packages/globstar/tests/string-mode.mjs
 
 # Wipe build artifacts (Rust target + JS workspace node_modules + bench output).
 clean:
