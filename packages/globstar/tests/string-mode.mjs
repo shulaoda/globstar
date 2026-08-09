@@ -1,15 +1,13 @@
-// String-mode ↔ byte-mode differential for the segment engine.
+// Segment engine ↔ PikeVM differential.
 //
-// The segment engine matches JS strings directly (zero-copy) and must
-// return exactly what byte mode returns on `toBytes(input)` — that is
-// the public contract (strings are UTF-8 text). This test sweeps
-// random patterns × paths, including multi-byte text, `?`-vs-bytes
-// traps, and dot/class/brace shapes, asserting the two modes agree.
+// The segment engine matches JS strings directly (zero-copy); PikeVM is the
+// independent byte-machine reference. On the same pattern × path the two must
+// agree. This sweeps random patterns × paths, including multi-byte text,
+// `?`-vs-bytes traps, and dot/class/brace shapes, asserting they agree.
 //
 // Run: node packages/globstar/tests/string-mode.mjs [count]
 
 import { compileMatcher } from "../src/glob.js";
-import { toBytes } from "../src/utf8.js";
 
 const COUNT = Number(process.argv[2] ?? 200000);
 
@@ -101,9 +99,10 @@ for (let i = 0; i < COUNT; i++) {
   const pat = genPattern();
   const dot = rand() < 0.5;
   const ci = rand() < 0.25;
-  let m;
+  let seg, ref;
   try {
-    m = compileMatcher(pat, { dot, caseInsensitive: ci });
+    seg = compileMatcher(pat, { dot, caseInsensitive: ci });
+    ref = compileMatcher(pat, { dot, caseInsensitive: ci, __engine: "pikevm" });
   } catch {
     continue; // parse error — fine
   }
@@ -111,21 +110,21 @@ for (let i = 0; i < COUNT; i++) {
   const path = genPath();
   tried++;
 
-  const viaStr = m.match(path);
-  const viaBytes = m.match(toBytes(path));
-  if (viaStr !== viaBytes) {
+  const viaSeg = seg.match(path);
+  const viaRef = ref.match(path);
+  if (viaSeg !== viaRef) {
     bad++;
     console.error(
-      `MATCH DIVERGENCE pat=${JSON.stringify(pat)} path=${JSON.stringify(path)} dot=${dot} ci=${ci} str=${viaStr} bytes=${viaBytes}`,
+      `MATCH DIVERGENCE pat=${JSON.stringify(pat)} path=${JSON.stringify(path)} dot=${dot} ci=${ci} seg=${viaSeg} pike=${viaRef}`,
     );
   }
 
-  const dirStr = m.matchDir(path);
-  const dirBytes = m.matchDir(toBytes(path));
-  if (dirStr !== dirBytes) {
+  const dirSeg = seg.matchDir(path);
+  const dirRef = ref.matchDir(path);
+  if (dirSeg !== dirRef) {
     bad++;
     console.error(
-      `DIR DIVERGENCE pat=${JSON.stringify(pat)} dir=${JSON.stringify(path)} dot=${dot} ci=${ci} str=${dirStr} bytes=${dirBytes}`,
+      `DIR DIVERGENCE pat=${JSON.stringify(pat)} dir=${JSON.stringify(path)} dot=${dot} ci=${ci} seg=${dirSeg} pike=${dirRef}`,
     );
   }
   if (bad > 20) break;
@@ -135,4 +134,4 @@ if (bad > 0) {
   console.error(`✗ ${bad} divergences over ${tried} cases`);
   process.exit(1);
 }
-console.log(`✓ string mode ≡ byte mode on ${tried} cases (${compiled} compiled patterns)`);
+console.log(`✓ segment ≡ pikevm on ${tried} cases (${compiled} compiled patterns)`);

@@ -19,16 +19,13 @@ export class LiteralMatcher {
   }
 
   isMatch(path) {
-    if (typeof path === "string") {
-      if (this.exactStr !== null) return path === this.exactStr;
-      if (this.litStr === null) return this.pathEq(toBytes(path));
-      return this.pathEqStr(path);
-    }
-    return this.pathEq(path);
+    if (this.exactStr !== null) return path === this.exactStr;
+    if (this.litStr === null) return this.pathEq(toBytes(path));
+    return this.pathEqStr(path);
   }
 
   matchDir(dirPath) {
-    const dir = typeof dirPath === "string" ? toBytes(dirPath) : dirPath;
+    const dir = toBytes(dirPath);
     if (this.pathEq(dir)) return DirMatch.Match;
     if (this.literalUnder(dir)) return DirMatch.Descend;
     return DirMatch.Pruned;

@@ -108,25 +108,19 @@ export class SegmentMatcher {
   }
 
   isMatch(input) {
-    if (typeof input === "string") {
-      if (!this.byteOnly) {
-        const r = this._isMatchStr(input);
-        if (r !== BAIL) return r === YES;
-      }
-      return this._isMatchBytes(toBytes(input));
+    if (!this.byteOnly) {
+      const r = this._isMatchStr(input);
+      if (r !== BAIL) return r === YES;
     }
-    return this._isMatchBytes(input);
+    return this._isMatchBytes(toBytes(input));
   }
 
   matchDir(input) {
-    if (typeof input === "string") {
-      if (!this.byteOnly) {
-        const r = this._matchDirStr(input);
-        if (r !== -1) return r;
-      }
-      return this._matchDirBytes(toBytes(input));
+    if (!this.byteOnly) {
+      const r = this._matchDirStr(input);
+      if (r !== -1) return r;
     }
-    return this._matchDirBytes(input);
+    return this._matchDirBytes(toBytes(input));
   }
 
   // ---- string mode ----

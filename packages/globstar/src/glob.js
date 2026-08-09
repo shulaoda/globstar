@@ -84,15 +84,14 @@ function makeMatcher(positiveEngine, negativeEngines) {
   // Segment and literal engines consume strings natively. Fallback/reference
   // engines receive a lazily encoded byte view, at most once per call.
   const match = (input) => {
-    const isStr = typeof input === "string";
     let bytes = null;
     if (positiveEngine !== null) {
-      const arg = positiveEngine.acceptsStrings || !isStr ? input : (bytes ??= toBytes(input));
+      const arg = positiveEngine.acceptsStrings ? input : (bytes ??= toBytes(input));
       if (positiveEngine.isMatch(arg)) return true;
     }
     for (let i = 0; i < negativeEngines.length; i++) {
       const engine = negativeEngines[i];
-      const arg = engine.acceptsStrings || !isStr ? input : (bytes ??= toBytes(input));
+      const arg = engine.acceptsStrings ? input : (bytes ??= toBytes(input));
       if (!engine.isMatch(arg)) return true; // `!body.match(p) === true`
     }
     return false;
@@ -100,7 +99,7 @@ function makeMatcher(positiveEngine, negativeEngines) {
 
   const matchDir = (input) => {
     if (positiveEngine === null) return DirMatch.Descend;
-    const arg = positiveEngine.acceptsStrings || typeof input !== "string" ? input : toBytes(input);
+    const arg = positiveEngine.acceptsStrings ? input : toBytes(input);
     const dm = positiveEngine.matchDir(arg);
     // With any negated branch present, descend pruning is unsafe (the
     // negation could match arbitrarily deep paths we haven't seen yet).
