@@ -52,7 +52,6 @@ impl OpProgram {
     }
 }
 
-#[cfg(debug_assertions)]
 fn is_normalized(ops: &[Op]) -> bool {
     let mut previous_lit = false;
     let mut previous_star = false;
