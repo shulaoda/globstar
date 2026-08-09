@@ -14,11 +14,11 @@ export class LiteralMatcher {
       }
     }
     this.litStr = ascii ? latin1(literal) : null;
-    this.exactStr = ascii && !caseInsensitive && !IS_WINDOWS_SEP ? this.litStr : null;
+    this.exact = ascii && !caseInsensitive && !IS_WINDOWS_SEP;
   }
 
   isMatch(path) {
-    if (this.exactStr !== null) return path === this.exactStr;
+    if (this.exact) return path === this.litStr;
     if (this.litStr === null) return this.pathEq(toBytes(path));
     return this.pathEqStr(path);
   }
