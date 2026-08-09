@@ -66,14 +66,17 @@ export function compileMatcher(patterns, options) {
 function buildEngine(asts, opts) {
   const ci = !!opts.caseInsensitive;
   const dot = !!opts.dot;
-  if (asts.length === 1) {
+  const forcePikevm = opts.__engine === "pikevm";
+  // The tier-0 literal shortcut would also swallow forced-pikevm builds, so
+  // it only applies when no engine is forced.
+  if (!forcePikevm && asts.length === 1) {
     const literalBytes = nodeToLiteralBytes(asts[0].body);
     if (literalBytes !== null) return new LiteralMatcher(literalBytes, ci);
   }
   const factored = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
   const program = lower(factored, ci);
 
-  if (opts.__engine === "pikevm") return PikeVm.build(program, dot);
+  if (forcePikevm) return PikeVm.build(program, dot);
   return SegmentMatcher.build(program, dot) ?? PikeVm.build(program, dot);
 }
 
