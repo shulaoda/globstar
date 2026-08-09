@@ -5,7 +5,6 @@
 
 mod ir;
 mod lower;
-mod normalize;
 mod prefixes;
 
 pub use ir::{Op, OpProgram};
