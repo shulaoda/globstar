@@ -65,8 +65,6 @@ export class SegmentMatcher {
     this.ci = !!program.caseInsensitive;
     this.dot = dot;
     this.byteOnly = byteOnly;
-    // Consumes JS strings natively — `makeMatcher` skips `toBytes`.
-    this.acceptsStrings = true;
     // Eager on both runtimes: a cheap leading-literal scan, and it
     // lets the matcher drop every reference to the op tree (lazy
     // computation would retain `program.ops` for the matcher's whole

@@ -29,7 +29,6 @@ import { nodeToLiteralBytes } from "./ast.js";
 import { factorBranches } from "./factor.js";
 import { GlobError } from "./error.js";
 import { DirMatch } from "./dir-match.js";
-import { toBytes } from "./utf8.js";
 
 const DEFAULT_OPTIONS = { dot: true, caseInsensitive: false };
 
@@ -84,23 +83,16 @@ function makeMatcher(positiveEngine, negativeEngines) {
   // Segment and literal engines consume strings natively. Fallback/reference
   // engines receive a lazily encoded byte view, at most once per call.
   const match = (input) => {
-    let bytes = null;
-    if (positiveEngine !== null) {
-      const arg = positiveEngine.acceptsStrings ? input : (bytes ??= toBytes(input));
-      if (positiveEngine.isMatch(arg)) return true;
-    }
+    if (positiveEngine !== null && positiveEngine.isMatch(input)) return true;
     for (let i = 0; i < negativeEngines.length; i++) {
-      const engine = negativeEngines[i];
-      const arg = engine.acceptsStrings ? input : (bytes ??= toBytes(input));
-      if (!engine.isMatch(arg)) return true; // `!body.match(p) === true`
+      if (!negativeEngines[i].isMatch(input)) return true; // `!body.match(p) === true`
     }
     return false;
   };
 
   const matchDir = (input) => {
     if (positiveEngine === null) return DirMatch.Descend;
-    const arg = positiveEngine.acceptsStrings ? input : toBytes(input);
-    const dm = positiveEngine.matchDir(arg);
+    const dm = positiveEngine.matchDir(input);
     // With any negated branch present, descend pruning is unsafe (the
     // negation could match arbitrarily deep paths we haven't seen yet).
     // Conservatively force Descend, preserve positive Match flag.

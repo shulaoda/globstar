@@ -6,7 +6,6 @@ export class LiteralMatcher {
   constructor(literal, caseInsensitive) {
     this.literal = literal;
     this.caseInsensitive = caseInsensitive;
-    this.acceptsStrings = true;
     let ascii = true;
     for (let i = 0; i < literal.length; i++) {
       if (literal[i] > 0x7f) {

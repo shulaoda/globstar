@@ -26,6 +26,7 @@ import { isPathSep, ctz32 } from "../options.js";
 import { classMatches } from "../ast.js";
 import { DirMatch } from "../dir-match.js";
 import { computeStaticPrefixes } from "./ops/index.js";
+import { toBytes } from "../utf8.js";
 
 // Reach-to-accept fixed-point over byte-consumer states. reach[s] = true
 // iff from state s the matcher can reach the accept state via at least
@@ -220,13 +221,15 @@ export class PikeVm {
     return false;
   }
 
-  isMatch(path) {
+  isMatch(input) {
+    const path = toBytes(input);
     if (!this.facts.accept(path)) return false;
     this._run(path);
     return this._isAccept(this._scratch);
   }
 
-  matchDir(dirPath) {
+  matchDir(input) {
+    const dirPath = toBytes(input);
     this._run(dirPath);
     return DirMatch.fromExactPrefix(this._isAccept(this._scratch), this._hasPrefixDescent());
   }
