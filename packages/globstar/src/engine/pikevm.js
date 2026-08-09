@@ -230,6 +230,10 @@ export class PikeVm {
 
   matchDir(input) {
     const dirPath = toBytes(input);
+    // Empty dir path is the cwd and every match lives under it, so descent
+    // is always on. The prefix probe would instead simulate a leading `/`,
+    // which cwd children don't have.
+    if (dirPath.length === 0) return DirMatch.fromExactPrefix(this.isMatch(""), true);
     this._run(dirPath);
     return DirMatch.fromExactPrefix(this._isAccept(this._scratch), this._hasPrefixDescent());
   }

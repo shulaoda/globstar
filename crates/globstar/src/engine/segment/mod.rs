@@ -253,6 +253,11 @@ impl SegmentMatcher {
     /// Walker-style directory query — exact/prefix bits combined
     /// across forks.
     pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
+        // Empty dir path is the cwd and every match lives under it, so
+        // descent is always on.
+        if dir_path.is_empty() {
+            return DirMatch::from_exact_prefix(self.is_match(dir_path), true);
+        }
         let (mut exact, mut prefix) = (false, false);
         for seq in self.seqs.iter() {
             let (e, p) = if self.case_insensitive {

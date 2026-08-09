@@ -198,3 +198,13 @@ x/{**,a}/**	x/.y	pruned	dot=false
 # descends into `.b/` (a match may lie deeper), dot=false prunes it.
 **/{**/a,b}	.b	descend	dot=true
 **/{**/a,b}	.b	pruned	dot=false
+
+## cwd.empty_dir
+# Empty dir path is the cwd; every relative match lives under it, so every
+# engine answers descend, or descend-match when the pattern also matches
+# the empty string. Pins the contract across literal, segment, and PikeVm
+# (the walker itself never asks, so only this corpus exercises it).
+src/**/*.ts		descend
+*.md		descend
+literalfile.txt		descend
+{a,}		descend-match

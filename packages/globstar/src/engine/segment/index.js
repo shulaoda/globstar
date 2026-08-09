@@ -114,6 +114,9 @@ export class SegmentMatcher {
   }
 
   matchDir(input) {
+    // Empty dir path is the cwd and every match lives under it, so descent
+    // is always on.
+    if (input.length === 0) return DirMatch.fromExactPrefix(this.isMatch(input), true);
     if (!this.byteOnly) {
       const r = this._matchDirStr(input);
       if (r !== -1) return r;

@@ -150,6 +150,12 @@ impl PikeVm {
     /// Walker-style directory query: does `dir_path` match exactly,
     /// descend into a possible match, or both?
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
+        // Empty dir path is the cwd and every match lives under it, so
+        // descent is always on. The probe below would instead simulate a
+        // leading `/`, which cwd children don't have.
+        if dir_path.is_empty() {
+            return DirMatch::from_exact_prefix(self.is_match(&[]), true);
+        }
         let nw = self.n_words;
         if nw <= STACK_WORDS {
             let mut buf = [0u64; STACK_WORDS * DIR_SLOTS];
