@@ -414,6 +414,46 @@ const jsMulti = {
   },
 };
 
+// Forced-PikeVM reference. The globstar columns above route almost every
+// pattern through the segment engine, so changes to the fallback NFA
+// (thompson / pikevm on either runtime) barely move them. These columns run
+// the same corpus with the engine forced to PikeVM to make that visible.
+const pikevmRef = {
+  rustCompile: {
+    data: rust.matcherSingle ?? empty,
+    rowKey: (l) => `compile_${l}`,
+    libCols: [["PikeVM (Rust)", "globstar_pikevm"]],
+  },
+  jsCompile: {
+    data: js.matcherSingle ?? empty,
+    rowKey: (l) => `compile: ${l}`,
+    libCols: [["PikeVM (JS)", "globstar_pikevm"]],
+  },
+  rustMatch: {
+    data: rust.matcherSingle ?? empty,
+    rowKey: (l) => `match_${l}`,
+    libCols: [["PikeVM (Rust)", "globstar_pikevm"]],
+    cellOpts: { divideBy: PATHS_PER_BATCH },
+  },
+  jsMatch: {
+    data: js.matcherSingle ?? empty,
+    rowKey: (l) => `match: ${l}`,
+    libCols: [["PikeVM (JS)", "globstar_pikevm"]],
+  },
+  rustMem: {
+    data: rust.singleMem ?? empty,
+    rowKey: (l) => l,
+    libCols: [["PikeVM (Rust)", "PikeVM"]],
+    cellOpts: { isMem: true },
+  },
+  jsMem: {
+    data: js.singleMem ?? empty,
+    rowKey: (l) => l,
+    libCols: [["PikeVM (JS)", "globstar_pikevm"]],
+    cellOpts: { isMem: true },
+  },
+};
+
 const rustWalker = {
   data: rust.walker ?? empty,
   rowKey: (l) => `walk_${l}`,
@@ -539,6 +579,27 @@ ${combinedTable("Set", MULTI_SETS, [rustMulti.match, jsMulti.match])}
 ### Memory (KB / matcher)
 
 ${combinedTable("Set", MULTI_SETS, [rustMulti.mem, jsMulti.mem])}
+`);
+
+sections.push(`## Engine reference — forced PikeVM
+
+The globstar columns above route almost every pattern through the
+segment engine, so changes to the fallback NFA (\`thompson\` /
+\`pikevm\` on either runtime) barely move them. These columns run the
+same single-pattern corpus with the engine forced to PikeVM, so
+fallback regressions show up here.
+
+### Compile (per matcher)
+
+${combinedTable("Pattern", SINGLE_PATTERNS, [pikevmRef.rustCompile, pikevmRef.jsCompile])}
+
+### Match (per call)
+
+${combinedTable("Pattern", SINGLE_PATTERNS, [pikevmRef.rustMatch, pikevmRef.jsMatch])}
+
+### Memory (KB / matcher)
+
+${combinedTable("Pattern", SINGLE_PATTERNS, [pikevmRef.rustMem, pikevmRef.jsMem])}
 `);
 
 sections.push(`## Walker (end-to-end)
