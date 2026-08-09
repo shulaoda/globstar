@@ -30,11 +30,25 @@ import {
   OP_STAR,
   lower,
 } from "../src/engine/ops/index.js";
-import { assertNormalizedProgram } from "../src/engine/ops/ir.js";
 import { dedupePrefixes } from "../src/engine/ops/prefixes.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cases = readFileSync(resolve(here, "../../../fixtures/compiler-stages.tsv"), "utf8");
+
+function assertNormalizedProgram(ops) {
+  let previousLit = false;
+  let previousStar = false;
+  for (const op of ops) {
+    if (op.kind === OP_GLOBSTAR) throw new Error("raw globstar escaped lowering");
+    if (op.kind === OP_LIT && previousLit) throw new Error("adjacent literal ops");
+    if (op.kind === OP_STAR && previousStar) throw new Error("adjacent star ops");
+    if (op.kind === OP_ALTERNATION) {
+      for (const branch of op.branches) assertNormalizedProgram(branch);
+    }
+    previousLit = op.kind === OP_LIT;
+    previousStar = op.kind === OP_STAR;
+  }
+}
 
 function bytes(value) {
   let out = "";

@@ -22,18 +22,3 @@ export const OSS_OP = Object.freeze({ kind: OP_OPT_SEGMENTS_SLASH });
 export const SLASH_ANY_OP = Object.freeze({ kind: OP_SLASH_ANYTHING });
 export const GSTAR_ANY_OP = Object.freeze({ kind: OP_GLOBSTAR_ANY });
 export const LEADING_SEPS_OP = Object.freeze({ kind: OP_LEADING_SEPS });
-
-export function assertNormalizedProgram(ops) {
-  let previousLit = false;
-  let previousStar = false;
-  for (const op of ops) {
-    if (op.kind === OP_GLOBSTAR) throw new Error("raw globstar escaped lowering");
-    if (op.kind === OP_LIT && previousLit) throw new Error("adjacent literal ops");
-    if (op.kind === OP_STAR && previousStar) throw new Error("adjacent star ops");
-    if (op.kind === OP_ALTERNATION) {
-      for (const branch of op.branches) assertNormalizedProgram(branch);
-    }
-    previousLit = op.kind === OP_LIT;
-    previousStar = op.kind === OP_STAR;
-  }
-}
