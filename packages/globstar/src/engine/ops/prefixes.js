@@ -1,5 +1,3 @@
-// Static path-prefix analysis used by the walker.
-
 import { OP_ALTERNATION, OP_LIT, OP_SEP, OP_SEP_RUN } from "./ir.js";
 
 export function computeStaticPrefixes(ops) {
@@ -7,13 +5,6 @@ export function computeStaticPrefixes(ops) {
 }
 
 function extractPrefixesPerBranch(ops) {
-  // Only recurse into a HEAD alternation when it owns a whole segment —
-  // i.e. it is the entire program or is immediately followed by a
-  // separator. Otherwise its branches are mid-segment and their bodies
-  // are NOT valid directory prefixes: `{package,tsconfig}.json` must not
-  // seed the walker at `package`/`tsconfig` (which don't exist, so the
-  // walk would return nothing). Fall back to the segment-bounded scan,
-  // which stops at the alternation and truncates to the last boundary.
   if (ops.length > 0 && ops[0].kind === OP_ALTERNATION) {
     const next = ops[1];
     if (next === undefined || next.kind === OP_SEP || next.kind === OP_SEP_RUN) {
@@ -47,18 +38,15 @@ function extractLeadingPrefix(ops) {
   return Uint8Array.from(acc.slice(0, length));
 }
 
-export function dedupePrefixes(prefixes) {
-  // 0/1 prefixes: dedup is the identity.
+function dedupePrefixes(prefixes) {
   if (prefixes.length <= 1) return prefixes;
-  // Parents precede descendants. A byte trie answers exact and directory-
-  // boundary ancestor queries in O(prefix length), replacing the previous
-  // O(number of accepted prefixes) scan for every candidate.
   prefixes.sort((a, b) => a.length - b.length || compareBytes(a, b));
   const root = { terminal: false, children: new Map() };
   const result = [];
   for (const prefix of prefixes) {
+    if (prefix.length === 0) return [prefix];
     let node = root;
-    let covered = node.terminal;
+    let covered = false;
     let complete = true;
     for (let i = 0; !covered && i < prefix.length; i++) {
       if (prefix[i] === 0x2f && node.terminal) {

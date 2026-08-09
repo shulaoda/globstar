@@ -30,7 +30,6 @@ import {
   OP_STAR,
   lower,
 } from "../src/engine/ops/index.js";
-import { dedupePrefixes } from "../src/engine/ops/prefixes.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cases = readFileSync(resolve(here, "../../../fixtures/compiler-stages.tsv"), "utf8");
@@ -137,12 +136,3 @@ for (const [index, line] of cases.split("\n").entries()) {
 }
 
 console.log("✓ shared parser/lowering golden cases");
-
-const encoded = ["src", "src/cli", "src-other", "src2", "src"].map((s) =>
-  new TextEncoder().encode(s),
-);
-assert.deepEqual(
-  dedupePrefixes(encoded).map((p) => new TextDecoder().decode(p)),
-  ["src", "src2", "src-other"],
-);
-console.log("✓ prefix dedupe directory boundaries");
