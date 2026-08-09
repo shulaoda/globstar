@@ -193,16 +193,12 @@ function escapeBytes(bytes) {
   }
   return out;
 }
-// PATTERN: encode the string as UTF-8 — identical bytes to what the JS
-// parser's toBytes() sees and to what Rust's from_utf8 reconstructs.
+// PATTERN and PATH both travel as UTF-8 — identical bytes to what the JS
+// side's internal toBytes() sees and to what Rust receives. The public JS
+// API is string-only, so the shared input domain is UTF-8 strings; raw
+// non-UTF-8 byte paths are Rust-only territory the differential can't reach.
 const patternWire = (s) => escapeBytes(ENC.encode(s));
-// PATH: each JS char's low byte is one raw path byte.
-function pathBytes(s) {
-  const a = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i) & 0xff;
-  return a;
-}
-const pathWire = (s) => escapeBytes(pathBytes(s));
+const pathWire = patternWire;
 
 // ── JS reference results ─────────────────────────────────────────────
 // Indexed by JS `DirMatch` value (Match=0, Pruned=1, Descend=2, DescendAndMatch=3).
@@ -212,13 +208,13 @@ function jsResult(c) {
   const opts = { dot: c.dot, caseInsensitive: c.ci };
   try {
     if (c.cmd === "m") {
-      return compileMatcher(c.pat, opts).match(pathBytes(c.path)) ? "match" : "no-match";
+      return compileMatcher(c.pat, opts).match(c.path) ? "match" : "no-match";
     }
     if (c.cmd === "d") {
-      return DIR_TOKEN[compileMatcher(c.pat, opts).matchDir(pathBytes(c.dir))];
+      return DIR_TOKEN[compileMatcher(c.pat, opts).matchDir(c.dir)];
     }
     // union
-    return compileMatcher(c.patterns, opts).match(pathBytes(c.path)) ? "match" : "no-match";
+    return compileMatcher(c.patterns, opts).match(c.path) ? "match" : "no-match";
   } catch (e) {
     return e instanceof GlobError ? "err:" + e.kind : "err:UNKNOWN(" + (e && e.message) + ")";
   }
