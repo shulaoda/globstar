@@ -1,21 +1,11 @@
-// Tier 0 — pure literal matcher. Routed to whenever the parsed pattern
-// has no metacharacters at all. A single byte-by-byte compare with
-// platform-separator normalization (GLOB_SPEC §12.3): each `/` in the
-// pattern consumes exactly one separator byte from the path.
-
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../options.js";
 import { DirMatch } from "../dir-match.js";
 import { toBytes, latin1 } from "../utf8.js";
 
 export class LiteralMatcher {
   constructor(literal, caseInsensitive) {
-    this.literal = literal; // Uint8Array
+    this.literal = literal;
     this.caseInsensitive = caseInsensitive;
-    // String fast path: valid only for all-ASCII literals (char code
-    // ⇔ byte is 1:1 and any non-ASCII input char mismatches an ASCII
-    // byte in both modes). On POSIX without case folding the
-    // separator-normalized compare degenerates to plain string
-    // equality — a single intrinsic.
     this.acceptsStrings = true;
     let ascii = true;
     for (let i = 0; i < literal.length; i++) {
@@ -31,82 +21,66 @@ export class LiteralMatcher {
   isMatch(path) {
     if (typeof path === "string") {
       if (this.exactStr !== null) return path === this.exactStr;
-      if (this.litStr === null) return pathEq(this.literal, toBytes(path), this.caseInsensitive);
-      return pathEqStr(this.litStr, path, this.caseInsensitive);
+      if (this.litStr === null) return this.pathEq(toBytes(path));
+      return this.pathEqStr(path);
     }
-    return pathEq(this.literal, path, this.caseInsensitive);
+    return this.pathEq(path);
   }
 
   matchDir(dirPath) {
     const dir = typeof dirPath === "string" ? toBytes(dirPath) : dirPath;
-    if (pathEq(this.literal, dir, this.caseInsensitive)) return DirMatch.Match;
-    if (literalUnder(this.literal, dir, this.caseInsensitive)) return DirMatch.Descend;
+    if (this.pathEq(dir)) return DirMatch.Match;
+    if (this.literalUnder(dir)) return DirMatch.Descend;
     return DirMatch.Pruned;
   }
 
-  // Tier-0 prefix: the literal itself, with any trailing separators
-  // stripped (walker re-adds them when descending).
   staticPrefixes() {
     const bytes = this.literal;
     let end = bytes.length;
     while (end > 0 && bytes[end - 1] === 0x2f) end--;
     return [bytes.slice(0, end)];
   }
-}
 
-// String-input twin of `pathEq` for all-ASCII literals (Windows or
-// case-insensitive — POSIX case-sensitive uses `exactStr` equality).
-function pathEqStr(lit, path, ci) {
-  const llen = lit.length;
-  if (path.length !== llen) return false;
-  for (let i = 0; i < llen; i++) {
-    const lb = lit.charCodeAt(i);
-    const pb = path.charCodeAt(i);
-    if (lb === 0x2f ? isPathSep(pb) : ci ? eqByteCi(lb, pb) : lb === pb) continue;
-    return false;
+  matchPrefix(other) {
+    const literal = this.literal;
+    const ci = this.caseInsensitive;
+    let n = 0;
+    const llen = literal.length,
+      olen = other.length;
+    while (n < llen && n < olen) {
+      const lb = literal[n];
+      const ob = other[n];
+      if (lb === 0x2f ? isPathSep(ob) : ci ? eqByteCi(lb, ob) : lb === ob) {
+        n++;
+      } else {
+        break;
+      }
+    }
+    return n;
   }
-  return true;
-}
 
-// Whole-path equality with separator normalization. Both args are
-// `Uint8Array` — the public boundary in `compileMatcher`'s `match` /
-// `matchDir` closures encodes any JS-string input via `pathBytes()`.
-function pathEq(literal, path, ci) {
-  let li = 0,
-    pi = 0;
-  const llen = literal.length,
-    plen = path.length;
-  while (li < llen && pi < plen) {
-    const lb = literal[li];
-    const pb = path[pi];
-    if (lb === 0x2f ? isPathSep(pb) : ci ? eqByteCi(lb, pb) : lb === pb) {
-      li++;
-      pi++;
-    } else {
+  pathEq(path) {
+    const n = this.matchPrefix(path);
+    return n === this.literal.length && n === path.length;
+  }
+
+  literalUnder(dirPath) {
+    if (dirPath.length === 0) return true;
+    const n = this.matchPrefix(dirPath);
+    return n === dirPath.length && n < this.literal.length && this.literal[n] === 0x2f;
+  }
+
+  pathEqStr(path) {
+    const lit = this.litStr;
+    const ci = this.caseInsensitive;
+    const llen = lit.length;
+    if (path.length !== llen) return false;
+    for (let i = 0; i < llen; i++) {
+      const lb = lit.charCodeAt(i);
+      const pb = path.charCodeAt(i);
+      if (lb === 0x2f ? isPathSep(pb) : ci ? eqByteCi(lb, pb) : lb === pb) continue;
       return false;
     }
+    return true;
   }
-  return li === llen && pi === plen;
-}
-
-// Whether `literal` lives strictly under `dirPath` — used by `matchDir`
-// to answer "should the walker descend into this directory?". Empty
-// `dirPath` (cwd) is "under" everything.
-function literalUnder(literal, dirPath, ci) {
-  if (dirPath.length === 0) return true;
-  let li = 0,
-    di = 0;
-  const llen = literal.length,
-    dlen = dirPath.length;
-  while (li < llen && di < dlen) {
-    const lb = literal[li];
-    const db = dirPath[di];
-    if (lb === 0x2f ? isPathSep(db) : ci ? eqByteCi(lb, db) : lb === db) {
-      li++;
-      di++;
-    } else {
-      return false;
-    }
-  }
-  return di === dlen && li < llen && literal[li] === 0x2f;
 }
