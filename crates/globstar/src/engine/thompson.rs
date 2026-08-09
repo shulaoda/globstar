@@ -214,7 +214,10 @@ impl Builder {
     }
 
     fn alloc_lit_byte(&mut self, b: u8) -> StateId {
-        let class = self.case_insensitive.then(|| CharClass::ci_letter(b)).flatten();
+        let class = self
+            .case_insensitive
+            .then(|| CharClass::ci_letter(b))
+            .flatten();
         match class {
             Some(class) => self.alloc(Trans::Class {
                 class: Box::new(class),

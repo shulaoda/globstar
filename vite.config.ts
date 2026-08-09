@@ -7,6 +7,8 @@ const ignorePatterns = [
   "crates/**",
   "tools/**",
   "fixtures/**",
+  "references/**",
+  "BENCHMARKS.md",
 ];
 
 export default defineConfig({
