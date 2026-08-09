@@ -29,16 +29,16 @@ impl LiteralMatcher {
     }
 
     fn path_eq(&self, path: &[u8]) -> bool {
-        let (lit_i, path_i) = self.match_prefix(path);
-        lit_i == self.literal.len() && path_i == path.len()
+        let n = self.match_prefix(path);
+        n == self.literal.len() && n == path.len()
     }
 
     fn literal_under(&self, dir_path: &[u8]) -> bool {
         if dir_path.is_empty() {
             return true;
         }
-        let (lit_i, dir_i) = self.match_prefix(dir_path);
-        dir_i == dir_path.len() && lit_i < self.literal.len() && self.literal[lit_i] == b'/'
+        let n = self.match_prefix(dir_path);
+        n == dir_path.len() && n < self.literal.len() && self.literal[n] == b'/'
     }
 
     #[inline(always)]
@@ -50,20 +50,18 @@ impl LiteralMatcher {
         }
     }
 
-    fn match_prefix(&self, other: &[u8]) -> (usize, usize) {
+    fn match_prefix(&self, other: &[u8]) -> usize {
         let literal = &self.literal;
-        let mut lit_i = 0usize;
-        let mut oth_i = 0usize;
-        while lit_i < literal.len() && oth_i < other.len() {
-            let lb = literal[lit_i];
-            let ob = other[oth_i];
+        let mut n = 0usize;
+        while n < literal.len() && n < other.len() {
+            let lb = literal[n];
+            let ob = other[n];
             if (lb == b'/' && std::path::is_separator(ob as char)) || self.eq_byte(lb, ob) {
-                lit_i += 1;
-                oth_i += 1;
+                n += 1;
             } else {
                 break;
             }
         }
-        (lit_i, oth_i)
+        n
     }
 }
