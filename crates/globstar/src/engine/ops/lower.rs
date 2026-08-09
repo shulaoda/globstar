@@ -18,10 +18,6 @@ pub fn lower(node: &Node, case_insensitive: bool) -> OpProgram {
             &mut needs_distribution,
         );
     }
-    finish(ops, case_insensitive)
-}
-
-fn finish(mut ops: Vec<Op>, case_insensitive: bool) -> OpProgram {
     fold_globstars_inplace(&mut ops);
     apply_leading_seps_at_start(&mut ops);
     OpProgram::from_normalized(ops, case_insensitive)
@@ -93,21 +89,6 @@ fn push_op(out: &mut Vec<Op>, op: Op) {
     }
 }
 
-fn apply_leading_seps_at_start(ops: &mut Vec<Op>) {
-    match ops.first_mut() {
-        Some(Op::OptSegmentsSlash) => ops.insert(0, Op::LeadingSeps),
-        Some(Op::Alternation(branches)) => {
-            for branch in branches {
-                apply_leading_seps_at_start(branch);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Whether some brace branch starts with a globstar (`{**,…}`) — used by
-/// the lowering walk to spot a brace edge that needs a preceding `/`
-/// distributed into it, and by [`distribute_seps`] to do it.
 fn leads_globstar(node: &Node) -> bool {
     match node {
         Node::Globstar => true,
@@ -117,14 +98,24 @@ fn leads_globstar(node: &Node) -> bool {
     }
 }
 
-/// Whether some brace branch ends with a globstar (`{…,**}`) — the
-/// trailing-`/` counterpart of [`leads_globstar`].
 fn trails_globstar(node: &Node) -> bool {
     match node {
         Node::Globstar => true,
         Node::Concat(children) => children.last().is_some_and(trails_globstar),
         Node::Brace(branches) => branches.iter().any(trails_globstar),
         _ => false,
+    }
+}
+
+fn apply_leading_seps_at_start(ops: &mut Vec<Op>) {
+    match ops.first_mut() {
+        Some(Op::OptSegmentsSlash) => ops.insert(0, Op::LeadingSeps),
+        Some(Op::Alternation(branches)) => {
+            for branch in branches {
+                apply_leading_seps_at_start(branch);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -138,11 +129,6 @@ fn distribute_seps(node: Node) -> Node {
                     out.push(distribute_seps(child));
                     continue;
                 };
-                // A `/` that is the trailing slash of a preceding `**`
-                // (`**/{...}`) belongs to the globstar's `**/` unit
-                // (OptSegmentsSlash — "any depth incl. zero"). Stealing
-                // it degrades the leading `**` to `.*` and breaks `**/X`
-                // matching X at depth 0 (§8.5), so leave it in place.
                 let prev_is_sep = matches!(out.last(), Some(Node::Separator));
                 let prev_sep_owned_by_globstar =
                     prev_is_sep && matches!(out.iter().rev().nth(1), Some(Node::Globstar));
@@ -184,7 +170,6 @@ fn distribute_seps(node: Node) -> Node {
     }
 }
 
-/// Fold raw globstar/separator adjacency into the four semantic op forms.
 fn fold_globstars_inplace(ops: &mut Vec<Op>) {
     let mut write = 0usize;
     let mut read = 0usize;
