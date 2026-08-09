@@ -1,7 +1,3 @@
-// Stable facade for the shared compiler IR. Implementation details live in
-// `ops/` so IR shape, normalization, lowering, and prefix analysis can evolve
-// independently without churning matcher imports.
-
 export {
   OP_LIT,
   OP_ANYCHAR,

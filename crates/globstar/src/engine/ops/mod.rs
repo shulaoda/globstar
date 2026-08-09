@@ -1,8 +1,3 @@
-//! Shared compiler IR facade.
-//!
-//! The implementation is split by responsibility while this module keeps the
-//! historical `engine::ops::*` import surface stable for matcher backends.
-
 mod ir;
 mod lower;
 mod prefixes;
