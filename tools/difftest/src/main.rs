@@ -154,6 +154,7 @@ fn err_token(e: &GlobError) -> String {
         UnterminatedClass { .. } => "UnterminatedClass",
         UnterminatedBrace { .. } => "UnterminatedBrace",
         TrailingBackslash => "TrailingBackslash",
+        EscapedSeparator { .. } => "EscapedSeparator",
         BraceNestingTooDeep { .. } => "BraceNestingTooDeep",
         InvalidRange { .. } => "InvalidRange",
         EmptyPatternSet => "EmptyPatternSet",

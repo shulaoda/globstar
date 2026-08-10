@@ -24,6 +24,8 @@ function formatMessage(kind, info) {
       return `unterminated brace expansion at byte ${info.at}`;
     case "TrailingBackslash":
       return "pattern ends with lone backslash";
+    case "EscapedSeparator":
+      return `escaped separator \`\\/\` at byte ${info.at}`;
     case "BraceNestingTooDeep":
       return `brace nesting exceeds limit ${info.max}`;
     case "InvalidRange":

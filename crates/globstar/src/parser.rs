@@ -168,6 +168,11 @@ impl<'a> Parser<'a> {
                     if self.pos >= self.input.len() {
                         return Err(GlobError::TrailingBackslash);
                     }
+                    // Except `\/`: a `/` can never appear inside a file name,
+                    // so an escaped separator has no possible match.
+                    if self.input[self.pos] == b'/' {
+                        return Err(GlobError::EscapedSeparator { at: self.pos - 1 });
+                    }
                     lit_buf.push(self.input[self.pos]);
                     self.pos += 1;
                 }

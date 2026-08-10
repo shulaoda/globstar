@@ -94,6 +94,7 @@ The byte `\` is ALWAYS the escape character inside a pattern. The byte that foll
 
 - meta-character (`* ? [ ] { } ! ( ) \ |`) → produces that literal byte;
 - any other byte → produces that literal byte (lenient policy: `\a` ≡ `a`);
+- `/` → **parse error** (`EscapedSeparator`): a `/` can never appear inside a file name on any platform, so an escaped separator has no possible match;
 - end of pattern → **parse error** (`TrailingBackslash`).
 
 ---
@@ -518,6 +519,7 @@ Detailed in §13. The headline: a pattern containing `**` returns `Descend` for 
 
 - `X` is a meta-character → produces `X` as a literal byte;
 - `X` is an ordinary byte → produces `X` as a literal byte (lenient);
+- `X` is `/` → parse error (`EscapedSeparator`) — no file name can contain a `/`;
 - `\` at end-of-pattern → parse error (`TrailingBackslash`).
 
 Examples:
@@ -525,6 +527,7 @@ Examples:
 - `\*` → literal `*`;
 - `\\` → literal `\`;
 - `\a` → literal `a` (≡ `a`);
+- `a\/b` → `EscapedSeparator`;
 - `foo\` → `TrailingBackslash`.
 
 **Meta-character categories** (each decides the bare-form behavior):
@@ -623,6 +626,7 @@ The parser MUST return an error for the following inputs:
 | `UnterminatedClass`   | `[abc`                     | opener requires its closer               |
 | `UnterminatedBrace`   | `{a,b`                     | opener requires its closer               |
 | `TrailingBackslash`   | `foo\`                     | typo                                     |
+| `EscapedSeparator`    | `a\/b`                     | `/` can never appear inside a file name  |
 | `BraceNestingTooDeep` | `{{{{...}}}}` (>32 levels) | DoS guard                                |
 | `InvalidRange`        | `[z-a]`                    | upper < lower                            |
 | `EmptyPatternSet`     | `globstar([])`             | the multi-pattern factory needs ≥1 input |

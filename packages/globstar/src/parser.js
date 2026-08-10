@@ -130,6 +130,11 @@ function parseSequence(state, ctx) {
         // `\X` → literal X (lenient escape, GLOB_SPEC §9.1).
         state.pos++;
         if (state.pos >= input.length) throw new GlobError("TrailingBackslash");
+        // Except `\/`: a `/` can never appear inside a file name, so an
+        // escaped separator has no possible match.
+        if (input[state.pos] === SLASH) {
+          throw new GlobError("EscapedSeparator", { at: state.pos - 1 });
+        }
         litBuf.push(input[state.pos]);
         state.pos++;
         break;

@@ -202,9 +202,9 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 if g_open {
                     return None; // `.*` glued to segment content
                 }
-                // An escaped separator (`a\/b*`) puts a real separator byte
-                // inside a Lit. Segments are separator-free by construction,
-                // so such a literal is not segment-expressible. Fall back.
+                // On Windows a `\\` escape puts a separator byte inside a
+                // Lit. Segments are separator-free by construction, so such
+                // a literal is not segment-expressible. Fall back.
                 if lit_contains_sep(op) {
                     return None;
                 }
@@ -299,8 +299,8 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
 }
 
 /// Does this in-segment op (or any nested alternation branch) hold a
-/// literal byte from the `Seps` set? Only escapes can produce one
-/// (`\/` always; `\\` on Windows).
+/// literal byte from the `Seps` set? Only a Windows `\\` escape can
+/// produce one (`\/` is a parse error).
 fn lit_contains_sep(op: &Op) -> bool {
     match op {
         Op::Lit(bytes) => bytes.iter().any(|&b| is_sep(b)),

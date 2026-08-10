@@ -32,7 +32,10 @@ fn non_literal_patterns_use_segment_engine() {
 
 #[test]
 fn segment_inexpressible_shape_uses_pikevm_fallback() {
-    assert_eq!(Glob::new("a\\/b*").unwrap().engine_name(), "PikeVm");
+    // 65 top-level branches exceed the segment engine's MAX_FORKS cap.
+    let branches: Vec<String> = (0..65).map(|i| format!("a{i}")).collect();
+    let pattern = format!("{{{}}}", branches.join(","));
+    assert_eq!(Glob::new(&pattern).unwrap().engine_name(), "PikeVm");
 }
 
 #[test]

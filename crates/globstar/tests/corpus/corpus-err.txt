@@ -75,3 +75,11 @@ foo{a,b	UnterminatedBrace
 # Sanity checks — these should NOT error
 # (test harness inverts the expectation for lines in this group)
 # (not included here to keep format uniform)
+
+## escaped.separator
+# `\/` is rejected: a `/` can never appear inside a file name on any
+# platform, so an escaped separator has no possible match (spec §2.4).
+\/	EscapedSeparator
+a\/b	EscapedSeparator
+{a\/b,c}	EscapedSeparator
+**/a\/b	EscapedSeparator

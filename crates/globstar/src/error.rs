@@ -27,6 +27,10 @@ pub enum GlobError {
     /// Pattern ends with a lone backslash.
     TrailingBackslash,
 
+    /// Escaped path separator (`\/`). A `/` can never appear inside a file
+    /// name on any platform, so the escape has no possible match.
+    EscapedSeparator { at: usize },
+
     /// Brace nesting exceeds [`MAX_BRACE_NESTING`].
     BraceNestingTooDeep { max: usize },
 
@@ -52,6 +56,9 @@ impl fmt::Display for GlobError {
                 write!(f, "unterminated brace expansion at byte {at}")
             }
             Self::TrailingBackslash => write!(f, "pattern ends with lone backslash"),
+            Self::EscapedSeparator { at } => {
+                write!(f, "escaped separator `\\/` at byte {at}")
+            }
             Self::BraceNestingTooDeep { max } => write!(f, "brace nesting exceeds limit {max}"),
             Self::InvalidRange { at, low, high } => write!(
                 f,
