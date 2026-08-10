@@ -287,7 +287,10 @@ function parseBraceInto(state, nodes, prevBoundary, nextBoundary) {
     nodes.push(lit(Uint8Array.from([LBRACE])));
     const single = branches[0];
     const litBytes = nodeToLiteralBytes(single);
-    if (litBytes !== null) {
+    // A separator is always structural (it can be neither escaped nor
+    // literal), so a branch holding one is spliced instead of flattened,
+    // keeping its Sep nodes. `x{a/b}y` then equals `x\{a/b\}y`.
+    if (litBytes !== null && !litBytes.includes(SLASH)) {
       nodes.push(lit(litBytes));
     } else {
       nodes.push(single);

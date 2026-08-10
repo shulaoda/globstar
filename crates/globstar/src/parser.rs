@@ -219,12 +219,19 @@ impl<'a> Parser<'a> {
                     match <[Node; 1]>::try_from(self.parse_brace(prev_boundary, next_boundary)?) {
                         Ok([single]) => {
                             nodes.push(Node::Literal(b"{".to_vec()));
-                            if let Some(bytes) = single.to_literal_bytes() {
-                                nodes.push(Node::Literal(bytes));
-                            } else {
-                                // Single non-literal branch — keep the surrounding `{}`
-                                // as literals (matches picomatch / fast-glob).
-                                nodes.push(single);
+                            match single.to_literal_bytes() {
+                                // A separator is always structural (it can
+                                // be neither escaped nor literal), so a
+                                // branch holding one is spliced instead of
+                                // flattened, keeping its `Sep` nodes.
+                                // `x{a/b}y` then equals `x\{a/b\}y`.
+                                Some(bytes) if !bytes.contains(&b'/') => {
+                                    nodes.push(Node::Literal(bytes));
+                                }
+                                // Non-literal or separator-holding branch —
+                                // keep the surrounding `{}` as literals and
+                                // splice (matches picomatch / fast-glob).
+                                _ => nodes.push(single),
                             }
                             nodes.push(Node::Literal(b"}".to_vec()));
                         }

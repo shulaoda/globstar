@@ -302,9 +302,9 @@ A*/b	a	pruned
 **/a/**	.b	pruned
 **/a/**	.b	descend	dot=true
 
-## literal.slash.in.byte.state
-# A brace holding `/` stays literal, so the `/` lands in a Byte state and
-# the match_dir probe must fire on it (pinned JS divergence, 2026-08).
+## single.branch.brace.with.sep
+# A `/` inside a single-branch brace stays a structural separator (§7.4),
+# so `x{a/b}y*` means the two-segment pattern `x{a` / `b}y*`.
 x{a/b}y*	x{a	descend
 x{a/b}y*	x{a/b}y	match
 x{a/b}y*	x{a/b}yz	match

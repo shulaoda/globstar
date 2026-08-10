@@ -351,6 +351,8 @@ Note the asymmetry with character classes: a single-member `[a]` IS still a clas
 
 **Interaction with `**` (§8.1).** Because the braces become literal, a `**` inside a single-branch brace is flanked by the literal `{` / `}` — not segment boundaries — so it degrades to `*`: `{**}` ≡ `{*}` (matches `{a}`, not `{a/b}`); `{a/**}` ≡ `{a/*}`. This is consistent with the "`**` must own a segment" rule and matches minimatch; it is a **deliberate divergence from picomatch / fast-glob**, which keep the globstar inside literal braces (see §16).
 
+**Interaction with `/` (§2.4).** A separator is always structural — it can be neither escaped (§2.4) nor turned into literal content. Collapsing a single-branch brace therefore literalizes only the `{` / `}` and the branch's non-separator bytes; any `/` inside stays a real segment boundary. `x{a/b}y` is exactly equivalent to `x\{a/b\}y`: the two-segment pattern `x{a` / `b}y`.
+
 ### 7.5 Unclosed braces
 
 `{a,b` → **parse error** (`UnterminatedBrace`).
