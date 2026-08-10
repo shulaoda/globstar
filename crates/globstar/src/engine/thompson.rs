@@ -150,10 +150,14 @@ impl Thompson {
             rec[1..].copy_from_slice(&closures[base..base + n_words]);
         }
 
+        // Fold guard chains until stable. Chains point forward (a guard's
+        // expansion only ever holds later guards), so the reverse pass folds
+        // each chain in one go and the loop converges in ~2 passes. Order
+        // affects speed only, the fixpoint is unique.
         let mut changed = true;
         while changed {
             changed = false;
-            for i in 0..guards.len() {
+            for i in (0..guards.len()).rev() {
                 for (j, &gj) in guards.iter().enumerate() {
                     if i == j || recs[i * stride + 1 + (gj >> 6)] & (1u64 << (gj & 63)) == 0 {
                         continue;

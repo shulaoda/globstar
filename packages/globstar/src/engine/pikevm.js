@@ -39,10 +39,13 @@ import { GlobError } from "../error.js";
 function reachFromClosures(closures, infoOff, acceptOff, nWords) {
   const n = closures.length - infoOff;
   const reach = new Uint8Array(n);
+  // Reverse order follows the backward flow (Thompson allocates successors
+  // after their predecessors), so this converges in ~2 passes. Order affects
+  // speed only, the fixpoint is unique.
   let changed = true;
   while (changed) {
     changed = false;
-    for (let s = 0; s < n; s++) {
+    for (let s = n - 1; s >= 0; s--) {
       if (reach[s]) continue;
       const word2 = closures[infoOff + s];
       const tag = word2 & 0xf;
@@ -221,12 +224,14 @@ export class PikeVm {
         const base = nexts[g] * nWords;
         for (let w = 0; w < nWords; w++) guardExps[i * stride + 1 + w] = combined[base + w];
       }
-      // Fold guard chains (a guard whose expansion holds another guard)
-      // until stable.
+      // Fold guard chains until stable. Chains point forward (a guard's
+      // expansion only ever holds later guards), so the reverse pass folds
+      // each chain in one go and the loop converges in ~2 passes. Order
+      // affects speed only, the fixpoint is unique.
       let changed = true;
       while (changed) {
         changed = false;
-        for (let i = 0; i < guardIds.length; i++) {
+        for (let i = guardIds.length - 1; i >= 0; i--) {
           for (let j = 0; j < guardIds.length; j++) {
             const gj = guardIds[j];
             if (i === j || (guardExps[i * stride + 1 + (gj >>> 5)] & (1 << (gj & 31))) === 0) {
@@ -350,7 +355,15 @@ export class PikeVm {
         word &= word - 1;
         const word2 = closures[infoOff + s];
         const tag = word2 & 0xf;
-        if (tag === T_SEP || tag === T_ANY_BYTE) {
+        // Mirror the Rust byte_step for `/`: Sep and AnyByte always fire,
+        // a Byte state holding a literal `/` (from single-branch brace
+        // flattening, e.g. `x{a/b}y*`) fires too. Classes never match a
+        // separator, either polarity.
+        if (
+          tag === T_SEP ||
+          tag === T_ANY_BYTE ||
+          (tag === T_BYTE && ((word2 >>> 8) & 0xff) === 0x2f)
+        ) {
           const base = (word2 >>> 16) * nWords;
           for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
         }

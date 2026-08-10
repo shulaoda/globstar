@@ -1,88 +1,40 @@
-//! Pike VM interpreter over a compiled [`super::thompson::Thompson`] NFA.
-//!
-//! Linear-time O(n·m) matcher, the fallback when the segment engine can't
-//! represent a pattern. Also kept as a standalone reference engine.
-//!
-//! # Algorithm
-//!
-//! Active states are a `u64` bitmap (`n_words = ceil(n / 64)`). For each byte
-//! it walks the set bits with `trailing_zeros`, applies each leaf state's byte
-//! test, and ORs the successor's pre-computed ε-closure into a `next` bitmap.
-//! Static ε-closures (over Split and Jump, since DotGuard is byte-conditional)
-//! are baked at build time, so per-step ε expansion is bitmap ORs instead of a
-//! recursive walk.
-//!
-//! # Dot guards
-//!
-//! `dot=false` compiles emit byte-conditional [`Trans::DotGuard`] ε-states
-//! that static closures cannot absorb (whether a guard passes depends on the
-//! upcoming byte). Each guard's transitive pass-expansion is precomputed at
-//! build time; when the guard condition holds, the run loop ORs the tables of
-//! the active guards in one pass before the sweep. A failing guard's thread
-//! simply dies, since `byte_step` ignores guard states.
-//!
-//! # Scratch on the stack
-//!
-//! Scratch is one contiguous `[u64; STACK_WORDS * N]` array on the call stack,
-//! with no heap and no `Sync` concerns. An NFA larger than `STACK_WORDS * 64`
-//! states falls back to a per-call `Vec<u64>`.
-
 use crate::dir_match::DirMatch;
 use crate::engine::facts::LiteralFacts;
 use crate::engine::ops::{OpProgram, compute_static_prefixes};
 use crate::engine::thompson::{StateId, Thompson, Trans};
 
-/// Stack-allocated bitmap word budget: `4` words cover NFAs up to 256
-/// states; larger ones heap-allocate.
+/// Bitmap words on the call stack. `4` words cover NFAs up to 256 states,
+/// larger ones heap-allocate per call.
 const STACK_WORDS: usize = 4;
 
-/// Scratch slots for `is_match` (current, next).
+/// Scratch slots (current, next). After `run` the final set sits in slot 0,
+/// so `match_dir` reuses the dead slot 1 for its `/` probe.
 const RUN_SLOTS: usize = 2;
-/// Scratch slots for `match_dir`, `RUN_SLOTS` plus `after_sep` for the
-/// prefix-descent probe.
-const DIR_SLOTS: usize = 3;
 
-/// Pike VM matcher, compiled once per pattern and `Send + Sync` (no interior
-/// mutability, scratch is per-call on the stack).
-///
-/// Stores only what the byte-step needs. The full [`Thompson`] is consulted
-/// during construction and then dropped.
 #[derive(Debug, Clone)]
 pub struct PikeVm {
-    /// Trans table.
     states: Box<[Trans]>,
     facts: LiteralFacts,
     prefixes: Box<[Box<[u8]>]>,
-    /// Bitmap of states from which at least one edge reaches
-    /// [`Trans::Match`] (bit `s` set iff state `s` qualifies). Drives the
-    /// prefix-mode descent test in [`PikeVm::match_dir_inner`].
-    reach_to_accept: Box<[u64]>,
+    /// States that accept as-is or can reach [`Trans::Match`] with more
+    /// bytes. Drives the descent half of `match_dir`.
+    descend_bits: Box<[u64]>,
     /// `ceil(states.len() / 64)`. Length of every bitmap below.
     n_words: usize,
-    /// Per-NFA-state ε-closure (Split/Jump only) packed as `n × n_words`
-    /// `u64` bitmaps. `static_closures[s * n_words .. (s+1) * n_words]`
-    /// is the bitmap of leaves reachable from `s`.
+    /// Per-state ε-closure (Split/Jump only), `n × n_words` bitmaps.
     static_closures: Box<[u64]>,
-    /// Offset of the initial state's closure row in `static_closures`,
-    /// copied into `current` at the start of each match.
+    /// Offset of the initial state's closure row in `static_closures`.
     init_off: usize,
-    /// States that accept at end of input: the Match state, plus every
-    /// guard whose transitive expansion reaches it (a guard passes
-    /// unconditionally at EOF — there is no next byte to trip it).
+    /// States that accept at end of input. The Match state, plus every guard
+    /// whose expansion reaches it (a guard passes unconditionally at EOF).
     accept_bits: Box<[u64]>,
-    /// Packed DotGuard pass-expansions, one `1 + n_words` record per guard
-    /// (state id, then the transitive bitmap it releases when it passes).
-    /// Empty for `dot=true` compiles. See [`Thompson::guard_expansions`].
+    /// Packed DotGuard expansions, see [`Thompson::guard_expansions`].
     guard_exps: Box<[u64]>,
-    /// `!dot`: whether wildcards refuse a segment-start `.` (GLOB_SPEC §6).
-    /// Folded into the per-byte `dot_mask`, like the segment engine's
-    /// top-level `dot` field.
+    /// `!dot`: wildcards refuse a segment-start `.` (GLOB_SPEC §6).
     dot_protect: bool,
 }
 
 impl PikeVm {
-    /// Compile the program into a Pike VM. Folds the Thompson fields the
-    /// runtime needs into bitmaps, then drops the rest.
     pub fn new(program: OpProgram, dot: bool) -> Self {
         let thompson = Thompson::compile(&program, dot);
         let prefixes = compute_static_prefixes(&program.ops);
@@ -94,9 +46,6 @@ impl PikeVm {
         let guard_exps = thompson.guard_expansions(&static_closures, n_words);
         let init_off = (thompson.initial as usize) * n_words;
 
-        // accept_bits: the Match state, plus every guard whose transitive
-        // expansion reaches it. Everything else an active set can hold is a
-        // byte consumer, which cannot accept without more input.
         let accept = thompson.accept as usize;
         let mut accept_bits = vec![0u64; n_words].into_boxed_slice();
         accept_bits[accept >> 6] |= 1u64 << (accept & 63);
@@ -107,18 +56,17 @@ impl PikeVm {
             }
         }
 
-        // reach_to_accept: leaf `s` reaches Match through at least one edge
-        // iff closure(next(s)) hits `accept_bits` or an already-reaching
-        // leaf. Fixpoint over the closure rows, mirroring the JS twin.
-        // `reach[Match]` stays false on purpose: a lone active Match has no
-        // descendants that could extend it, and setting it would make
-        // `match_dir` wrongly report `DescendAndMatch`.
-        let mut reach_to_accept = vec![0u64; n_words].into_boxed_slice();
+        // Fixpoint seeded with `accept_bits`. Leaf `s` joins iff
+        // closure(next(s)) hits the set. Reverse order follows the backward
+        // flow (Thompson allocates successors after their predecessors), so
+        // this converges in ~2 passes. Order affects speed only, the least
+        // fixpoint is unique.
+        let mut descend_bits = accept_bits.clone();
         let mut changed = true;
         while changed {
             changed = false;
-            for (s, t) in thompson.states.iter().enumerate() {
-                if reach_to_accept[s >> 6] & (1u64 << (s & 63)) != 0 {
+            for (s, t) in thompson.states.iter().enumerate().rev() {
+                if descend_bits[s >> 6] & (1u64 << (s & 63)) != 0 {
                     continue;
                 }
                 let next = match t {
@@ -131,25 +79,22 @@ impl PikeVm {
                     Trans::Match | Trans::Split { .. } | Trans::Jump { .. } => continue,
                 };
                 let base = next * n_words;
-                let hit = (0..n_words).any(|w| {
-                    static_closures[base + w] & (accept_bits[w] | reach_to_accept[w]) != 0
-                });
+                let hit =
+                    (0..n_words).any(|w| static_closures[base + w] & descend_bits[w] != 0);
                 if hit {
-                    reach_to_accept[s >> 6] |= 1u64 << (s & 63);
+                    descend_bits[s >> 6] |= 1u64 << (s & 63);
                     changed = true;
                 }
             }
         }
 
-        // Keep only `states`. `initial` and `accept` now live in `init_off`
-        // and `accept_bits`.
         let Thompson { states, .. } = thompson;
 
         Self {
             states: states.into_boxed_slice(),
             facts,
             prefixes,
-            reach_to_accept,
+            descend_bits,
             n_words,
             static_closures,
             init_off,
@@ -159,12 +104,11 @@ impl PikeVm {
         }
     }
 
-    /// Cached static path prefixes for walker integration.
+    /// Static path prefixes for walker integration.
     pub fn static_prefixes(&self) -> &[Box<[u8]>] {
         &self.prefixes
     }
 
-    /// Full-match query: the whole `path` must match the pattern.
     pub fn is_match(&self, path: &[u8]) -> bool {
         if !self.facts.accept(path) {
             return false;
@@ -178,25 +122,21 @@ impl PikeVm {
         }
     }
 
-    /// Walker-style directory query: does `dir_path` match exactly,
-    /// descend into a possible match, or both?
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        // Empty dir path is the cwd and every match lives under it, so
-        // descent is always on. The probe below would instead simulate a
-        // leading `/`, which cwd children don't have.
+        // The empty dir is the cwd and every match lives under it, so descent
+        // is always on. The probe below would instead simulate a leading `/`,
+        // which cwd children don't have.
         if dir_path.is_empty() {
             return DirMatch::from_exact_prefix(self.is_match(&[]), true);
         }
         let nw = self.n_words;
         if nw <= STACK_WORDS {
-            let mut buf = [0u64; STACK_WORDS * DIR_SLOTS];
-            self.match_dir_inner(dir_path, &mut buf[..nw * DIR_SLOTS])
+            let mut buf = [0u64; STACK_WORDS * RUN_SLOTS];
+            self.match_dir_inner(dir_path, &mut buf[..nw * RUN_SLOTS])
         } else {
-            self.match_dir_inner(dir_path, &mut vec![0u64; nw * DIR_SLOTS])
+            self.match_dir_inner(dir_path, &mut vec![0u64; nw * RUN_SLOTS])
         }
     }
-
-    // ── Inner implementations (shared between stack and heap paths) ──
 
     fn is_match_inner(&self, path: &[u8], buf: &mut [u64]) -> bool {
         let nw = self.n_words;
@@ -208,53 +148,45 @@ impl PikeVm {
     fn match_dir_inner(&self, dir_path: &[u8], buf: &mut [u64]) -> DirMatch {
         let nw = self.n_words;
         buf[..nw].copy_from_slice(&self.static_closures[self.init_off..self.init_off + nw]);
-        // Split off the trailing `after_sep` slot before running so the
-        // run loop sees only `[current, next]`.
-        let (active, after_sep) = buf.split_at_mut(nw * RUN_SLOTS);
-        self.run(dir_path, active, nw);
-        let exact = bitmap_intersects(&active[..nw], &self.accept_bits);
+        self.run(dir_path, buf, nw);
+        // `run` left the final active set in slot 0, slot 1 is dead and
+        // becomes the probe's `after_sep`.
+        let (active, after_sep) = buf.split_at_mut(nw);
+        let exact = bitmap_intersects(active, &self.accept_bits);
 
-        // Probe a hypothetical descendant `/` step, then a reach-to-accept
-        // check. That `/` follows a non-separator byte (the dir's last byte),
-        // so `at_seg_start` is false.
-        let after_sep = &mut after_sep[..nw];
+        // Expand guards first. A `/` is never a segment-start dot, so every
+        // guard passes here, and a consumer hiding behind one (the trailing
+        // `/` of `*/` under dot=false) would otherwise be invisible and the
+        // subtree wrongly pruned.
+        self.expand_guards(active);
+
+        // Probe one hypothetical descendant `/` step. It follows the dir's
+        // last byte, which is not a separator, so `at_seg_start` is false.
         after_sep.fill(0);
         let states = &self.states;
         let closures = &self.static_closures;
-
-        // ε-expand guards before the hypothetical `/`. A separator is never a
-        // segment-start dot, so every guard passes here. Static closures stop
-        // at a guard, so a Sep or AnyByte consumer behind one (the trailing
-        // `/` of `*/` under dot=false) would otherwise be invisible and the
-        // subtree wrongly pruned.
-        self.expand_guards(&mut active[..nw]);
-
-        for s in iter_set_states(&active[..nw]) {
-            if let Some(n) = byte_step(&states[s], b'/', true, false) {
-                let base = (n as usize) * nw;
-                for j in 0..nw {
-                    after_sep[j] |= closures[base + j];
+        for (w_idx, &active_word) in active.iter().enumerate() {
+            let mut word = active_word;
+            while word != 0 {
+                let s = w_idx * 64 + word.trailing_zeros() as usize;
+                word &= word - 1;
+                if let Some(n) = byte_step(&states[s], b'/', true, false) {
+                    let base = (n as usize) * nw;
+                    for j in 0..nw {
+                        after_sep[j] |= closures[base + j];
+                    }
                 }
             }
         }
-        // Prefix-mode descent qualifier. A state in `after_sep` either
-        // accepts as-is or can reach Match with more bytes.
-        let prefix = bitmap_intersects(after_sep, &self.reach_to_accept)
-            || bitmap_intersects(after_sep, &self.accept_bits);
+        // Descend iff some surviving state accepts as-is or can still reach
+        // Match with more bytes.
+        let prefix = bitmap_intersects(after_sep, &self.descend_bits);
 
         DirMatch::from_exact_prefix(exact, prefix)
     }
 
-    // ── Per-byte run loop ───────────────────────────────────────────
-
-    /// One sweep per byte. When the guard condition holds, active guards
-    /// expand through their precomputed tables before the sweep; a failing
-    /// guard's thread dies since `byte_step` ignores guard states. `current`
-    /// and `next` flip by swapping offsets, and the final active set is
-    /// copied back to slot 0.
-    ///
-    /// Monomorphized on guard presence, so the guard-free (`dot=true`) loop
-    /// carries no per-byte check at all.
+    /// One bitmap sweep per byte. Monomorphized on guard presence so the
+    /// guard-free (`dot=true`) loop carries no per-byte check at all.
     fn run(&self, path: &[u8], buf: &mut [u64], nw: usize) {
         if self.guard_exps.is_empty() {
             self.run_inner::<false>(path, buf, nw)
@@ -264,7 +196,6 @@ impl PikeVm {
     }
 
     fn run_inner<const GUARDS: bool>(&self, path: &[u8], buf: &mut [u64], nw: usize) {
-        // Hoist field reads out of the hot loop.
         let states = &self.states;
         let closures = &self.static_closures;
         let protect = self.dot_protect;
@@ -308,9 +239,8 @@ impl PikeVm {
         }
     }
 
-    /// OR each active guard's precomputed pass-expansion into `cur`. The
-    /// records are transitive, so one pass covers guard chains. No-op when
-    /// the NFA has no guard.
+    /// OR each active guard's pass-expansion into `cur`. The records are
+    /// transitive, so one pass covers guard chains.
     #[inline]
     fn expand_guards(&self, cur: &mut [u64]) {
         let nw = self.n_words;
@@ -325,44 +255,19 @@ impl PikeVm {
     }
 }
 
-// ── Bitmap helpers ──────────────────────────────────────────────────
-
 /// `(a & b) ≠ 0` over two equal-length bitmaps.
 #[inline]
 fn bitmap_intersects(a: &[u64], b: &[u64]) -> bool {
     a.iter().zip(b.iter()).any(|(x, y)| (x & y) != 0)
 }
 
-/// Iterate the set bits of `bits` as flat NFA-state indices. Each step clears
-/// the lowest set bit (`word &= word - 1`), so the work scales with the
-/// popcount, not 64.
-fn iter_set_states(bits: &[u64]) -> impl Iterator<Item = usize> + '_ {
-    bits.iter().enumerate().flat_map(|(w_idx, &word)| {
-        let base = w_idx * 64;
-        std::iter::from_fn({
-            let mut word = word;
-            move || {
-                if word == 0 {
-                    return None;
-                }
-                let bit = word.trailing_zeros() as usize;
-                word &= word - 1;
-                Some(base + bit)
-            }
-        })
-    })
-}
-
-/// Apply one leaf state's byte test against `c`. Returns the successor state
-/// if the transition fires, else `None`. The caller expands the ε-closure.
+/// One leaf state's byte test. Returns the successor if the transition
+/// fires, the caller expands its ε-closure.
 ///
-/// `DotGuard` returns `None` because it consumes nothing: a passing guard is
-/// expanded through its precomputed table before the sweep, and a failing one
-/// dies right here. Match, Split, and Jump never appear in the active set
-/// after ε-closure, and Match consumes no byte.
-/// `dot_mask` is true only for a segment-start `.` under dot protection;
-/// which states it rejects derives from the state kind alone (wildcards and
-/// negated classes refuse it, literals and positive classes match it).
+/// `dot_mask` is true only for a segment-start `.` under dot protection.
+/// Wildcards and negated classes refuse it, literals and positive classes
+/// match it. A passing `DotGuard` is expanded before the sweep, so `None`
+/// here kills only failing guards.
 #[inline]
 fn byte_step(t: &Trans, c: u8, sep: bool, dot_mask: bool) -> Option<StateId> {
     match t {

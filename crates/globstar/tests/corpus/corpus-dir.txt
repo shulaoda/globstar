@@ -301,3 +301,12 @@ A*/b	a	pruned
 **/a/**	a/b	descend-match
 **/a/**	.b	pruned
 **/a/**	.b	descend	dot=true
+
+## literal.slash.in.byte.state
+# A brace holding `/` stays literal, so the `/` lands in a Byte state and
+# the match_dir probe must fire on it (pinned JS divergence, 2026-08).
+x{a/b}y*	x{a	descend
+x{a/b}y*	x{a/b}y	match
+x{a/b}y*	x{a/b}yz	match
+x{a/b}y*	x	pruned
+x{a/b}y*	xa	pruned
