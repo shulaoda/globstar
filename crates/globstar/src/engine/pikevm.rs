@@ -113,13 +113,7 @@ impl PikeVm {
         if !self.facts.accept(path) {
             return false;
         }
-        let nw = self.n_words;
-        if nw <= STACK_WORDS {
-            let mut buf = [0u64; STACK_WORDS * RUN_SLOTS];
-            self.is_match_inner(path, &mut buf[..nw * RUN_SLOTS])
-        } else {
-            self.is_match_inner(path, &mut vec![0u64; nw * RUN_SLOTS])
-        }
+        with_scratch(self.n_words, |buf| self.is_match_inner(path, buf))
     }
 
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
@@ -129,13 +123,7 @@ impl PikeVm {
         if dir_path.is_empty() {
             return DirMatch::from_exact_prefix(self.is_match(&[]), true);
         }
-        let nw = self.n_words;
-        if nw <= STACK_WORDS {
-            let mut buf = [0u64; STACK_WORDS * RUN_SLOTS];
-            self.match_dir_inner(dir_path, &mut buf[..nw * RUN_SLOTS])
-        } else {
-            self.match_dir_inner(dir_path, &mut vec![0u64; nw * RUN_SLOTS])
-        }
+        with_scratch(self.n_words, |buf| self.match_dir_inner(dir_path, buf))
     }
 
     fn is_match_inner(&self, path: &[u8], buf: &mut [u64]) -> bool {
@@ -252,6 +240,16 @@ impl PikeVm {
                 }
             }
         }
+    }
+}
+
+/// Run `f` on a zeroed scratch of `nw * RUN_SLOTS` words, on the stack when
+/// the NFA is small enough.
+fn with_scratch<R>(nw: usize, f: impl FnOnce(&mut [u64]) -> R) -> R {
+    if nw <= STACK_WORDS {
+        f(&mut [0u64; STACK_WORDS * RUN_SLOTS][..nw * RUN_SLOTS])
+    } else {
+        f(&mut vec![0u64; nw * RUN_SLOTS])
     }
 }
 

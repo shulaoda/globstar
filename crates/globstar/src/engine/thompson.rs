@@ -192,9 +192,15 @@ impl Builder {
     }
 
     fn alloc(&mut self, t: Trans) -> StateId {
-        let id = self.states.len() as StateId;
+        let id = self.next_id();
         self.states.push(t);
         id
+    }
+
+    /// Id the next `alloc` will assign. Fragments compute their intra-loop
+    /// targets from it up front instead of patching afterwards.
+    fn next_id(&self) -> StateId {
+        self.states.len() as StateId
     }
 
     /// Point every `UNSET` field of `state` at `target`.
@@ -228,19 +234,15 @@ impl Builder {
             let s = self.alloc(Trans::Jump { next: UNSET });
             return (s, vec![s]);
         }
-        let mut entry: Option<StateId> = None;
-        let mut pending_tails: Vec<StateId> = Vec::new();
-        for op in ops {
-            let (op_entry, mut op_tails) = self.compile_op(op);
-            for tail in pending_tails.drain(..) {
+        let (entry, mut pending_tails) = self.compile_op(&ops[0]);
+        for op in &ops[1..] {
+            let (op_entry, op_tails) = self.compile_op(op);
+            for &tail in &pending_tails {
                 self.patch(tail, op_entry);
             }
-            pending_tails.append(&mut op_tails);
-            if entry.is_none() {
-                entry = Some(op_entry);
-            }
+            pending_tails = op_tails;
         }
-        (entry.unwrap(), pending_tails)
+        (entry, pending_tails)
     }
 
     fn compile_op(&mut self, op: &Op) -> (StateId, Vec<StateId>) {
@@ -295,22 +297,18 @@ impl Builder {
     }
 
     fn compile_star(&mut self) -> (StateId, Vec<StateId>) {
-        let entry = self.alloc(Trans::Split {
-            a: UNSET, // → body
-            b: UNSET, // → dot_guard or exit
-        });
-        let body = self.alloc(Trans::AnyNonSep { next: entry });
-        if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
-            *a = body;
-        }
-        if !self.dot {
-            let dot_guard = self.alloc(Trans::DotGuard { next: UNSET });
-            if let Trans::Split { b, .. } = &mut self.states[entry as usize] {
-                *b = dot_guard;
-            }
-            (entry, vec![dot_guard])
-        } else {
+        let entry = self.next_id();
+        let body = entry + 1;
+        if self.dot {
+            self.alloc(Trans::Split { a: body, b: UNSET });
+            self.alloc(Trans::AnyNonSep { next: entry });
             (entry, vec![entry])
+        } else {
+            let dot_guard = entry + 2;
+            self.alloc(Trans::Split { a: body, b: dot_guard });
+            self.alloc(Trans::AnyNonSep { next: entry });
+            self.alloc(Trans::DotGuard { next: UNSET });
+            (entry, vec![dot_guard])
         }
     }
 
@@ -328,100 +326,49 @@ impl Builder {
     }
 
     fn compile_sep_run(&mut self) -> (StateId, Vec<StateId>) {
-        let tail_split = self.alloc(Trans::Split {
-            a: UNSET, // → entry (loop)
-            b: UNSET, // → exit (tail)
-        });
-        let entry = self.alloc(Trans::Sep { next: tail_split });
-        if let Trans::Split { a, .. } = &mut self.states[tail_split as usize] {
-            *a = entry;
-        }
+        let tail_split = self.next_id();
+        let entry = tail_split + 1;
+        self.alloc(Trans::Split { a: entry, b: UNSET });
+        self.alloc(Trans::Sep { next: tail_split });
         (entry, vec![tail_split])
     }
 
     fn compile_leading_seps(&mut self) -> (StateId, Vec<StateId>) {
-        let entry = self.alloc(Trans::Split {
-            a: UNSET, // → loop_body
-            b: UNSET, // → exit
-        });
-        let loop_body = self.alloc(Trans::Sep { next: entry });
-        if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
-            *a = loop_body;
-        }
+        let entry = self.next_id();
+        let loop_body = entry + 1;
+        self.alloc(Trans::Split { a: loop_body, b: UNSET });
+        self.alloc(Trans::Sep { next: entry });
         (entry, vec![entry])
     }
 
     fn compile_oss(&mut self) -> (StateId, Vec<StateId>) {
-        let entry = self.alloc(Trans::Split {
-            a: UNSET, // → seg_body
-            b: UNSET, // → exit
-        });
-        let seg_body = self.alloc(Trans::AnyNonSep { next: UNSET });
-        let seg_cont = self.alloc(Trans::Split {
-            a: UNSET, // → seg_body_loop (more non-sep bytes)
-            b: UNSET, // → sep_start (end of segment)
-        });
-        let seg_body_loop = self.alloc(Trans::AnyNonSep { next: seg_cont });
-        let sep_start = self.alloc(Trans::Sep { next: UNSET });
-        let sep_tail = self.alloc(Trans::Split {
-            a: UNSET, // → sep_start (collapse consecutive)
-            b: UNSET, // → entry (start next segment)
-        });
-
-        if let Trans::AnyNonSep { next, .. } = &mut self.states[seg_body as usize] {
-            *next = seg_cont;
-        }
-        if let Trans::Split { a, b } = &mut self.states[seg_cont as usize] {
-            *a = seg_body_loop;
-            *b = sep_start;
-        }
-        if let Trans::Sep { next } = &mut self.states[sep_start as usize] {
-            *next = sep_tail;
-        }
-        if let Trans::Split { a, b } = &mut self.states[sep_tail as usize] {
-            *a = sep_start;
-            *b = entry;
-        }
-        if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
-            *a = seg_body;
-        }
+        let entry = self.next_id();
+        let (seg_body, seg_cont, seg_body_loop, sep_start, sep_tail) =
+            (entry + 1, entry + 2, entry + 3, entry + 4, entry + 5);
+        self.alloc(Trans::Split { a: seg_body, b: UNSET });
+        self.alloc(Trans::AnyNonSep { next: seg_cont });
+        self.alloc(Trans::Split { a: seg_body_loop, b: sep_start });
+        self.alloc(Trans::AnyNonSep { next: seg_cont });
+        self.alloc(Trans::Sep { next: sep_tail });
+        self.alloc(Trans::Split { a: sep_start, b: entry });
         (entry, vec![entry])
     }
 
     fn compile_slash_anything(&mut self) -> (StateId, Vec<StateId>) {
-        let entry = self.alloc(Trans::Sep { next: UNSET });
-        let post_sep = self.alloc(Trans::Split {
-            a: UNSET, // → entry (collapse consecutive seps)
-            b: UNSET, // → tail
-        });
-        let tail = self.alloc(Trans::Split {
-            a: UNSET, // → tail_loop (more bytes)
-            b: UNSET, // → exit
-        });
-        let tail_loop = self.alloc(Trans::AnyByte { next: tail });
-
-        if let Trans::Sep { next } = &mut self.states[entry as usize] {
-            *next = post_sep;
-        }
-        if let Trans::Split { a, b } = &mut self.states[post_sep as usize] {
-            *a = entry;
-            *b = tail;
-        }
-        if let Trans::Split { a, .. } = &mut self.states[tail as usize] {
-            *a = tail_loop;
-        }
+        let entry = self.next_id();
+        let (post_sep, tail, tail_loop) = (entry + 1, entry + 2, entry + 3);
+        self.alloc(Trans::Sep { next: post_sep });
+        self.alloc(Trans::Split { a: entry, b: tail });
+        self.alloc(Trans::Split { a: tail_loop, b: UNSET });
+        self.alloc(Trans::AnyByte { next: tail });
         (entry, vec![tail])
     }
 
     fn compile_globstar_any(&mut self) -> (StateId, Vec<StateId>) {
-        let entry = self.alloc(Trans::Split {
-            a: UNSET, // → body
-            b: UNSET, // → exit
-        });
-        let body = self.alloc(Trans::AnyByte { next: entry });
-        if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
-            *a = body;
-        }
+        let entry = self.next_id();
+        let body = entry + 1;
+        self.alloc(Trans::Split { a: body, b: UNSET });
+        self.alloc(Trans::AnyByte { next: entry });
         (entry, vec![entry])
     }
 
@@ -434,18 +381,11 @@ impl Builder {
             branch_entries.push(entry);
             branch_tails.extend(tails);
         }
-        let mut next_state: Option<StateId> = None;
-        for i in (0..branches.len() - 1).rev() {
-            let a = branch_entries[i];
-            let b = if let Some(n) = next_state {
-                n
-            } else {
-                branch_entries[i + 1]
-            };
-            let s = self.alloc(Trans::Split { a, b });
-            next_state = Some(s);
+        // Chain Splits right to left, the last two branches share one.
+        let mut entry = *branch_entries.last().unwrap();
+        for &a in branch_entries[..branch_entries.len() - 1].iter().rev() {
+            entry = self.alloc(Trans::Split { a, b: entry });
         }
-        let entry = next_state.expect("at least 2 branches => at least 1 split");
         (entry, branch_tails)
     }
 }

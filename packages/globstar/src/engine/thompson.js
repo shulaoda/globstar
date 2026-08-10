@@ -38,13 +38,19 @@ class Builder {
   }
 
   _push(tag, next, byteVal, cls, splitB) {
-    const id = this.tags.length;
+    const id = this.nextId();
     this.tags.push(tag);
     this.nexts.push(next);
     this.byteVals.push(byteVal);
     this.splitsB.push(splitB);
     this.clsRefs.push(cls);
     return id;
+  }
+
+  // Id the next alloc will assign. Fragments compute their intra-loop
+  // targets from it up front instead of patching afterwards.
+  nextId() {
+    return this.tags.length;
   }
 
   allocByte(b) {
@@ -99,13 +105,12 @@ class Builder {
       const s = this.allocJump(UNSET);
       return [s, [s]];
     }
-    let entry = -1;
-    let pendingTails = [];
-    for (const op of ops) {
-      const [opEntry, opTails] = this.compileOp(op);
+    const [entry, tails] = this.compileOp(ops[0]);
+    let pendingTails = tails;
+    for (let i = 1; i < ops.length; i++) {
+      const [opEntry, opTails] = this.compileOp(ops[i]);
       for (const t of pendingTails) this.patch(t, opEntry);
       pendingTails = opTails;
-      if (entry === -1) entry = opEntry;
     }
     return [entry, pendingTails];
   }
@@ -155,16 +160,18 @@ class Builder {
   }
 
   compileStar() {
-    const entry = this.allocSplit(UNSET, UNSET);
-    const body = this.allocAnyNonSep(entry);
-    this.nexts[entry] = body;
-    if (!this.dot) {
-      const dotGuard = this.allocDotGuard(UNSET);
-      this.splitsB[entry] = dotGuard;
-      return [entry, [dotGuard]];
+    const entry = this.nextId();
+    const body = entry + 1;
+    if (this.dot) {
+      this.allocSplit(body, UNSET);
+      this.allocAnyNonSep(entry);
+      return [entry, [entry]];
     }
-    // No dot protection: the Split's dangling exit is the fragment tail.
-    return [entry, [entry]];
+    const dotGuard = entry + 2;
+    this.allocSplit(body, dotGuard);
+    this.allocAnyNonSep(entry);
+    this.allocDotGuard(UNSET);
+    return [entry, [dotGuard]];
   }
 
   compileClass(cls) {
@@ -178,54 +185,52 @@ class Builder {
   }
 
   compileSepRun() {
-    const tailSplit = this.allocSplit(UNSET, UNSET);
-    const entry = this.allocSep(tailSplit);
-    this.nexts[tailSplit] = entry;
+    const tailSplit = this.nextId();
+    const entry = tailSplit + 1;
+    this.allocSplit(entry, UNSET);
+    this.allocSep(tailSplit);
     return [entry, [tailSplit]];
   }
 
   compileLeadingSeps() {
-    const entry = this.allocSplit(UNSET, UNSET);
-    const loopBody = this.allocSep(entry);
-    this.nexts[entry] = loopBody;
+    const entry = this.nextId();
+    this.allocSplit(entry + 1, UNSET);
+    this.allocSep(entry);
     return [entry, [entry]];
   }
 
   compileOss() {
-    const entry = this.allocSplit(UNSET, UNSET);
-    const segBody = this.allocAnyNonSep(UNSET);
-    const segCont = this.allocSplit(UNSET, UNSET);
-    const segBodyLoop = this.allocAnyNonSep(segCont);
-    const sepStart = this.allocSep(UNSET);
-    const sepTail = this.allocSplit(UNSET, UNSET);
-
-    this.nexts[segBody] = segCont;
-    this.nexts[segCont] = segBodyLoop;
-    this.splitsB[segCont] = sepStart;
-    this.nexts[sepStart] = sepTail;
-    this.nexts[sepTail] = sepStart;
-    this.splitsB[sepTail] = entry;
-    this.nexts[entry] = segBody;
+    const entry = this.nextId();
+    const [segBody, segCont, segBodyLoop, sepStart, sepTail] = [
+      entry + 1,
+      entry + 2,
+      entry + 3,
+      entry + 4,
+      entry + 5,
+    ];
+    this.allocSplit(segBody, UNSET);
+    this.allocAnyNonSep(segCont);
+    this.allocSplit(segBodyLoop, sepStart);
+    this.allocAnyNonSep(segCont);
+    this.allocSep(sepTail);
+    this.allocSplit(sepStart, entry);
     return [entry, [entry]];
   }
 
   compileSlashAnything() {
-    const entry = this.allocSep(UNSET);
-    const postSep = this.allocSplit(UNSET, UNSET);
-    const tail = this.allocSplit(UNSET, UNSET);
-    const tailLoop = this.allocAnyByte(tail);
-
-    this.nexts[entry] = postSep;
-    this.nexts[postSep] = entry;
-    this.splitsB[postSep] = tail;
-    this.nexts[tail] = tailLoop;
+    const entry = this.nextId();
+    const [postSep, tail, tailLoop] = [entry + 1, entry + 2, entry + 3];
+    this.allocSep(postSep);
+    this.allocSplit(entry, tail);
+    this.allocSplit(tailLoop, UNSET);
+    this.allocAnyByte(tail);
     return [entry, [tail]];
   }
 
   compileGlobstarAny() {
-    const entry = this.allocSplit(UNSET, UNSET);
-    const body = this.allocAnyByte(entry);
-    this.nexts[entry] = body;
+    const entry = this.nextId();
+    this.allocSplit(entry + 1, UNSET);
+    this.allocAnyByte(entry);
     return [entry, [entry]];
   }
 
@@ -237,14 +242,12 @@ class Builder {
       branchEntries.push(entry);
       for (const t of tails) branchTails.push(t);
     }
-    let nextState = -1;
-    for (let i = branches.length - 2; i >= 0; i--) {
-      const a = branchEntries[i];
-      const b = nextState !== -1 ? nextState : branchEntries[i + 1];
-      const s = this.allocSplit(a, b);
-      nextState = s;
+    // Chain Splits right to left, the last two branches share one.
+    let entry = branchEntries[branchEntries.length - 1];
+    for (let i = branchEntries.length - 2; i >= 0; i--) {
+      entry = this.allocSplit(branchEntries[i], entry);
     }
-    return [nextState, branchTails];
+    return [entry, branchTails];
   }
 }
 
