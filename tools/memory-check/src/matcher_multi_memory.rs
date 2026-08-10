@@ -12,12 +12,12 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use globset::GlobBuilder;
-use globstar::Glob as GcGlob;
 use globstar::ast::Node;
 use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
 use globstar::factor::factor_branches;
 use globstar::parser;
+use globstar::Glob as GcGlob;
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 

@@ -484,135 +484,139 @@ fn compute_accepts_at_eof(states: &[Trans]) -> Vec<bool> {
     acc
 }
 
-/// Reverse reachability to `accept` following at least one edge. ε edges
-/// count too, so a `DotGuard` jumping straight to `accept` is reachable
-/// without consuming a byte (harmless in practice: a guard only enters the
-/// active set alongside its star's byte-consuming body).
-///
-/// `reach_to_accept[accept]` stays false on purpose. A lone active Match has
-/// no descendants that could extend it, so leaving its flag set would make
-/// `match_dir` wrongly report `DescendAndMatch`.
-pub(crate) fn compute_reach_to_accept(states: &[Trans], accept: StateId) -> Vec<bool> {
-    let n = states.len();
-    let mut rev: Vec<Vec<StateId>> = vec![Vec::new(); n];
-    for (from, trans) in states.iter().enumerate() {
-        let from = from as StateId;
-        match trans {
-            Trans::Match => {}
-            Trans::Byte { next, .. }
-            | Trans::Class { next, .. }
-            | Trans::AnyNonSep { next, .. }
-            | Trans::AnyByte { next, .. }
-            | Trans::Sep { next, .. }
-            | Trans::Jump { next }
-            | Trans::DotGuard { next } => {
-                if (*next as usize) < n {
-                    rev[*next as usize].push(from);
+impl Thompson {
+    /// Reverse reachability to `accept` following at least one edge. ε edges
+    /// count too, so a `DotGuard` jumping straight to `accept` is reachable
+    /// without consuming a byte (harmless in practice: a guard only enters
+    /// the active set alongside its star's byte-consuming body).
+    ///
+    /// `reach_to_accept[accept]` stays false on purpose. A lone active Match
+    /// has no descendants that could extend it, so leaving its flag set would
+    /// make `match_dir` wrongly report `DescendAndMatch`.
+    pub(crate) fn reach_to_accept(&self) -> Vec<bool> {
+        let states = &self.states;
+        let accept = self.accept;
+        let n = states.len();
+        let mut rev: Vec<Vec<StateId>> = vec![Vec::new(); n];
+        for (from, trans) in states.iter().enumerate() {
+            let from = from as StateId;
+            match trans {
+                Trans::Match => {}
+                Trans::Byte { next, .. }
+                | Trans::Class { next, .. }
+                | Trans::AnyNonSep { next, .. }
+                | Trans::AnyByte { next, .. }
+                | Trans::Sep { next, .. }
+                | Trans::Jump { next }
+                | Trans::DotGuard { next } => {
+                    if (*next as usize) < n {
+                        rev[*next as usize].push(from);
+                    }
                 }
-            }
-            Trans::Split { a, b } => {
-                if (*a as usize) < n {
-                    rev[*a as usize].push(from);
-                }
-                if (*b as usize) < n {
-                    rev[*b as usize].push(from);
+                Trans::Split { a, b } => {
+                    if (*a as usize) < n {
+                        rev[*a as usize].push(from);
+                    }
+                    if (*b as usize) < n {
+                        rev[*b as usize].push(from);
+                    }
                 }
             }
         }
-    }
-    let mut reach = vec![false; n];
-    let mut stack = Vec::with_capacity(n);
-    // Start from `accept`'s direct predecessors so `reach[accept]` stays false.
-    for &prev in &rev[accept as usize] {
-        if !reach[prev as usize] {
-            reach[prev as usize] = true;
-            stack.push(prev);
-        }
-    }
-    while let Some(s) = stack.pop() {
-        for &prev in &rev[s as usize] {
+        let mut reach = vec![false; n];
+        let mut stack = Vec::with_capacity(n);
+        // Start from `accept`'s direct predecessors so `reach[accept]` stays false.
+        for &prev in &rev[accept as usize] {
             if !reach[prev as usize] {
                 reach[prev as usize] = true;
                 stack.push(prev);
             }
         }
-    }
-    reach
-}
-
-/// Per-state ε-closure bitmaps over Split/Jump edges, used by the Pike VM to
-/// expand ε-moves as bitmap ORs instead of a per-byte graph walk.
-/// `result[s * n_words .. (s+1) * n_words]` holds the leaf states reachable
-/// from `s`.
-///
-/// Post-order DFS on an explicit stack. A recursive version overflowed on
-/// deeply nested brace unions.
-pub(crate) fn compute_static_closures(thompson: &Thompson, n_words: usize) -> Vec<u64> {
-    let n = thompson.states.len();
-    let mut closures = vec![0u64; n * n_words];
-    let mut seen = vec![false; n];
-
-    // High bit marks the exit phase (children done, fold their closures).
-    const EXIT_BIT: u32 = 1 << 31;
-    let mut stack: Vec<u32> = Vec::new();
-
-    for root in 0..n {
-        if seen[root] {
-            continue;
+        while let Some(s) = stack.pop() {
+            for &prev in &rev[s as usize] {
+                if !reach[prev as usize] {
+                    reach[prev as usize] = true;
+                    stack.push(prev);
+                }
+            }
         }
-        stack.push(root as u32);
+        reach
+    }
 
-        while let Some(item) = stack.pop() {
-            if item & EXIT_BIT != 0 {
-                let s = (item & !EXIT_BIT) as usize;
-                let s_base = s * n_words;
-                match &thompson.states[s] {
+    /// Per-state ε-closure bitmaps over Split/Jump edges, used by the Pike VM
+    /// to expand ε-moves as bitmap ORs instead of a per-byte graph walk.
+    /// `result[s * n_words .. (s+1) * n_words]` holds the leaf states
+    /// reachable from `s`.
+    ///
+    /// Post-order DFS on an explicit stack. A recursive version overflowed on
+    /// deeply nested brace unions.
+    pub(crate) fn static_closures(&self, n_words: usize) -> Vec<u64> {
+        let n = self.states.len();
+        let mut closures = vec![0u64; n * n_words];
+        let mut seen = vec![false; n];
+
+        // High bit marks the exit phase (children done, fold their closures).
+        const EXIT_BIT: u32 = 1 << 31;
+        let mut stack: Vec<u32> = Vec::new();
+
+        for root in 0..n {
+            if seen[root] {
+                continue;
+            }
+            stack.push(root as u32);
+
+            while let Some(item) = stack.pop() {
+                if item & EXIT_BIT != 0 {
+                    let s = (item & !EXIT_BIT) as usize;
+                    let s_base = s * n_words;
+                    match &self.states[s] {
+                        Trans::Split { a, b } => {
+                            let a_base = (*a as usize) * n_words;
+                            let b_base = (*b as usize) * n_words;
+                            for j in 0..n_words {
+                                closures[s_base + j] = closures[a_base + j] | closures[b_base + j];
+                            }
+                        }
+                        Trans::Jump { next } => {
+                            let n_base = (*next as usize) * n_words;
+                            closures.copy_within(n_base..n_base + n_words, s_base);
+                        }
+                        _ => {
+                            // Leaf: its closure is just itself.
+                            closures[s_base + (s >> 6)] = 1u64 << (s & 63);
+                        }
+                    }
+                    continue;
+                }
+
+                let s = item as usize;
+                if seen[s] {
+                    continue;
+                }
+                seen[s] = true;
+
+                // Push the exit marker before the children so it pops after them.
+                stack.push((s as u32) | EXIT_BIT);
+
+                match &self.states[s] {
                     Trans::Split { a, b } => {
-                        let a_base = (*a as usize) * n_words;
-                        let b_base = (*b as usize) * n_words;
-                        for j in 0..n_words {
-                            closures[s_base + j] = closures[a_base + j] | closures[b_base + j];
+                        if !seen[*a as usize] {
+                            stack.push(*a);
+                        }
+                        if !seen[*b as usize] {
+                            stack.push(*b);
                         }
                     }
                     Trans::Jump { next } => {
-                        let n_base = (*next as usize) * n_words;
-                        closures.copy_within(n_base..n_base + n_words, s_base);
+                        if !seen[*next as usize] {
+                            stack.push(*next);
+                        }
                     }
-                    _ => {
-                        // Leaf: its closure is just itself.
-                        closures[s_base + (s >> 6)] = 1u64 << (s & 63);
-                    }
+                    _ => {}
                 }
-                continue;
-            }
-
-            let s = item as usize;
-            if seen[s] {
-                continue;
-            }
-            seen[s] = true;
-
-            // Push the exit marker before the children so it pops after them.
-            stack.push((s as u32) | EXIT_BIT);
-
-            match &thompson.states[s] {
-                Trans::Split { a, b } => {
-                    if !seen[*a as usize] {
-                        stack.push(*a);
-                    }
-                    if !seen[*b as usize] {
-                        stack.push(*b);
-                    }
-                }
-                Trans::Jump { next } => {
-                    if !seen[*next as usize] {
-                        stack.push(*next);
-                    }
-                }
-                _ => {}
             }
         }
-    }
 
-    closures
+        closures
+    }
 }

@@ -28,9 +28,7 @@
 use crate::dir_match::DirMatch;
 use crate::engine::facts::LiteralFacts;
 use crate::engine::ops::{OpProgram, compute_static_prefixes};
-use crate::engine::thompson::{
-    StateId, Thompson, Trans, compute_reach_to_accept, compute_static_closures,
-};
+use crate::engine::thompson::{StateId, Thompson, Trans};
 
 /// Stack-allocated bitmap word budget: `4` words cover NFAs up to 256
 /// states; larger ones heap-allocate.
@@ -79,13 +77,13 @@ impl PikeVm {
     /// runtime needs into bitmaps, then drops the rest.
     pub fn new(program: OpProgram, dot: bool) -> Self {
         let thompson = Thompson::compile(&program, dot);
-        let reach_flags = compute_reach_to_accept(&thompson.states, thompson.accept);
+        let reach_flags = thompson.reach_to_accept();
         let prefixes = compute_static_prefixes(&program.ops);
         let facts = program.facts;
 
         let n = thompson.states.len();
         let n_words = n.div_ceil(64);
-        let static_closures = compute_static_closures(&thompson, n_words).into_boxed_slice();
+        let static_closures = thompson.static_closures(n_words).into_boxed_slice();
 
         let init_off = (thompson.initial as usize) * n_words;
         let init_bits = static_closures[init_off..init_off + n_words]
