@@ -64,22 +64,15 @@ impl LiteralFacts {
 }
 
 fn extract_suffix(ops: &[Op]) -> Vec<u8> {
-    let mut acc: Vec<u8> = Vec::new();
-    for op in ops.iter().rev() {
+    let start = ops
+        .iter()
+        .rposition(|op| !matches!(op, Op::Lit(_) | Op::Sep))
+        .map_or(0, |i| i + 1);
+    let mut acc = Vec::new();
+    for op in &ops[start..] {
         match op {
-            Op::Lit(bytes) => {
-                let mut new_acc = Vec::with_capacity(bytes.len() + acc.len());
-                new_acc.extend_from_slice(bytes);
-                new_acc.extend_from_slice(&acc);
-                acc = new_acc;
-            }
-            Op::Sep | Op::SepRun => {
-                let mut new_acc = Vec::with_capacity(1 + acc.len());
-                new_acc.push(b'/');
-                new_acc.extend_from_slice(&acc);
-                acc = new_acc;
-            }
-            _ => break,
+            Op::Lit(bytes) => acc.extend_from_slice(bytes),
+            _ => acc.push(b'/'),
         }
     }
     acc
@@ -102,7 +95,7 @@ fn extract_suffix_set(ops: &[Op]) -> Vec<Box<[u8]>> {
         }
         let branch_all_literal = branch
             .iter()
-            .all(|op| matches!(op, Op::Lit(_) | Op::Sep | Op::SepRun));
+            .all(|op| matches!(op, Op::Lit(_) | Op::Sep));
         let full = if branch_all_literal {
             let mut v = Vec::with_capacity(common_tail.len() + branch_suffix.len());
             v.extend_from_slice(&common_tail);

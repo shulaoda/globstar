@@ -1,5 +1,5 @@
 import { isPathSep, eqByteCi } from "../options.js";
-import { OP_LIT, OP_SEP, OP_SEP_RUN, OP_ALTERNATION } from "./ops/ir.js";
+import { OP_LIT, OP_SEP, OP_ALTERNATION } from "./ops/ir.js";
 
 export class LiteralFacts {
   constructor(suffix, suffixSet, caseInsensitive) {
@@ -49,7 +49,7 @@ function suffixArray(ops, end) {
     const op = ops[i];
     if (op.kind === OP_LIT) {
       for (let j = op.bytes.length - 1; j >= 0; j--) acc.push(op.bytes[j]);
-    } else if (op.kind === OP_SEP || op.kind === OP_SEP_RUN) {
+    } else if (op.kind === OP_SEP) {
       acc.push(0x2f);
     } else {
       break;
@@ -73,7 +73,7 @@ function extractSuffixSet(ops) {
 
     let allLiteral = true;
     for (const op of branch) {
-      if (op.kind !== OP_LIT && op.kind !== OP_SEP && op.kind !== OP_SEP_RUN) {
+      if (op.kind !== OP_LIT && op.kind !== OP_SEP) {
         allLiteral = false;
         break;
       }
