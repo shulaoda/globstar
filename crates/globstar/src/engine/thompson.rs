@@ -5,9 +5,11 @@
 //! One [`Trans`] per state. Compound ops become a chain of primitive states
 //! joined by ε-transitions ([`Trans::Split`], [`Trans::Jump`]).
 //!
-//! A `dot_protected` state refuses a `.` at a segment start (byte 0, or right
-//! after a separator). This is glob's segment-leading-dot rule (GLOB_SPEC §6).
-//! A state whose job is to match `.` is never dot-protected.
+//! The segment-leading-dot rule (GLOB_SPEC §6) is not baked into states. At
+//! run time a state refuses a segment-start `.` based on its kind alone:
+//! `AnyNonSep`, `AnyByte`, and negated classes refuse it, while literals and
+//! positive classes match it explicitly. Only `*`'s zero-match exit needs a
+//! dedicated state, [`Trans::DotGuard`], emitted under `dot=false`.
 
 use crate::ast::CharClass;
 use crate::engine::ops::{Op, OpProgram};
@@ -26,20 +28,15 @@ pub(crate) enum Trans {
     /// Consume byte `b`.
     Byte { b: u8, next: StateId },
 
-    /// Consume one byte in `class`. `dot_protected` when the class is negated
-    /// and dot mode is off.
-    Class {
-        class: Box<CharClass>,
-        next: StateId,
-        dot_protected: bool,
-    },
+    /// Consume one byte in `class`.
+    Class { class: Box<CharClass>, next: StateId },
 
     /// Consume one non-separator byte (`*`, `?`, and the OSS body).
-    AnyNonSep { next: StateId, dot_protected: bool },
+    AnyNonSep { next: StateId },
 
     /// Consume any byte, separators included (inside `SlashAnything` and
     /// `GlobstarAny`).
-    AnyByte { next: StateId, dot_protected: bool },
+    AnyByte { next: StateId },
 
     /// Consume exactly one separator. Runs (`SepRun`, `LeadingSeps`) are built
     /// from `Split` loops around this state, not handled per byte.
@@ -392,15 +389,15 @@ impl Builder {
     fn compile_op(&mut self, op: &Op, dot: bool) -> (StateId, Vec<StateId>) {
         match op {
             Op::Lit(bytes) => self.compile_lit(bytes),
-            Op::AnyChar => self.compile_any_non_sep(dot),
+            Op::AnyChar => self.compile_any_non_sep(),
             Op::Star => self.compile_star(dot),
-            Op::Class(class) => self.compile_class(class, dot),
+            Op::Class(class) => self.compile_class(class),
             Op::Sep => self.compile_sep(),
             Op::SepRun => self.compile_sep_run(),
             Op::LeadingSeps => self.compile_leading_seps(),
-            Op::OptSegmentsSlash => self.compile_oss(dot),
-            Op::SlashAnything => self.compile_slash_anything(dot),
-            Op::GlobstarAny => self.compile_globstar_any(dot),
+            Op::OptSegmentsSlash => self.compile_oss(),
+            Op::SlashAnything => self.compile_slash_anything(),
+            Op::GlobstarAny => self.compile_globstar_any(),
             Op::Alternation(branches) => self.compile_alternation(branches, dot),
             Op::Globstar => {
                 // Lowering folds raw globstars away; is_normalized asserts it
@@ -413,7 +410,6 @@ impl Builder {
                         items: Vec::new(),
                     }),
                     next: UNSET,
-                    dot_protected: false,
                 });
                 (s, vec![s])
             }
@@ -445,17 +441,13 @@ impl Builder {
             Some(class) => self.alloc(Trans::Class {
                 class: Box::new(class),
                 next: UNSET,
-                dot_protected: false,
             }),
             None => self.alloc(Trans::Byte { b, next: UNSET }),
         }
     }
 
-    fn compile_any_non_sep(&mut self, dot: bool) -> (StateId, Vec<StateId>) {
-        let s = self.alloc(Trans::AnyNonSep {
-            next: UNSET,
-            dot_protected: !dot,
-        });
+    fn compile_any_non_sep(&mut self) -> (StateId, Vec<StateId>) {
+        let s = self.alloc(Trans::AnyNonSep { next: UNSET });
         (s, vec![s])
     }
 
@@ -468,10 +460,7 @@ impl Builder {
             a: UNSET, // → body
             b: UNSET, // → dot_guard or exit
         });
-        let body = self.alloc(Trans::AnyNonSep {
-            next: entry,
-            dot_protected: !dot,
-        });
+        let body = self.alloc(Trans::AnyNonSep { next: entry });
         if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
             *a = body;
         }
@@ -486,11 +475,10 @@ impl Builder {
         }
     }
 
-    fn compile_class(&mut self, class: &CharClass, dot: bool) -> (StateId, Vec<StateId>) {
+    fn compile_class(&mut self, class: &CharClass) -> (StateId, Vec<StateId>) {
         let s = self.alloc(Trans::Class {
             class: Box::new(class.clone()),
             next: UNSET,
-            dot_protected: !dot && class.negated,
         });
         (s, vec![s])
     }
@@ -544,25 +532,17 @@ impl Builder {
     ///   seg_body_loop: AnyNonSep(→seg_cont)
     ///   sep_start: Sep(→sep_tail)
     ///   sep_tail: Split(sep_start, entry)
-    fn compile_oss(&mut self, dot: bool) -> (StateId, Vec<StateId>) {
+    fn compile_oss(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → seg_body
             b: UNSET, // → exit
         });
-        // Dot-protected at the segment start.
-        let seg_body = self.alloc(Trans::AnyNonSep {
-            next: UNSET,
-            dot_protected: !dot,
-        });
-        // Past the segment start, so no dot protection.
+        let seg_body = self.alloc(Trans::AnyNonSep { next: UNSET });
         let seg_cont = self.alloc(Trans::Split {
             a: UNSET, // → seg_body_loop (more non-sep bytes)
             b: UNSET, // → sep_start (end of segment)
         });
-        let seg_body_loop = self.alloc(Trans::AnyNonSep {
-            next: seg_cont,
-            dot_protected: false,
-        });
+        let seg_body_loop = self.alloc(Trans::AnyNonSep { next: seg_cont });
         let sep_start = self.alloc(Trans::Sep { next: UNSET });
         let sep_tail = self.alloc(Trans::Split {
             a: UNSET, // → sep_start (collapse consecutive)
@@ -595,7 +575,7 @@ impl Builder {
     ///   post_sep: Split(entry, tail)
     ///   tail: Split(tail_loop, exit)
     ///   tail_loop: AnyByte(→tail)
-    fn compile_slash_anything(&mut self, dot: bool) -> (StateId, Vec<StateId>) {
+    fn compile_slash_anything(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Sep { next: UNSET });
         let post_sep = self.alloc(Trans::Split {
             a: UNSET, // → entry (collapse consecutive seps)
@@ -605,10 +585,7 @@ impl Builder {
             a: UNSET, // → tail_loop (more bytes)
             b: UNSET, // → exit
         });
-        let tail_loop = self.alloc(Trans::AnyByte {
-            next: tail,
-            dot_protected: !dot,
-        });
+        let tail_loop = self.alloc(Trans::AnyByte { next: tail });
 
         if let Trans::Sep { next } = &mut self.states[entry as usize] {
             *next = post_sep;
@@ -628,15 +605,12 @@ impl Builder {
     ///
     ///   entry: Split(body, exit)
     ///   body: AnyByte(→entry)
-    fn compile_globstar_any(&mut self, dot: bool) -> (StateId, Vec<StateId>) {
+    fn compile_globstar_any(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → body
             b: UNSET, // → exit
         });
-        let body = self.alloc(Trans::AnyByte {
-            next: entry,
-            dot_protected: !dot,
-        });
+        let body = self.alloc(Trans::AnyByte { next: entry });
         if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
             *a = body;
         }

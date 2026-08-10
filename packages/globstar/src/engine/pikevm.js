@@ -145,7 +145,10 @@ export class PikeVm {
     //
     // Each state's `info` word packs:
     //   bits  0..3   tag      (T_MATCH..T_NULL = 0..9 fit in 4 bits)
-    //   bits  4..7   flags    (bit 0 = dotProtected)
+    //   bit   4      refuses a segment-start dot. Derived here from the
+    //                state kind under dot=false: wildcards and negated
+    //                classes refuse it, literals and positive classes
+    //                match it explicitly (GLOB_SPEC §6).
     //   bits  8..15  byte     (T_BYTE byte value)
     //   bits 16..31  next     (next-state index, ≤ 65535)
     // ε-only T_SPLIT / T_JUMP slots get tag = T_NULL. Closures already
@@ -166,8 +169,8 @@ export class PikeVm {
     const tags = nfa.tags;
     const nexts = nfa.nexts;
     const byteVals = nfa.byteVals;
-    const flagBits = nfa.flagBits;
     const inClsRefs = nfa.clsRefs;
+    const protectFlag = nfa.dot ? 0 : 0x10;
     let clsRefs = null;
     const guardIds = [];
     for (let i = 0; i < n; i++) {
@@ -176,7 +179,11 @@ export class PikeVm {
         combined[infoOff + i] = T_NULL;
         continue;
       }
-      combined[infoOff + i] = tag | (flagBits[i] << 4) | (byteVals[i] << 8) | (nexts[i] << 16);
+      let bits = tag | (byteVals[i] << 8) | (nexts[i] << 16);
+      if (tag === T_ANY_NON_SEP || tag === T_ANY_BYTE || (tag === T_CLASS && inClsRefs[i].neg)) {
+        bits |= protectFlag;
+      }
+      combined[infoOff + i] = bits;
       if (tag === T_DOT_GUARD) guardIds.push(i);
       if (tag === T_CLASS) {
         if (clsRefs === null) clsRefs = Array.from({ length: n });
@@ -354,9 +361,9 @@ export class PikeVm {
     for (let p = 0; p < path.length; p++) {
       const c = path[p];
       const sep = isPathSep(c);
-      // `info[s]` packs `dotProtected` at bit 4 (0x10). At a segment-start
-      // dot, `dotMaskFlag = 0x10` so `!(word2 & dotMaskFlag)` rejects
-      // dot-protected states; otherwise it's `0` and always passes.
+      // `info[s]` bit 4 (0x10) marks states that refuse a segment-start
+      // dot. At one, `dotMaskFlag = 0x10` so `!(word2 & dotMaskFlag)`
+      // rejects them; otherwise it's `0` and always passes.
       const dotMaskFlag = atSegStart && c === 0x2e ? 0x10 : 0;
 
       // Passing guards release their precomputed transitive expansions; a

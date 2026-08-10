@@ -73,6 +73,10 @@ pub struct PikeVm {
     /// (state id, then the transitive bitmap it releases when it passes).
     /// Empty for `dot=true` compiles. See [`Thompson::guard_expansions`].
     guard_exps: Box<[u64]>,
+    /// `!dot`: whether wildcards refuse a segment-start `.` (GLOB_SPEC §6).
+    /// Folded into the per-byte `dot_mask`, like the segment engine's
+    /// top-level `dot` field.
+    dot_protect: bool,
 }
 
 impl PikeVm {
@@ -123,6 +127,7 @@ impl PikeVm {
             init_bits,
             accept_bits: accept_bits.into_boxed_slice(),
             guard_exps,
+            dot_protect: !dot,
         }
     }
 
@@ -236,6 +241,7 @@ impl PikeVm {
         // Hoist field reads out of the hot loop.
         let states = &self.states;
         let closures = &self.static_closures;
+        let protect = self.dot_protect;
         let mut cur = 0usize;
         let mut nxt = nw;
         let mut at_seg_start = true;
@@ -243,7 +249,7 @@ impl PikeVm {
         for &c in path {
             buf[nxt..nxt + nw].fill(0);
             let sep = std::path::is_separator(c as char);
-            let dot_mask = at_seg_start && c == b'.';
+            let dot_mask = protect && at_seg_start && c == b'.';
 
             if GUARDS && !dot_mask {
                 self.expand_guards(&mut buf[cur..cur + nw]);
@@ -328,23 +334,18 @@ fn iter_set_states(bits: &[u64]) -> impl Iterator<Item = usize> + '_ {
 /// expanded through its precomputed table before the sweep, and a failing one
 /// dies right here. Match, Split, and Jump never appear in the active set
 /// after ε-closure, and Match consumes no byte.
+/// `dot_mask` is true only for a segment-start `.` under dot protection;
+/// which states it rejects derives from the state kind alone (wildcards and
+/// negated classes refuse it, literals and positive classes match it).
 #[inline]
 fn byte_step(t: &Trans, c: u8, sep: bool, dot_mask: bool) -> Option<StateId> {
     match t {
         Trans::Byte { b, next: n } => (*b == c).then_some(*n),
-        Trans::Class {
-            class,
-            next: n,
-            dot_protected,
-        } => (class.matches(c) && !(*dot_protected && dot_mask)).then_some(*n),
-        Trans::AnyNonSep {
-            next: n,
-            dot_protected,
-        } => (!(sep || *dot_protected && dot_mask)).then_some(*n),
-        Trans::AnyByte {
-            next: n,
-            dot_protected,
-        } => (!(*dot_protected && dot_mask)).then_some(*n),
+        Trans::Class { class, next: n } => {
+            (class.matches(c) && !(class.negated && dot_mask)).then_some(*n)
+        }
+        Trans::AnyNonSep { next: n } => (!(sep || dot_mask)).then_some(*n),
+        Trans::AnyByte { next: n } => (!dot_mask).then_some(*n),
         Trans::Sep { next: n } => sep.then_some(*n),
         Trans::DotGuard { .. } | Trans::Match | Trans::Split { .. } | Trans::Jump { .. } => None,
     }

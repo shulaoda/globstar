@@ -10,7 +10,6 @@
 //   nexts[s]     number   for byte-consumers/JUMP/DOT_GUARD: next state;
 //                          for SPLIT: first branch (`a`)
 //   byteVals[s]  number   T_BYTE byte value (else 0)
-//   flagBits[s]  number   bit 0 = dotProtected (else 0)
 //   splitsB[s]  number   T_SPLIT second branch (else UNSET)
 //   clsRefs[s]   Object   T_CLASS class struct (else null)
 //
@@ -60,54 +59,52 @@ class Builder {
     this.tags = [];
     this.nexts = [];
     this.byteVals = [];
-    this.flagBits = [];
     this.splitsB = [];
     this.clsRefs = []; // sparse — null entries common
   }
 
-  _push(tag, next, byteVal, flags, cls, splitB) {
+  _push(tag, next, byteVal, cls, splitB) {
     const id = this.tags.length;
     this.tags.push(tag);
     this.nexts.push(next);
     this.byteVals.push(byteVal);
-    this.flagBits.push(flags);
     this.splitsB.push(splitB);
     this.clsRefs.push(cls);
     return id;
   }
 
   allocByte(b) {
-    return this._push(T_BYTE, UNSET, b, 0, null, UNSET);
+    return this._push(T_BYTE, UNSET, b, null, UNSET);
   }
-  allocClass(cls, dotProtected) {
-    return this._push(T_CLASS, UNSET, 0, dotProtected ? 1 : 0, cls, UNSET);
+  allocClass(cls) {
+    return this._push(T_CLASS, UNSET, 0, cls, UNSET);
   }
-  allocAnyNonSep(next, dotProtected) {
-    return this._push(T_ANY_NON_SEP, next, 0, dotProtected ? 1 : 0, null, UNSET);
+  allocAnyNonSep(next) {
+    return this._push(T_ANY_NON_SEP, next, 0, null, UNSET);
   }
-  allocAnyByte(next, dotProtected) {
-    return this._push(T_ANY_BYTE, next, 0, dotProtected ? 1 : 0, null, UNSET);
+  allocAnyByte(next) {
+    return this._push(T_ANY_BYTE, next, 0, null, UNSET);
   }
   allocSep(next) {
-    return this._push(T_SEP, next, 0, 0, null, UNSET);
+    return this._push(T_SEP, next, 0, null, UNSET);
   }
   allocSplit(a, splitB) {
-    return this._push(T_SPLIT, a, 0, 0, null, splitB);
+    return this._push(T_SPLIT, a, 0, null, splitB);
   }
   allocJump(next) {
-    return this._push(T_JUMP, next, 0, 0, null, UNSET);
+    return this._push(T_JUMP, next, 0, null, UNSET);
   }
   allocDotGuard(next) {
-    return this._push(T_DOT_GUARD, next, 0, 0, null, UNSET);
+    return this._push(T_DOT_GUARD, next, 0, null, UNSET);
   }
   allocMatch() {
-    return this._push(T_MATCH, 0, 0, 0, null, UNSET);
+    return this._push(T_MATCH, 0, 0, null, UNSET);
   }
 
   allocLitByte(b) {
     if (this.caseInsensitive) {
       const cls = ciLetter(b);
-      if (cls !== null) return this.allocClass(cls, false);
+      if (cls !== null) return this.allocClass(cls);
     }
     return this.allocByte(b);
   }
@@ -145,11 +142,11 @@ class Builder {
       case OP_LIT:
         return this.compileLit(op.bytes);
       case OP_ANYCHAR:
-        return this.compileAnyNonSep(dot);
+        return this.compileAnyNonSep();
       case OP_STAR:
         return this.compileStar(dot);
       case OP_CLASS:
-        return this.compileClass(op.cls, dot);
+        return this.compileClass(op.cls);
       case OP_SEP:
         return this.compileSep();
       case OP_SEP_RUN:
@@ -157,17 +154,17 @@ class Builder {
       case OP_LEADING_SEPS:
         return this.compileLeadingSeps();
       case OP_OPT_SEGMENTS_SLASH:
-        return this.compileOss(dot);
+        return this.compileOss();
       case OP_SLASH_ANYTHING:
-        return this.compileSlashAnything(dot);
+        return this.compileSlashAnything();
       case OP_GLOBSTAR_ANY:
-        return this.compileGlobstarAny(dot);
+        return this.compileGlobstarAny();
       case OP_ALTERNATION:
         return this.compileAlternation(op.branches, dot);
       case OP_GLOBSTAR: {
         // Lowering folds raw globstars away. Release safety net: an empty
         // class matches no byte, so a leak can never produce a false match.
-        const s = this.allocClass({ neg: false, items: [] }, false);
+        const s = this.allocClass({ neg: false, items: [] });
         return [s, [s]];
       }
     }
@@ -185,14 +182,14 @@ class Builder {
     return [entry, [prev]];
   }
 
-  compileAnyNonSep(dot) {
-    const s = this.allocAnyNonSep(UNSET, !dot);
+  compileAnyNonSep() {
+    const s = this.allocAnyNonSep(UNSET);
     return [s, [s]];
   }
 
   compileStar(dot) {
     const entry = this.allocSplit(UNSET, UNSET);
-    const body = this.allocAnyNonSep(entry, !dot);
+    const body = this.allocAnyNonSep(entry);
     this.nexts[entry] = body;
     if (!dot) {
       const dotGuard = this.allocDotGuard(UNSET);
@@ -203,8 +200,8 @@ class Builder {
     return [entry, [entry]];
   }
 
-  compileClass(cls, dot) {
-    const s = this.allocClass(cls, !dot && cls.neg);
+  compileClass(cls) {
+    const s = this.allocClass(cls);
     return [s, [s]];
   }
 
@@ -227,11 +224,11 @@ class Builder {
     return [entry, [entry]];
   }
 
-  compileOss(dot) {
+  compileOss() {
     const entry = this.allocSplit(UNSET, UNSET);
-    const segBody = this.allocAnyNonSep(UNSET, !dot);
+    const segBody = this.allocAnyNonSep(UNSET);
     const segCont = this.allocSplit(UNSET, UNSET);
-    const segBodyLoop = this.allocAnyNonSep(segCont, false);
+    const segBodyLoop = this.allocAnyNonSep(segCont);
     const sepStart = this.allocSep(UNSET);
     const sepTail = this.allocSplit(UNSET, UNSET);
 
@@ -245,11 +242,11 @@ class Builder {
     return [entry, [entry]];
   }
 
-  compileSlashAnything(dot) {
+  compileSlashAnything() {
     const entry = this.allocSep(UNSET);
     const postSep = this.allocSplit(UNSET, UNSET);
     const tail = this.allocSplit(UNSET, UNSET);
-    const tailLoop = this.allocAnyByte(tail, !dot);
+    const tailLoop = this.allocAnyByte(tail);
 
     this.nexts[entry] = postSep;
     this.nexts[postSep] = entry;
@@ -258,9 +255,9 @@ class Builder {
     return [entry, [tail]];
   }
 
-  compileGlobstarAny(dot) {
+  compileGlobstarAny() {
     const entry = this.allocSplit(UNSET, UNSET);
-    const body = this.allocAnyByte(entry, !dot);
+    const body = this.allocAnyByte(entry);
     this.nexts[entry] = body;
     return [entry, [entry]];
   }
@@ -298,7 +295,6 @@ export function compileThompson(program, dot) {
   const nexts = builder.nexts;
   const splitsB = builder.splitsB;
   const byteVals = builder.byteVals;
-  const flagBits = builder.flagBits;
   const clsRefs = builder.clsRefs;
   const acceptsAtEof = computeAcceptsAtEof(tags, nexts, splitsB, n);
 
@@ -308,10 +304,10 @@ export function compileThompson(program, dot) {
     nexts,
     splitsB,
     byteVals,
-    flagBits,
     clsRefs,
     initial,
     acceptsAtEof,
+    dot,
   };
 }
 
