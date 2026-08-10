@@ -78,10 +78,8 @@ impl Thompson {
     /// Compile the program into an NFA. Always succeeds.
     pub(crate) fn compile(program: &OpProgram, dot: bool) -> Self {
         let mut builder = Builder::new(program.case_insensitive);
-        let initial = builder.alloc(Trans::Jump { next: UNSET });
-        let (body_entry, tails) = builder.compile_ops(&program.ops, dot);
+        let (initial, tails) = builder.compile_ops(&program.ops, dot);
         let accept = builder.alloc(Trans::Match);
-        builder.patch(initial, body_entry);
         for st in tails {
             builder.patch(st, accept);
         }
@@ -239,28 +237,31 @@ impl Builder {
         (s, vec![s])
     }
 
-    /// `Split(body, dot_guard)`. The body loops back to consume more bytes.
-    /// The dot_guard is the zero-match exit, but dies on a segment-start `.`.
+    /// `Split(body, exit)`. The body loops back to consume more bytes; the
+    /// exit is the zero-match branch. Under dot protection the exit goes
+    /// through a `DotGuard` that dies on a segment-start `.`; otherwise the
+    /// Split's own dangling exit is the fragment tail.
     fn compile_star(&mut self, dot: bool) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → body
-            b: UNSET, // → dot_guard
+            b: UNSET, // → dot_guard or exit
         });
         let body = self.alloc(Trans::AnyNonSep {
             next: entry,
             dot_protected: !dot,
         });
-        let dot_guard = if !dot {
-            self.alloc(Trans::DotGuard { next: UNSET })
-        } else {
-            // No dot protection needed, so a plain Jump keeps the NFA smaller.
-            self.alloc(Trans::Jump { next: UNSET })
-        };
-        if let Trans::Split { a, b } = &mut self.states[entry as usize] {
+        if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
             *a = body;
-            *b = dot_guard;
         }
-        (entry, vec![dot_guard])
+        if !dot {
+            let dot_guard = self.alloc(Trans::DotGuard { next: UNSET });
+            if let Trans::Split { b, .. } = &mut self.states[entry as usize] {
+                *b = dot_guard;
+            }
+            (entry, vec![dot_guard])
+        } else {
+            (entry, vec![entry])
+        }
     }
 
     fn compile_class(&mut self, class: &CharClass, dot: bool) -> (StateId, Vec<StateId>) {
@@ -283,18 +284,16 @@ impl Builder {
     /// `a/**/b` matches `a//b`.
     ///
     ///   entry: Sep(→tail_split)
-    ///   tail_split: Split(loop_body, exit)
-    ///   loop_body: Sep(→tail_split)
+    ///   tail_split: Split(entry, exit)
     fn compile_sep_run(&mut self) -> (StateId, Vec<StateId>) {
         let tail_split = self.alloc(Trans::Split {
-            a: UNSET, // → loop_body
+            a: UNSET, // → entry (loop)
             b: UNSET, // → exit (tail)
         });
-        let loop_body = self.alloc(Trans::Sep { next: tail_split });
-        if let Trans::Split { a, .. } = &mut self.states[tail_split as usize] {
-            *a = loop_body;
-        }
         let entry = self.alloc(Trans::Sep { next: tail_split });
+        if let Trans::Split { a, .. } = &mut self.states[tail_split as usize] {
+            *a = entry;
+        }
         (entry, vec![tail_split])
     }
 
@@ -322,8 +321,7 @@ impl Builder {
     ///   seg_cont: Split(seg_body_loop, sep_start)
     ///   seg_body_loop: AnyNonSep(→seg_cont)
     ///   sep_start: Sep(→sep_tail)
-    ///   sep_tail: Split(sep_loop, entry)
-    ///   sep_loop: Sep(→sep_tail)
+    ///   sep_tail: Split(sep_start, entry)
     fn compile_oss(&mut self, dot: bool) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → seg_body
@@ -345,10 +343,9 @@ impl Builder {
         });
         let sep_start = self.alloc(Trans::Sep { next: UNSET });
         let sep_tail = self.alloc(Trans::Split {
-            a: UNSET, // → sep_loop (collapse consecutive)
+            a: UNSET, // → sep_start (collapse consecutive)
             b: UNSET, // → entry (start next segment)
         });
-        let sep_loop = self.alloc(Trans::Sep { next: sep_tail });
 
         if let Trans::AnyNonSep { next, .. } = &mut self.states[seg_body as usize] {
             *next = seg_cont;
@@ -361,7 +358,7 @@ impl Builder {
             *next = sep_tail;
         }
         if let Trans::Split { a, b } = &mut self.states[sep_tail as usize] {
-            *a = sep_loop;
+            *a = sep_start;
             *b = entry;
         }
         if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
@@ -373,17 +370,15 @@ impl Builder {
     /// One separator, then any bytes. Dot-protected at each segment start.
     ///
     ///   entry: Sep(→post_sep)
-    ///   post_sep: Split(sep_loop, tail)
-    ///   sep_loop: Sep(→post_sep)
+    ///   post_sep: Split(entry, tail)
     ///   tail: Split(tail_loop, exit)
     ///   tail_loop: AnyByte(→tail)
     fn compile_slash_anything(&mut self, dot: bool) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Sep { next: UNSET });
         let post_sep = self.alloc(Trans::Split {
-            a: UNSET, // → sep_loop
+            a: UNSET, // → entry (collapse consecutive seps)
             b: UNSET, // → tail
         });
-        let sep_loop = self.alloc(Trans::Sep { next: post_sep });
         let tail = self.alloc(Trans::Split {
             a: UNSET, // → tail_loop (more bytes)
             b: UNSET, // → exit
@@ -397,7 +392,7 @@ impl Builder {
             *next = post_sep;
         }
         if let Trans::Split { a, b } = &mut self.states[post_sep as usize] {
-            *a = sep_loop;
+            *a = entry;
             *b = tail;
         }
         if let Trans::Split { a, .. } = &mut self.states[tail as usize] {
@@ -489,7 +484,10 @@ fn compute_accepts_at_eof(states: &[Trans]) -> Vec<bool> {
     acc
 }
 
-/// Reverse reachability to `accept` over non-empty transition sequences.
+/// Reverse reachability to `accept` following at least one edge. ε edges
+/// count too, so a `DotGuard` jumping straight to `accept` is reachable
+/// without consuming a byte (harmless in practice: a guard only enters the
+/// active set alongside its star's byte-consuming body).
 ///
 /// `reach_to_accept[accept]` stays false on purpose. A lone active Match has
 /// no descendants that could extend it, so leaving its flag set would make

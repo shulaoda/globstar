@@ -193,10 +193,14 @@ class Builder {
   compileStar(dot) {
     const entry = this.allocSplit(UNSET, UNSET);
     const body = this.allocAnyNonSep(entry, !dot);
-    const dotGuard = !dot ? this.allocDotGuard(UNSET) : this.allocJump(UNSET);
     this.nexts[entry] = body;
-    this.splitsB[entry] = dotGuard;
-    return [entry, [dotGuard]];
+    if (!dot) {
+      const dotGuard = this.allocDotGuard(UNSET);
+      this.splitsB[entry] = dotGuard;
+      return [entry, [dotGuard]];
+    }
+    // No dot protection: the Split's dangling exit is the fragment tail.
+    return [entry, [entry]];
   }
 
   compileClass(cls, dot) {
@@ -211,9 +215,8 @@ class Builder {
 
   compileSepRun() {
     const tailSplit = this.allocSplit(UNSET, UNSET);
-    const loopBody = this.allocSep(tailSplit);
-    this.nexts[tailSplit] = loopBody;
     const entry = this.allocSep(tailSplit);
+    this.nexts[tailSplit] = entry;
     return [entry, [tailSplit]];
   }
 
@@ -231,13 +234,12 @@ class Builder {
     const segBodyLoop = this.allocAnyNonSep(segCont, false);
     const sepStart = this.allocSep(UNSET);
     const sepTail = this.allocSplit(UNSET, UNSET);
-    const sepLoop = this.allocSep(sepTail);
 
     this.nexts[segBody] = segCont;
     this.nexts[segCont] = segBodyLoop;
     this.splitsB[segCont] = sepStart;
     this.nexts[sepStart] = sepTail;
-    this.nexts[sepTail] = sepLoop;
+    this.nexts[sepTail] = sepStart;
     this.splitsB[sepTail] = entry;
     this.nexts[entry] = segBody;
     return [entry, [entry]];
@@ -246,12 +248,11 @@ class Builder {
   compileSlashAnything(dot) {
     const entry = this.allocSep(UNSET);
     const postSep = this.allocSplit(UNSET, UNSET);
-    const sepLoop = this.allocSep(postSep);
     const tail = this.allocSplit(UNSET, UNSET);
     const tailLoop = this.allocAnyByte(tail, !dot);
 
     this.nexts[entry] = postSep;
-    this.nexts[postSep] = sepLoop;
+    this.nexts[postSep] = entry;
     this.splitsB[postSep] = tail;
     this.nexts[tail] = tailLoop;
     return [entry, [tail]];
@@ -288,10 +289,8 @@ class Builder {
 // finish constructing its run state (closures, scratch, etc.).
 export function compileThompson(program, dot) {
   const builder = new Builder(program.caseInsensitive);
-  const initial = builder.allocJump(UNSET);
-  const [bodyEntry, tails] = builder.compileOps(program.ops, dot);
+  const [initial, tails] = builder.compileOps(program.ops, dot);
   const accept = builder.allocMatch();
-  builder.patch(initial, bodyEntry);
   for (const st of tails) builder.patch(st, accept);
 
   const n = builder.tags.length;
