@@ -189,7 +189,7 @@ The resolved `cwd` MUST then be validated:
 
 A typo'd or non-existent `cwd` therefore fails loudly at the start of the walk, rather than silently producing an empty result.
 
-**Case-insensitive seeding caveat.** The walker's static-prefix optimization (§6) seeds traversal at literal pattern prefixes using their original case. On case-insensitive filesystems (macOS APFS, Windows NTFS) where the on-disk casing differs from the pattern, the seeded subtree may be missed — the prefix `Src` may not resolve to the directory `src` even though their `is_match` results are equivalent under `caseInsensitive: true`. Workarounds: write the prefix in the actual on-disk casing, OR use an explicit class (`[Ss]rc/...`).
+**Case-insensitive seeding caveat.** The walker's static-prefix optimization (§6) seeds traversal at literal pattern prefixes using their original case, even under `caseInsensitive: true`. On a case-SENSITIVE filesystem (Linux ext4, case-sensitive APFS) where the on-disk casing differs from the pattern, the seed does not resolve and the whole subtree is silently skipped — `walk("src/*.rs", { caseInsensitive: true })` yields nothing when the directory is named `SRC`, even though `isMatch("SRC/a.rs")` is true. On case-insensitive filesystems (default macOS APFS, Windows NTFS) the seed resolves through the filesystem's own folding and the walk works; emitted paths carry the pattern's casing rather than the on-disk casing. Workarounds: write the prefix in the actual on-disk casing, OR use an explicit class (`[Ss]rc/...`), which keeps the prefix non-literal and forces a root walk.
 
 ---
 

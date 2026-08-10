@@ -32,11 +32,14 @@ pub struct WalkOptions {
     /// ASCII case-insensitive matching for main and ignore patterns.
     /// Default: `false`.
     ///
-    /// Note: the walker's `static_prefixes` jump-start still uses the
-    /// literal prefix verbatim, so on case-insensitive filesystems where
-    /// the directory name's case differs from the pattern, the walker may
-    /// miss the seek. Workaround: normalize the pattern to match the
-    /// filesystem case, or write `[Ss]rc/...` for the prefix portion.
+    /// Known limitation: static-prefix seeding uses the pattern's literal
+    /// prefix verbatim. On a case-sensitive filesystem, a directory whose
+    /// on-disk casing differs from the pattern is silently skipped even
+    /// though the matcher accepts it. On case-insensitive filesystems the
+    /// seed resolves through the filesystem's own folding and the walk
+    /// works, with emitted paths carrying the pattern's casing. Workaround:
+    /// write the prefix in the on-disk casing, or make it non-literal with
+    /// a class like `[Ss]rc/...`.
     pub case_insensitive: bool,
 
     /// Follow symbolic links when descending. Cycles are detected via
