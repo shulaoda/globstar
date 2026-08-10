@@ -245,8 +245,12 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 leading_seps = true;
             }
             Op::OptSegmentsSlash => {
+                // A glued absorber cannot be produced today (the parser
+                // degrades any `**` that does not own a whole segment,
+                // §8.1). Defensive bail, PikeVm answers correctly if one
+                // ever appears.
                 if state == Boundary::InSegment || g_open {
-                    return None; // glued (`x{**/a,b}`, `{**,x}{**/a,b}`)
+                    return None;
                 }
                 let strict_entry = match state {
                     // Pattern-head OSS always carries LeadingSeps; a
@@ -277,8 +281,9 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 state = Boundary::Fresh;
             }
             Op::GlobstarAny => {
+                // Defensive bail, same as the OSS arm above.
                 if state == Boundary::InSegment || g_open {
-                    return None; // glued (`a{**,x}b`)
+                    return None;
                 }
                 // Behind a strict separator the absorber must consume
                 // ≥ 1 segment (`a/{**,x}` rejects `a`).
