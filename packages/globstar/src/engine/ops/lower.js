@@ -164,7 +164,8 @@ function distributeSeps(node) {
       const branches = child.branches.map((branch) => {
         const sequence = [];
         if (absorbPrev) sequence.push(sep());
-        sequence.push(branch);
+        if (branch.tag === N_CONCAT) sequence.push(...branch.children);
+        else sequence.push(branch);
         if (absorbNext) sequence.push(sep());
         return distributeSeps(concat(sequence));
       });

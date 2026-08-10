@@ -9,8 +9,8 @@
 //   zero per-call allocation, no UTF-8 encode. The only two constructs
 //   whose semantics depend on *counting* (`?`, one BYTE; negated
 //   classes) BAIL to byte mode when they would touch a char > 0x7F.
-// - **Byte mode**: `toBytes(input)` once, same algorithm over the
-//   `Uint8Array`. Also used for `Uint8Array` inputs.
+// - **Byte mode**: `toBytes(input)` once, same algorithm over the bytes.
+//   Entered only when the pattern itself contains non-ASCII bytes.
 //
 // Patterns the segment model cannot express return `null` from `build`
 // and the caller falls back to the PikeVm.

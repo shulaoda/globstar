@@ -154,7 +154,10 @@ fn distribute_seps(node: Node) -> Node {
                         if absorb_prev {
                             sequence.push(Node::Separator);
                         }
-                        sequence.push(branch);
+                        match branch {
+                            Node::Concat(children) => sequence.extend(children),
+                            other => sequence.push(other),
+                        }
                         if absorb_next {
                             sequence.push(Node::Separator);
                         }

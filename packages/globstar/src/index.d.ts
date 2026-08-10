@@ -38,7 +38,7 @@ export interface GlobstarOptions {
 export function globstar(
   patterns: string | readonly string[],
   options?: GlobstarOptions,
-): (input: string | Uint8Array) => boolean;
+): (input: string) => boolean;
 
 /**
  * Result of {@link Matcher.matchDir} — what a directory path means
@@ -75,9 +75,9 @@ export declare const DirMatch: {
 /** Compiled pattern set returned by {@link compileMatcher}. */
 export interface Matcher {
   /** Full-path match — same predicate {@link globstar} returns. */
-  match(input: string | Uint8Array): boolean;
+  match(input: string): boolean;
   /** Directory-level verdict for walker pruning (see {@link DirMatch}). */
-  matchDir(input: string | Uint8Array): DirMatchValue;
+  matchDir(input: string): DirMatchValue;
   /** Literal path prefixes a walker can seed traversal from. */
   staticPrefixes(): Uint8Array[];
 }

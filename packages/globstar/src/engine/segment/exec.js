@@ -143,6 +143,9 @@ function matchSingleGStr(seq, str, dot, ci) {
 }
 
 function lastSepBeforeStr(str, end) {
+  // `lastIndexOf` clamps a negative position to 0 instead of returning -1,
+  // which would report a separator AT index 0 when there is none before it.
+  if (end <= 0) return -1;
   const i = str.lastIndexOf("/", end - 1);
   if (!IS_WINDOWS_SEP) return i;
   const j = str.lastIndexOf("\\", end - 1);

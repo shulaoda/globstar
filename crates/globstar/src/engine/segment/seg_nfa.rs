@@ -240,22 +240,17 @@ fn compute_satisfiable(states: &[SegState], closures: &[u64], init: u64, accept_
         }
     }
     let mut reach = init;
-    loop {
-        let mut grew = false;
-        let mut bits = reach & fires;
-        while bits != 0 {
-            let s = bits.trailing_zeros() as usize;
-            bits &= bits - 1;
-            let clo = closures[fire_next[s] as usize];
-            if reach | clo != reach {
-                reach |= clo;
-                grew = true;
-            }
-        }
-        if !grew {
-            return reach & accept_mask != 0;
+    let mut work = reach & fires;
+    while work != 0 {
+        let s = work.trailing_zeros() as usize;
+        work &= work - 1;
+        let new = closures[fire_next[s] as usize] & !reach;
+        if new != 0 {
+            reach |= new;
+            work |= new & fires;
         }
     }
+    reach & accept_mask != 0
 }
 
 struct SegBuilder {
@@ -284,15 +279,9 @@ impl SegBuilder {
                     *n = target;
                 }
             }
-            SegState::Split(a, b) => {
-                if *a == UNSET {
-                    *a = target;
-                }
-                if *b == UNSET {
-                    *b = target;
-                }
-            }
-            SegState::Match => unreachable!(),
+            // A Split is never a dangling tail: Star returns its exit state
+            // and Alternation returns its branches' leaf tails.
+            SegState::Split(..) | SegState::Match => unreachable!(),
         }
     }
 

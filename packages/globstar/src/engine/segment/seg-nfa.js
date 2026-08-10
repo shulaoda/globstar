@@ -213,20 +213,18 @@ function computeSatisfiable(nfa) {
     }
   }
   let reach = nfa.init;
-  for (;;) {
-    let grew = false;
-    let bits = reach & fires;
-    while (bits !== 0) {
-      const s = ctz32(bits);
-      bits &= bits - 1;
-      const clo = nfa.closures[nfa.nexts[s]];
-      if ((reach | clo) !== reach) {
-        reach |= clo;
-        grew = true;
-      }
+  let work = reach & fires;
+  while (work !== 0) {
+    const s = ctz32(work);
+    work &= work - 1;
+    const clo = nfa.closures[nfa.nexts[s]];
+    const grown = clo & ~reach;
+    if (grown !== 0) {
+      reach |= grown;
+      work |= grown & fires;
     }
-    if (!grew) return (reach & nfa.acceptMask) !== 0;
   }
+  return (reach & nfa.acceptMask) !== 0;
 }
 
 class SegBuilder {
@@ -253,11 +251,9 @@ class SegBuilder {
   }
 
   patch(state, target) {
-    if (this.kinds[state] === S_SPLIT) {
-      if (this.nexts[state] === UNSET) this.nexts[state] = target;
-      if (this.splitBs[state] === UNSET) this.splitBs[state] = target;
-      return;
-    }
+    // A Split is never a dangling tail: Star returns its exit state and
+    // Alternation returns its branches' leaf tails.
+    if (this.kinds[state] === S_SPLIT) throw new Error("patch: unreachable Split");
     if (this.nexts[state] === UNSET) this.nexts[state] = target;
   }
 

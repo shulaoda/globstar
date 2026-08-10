@@ -310,3 +310,9 @@ x{a/b}y*	x{a/b}y	match
 x{a/b}y*	x{a/b}yz	match
 x{a/b}y*	x	pruned
 x{a/b}y*	xa	pruned
+
+## nested.brace.globstar.dirs
+{a/{**,},x}/y	a	descend
+{a/{**,},x}/**	a	descend
+{a/{**,},x}/**	a/	descend-match
+**/a/b	/a	descend

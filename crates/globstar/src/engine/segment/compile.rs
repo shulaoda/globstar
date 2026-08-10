@@ -213,12 +213,15 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
             }
             Op::Sep => {
                 if g_open {
-                    // The separator is the open absorber's right
-                    // boundary; a `.*` in front of a mandatory `/`
-                    // must absorb at least one segment.
-                    if g_upgradeable {
-                        *elems.last_mut().unwrap() = Elem::G1;
+                    // The separator is the open absorber's right boundary
+                    // and upgrades the lenient `.*` to "at least one
+                    // segment". A non-upgradeable absorber (`SlashAnything`)
+                    // is never followed by a `Sep` after lowering; bail if
+                    // one shows up rather than dropping the separator.
+                    if !g_upgradeable {
+                        return None;
                     }
+                    *elems.last_mut().unwrap() = Elem::G1;
                     g_open = false;
                     g_upgradeable = false;
                     state = Boundary::Fresh;

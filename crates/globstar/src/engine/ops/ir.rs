@@ -17,7 +17,8 @@ pub enum Op {
     SepRun,
     /// Raw `**`; internal to lowering and normalized before publication.
     Globstar,
-    /// `(?:[^/]*/)*`, used for leading and middle `**/`.
+    /// `(?:[^/]+/+)*`, used for leading and middle `**/`. Every absorbed
+    /// segment is nonempty, empty segments come from the boundary ops.
     OptSegmentsSlash,
     /// `/.*`, used for strict trailing `/**`.
     SlashAnything,

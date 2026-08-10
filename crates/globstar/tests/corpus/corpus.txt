@@ -698,3 +698,21 @@ x/{**,a}/**	x/a/.z	no-match	dot=false
 /{**,}/**	/.x	no-match	dot=false
 */{**,*}/**	a/.b	match	dot=true
 */{**,*}/**	a/.b	no-match	dot=false
+
+## nested.brace.globstar.boundary
+# A branch-edge `**` inside a nested brace must absorb the outer `/`
+# (distribute_seps splices Concat branches; pinned 2026-08).
+{a/{**,},x}/y	a/y	match
+{a/{**,z},x}/y	a/y	match
+{a/{**,},x}/**	a/	match
+{a/{**,},x}/**	a/b	match
+{*/{**,},}/**	b/	match
+a/{c/{**,b},x}/**	a/c/y	match
+{/{**,},x}/**	/	match
+a/{{**/c,x}d,y}	a/b/cd	match
+
+## leading.sep.string.mode
+# Path starts with a separator, single-globstar tail scan (the JS
+# string-mode lastSepBeforeStr clamp bug, pinned 2026-08).
+**//a	/a	match
+**/a/b	/a/b	match

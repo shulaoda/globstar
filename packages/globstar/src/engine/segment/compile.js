@@ -223,9 +223,13 @@ export function segmentize(ops, dot, ci) {
       }
       case OP_SEP: {
         if (gOpen) {
-          // The separator is the open absorber's right boundary; a
-          // `.*` before a mandatory `/` must absorb >= 1 segment.
-          if (gUpgradeable) elems[elems.length - 1] = makeElem(EL_G1, null, null);
+          // The separator is the open absorber's right boundary and
+          // upgrades the lenient `.*` to "at least one segment". A
+          // non-upgradeable absorber (SlashAnything) is never followed by
+          // a Sep after lowering; bail if one shows up rather than
+          // dropping the separator.
+          if (!gUpgradeable) return null;
+          elems[elems.length - 1] = makeElem(EL_G1, null, null);
           gOpen = false;
           gUpgradeable = false;
           state = B_FRESH;
