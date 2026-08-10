@@ -53,7 +53,7 @@ pub struct PikeVm {
     states: Box<[Trans]>,
     facts: LiteralFacts,
     prefixes: Box<[Box<[u8]>]>,
-    /// Bitmap of states from which a non-empty byte sequence can reach
+    /// Bitmap of states from which at least one edge reaches
     /// [`Trans::Match`] (bit `s` set iff state `s` qualifies). Drives the
     /// prefix-mode descent test in [`PikeVm::match_dir_inner`].
     reach_to_accept: Box<[u64]>,
@@ -63,11 +63,12 @@ pub struct PikeVm {
     /// `u64` bitmaps. `static_closures[s * n_words .. (s+1) * n_words]`
     /// is the bitmap of leaves reachable from `s`.
     static_closures: Box<[u64]>,
-    /// ε-closure of the initial state, copied into `current` at the start of
-    /// each match.
-    init_bits: Box<[u64]>,
-    /// `accepts_at_eof` packed as a bitmap so the EOF accept check is
-    /// one AND across `n_words` words.
+    /// Offset of the initial state's closure row in `static_closures`,
+    /// copied into `current` at the start of each match.
+    init_off: usize,
+    /// States that accept at end of input: the Match state, plus every
+    /// guard whose transitive expansion reaches it (a guard passes
+    /// unconditionally at EOF — there is no next byte to trip it).
     accept_bits: Box<[u64]>,
     /// Packed DotGuard pass-expansions, one `1 + n_words` record per guard
     /// (state id, then the transitive bitmap it releases when it passes).
@@ -84,37 +85,64 @@ impl PikeVm {
     /// runtime needs into bitmaps, then drops the rest.
     pub fn new(program: OpProgram, dot: bool) -> Self {
         let thompson = Thompson::compile(&program, dot);
-        let reach_flags = thompson.reach_to_accept();
         let prefixes = compute_static_prefixes(&program.ops);
         let facts = program.facts;
 
         let n = thompson.states.len();
         let n_words = n.div_ceil(64);
         let static_closures = thompson.static_closures(n_words).into_boxed_slice();
-
-        let init_off = (thompson.initial as usize) * n_words;
-        let init_bits = static_closures[init_off..init_off + n_words]
-            .to_vec()
-            .into_boxed_slice();
-
-        let mut accept_bits = vec![0u64; n_words];
-        for (i, &eof) in thompson.accepts_at_eof.iter().enumerate() {
-            if eof {
-                accept_bits[i >> 6] |= 1u64 << (i & 63);
-            }
-        }
-
-        let mut reach_to_accept = vec![0u64; n_words].into_boxed_slice();
-        for (i, &reach) in reach_flags.iter().enumerate() {
-            if reach {
-                reach_to_accept[i >> 6] |= 1u64 << (i & 63);
-            }
-        }
-
         let guard_exps = thompson.guard_expansions(&static_closures, n_words);
+        let init_off = (thompson.initial as usize) * n_words;
 
-        // Keep only `states`. `initial`, `accept`, and `accepts_at_eof` now
-        // live in `init_bits`, `reach_to_accept`, and `accept_bits`.
+        // accept_bits: the Match state, plus every guard whose transitive
+        // expansion reaches it. Everything else an active set can hold is a
+        // byte consumer, which cannot accept without more input.
+        let accept = thompson.accept as usize;
+        let mut accept_bits = vec![0u64; n_words].into_boxed_slice();
+        accept_bits[accept >> 6] |= 1u64 << (accept & 63);
+        for rec in guard_exps.chunks_exact(1 + n_words) {
+            if rec[1 + (accept >> 6)] & (1u64 << (accept & 63)) != 0 {
+                let g = rec[0] as usize;
+                accept_bits[g >> 6] |= 1u64 << (g & 63);
+            }
+        }
+
+        // reach_to_accept: leaf `s` reaches Match through at least one edge
+        // iff closure(next(s)) hits `accept_bits` or an already-reaching
+        // leaf. Fixpoint over the closure rows, mirroring the JS twin.
+        // `reach[Match]` stays false on purpose: a lone active Match has no
+        // descendants that could extend it, and setting it would make
+        // `match_dir` wrongly report `DescendAndMatch`.
+        let mut reach_to_accept = vec![0u64; n_words].into_boxed_slice();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (s, t) in thompson.states.iter().enumerate() {
+                if reach_to_accept[s >> 6] & (1u64 << (s & 63)) != 0 {
+                    continue;
+                }
+                let next = match t {
+                    Trans::Byte { next, .. }
+                    | Trans::Class { next, .. }
+                    | Trans::AnyNonSep { next }
+                    | Trans::AnyByte { next }
+                    | Trans::Sep { next }
+                    | Trans::DotGuard { next } => *next as usize,
+                    Trans::Match | Trans::Split { .. } | Trans::Jump { .. } => continue,
+                };
+                let base = next * n_words;
+                let hit = (0..n_words).any(|w| {
+                    static_closures[base + w] & (accept_bits[w] | reach_to_accept[w]) != 0
+                });
+                if hit {
+                    reach_to_accept[s >> 6] |= 1u64 << (s & 63);
+                    changed = true;
+                }
+            }
+        }
+
+        // Keep only `states`. `initial` and `accept` now live in `init_off`
+        // and `accept_bits`.
         let Thompson { states, .. } = thompson;
 
         Self {
@@ -124,8 +152,8 @@ impl PikeVm {
             reach_to_accept,
             n_words,
             static_closures,
-            init_bits,
-            accept_bits: accept_bits.into_boxed_slice(),
+            init_off,
+            accept_bits,
             guard_exps,
             dot_protect: !dot,
         }
@@ -172,14 +200,14 @@ impl PikeVm {
 
     fn is_match_inner(&self, path: &[u8], buf: &mut [u64]) -> bool {
         let nw = self.n_words;
-        buf[..nw].copy_from_slice(&self.init_bits);
+        buf[..nw].copy_from_slice(&self.static_closures[self.init_off..self.init_off + nw]);
         self.run(path, buf, nw);
         bitmap_intersects(&buf[..nw], &self.accept_bits)
     }
 
     fn match_dir_inner(&self, dir_path: &[u8], buf: &mut [u64]) -> DirMatch {
         let nw = self.n_words;
-        buf[..nw].copy_from_slice(&self.init_bits);
+        buf[..nw].copy_from_slice(&self.static_closures[self.init_off..self.init_off + nw]);
         // Split off the trailing `after_sep` slot before running so the
         // run loop sees only `[current, next]`.
         let (active, after_sep) = buf.split_at_mut(nw * RUN_SLOTS);
@@ -209,12 +237,10 @@ impl PikeVm {
                 }
             }
         }
-        // Prefix-mode descent qualifier. A state in `after_sep` either is
-        // Match or can reach Match with more bytes.
-        let reach_hit = bitmap_intersects(after_sep, &self.reach_to_accept);
-        let match_hit =
-            !reach_hit && iter_set_states(after_sep).any(|s| matches!(states[s], Trans::Match));
-        let prefix = reach_hit || match_hit;
+        // Prefix-mode descent qualifier. A state in `after_sep` either
+        // accepts as-is or can reach Match with more bytes.
+        let prefix = bitmap_intersects(after_sep, &self.reach_to_accept)
+            || bitmap_intersects(after_sep, &self.accept_bits);
 
         DirMatch::from_exact_prefix(exact, prefix)
     }

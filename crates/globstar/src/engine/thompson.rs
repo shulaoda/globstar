@@ -55,20 +55,11 @@ pub(crate) enum Trans {
 }
 
 /// Compiled Thompson NFA.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct Thompson {
     pub(crate) states: Vec<Trans>,
     pub(crate) initial: StateId,
-    accept: StateId,
-
-    /// States that reach [`Trans::Match`] through ε-edges alone, with no more
-    /// bytes to read.
-    ///
-    /// `DotGuard` counts as ε here. At end of input there is no next byte to
-    /// trip its guard, so `*`'s zero-match branch must still accept (`[^.]*`
-    /// on `main.rs`). The per-step closure skips `DotGuard`, so this mask
-    /// covers the end-of-input case on its own.
-    pub(crate) accepts_at_eof: Vec<bool>,
+    pub(crate) accept: StateId,
 }
 
 impl Thompson {
@@ -80,98 +71,11 @@ impl Thompson {
         for st in tails {
             builder.patch(st, accept);
         }
-        let states = builder.states;
-        let accepts_at_eof = Self::compute_accepts_at_eof(&states);
         Self {
-            states,
+            states: builder.states,
             initial,
             accept,
-            accepts_at_eof,
         }
-    }
-
-    /// `accepts_at_eof[s]` is true when `s` reaches [`Trans::Match`] through
-    /// ε-edges alone (Split, Jump, DotGuard). See [`Thompson::accepts_at_eof`]
-    /// for why DotGuard counts as ε here.
-    fn compute_accepts_at_eof(states: &[Trans]) -> Vec<bool> {
-        let n = states.len();
-        let mut acc = vec![false; n];
-        for (i, t) in states.iter().enumerate() {
-            if matches!(t, Trans::Match) {
-                acc[i] = true;
-            }
-        }
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for (i, t) in states.iter().enumerate() {
-                if acc[i] {
-                    continue;
-                }
-                let reaches = match t {
-                    Trans::Jump { next } | Trans::DotGuard { next } => acc[*next as usize],
-                    Trans::Split { a, b } => acc[*a as usize] || acc[*b as usize],
-                    _ => false,
-                };
-                if reaches {
-                    acc[i] = true;
-                    changed = true;
-                }
-            }
-        }
-        acc
-    }
-
-    /// Reverse reachability to `accept` following at least one edge. ε edges
-    /// count too, so a `DotGuard` jumping straight to `accept` is reachable
-    /// without consuming a byte (harmless in practice: a guard only enters
-    /// the active set alongside its star's byte-consuming body).
-    ///
-    /// `reach_to_accept[accept]` stays false on purpose. A lone active Match
-    /// has no descendants that could extend it, so leaving its flag set would
-    /// make `match_dir` wrongly report `DescendAndMatch`.
-    pub(crate) fn reach_to_accept(&self) -> Vec<bool> {
-        let states = &self.states;
-        let accept = self.accept;
-        let n = states.len();
-        let mut rev: Vec<Vec<StateId>> = vec![Vec::new(); n];
-        for (from, trans) in states.iter().enumerate() {
-            let from = from as StateId;
-            match trans {
-                Trans::Match => {}
-                Trans::Byte { next, .. }
-                | Trans::Class { next, .. }
-                | Trans::AnyNonSep { next, .. }
-                | Trans::AnyByte { next, .. }
-                | Trans::Sep { next, .. }
-                | Trans::Jump { next }
-                | Trans::DotGuard { next } => {
-                    rev[*next as usize].push(from);
-                }
-                Trans::Split { a, b } => {
-                    rev[*a as usize].push(from);
-                    rev[*b as usize].push(from);
-                }
-            }
-        }
-        let mut reach = vec![false; n];
-        let mut stack = Vec::with_capacity(n);
-        // Start from `accept`'s direct predecessors so `reach[accept]` stays false.
-        for &prev in &rev[accept as usize] {
-            if !reach[prev as usize] {
-                reach[prev as usize] = true;
-                stack.push(prev);
-            }
-        }
-        while let Some(s) = stack.pop() {
-            for &prev in &rev[s as usize] {
-                if !reach[prev as usize] {
-                    reach[prev as usize] = true;
-                    stack.push(prev);
-                }
-            }
-        }
-        reach
     }
 
     /// Per-state ε-closure bitmaps over Split/Jump edges, used by the Pike VM
@@ -615,10 +519,10 @@ impl Builder {
     /// A chain of Splits fanning out to each branch, all branch exits returned
     /// together.
     fn compile_alternation(&mut self, branches: &[Vec<Op>]) -> (StateId, Vec<StateId>) {
-        debug_assert!(!branches.is_empty());
-        if branches.len() == 1 {
-            return self.compile_ops(&branches[0]);
-        }
+        // Every constructible Alternation has >= 2 branches: the parser
+        // collapses single-branch braces into literals (GLOB_SPEC §7.4) and
+        // the union factorer only wraps >= 2 patterns.
+        debug_assert!(branches.len() >= 2);
         // Compile the branches first so the Splits can point at their entries.
         let mut branch_entries = Vec::with_capacity(branches.len());
         let mut branch_tails = Vec::new();
