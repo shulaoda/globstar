@@ -1,60 +1,36 @@
-//! Thompson NFA compiled from an [`OpProgram`] and run by
-//! [`super::pikevm::PikeVm`] in linear time with no backtracking. The
-//! fallback when the segment engine can't represent a pattern.
-//!
-//! One [`Trans`] per state. Compound ops become a chain of primitive states
-//! joined by ε-transitions ([`Trans::Split`], [`Trans::Jump`]).
-//!
-//! The segment-leading-dot rule (GLOB_SPEC §6) is not baked into states. At
-//! run time a state refuses a segment-start `.` based on its kind alone:
-//! `AnyNonSep`, `AnyByte`, and negated classes refuse it, while literals and
-//! positive classes match it explicitly. Only `*`'s zero-match exit needs a
-//! dedicated state, [`Trans::DotGuard`], emitted under `dot=false`.
-
 use crate::ast::CharClass;
 use crate::engine::ops::{Op, OpProgram};
 
 pub(crate) type StateId = u32;
 
-/// "No state yet", used to patch forward references during construction.
 const UNSET: StateId = StateId::MAX;
 
-/// One NFA transition. Ordered hot-first for branch prediction.
 #[derive(Clone, Debug)]
 pub(crate) enum Trans {
     /// Accept state. A thread here at end of input means a match.
     Match,
-
     /// Consume byte `b`.
     Byte { b: u8, next: StateId },
-
     /// Consume one byte in `class`.
-    Class { class: Box<CharClass>, next: StateId },
-
-    /// Consume one non-separator byte (`*`, `?`, and the OSS body).
+    Class {
+        class: Box<CharClass>,
+        next: StateId,
+    },
+    /// Consume one non-separator byte.
     AnyNonSep { next: StateId },
-
-    /// Consume any byte, separators included (inside `SlashAnything` and
-    /// `GlobstarAny`).
+    /// Consume any byte, separators included.
     AnyByte { next: StateId },
-
-    /// Consume exactly one separator. Runs (`SepRun`, `LeadingSeps`) are built
-    /// from `Split` loops around this state, not handled per byte.
+    /// Consume exactly one separator.
     Sep { next: StateId },
-
     /// ε fork. Both targets are taken during ε-closure.
     Split { a: StateId, b: StateId },
-
     /// ε jump to `next`.
     Jump { next: StateId },
-
-    /// ε jump that instead dies when the thread is at a segment start and the
-    /// next byte is `.`, so `*` can't zero-match a hidden file. Checked at step
-    /// time because it depends on the next byte.
+    /// ε jump that dies when the thread is at a segment start and the next
+    /// byte is `.`. Guards `*`'s zero-match exit under `dot=false`.
     DotGuard { next: StateId },
 }
 
-/// Compiled Thompson NFA.
 #[derive(Debug)]
 pub(crate) struct Thompson {
     pub(crate) states: Vec<Trans>,
@@ -63,7 +39,6 @@ pub(crate) struct Thompson {
 }
 
 impl Thompson {
-    /// Compile the program into an NFA. Always succeeds.
     pub(crate) fn compile(program: &OpProgram, dot: bool) -> Self {
         let mut builder = Builder::new(program.case_insensitive, dot);
         let (initial, tails) = builder.compile_ops(&program.ops);
@@ -78,13 +53,8 @@ impl Thompson {
         }
     }
 
-    /// Per-state ε-closure bitmaps over Split/Jump edges, used by the Pike VM
-    /// to expand ε-moves as bitmap ORs instead of a per-byte graph walk.
-    /// `result[s * n_words .. (s+1) * n_words]` holds the leaf states
-    /// reachable from `s`.
-    ///
-    /// Post-order DFS on an explicit stack. A recursive version overflowed on
-    /// deeply nested brace unions.
+    /// Per-state ε-closure bitmaps. `result[s * n_words .. (s+1) * n_words]`
+    /// holds the leaf states reachable from `s` over Split/Jump edges.
     pub(crate) fn static_closures(&self, n_words: usize) -> Vec<u64> {
         let n = self.states.len();
         let mut closures = vec![0u64; n * n_words];
@@ -117,7 +87,6 @@ impl Thompson {
                             closures.copy_within(n_base..n_base + n_words, s_base);
                         }
                         _ => {
-                            // Leaf: its closure is just itself.
                             closures[s_base + (s >> 6)] = 1u64 << (s & 63);
                         }
                     }
@@ -129,8 +98,6 @@ impl Thompson {
                     continue;
                 }
                 seen[s] = true;
-
-                // Push the exit marker before the children so it pops after them.
                 stack.push((s as u32) | EXIT_BIT);
 
                 match &self.states[s] {
@@ -155,14 +122,10 @@ impl Thompson {
         closures
     }
 
-    /// Packed [`Trans::DotGuard`] pass-expansions for the Pike VM, one record
-    /// of `1 + n_words` words per guard: the guard's state id, then the
-    /// bitmap the guard releases when it passes (its target's static closure,
-    /// with any chained guards' expansions folded in). Empty when the NFA has
-    /// no guard (every `dot=true` compile).
-    ///
-    /// The fold makes each record transitive, so the run loop expands every
-    /// active guard in one pass instead of chasing a work queue to a fixpoint.
+    /// Packed [`Trans::DotGuard`] expansions, one record of `1 + n_words`
+    /// words per guard. A record holds the guard's state id, then the bitmap
+    /// it releases when it passes. Chained guards are folded in, so the run
+    /// loop expands every active guard in a single pass.
     pub(crate) fn guard_expansions(&self, closures: &[u64], n_words: usize) -> Box<[u64]> {
         let guards: Vec<usize> = self
             .states
@@ -187,8 +150,6 @@ impl Thompson {
             rec[1..].copy_from_slice(&closures[base..base + n_words]);
         }
 
-        // Fold guard chains (a guard whose expansion holds another guard)
-        // until stable.
         let mut changed = true;
         while changed {
             changed = false;
@@ -211,14 +172,9 @@ impl Thompson {
     }
 }
 
-/// Builds the NFA one op at a time. Each `compile_*` returns the fragment's
-/// entry state and its dangling exits for the caller to wire onward.
 struct Builder {
     states: Vec<Trans>,
-    /// When set, a `Lit` byte that is an ASCII letter compiles to a two-item
-    /// `Class` matching both cases instead of an exact `Byte`.
     case_insensitive: bool,
-    /// When unset, `*` guards its zero-match exit with a [`Trans::DotGuard`].
     dot: bool,
 }
 
@@ -263,8 +219,6 @@ impl Builder {
         }
     }
 
-    /// Compile a sequence of ops into a chain, returning its entry state and
-    /// the last op's dangling exits.
     fn compile_ops(&mut self, ops: &[Op]) -> (StateId, Vec<StateId>) {
         if ops.is_empty() {
             let s = self.alloc(Trans::Jump { next: UNSET });
@@ -274,7 +228,6 @@ impl Builder {
         let mut pending_tails: Vec<StateId> = Vec::new();
         for op in ops {
             let (op_entry, mut op_tails) = self.compile_op(op);
-            // Wire the previous op's exits onto this op's entry.
             for tail in pending_tails.drain(..) {
                 self.patch(tail, op_entry);
             }
@@ -286,7 +239,6 @@ impl Builder {
         (entry.unwrap(), pending_tails)
     }
 
-    /// Compile one op. Returns its entry state and the exits to wire onward.
     fn compile_op(&mut self, op: &Op) -> (StateId, Vec<StateId>) {
         match op {
             Op::Lit(bytes) => self.compile_lit(bytes),
@@ -300,24 +252,10 @@ impl Builder {
             Op::SlashAnything => self.compile_slash_anything(),
             Op::GlobstarAny => self.compile_globstar_any(),
             Op::Alternation(branches) => self.compile_alternation(branches),
-            Op::Globstar => {
-                // Lowering folds raw globstars away; is_normalized asserts it
-                // in debug builds. As a release safety net, emit a truly dead
-                // state (an empty class matches no byte) so a leak can never
-                // produce a false match.
-                let s = self.alloc(Trans::Class {
-                    class: Box::new(CharClass {
-                        negated: false,
-                        items: Vec::new(),
-                    }),
-                    next: UNSET,
-                });
-                (s, vec![s])
-            }
+            Op::Globstar => unreachable!("raw Globstar must be folded by lowering"),
         }
     }
 
-    /// One byte-consuming state per byte, chained.
     fn compile_lit(&mut self, bytes: &[u8]) -> (StateId, Vec<StateId>) {
         debug_assert!(
             !bytes.is_empty(),
@@ -352,10 +290,6 @@ impl Builder {
         (s, vec![s])
     }
 
-    /// `Split(body, exit)`. The body loops back to consume more bytes; the
-    /// exit is the zero-match branch. Under dot protection the exit goes
-    /// through a `DotGuard` that dies on a segment-start `.`; otherwise the
-    /// Split's own dangling exit is the fragment tail.
     fn compile_star(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → body
@@ -384,18 +318,11 @@ impl Builder {
         (s, vec![s])
     }
 
-    /// One separator, matched strictly. A single `/` in the pattern does not
-    /// absorb a run like `a//b` in the path (matches picomatch, globset, bash).
     fn compile_sep(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Sep { next: UNSET });
         (entry, vec![entry])
     }
 
-    /// One or more separators. Emitted for the `/` next to a `**`, so
-    /// `a/**/b` matches `a//b`.
-    ///
-    ///   entry: Sep(→tail_split)
-    ///   tail_split: Split(entry, exit)
     fn compile_sep_run(&mut self) -> (StateId, Vec<StateId>) {
         let tail_split = self.alloc(Trans::Split {
             a: UNSET, // → entry (loop)
@@ -408,10 +335,6 @@ impl Builder {
         (entry, vec![tail_split])
     }
 
-    /// Zero or more separators (pattern-head `**/`).
-    ///
-    ///   entry: Split(loop_body, exit)
-    ///   loop_body: Sep(→entry)
     fn compile_leading_seps(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → loop_body
@@ -424,14 +347,6 @@ impl Builder {
         (entry, vec![entry])
     }
 
-    /// `(<segment>/)*`, zero or more whole segments each ending in a separator.
-    ///
-    ///   entry: Split(seg_body, exit)
-    ///   seg_body: AnyNonSep(→seg_cont)
-    ///   seg_cont: Split(seg_body_loop, sep_start)
-    ///   seg_body_loop: AnyNonSep(→seg_cont)
-    ///   sep_start: Sep(→sep_tail)
-    ///   sep_tail: Split(sep_start, entry)
     fn compile_oss(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → seg_body
@@ -469,12 +384,6 @@ impl Builder {
         (entry, vec![entry])
     }
 
-    /// One separator, then any bytes.
-    ///
-    ///   entry: Sep(→post_sep)
-    ///   post_sep: Split(entry, tail)
-    ///   tail: Split(tail_loop, exit)
-    ///   tail_loop: AnyByte(→tail)
     fn compile_slash_anything(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Sep { next: UNSET });
         let post_sep = self.alloc(Trans::Split {
@@ -500,10 +409,6 @@ impl Builder {
         (entry, vec![tail])
     }
 
-    /// Any bytes including separators, or nothing.
-    ///
-    ///   entry: Split(body, exit)
-    ///   body: AnyByte(→entry)
     fn compile_globstar_any(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → body
@@ -516,14 +421,8 @@ impl Builder {
         (entry, vec![entry])
     }
 
-    /// A chain of Splits fanning out to each branch, all branch exits returned
-    /// together.
     fn compile_alternation(&mut self, branches: &[Vec<Op>]) -> (StateId, Vec<StateId>) {
-        // Every constructible Alternation has >= 2 branches: the parser
-        // collapses single-branch braces into literals (GLOB_SPEC §7.4) and
-        // the union factorer only wraps >= 2 patterns.
         debug_assert!(branches.len() >= 2);
-        // Compile the branches first so the Splits can point at their entries.
         let mut branch_entries = Vec::with_capacity(branches.len());
         let mut branch_tails = Vec::new();
         for branch in branches {

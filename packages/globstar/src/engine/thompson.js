@@ -1,27 +1,3 @@
-// Struct-of-arrays Thompson NFA builder for the PikeVM. JS port of the
-// Rust module `crates/globstar/src/engine/thompson.rs`. Compiles to
-// parallel `number[]` arrays
-// instead of a `Trans` object per state — Builder skips ~N V8 object
-// allocations per compile, freezes to typed arrays at the end, and
-// hands PikeVm a ready-to-consume SoA shape.
-//
-// Per-state storage (during build, plain JS arrays):
-//   tags[s]      number   T_BYTE | T_CLASS | …
-//   nexts[s]     number   for byte-consumers/JUMP/DOT_GUARD: next state;
-//                          for SPLIT: first branch (`a`)
-//   byteVals[s]  number   T_BYTE byte value (else 0)
-//   splitsB[s]  number   T_SPLIT second branch (else UNSET)
-//   clsRefs[s]   Object   T_CLASS class struct (else null)
-//
-// Frozen output (consumed by PikeVm constructor):
-//   info: Uint32Array(n) — packed tag/flags/byte/next per byte-consumer
-//                          state (T_SPLIT/T_JUMP slots get tag=T_NULL,
-//                          edges already absorbed by closures).
-//   clsRefs: Array(n) | null
-//   tags, nexts, splitsB: kept as number[] for `staticClosuresN` —
-//                          dropped after closure computation.
-//   initial, accept, n.
-
 import {
   OP_LIT,
   OP_ANYCHAR,
@@ -29,7 +5,6 @@ import {
   OP_CLASS,
   OP_SEP,
   OP_SEP_RUN,
-  OP_GLOBSTAR,
   OP_OPT_SEGMENTS_SLASH,
   OP_SLASH_ANYTHING,
   OP_GLOBSTAR_ANY,
@@ -38,8 +13,6 @@ import {
 } from "./ops/index.js";
 import { ciLetter } from "../ast.js";
 
-// NFA transition tags. `T_NULL` is a packed-runtime sentinel for ε-only
-// states whose closures have already been absorbed by PikeVm.
 export const T_MATCH = 0;
 export const T_BYTE = 1;
 export const T_CLASS = 2;
@@ -56,13 +29,12 @@ const UNSET = -1;
 class Builder {
   constructor(caseInsensitive, dot) {
     this.caseInsensitive = caseInsensitive;
-    // When false, `*` guards its zero-match exit with a T_DOT_GUARD.
     this.dot = dot;
     this.tags = [];
     this.nexts = [];
     this.byteVals = [];
     this.splitsB = [];
-    this.clsRefs = []; // sparse — null entries common
+    this.clsRefs = [];
   }
 
   _push(tag, next, byteVal, cls, splitB) {
@@ -119,7 +91,6 @@ class Builder {
       else if (this.splitsB[state] === UNSET) this.splitsB[state] = target;
       return;
     }
-    // BYTE / CLASS / ANY_NON_SEP / ANY_BYTE / SEP / JUMP / DOT_GUARD
     if (this.nexts[state] === UNSET) this.nexts[state] = target;
   }
 
@@ -163,12 +134,6 @@ class Builder {
         return this.compileGlobstarAny();
       case OP_ALTERNATION:
         return this.compileAlternation(op.branches);
-      case OP_GLOBSTAR: {
-        // Lowering folds raw globstars away. Release safety net: an empty
-        // class matches no byte, so a leak can never produce a false match.
-        const s = this.allocClass({ neg: false, items: [] });
-        return [s, [s]];
-      }
     }
     throw new Error("compileOp: unreachable");
   }
@@ -264,9 +229,6 @@ class Builder {
     return [entry, [entry]];
   }
 
-  // Every constructible Alternation has >= 2 branches: the parser collapses
-  // single-branch braces into literals (GLOB_SPEC §7.4) and the union
-  // factorer only wraps >= 2 patterns.
   compileAlternation(branches) {
     const branchEntries = [];
     const branchTails = [];
@@ -286,8 +248,6 @@ class Builder {
   }
 }
 
-// Build the SoA-form NFA. Returns the working data PikeVm needs to
-// finish constructing its run state (closures, scratch, etc.).
 export function compileThompson(program, dot) {
   const builder = new Builder(program.caseInsensitive, dot);
   const [initial, tails] = builder.compileOps(program.ops);
