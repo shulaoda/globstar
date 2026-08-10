@@ -280,12 +280,16 @@ function combinedTable(rowLabelHeader, rowLabels, sources) {
 
 const empty = {};
 
+// The globstar PikeVM columns force the fallback engine on the same corpus.
+// The default columns route almost every pattern through the segment engine,
+// so thompson/pikevm changes would otherwise be invisible here.
 const rustSingle = {
   compile: {
     data: rust.matcherSingle ?? empty,
     rowKey: (l) => `compile_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
+      ["globstar (Rust PikeVM)", "globstar_pikevm"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
     ],
@@ -295,6 +299,7 @@ const rustSingle = {
     rowKey: (l) => `match_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
+      ["globstar (Rust PikeVM)", "globstar_pikevm"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
       ["fast_glob (Rust)", "fast_glob"],
@@ -306,6 +311,7 @@ const rustSingle = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (Rust)", "globstar"],
+      ["globstar (Rust PikeVM)", "PikeVM"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
     ],
@@ -319,6 +325,7 @@ const jsSingle = {
     rowKey: (l) => `compile: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
+      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -329,6 +336,7 @@ const jsSingle = {
     rowKey: (l) => `match: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
+      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -339,6 +347,7 @@ const jsSingle = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (JS)", "globstar"],
+      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -353,6 +362,7 @@ const rustMulti = {
     rowKey: (l) => `compile_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
+      ["globstar (Rust PikeVM)", "PikeVM_union"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_or"],
     ],
@@ -362,6 +372,7 @@ const rustMulti = {
     rowKey: (l) => `match_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
+      ["globstar (Rust PikeVM)", "PikeVM_union"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_or"],
       ["fast_glob (Rust)", "fast_glob_or"],
@@ -373,6 +384,7 @@ const rustMulti = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (Rust)", "gs_union"],
+      ["globstar (Rust PikeVM)", "pike_union"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_per"],
     ],
@@ -386,6 +398,7 @@ const jsMulti = {
     rowKey: (l) => `compile: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
+      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -396,6 +409,7 @@ const jsMulti = {
     rowKey: (l) => `match: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
+      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -406,50 +420,11 @@ const jsMulti = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (JS)", "globstar"],
+      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
     ],
-    cellOpts: { isMem: true },
-  },
-};
-
-// Forced-PikeVM reference. The globstar columns above route almost every
-// pattern through the segment engine, so changes to the fallback NFA
-// (thompson / pikevm on either runtime) barely move them. These columns run
-// the same corpus with the engine forced to PikeVM to make that visible.
-const pikevmRef = {
-  rustCompile: {
-    data: rust.matcherSingle ?? empty,
-    rowKey: (l) => `compile_${l}`,
-    libCols: [["PikeVM (Rust)", "globstar_pikevm"]],
-  },
-  jsCompile: {
-    data: js.matcherSingle ?? empty,
-    rowKey: (l) => `compile: ${l}`,
-    libCols: [["PikeVM (JS)", "globstar_pikevm"]],
-  },
-  rustMatch: {
-    data: rust.matcherSingle ?? empty,
-    rowKey: (l) => `match_${l}`,
-    libCols: [["PikeVM (Rust)", "globstar_pikevm"]],
-    cellOpts: { divideBy: PATHS_PER_BATCH },
-  },
-  jsMatch: {
-    data: js.matcherSingle ?? empty,
-    rowKey: (l) => `match: ${l}`,
-    libCols: [["PikeVM (JS)", "globstar_pikevm"]],
-  },
-  rustMem: {
-    data: rust.singleMem ?? empty,
-    rowKey: (l) => l,
-    libCols: [["PikeVM (Rust)", "PikeVM"]],
-    cellOpts: { isMem: true },
-  },
-  jsMem: {
-    data: js.singleMem ?? empty,
-    rowKey: (l) => l,
-    libCols: [["PikeVM (JS)", "globstar_pikevm"]],
     cellOpts: { isMem: true },
   },
 };
@@ -579,27 +554,6 @@ ${combinedTable("Set", MULTI_SETS, [rustMulti.match, jsMulti.match])}
 ### Memory (KB / matcher)
 
 ${combinedTable("Set", MULTI_SETS, [rustMulti.mem, jsMulti.mem])}
-`);
-
-sections.push(`## Engine reference — forced PikeVM
-
-The globstar columns above route almost every pattern through the
-segment engine, so changes to the fallback NFA (\`thompson\` /
-\`pikevm\` on either runtime) barely move them. These columns run the
-same single-pattern corpus with the engine forced to PikeVM, so
-fallback regressions show up here.
-
-### Compile (per matcher)
-
-${combinedTable("Pattern", SINGLE_PATTERNS, [pikevmRef.rustCompile, pikevmRef.jsCompile])}
-
-### Match (per call)
-
-${combinedTable("Pattern", SINGLE_PATTERNS, [pikevmRef.rustMatch, pikevmRef.jsMatch])}
-
-### Memory (KB / matcher)
-
-${combinedTable("Pattern", SINGLE_PATTERNS, [pikevmRef.rustMem, pikevmRef.jsMem])}
 `);
 
 sections.push(`## Walker (end-to-end)

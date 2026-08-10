@@ -83,6 +83,12 @@ function runPerPattern(matchOne) {
 const LIBS = [
   // globstar handles `!`-prefixed patterns natively in `compileMatcher`.
   ["globstar", (patterns) => compileMatcher(patterns).match, (fn, s) => fn(s)],
+  // Forced fallback engine, so thompson/pikevm changes show up in the bench.
+  [
+    "globstar_pikevm",
+    (patterns) => compileMatcher(patterns, { __engine: "pikevm" }).match,
+    (fn, s) => fn(s),
+  ],
   ["picomatch", buildPerPattern((b) => pico(b)), runPerPattern((m, s) => m(s))],
   ["minimatch", buildPerPattern((b) => new Minimatch(b)), runPerPattern((m, s) => m.match(s))],
   ["micromatch", buildPerPattern((b) => micro.matcher(b)), runPerPattern((m, s) => m(s))],
@@ -141,7 +147,7 @@ function median(xs) {
 }
 
 console.log(`\n===== PHASE 3: MEMORY (median of ${TRIALS}, B/matcher) =====\n`);
-const widths = [22, 12, 12, 12, 12];
+const widths = [22, 12, 16, 12, 12, 12];
 const header = ["Pattern set", ...LIBS.map(([n]) => n)]
   .map((s, i) => s.padEnd(widths[i] || 12))
   .join(" | ");

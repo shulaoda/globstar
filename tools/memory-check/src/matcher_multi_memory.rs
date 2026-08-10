@@ -13,6 +13,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use globset::GlobBuilder;
 use globstar::Glob as GcGlob;
+use globstar::ast::Node;
+use globstar::engine::ops::lower;
+use globstar::engine::pikevm::PikeVm;
+use globstar::factor::factor_branches;
+use globstar::parser;
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
@@ -86,6 +91,17 @@ fn main() {
         ),
     ];
 
+    /// Forced merged PikeVM — mirrors the criterion bench's PikeVM_union.
+    fn build_pikevm_union(patterns: &[&str]) -> PikeVm {
+        let bodies: Vec<Node> = patterns
+            .iter()
+            .map(|p| parser::parse(p.as_bytes()).expect("parse").body)
+            .collect();
+        let merged = factor_branches(bodies);
+        let program = lower(&merged, false);
+        PikeVm::new(program, true)
+    }
+
     fn build_globset(patterns: &[&str]) -> globset::GlobSet {
         let mut b = globset::GlobSetBuilder::new();
         for p in patterns {
@@ -97,12 +113,12 @@ fn main() {
     let trials = 9;
 
     println!(
-        "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12}",
-        "Pattern set", "N", "gs_union", "gs_per", "globset", "wax_per"
+        "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12} {:>12}",
+        "Pattern set", "N", "gs_union", "pike_union", "gs_per", "globset", "wax_per"
     );
     println!(
-        "{:-<18} {:->3} {:->12} {:->12} {:->12} {:->12}",
-        "", "", "", "", "", ""
+        "{:-<18} {:->3} {:->12} {:->12} {:->12} {:->12} {:->12}",
+        "", "", "", "", "", "", ""
     );
 
     for &(label, patterns) in pattern_sets {
@@ -116,6 +132,15 @@ fn main() {
             })
             .collect();
         let gs_union = median(&mut samples);
+
+        // Forced merged PikeVM.
+        let mut samples: Vec<usize> = (0..trials)
+            .map(|_| {
+                let (_v, heap) = measure_heap(|| build_pikevm_union(patterns));
+                heap
+            })
+            .collect();
+        let pike_union = median(&mut samples);
 
         // globstar per-pattern — N independent Glob matchers (heap of
         // a Vec<Glob> with N entries).
@@ -156,8 +181,8 @@ fn main() {
         let wax_per = median(&mut samples);
 
         println!(
-            "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12}",
-            label, n, gs_union, gs_per, globset_total, wax_per
+            "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12} {:>12}",
+            label, n, gs_union, pike_union, gs_per, globset_total, wax_per
         );
     }
 }
