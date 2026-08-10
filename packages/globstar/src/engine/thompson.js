@@ -54,8 +54,10 @@ export const T_NULL = 9;
 const UNSET = -1;
 
 class Builder {
-  constructor(caseInsensitive) {
+  constructor(caseInsensitive, dot) {
     this.caseInsensitive = caseInsensitive;
+    // When false, `*` guards its zero-match exit with a T_DOT_GUARD.
+    this.dot = dot;
     this.tags = [];
     this.nexts = [];
     this.byteVals = [];
@@ -121,7 +123,7 @@ class Builder {
     if (this.nexts[state] === UNSET) this.nexts[state] = target;
   }
 
-  compileOps(ops, dot) {
+  compileOps(ops) {
     if (ops.length === 0) {
       const s = this.allocJump(UNSET);
       return [s, [s]];
@@ -129,7 +131,7 @@ class Builder {
     let entry = -1;
     let pendingTails = [];
     for (const op of ops) {
-      const [opEntry, opTails] = this.compileOp(op, dot);
+      const [opEntry, opTails] = this.compileOp(op);
       for (const t of pendingTails) this.patch(t, opEntry);
       pendingTails = opTails;
       if (entry === -1) entry = opEntry;
@@ -137,14 +139,14 @@ class Builder {
     return [entry, pendingTails];
   }
 
-  compileOp(op, dot) {
+  compileOp(op) {
     switch (op.kind) {
       case OP_LIT:
         return this.compileLit(op.bytes);
       case OP_ANYCHAR:
         return this.compileAnyNonSep();
       case OP_STAR:
-        return this.compileStar(dot);
+        return this.compileStar();
       case OP_CLASS:
         return this.compileClass(op.cls);
       case OP_SEP:
@@ -160,7 +162,7 @@ class Builder {
       case OP_GLOBSTAR_ANY:
         return this.compileGlobstarAny();
       case OP_ALTERNATION:
-        return this.compileAlternation(op.branches, dot);
+        return this.compileAlternation(op.branches);
       case OP_GLOBSTAR: {
         // Lowering folds raw globstars away. Release safety net: an empty
         // class matches no byte, so a leak can never produce a false match.
@@ -187,11 +189,11 @@ class Builder {
     return [s, [s]];
   }
 
-  compileStar(dot) {
+  compileStar() {
     const entry = this.allocSplit(UNSET, UNSET);
     const body = this.allocAnyNonSep(entry);
     this.nexts[entry] = body;
-    if (!dot) {
+    if (!this.dot) {
       const dotGuard = this.allocDotGuard(UNSET);
       this.splitsB[entry] = dotGuard;
       return [entry, [dotGuard]];
@@ -262,12 +264,12 @@ class Builder {
     return [entry, [entry]];
   }
 
-  compileAlternation(branches, dot) {
-    if (branches.length === 1) return this.compileOps(branches[0], dot);
+  compileAlternation(branches) {
+    if (branches.length === 1) return this.compileOps(branches[0]);
     const branchEntries = [];
     const branchTails = [];
     for (const branch of branches) {
-      const [entry, tails] = this.compileOps(branch, dot);
+      const [entry, tails] = this.compileOps(branch);
       branchEntries.push(entry);
       for (const t of tails) branchTails.push(t);
     }
@@ -285,8 +287,8 @@ class Builder {
 // Build the SoA-form NFA. Returns the working data PikeVm needs to
 // finish constructing its run state (closures, scratch, etc.).
 export function compileThompson(program, dot) {
-  const builder = new Builder(program.caseInsensitive);
-  const [initial, tails] = builder.compileOps(program.ops, dot);
+  const builder = new Builder(program.caseInsensitive, dot);
+  const [initial, tails] = builder.compileOps(program.ops);
   const accept = builder.allocMatch();
   for (const st of tails) builder.patch(st, accept);
 

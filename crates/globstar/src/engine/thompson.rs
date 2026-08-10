@@ -59,7 +59,7 @@ pub(crate) enum Trans {
 pub(crate) struct Thompson {
     pub(crate) states: Vec<Trans>,
     pub(crate) initial: StateId,
-    pub(crate) accept: StateId,
+    accept: StateId,
 
     /// States that reach [`Trans::Match`] through ε-edges alone, with no more
     /// bytes to read.
@@ -74,8 +74,8 @@ pub(crate) struct Thompson {
 impl Thompson {
     /// Compile the program into an NFA. Always succeeds.
     pub(crate) fn compile(program: &OpProgram, dot: bool) -> Self {
-        let mut builder = Builder::new(program.case_insensitive);
-        let (initial, tails) = builder.compile_ops(&program.ops, dot);
+        let mut builder = Builder::new(program.case_insensitive, dot);
+        let (initial, tails) = builder.compile_ops(&program.ops);
         let accept = builder.alloc(Trans::Match);
         for st in tails {
             builder.patch(st, accept);
@@ -146,17 +146,11 @@ impl Thompson {
                 | Trans::Sep { next, .. }
                 | Trans::Jump { next }
                 | Trans::DotGuard { next } => {
-                    if (*next as usize) < n {
-                        rev[*next as usize].push(from);
-                    }
+                    rev[*next as usize].push(from);
                 }
                 Trans::Split { a, b } => {
-                    if (*a as usize) < n {
-                        rev[*a as usize].push(from);
-                    }
-                    if (*b as usize) < n {
-                        rev[*b as usize].push(from);
-                    }
+                    rev[*a as usize].push(from);
+                    rev[*b as usize].push(from);
                 }
             }
         }
@@ -320,13 +314,16 @@ struct Builder {
     /// When set, a `Lit` byte that is an ASCII letter compiles to a two-item
     /// `Class` matching both cases instead of an exact `Byte`.
     case_insensitive: bool,
+    /// When unset, `*` guards its zero-match exit with a [`Trans::DotGuard`].
+    dot: bool,
 }
 
 impl Builder {
-    fn new(case_insensitive: bool) -> Self {
+    fn new(case_insensitive: bool, dot: bool) -> Self {
         Self {
             states: Vec::with_capacity(32),
             case_insensitive,
+            dot,
         }
     }
 
@@ -364,7 +361,7 @@ impl Builder {
 
     /// Compile a sequence of ops into a chain, returning its entry state and
     /// the last op's dangling exits.
-    fn compile_ops(&mut self, ops: &[Op], dot: bool) -> (StateId, Vec<StateId>) {
+    fn compile_ops(&mut self, ops: &[Op]) -> (StateId, Vec<StateId>) {
         if ops.is_empty() {
             let s = self.alloc(Trans::Jump { next: UNSET });
             return (s, vec![s]);
@@ -372,7 +369,7 @@ impl Builder {
         let mut entry: Option<StateId> = None;
         let mut pending_tails: Vec<StateId> = Vec::new();
         for op in ops {
-            let (op_entry, mut op_tails) = self.compile_op(op, dot);
+            let (op_entry, mut op_tails) = self.compile_op(op);
             // Wire the previous op's exits onto this op's entry.
             for tail in pending_tails.drain(..) {
                 self.patch(tail, op_entry);
@@ -386,11 +383,11 @@ impl Builder {
     }
 
     /// Compile one op. Returns its entry state and the exits to wire onward.
-    fn compile_op(&mut self, op: &Op, dot: bool) -> (StateId, Vec<StateId>) {
+    fn compile_op(&mut self, op: &Op) -> (StateId, Vec<StateId>) {
         match op {
             Op::Lit(bytes) => self.compile_lit(bytes),
             Op::AnyChar => self.compile_any_non_sep(),
-            Op::Star => self.compile_star(dot),
+            Op::Star => self.compile_star(),
             Op::Class(class) => self.compile_class(class),
             Op::Sep => self.compile_sep(),
             Op::SepRun => self.compile_sep_run(),
@@ -398,7 +395,7 @@ impl Builder {
             Op::OptSegmentsSlash => self.compile_oss(),
             Op::SlashAnything => self.compile_slash_anything(),
             Op::GlobstarAny => self.compile_globstar_any(),
-            Op::Alternation(branches) => self.compile_alternation(branches, dot),
+            Op::Alternation(branches) => self.compile_alternation(branches),
             Op::Globstar => {
                 // Lowering folds raw globstars away; is_normalized asserts it
                 // in debug builds. As a release safety net, emit a truly dead
@@ -455,7 +452,7 @@ impl Builder {
     /// exit is the zero-match branch. Under dot protection the exit goes
     /// through a `DotGuard` that dies on a segment-start `.`; otherwise the
     /// Split's own dangling exit is the fragment tail.
-    fn compile_star(&mut self, dot: bool) -> (StateId, Vec<StateId>) {
+    fn compile_star(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.alloc(Trans::Split {
             a: UNSET, // → body
             b: UNSET, // → dot_guard or exit
@@ -464,7 +461,7 @@ impl Builder {
         if let Trans::Split { a, .. } = &mut self.states[entry as usize] {
             *a = body;
         }
-        if !dot {
+        if !self.dot {
             let dot_guard = self.alloc(Trans::DotGuard { next: UNSET });
             if let Trans::Split { b, .. } = &mut self.states[entry as usize] {
                 *b = dot_guard;
@@ -524,7 +521,6 @@ impl Builder {
     }
 
     /// `(<segment>/)*`, zero or more whole segments each ending in a separator.
-    /// Each segment start is dot-protected.
     ///
     ///   entry: Split(seg_body, exit)
     ///   seg_body: AnyNonSep(→seg_cont)
@@ -569,7 +565,7 @@ impl Builder {
         (entry, vec![entry])
     }
 
-    /// One separator, then any bytes. Dot-protected at each segment start.
+    /// One separator, then any bytes.
     ///
     ///   entry: Sep(→post_sep)
     ///   post_sep: Split(entry, tail)
@@ -600,8 +596,7 @@ impl Builder {
         (entry, vec![tail])
     }
 
-    /// Any bytes including separators, or nothing. Dot-protected at each
-    /// segment start.
+    /// Any bytes including separators, or nothing.
     ///
     ///   entry: Split(body, exit)
     ///   body: AnyByte(→entry)
@@ -619,16 +614,16 @@ impl Builder {
 
     /// A chain of Splits fanning out to each branch, all branch exits returned
     /// together.
-    fn compile_alternation(&mut self, branches: &[Vec<Op>], dot: bool) -> (StateId, Vec<StateId>) {
+    fn compile_alternation(&mut self, branches: &[Vec<Op>]) -> (StateId, Vec<StateId>) {
         debug_assert!(!branches.is_empty());
         if branches.len() == 1 {
-            return self.compile_ops(&branches[0], dot);
+            return self.compile_ops(&branches[0]);
         }
         // Compile the branches first so the Splits can point at their entries.
         let mut branch_entries = Vec::with_capacity(branches.len());
         let mut branch_tails = Vec::new();
         for branch in branches {
-            let (entry, tails) = self.compile_ops(branch, dot);
+            let (entry, tails) = self.compile_ops(branch);
             branch_entries.push(entry);
             branch_tails.extend(tails);
         }
