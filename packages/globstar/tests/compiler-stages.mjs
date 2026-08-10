@@ -15,6 +15,7 @@ import {
   N_STAR,
 } from "../src/ast.js";
 import { parse } from "../src/parser.js";
+import { compileMatcher } from "../src/glob.js";
 import {
   OP_ALTERNATION,
   OP_ANYCHAR,
@@ -136,3 +137,25 @@ for (const [index, line] of cases.split("\n").entries()) {
 }
 
 console.log("✓ shared parser/lowering golden cases");
+
+// Static-prefix pinning, mirroring crates/globstar/tests/glob.rs prefixes_*.
+const prefixesOf = (patterns) =>
+  compileMatcher(patterns)
+    .staticPrefixes()
+    .map((b) => new TextDecoder().decode(b))
+    .sort();
+assert.deepEqual(prefixesOf("src/main.rs"), ["src/main.rs"]);
+assert.deepEqual(prefixesOf("src/*.ts"), ["src"]);
+assert.deepEqual(prefixesOf("**/*.ts"), [""]);
+assert.deepEqual(prefixesOf("src/**/*.ts"), ["src"]);
+// Strict trailing `/**` keeps the full literal head as the seed.
+assert.deepEqual(prefixesOf("src/**"), ["src"]);
+assert.deepEqual(prefixesOf("a/b/**"), ["a/b"]);
+assert.deepEqual(prefixesOf("{src,tests}/**"), ["src", "tests"]);
+// `{**,src}/x` — the empty prefix subsumes "src".
+assert.deepEqual(prefixesOf("{**,src}/x"), [""]);
+// A negated branch means matches can fall anywhere: seed from the cwd
+// (a single empty prefix, never an empty list — the Rust convention).
+assert.deepEqual(prefixesOf(["src/*.ts", "!x"]), [""]);
+assert.deepEqual(prefixesOf(["!x"]), [""]);
+console.log("✓ static prefix extraction");

@@ -17,6 +17,11 @@ fn extract_prefix(ops: &[Op]) -> Box<[u8]> {
                 acc.push(b'/');
                 last_boundary = acc.len();
             }
+            Op::SlashAnything => {
+                last_boundary = acc.len();
+                fully_literal = false;
+                break;
+            }
             _ => {
                 fully_literal = false;
                 break;
@@ -34,7 +39,10 @@ fn extract_prefix(ops: &[Op]) -> Box<[u8]> {
 
 fn extract_prefixes_per_branch(ops: &[Op]) -> Box<[Box<[u8]>]> {
     if let Some(Op::Alternation(branches)) = ops.first() {
-        if matches!(ops.get(1), None | Some(Op::Sep) | Some(Op::SepRun)) {
+        if matches!(
+            ops.get(1),
+            None | Some(Op::Sep) | Some(Op::SepRun) | Some(Op::SlashAnything)
+        ) {
             return branches
                 .iter()
                 .flat_map(|branch| extract_prefixes_per_branch(branch))

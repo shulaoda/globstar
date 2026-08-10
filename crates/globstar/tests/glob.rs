@@ -116,6 +116,17 @@ fn prefixes_brace_dedupes_nested() {
 }
 
 #[test]
+fn prefixes_trailing_slash_globstar() {
+    // Strict trailing `/**` keeps the full literal head as the seed.
+    assert_eq!(prefixes("src/**"), vec![b"src".to_vec()]);
+    assert_eq!(prefixes("a/b/**"), vec![b"a/b".to_vec()]);
+    let p = prefixes("{src,tests}/**");
+    assert_eq!(p.len(), 2);
+    assert!(p.contains(&b"src".to_vec()));
+    assert!(p.contains(&b"tests".to_vec()));
+}
+
+#[test]
 fn prefixes_empty_subsumes_all() {
     // `{**,src}/x` — one variant is `**/x` (prefix ""), the other is
     // `src/x` (prefix "src"). The empty prefix subsumes "src".

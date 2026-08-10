@@ -105,7 +105,13 @@ function makeMatcher(positiveEngine, negativeEngines) {
 
   // Negated branches don't contribute — a negation has no useful
   // jump-in point.
-  const staticPrefixes = () => (positiveEngine !== null ? positiveEngine.staticPrefixes() : []);
+  // With a negated branch, matches can fall anywhere the negation rejects,
+  // so seed from the cwd — the Rust twin's negated convention (a single
+  // empty prefix, never an empty list).
+  const staticPrefixes = () =>
+    hasNegatives || positiveEngine === null
+      ? [new Uint8Array(0)]
+      : positiveEngine.staticPrefixes();
 
   return { match, matchDir, staticPrefixes };
 }
