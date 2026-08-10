@@ -328,6 +328,69 @@ async function runJsVerify() {
     else record(dir.PikeVm, p === row.expected, () => dirFail(row, "PikeVm", p));
   }
 
+  // ── multi-pattern match_dir corpus — union built the same way as the
+  // multi corpus, judged with the dir tokens. Rows default to dot=false
+  // (walker convention), mirroring `corpus_multi_dir_engines_vs_truth`.
+  function* multiDirRows() {
+    const text = readFileSync(join(CORPUS_DIR, "corpus-multi-dir.txt"), "utf8");
+    let lineNo = 0;
+    for (const raw of text.split("\n")) {
+      lineNo++;
+      const line = raw.replace(/\s+$/, "");
+      if (!line || line.startsWith("#")) continue;
+      const cols = line.split("\t");
+      if (cols.length < 3) continue;
+      let patterns;
+      try {
+        patterns = JSON.parse(cols[0]);
+      } catch (e) {
+        throw new Error(`corpus-multi-dir.txt:${lineNo}: bad PATTERNS_JSON ${cols[0]} (${e.message})`);
+      }
+      const expected = cols[2];
+      if (!DIR_TOKEN.includes(expected)) {
+        throw new Error(`corpus-multi-dir.txt:${lineNo}: unknown DirMatch "${expected}"`);
+      }
+      const flags =
+        cols.length >= 4 ? parseFlags(cols[3], false) : { dot: false, caseInsensitive: false };
+      yield {
+        lineNo,
+        patterns,
+        path: unescape(cols[1]),
+        expected,
+        ...flags,
+      };
+    }
+  }
+
+  function runMultiDirEngine(row, engineName) {
+    try {
+      const dm = compileMatcher(row.patterns, {
+        dot: row.dot,
+        caseInsensitive: row.caseInsensitive,
+        __engine: engineName,
+      }).matchDir(row.path);
+      return DIR_TOKEN[dm];
+    } catch {
+      return null;
+    }
+  }
+  const multiDirFail = (row, engine, got) =>
+    `corpus-multi-dir.txt:${row.lineNo}: patterns=${JSON.stringify(row.patterns)} dir=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
+
+  const multiDir = {
+    globstar: makeStats(),
+    PikeVm: makeStats(),
+  };
+  for (const row of multiDirRows()) {
+    const g = runMultiDirEngine(row, undefined);
+    if (g === null) multiDir.globstar.skip++;
+    else record(multiDir.globstar, g === row.expected, () => multiDirFail(row, "globstar", g));
+
+    const p = runMultiDirEngine(row, "pikevm");
+    if (p === null) multiDir.PikeVm.skip++;
+    else record(multiDir.PikeVm, p === row.expected, () => multiDirFail(row, "PikeVm", p));
+  }
+
   // ── parse-error corpus — public API only (engines never see malformed input)
   const errStats = makeStats();
   {
@@ -365,6 +428,8 @@ async function runJsVerify() {
     { corpus: "multi", engine: "PikeVm", ...multi.PikeVm },
     { corpus: "dir", engine: "globstar", ...dir.globstar },
     { corpus: "dir", engine: "PikeVm", ...dir.PikeVm },
+    { corpus: "mdir", engine: "globstar", ...multiDir.globstar },
+    { corpus: "mdir", engine: "PikeVm", ...multiDir.PikeVm },
     { corpus: "err", engine: "globstar", ...errStats },
   ];
 }
@@ -414,7 +479,7 @@ console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 5 + 5));
 // Stable cross-runtime row order: single → multi → err, then
 // globstar → PikeVm. Rust prints in cargo-test name
 // order (alphabetical), JS in author order — sort so both line up.
-const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, err: 3 };
+const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, mdir: 3, err: 4 };
 const ENGINE_ORDER = { globstar: 0, PikeVm: 1 };
 const rowKey = (r) => [CORPUS_ORDER[r.corpus] ?? 99, ENGINE_ORDER[r.engine] ?? 99];
 for (const side of sides) {

@@ -1,0 +1,66 @@
+# ============================================================================
+# corpus-multi-dir.txt — multi-pattern (OR union) match_dir golden corpus
+# Format: PATTERNS_JSON<TAB>DIR_PATH<TAB>EXPECTED[<TAB>FLAGS]
+# EXPECTED: pruned | descend | match | descend-match (see corpus-dir.txt)
+# FLAGS defaults: dot=false (walker convention), case_insensitive=false
+#
+# Positive-only, like corpus-multi.txt: Rust's `Glob::union` rejects
+# `!`-prefixed members, and both runtimes must go through the same surface.
+# ============================================================================
+
+## union.disjoint.roots
+["src/**","tests/**"]	src	descend
+["src/**","tests/**"]	tests	descend
+["src/**","tests/**"]	lib	pruned
+["src/**","tests/**"]	src/a	descend-match
+["src/**","tests/**"]	tests/a/b	descend-match
+
+## union.overlapping.heads
+["a/*","a/b/*"]	a	descend
+["a/*","a/b/*"]	a/b	descend-match
+["a/*","a/b/*"]	a/b/c	match
+["a/*","a/b/*"]	b	pruned
+
+## union.exact.plus.deeper
+["a","a/b"]	a	descend-match
+["a","a/b"]	a/b	match
+["a","a/b"]	b	pruned
+
+## union.one.branch.prunes
+["x/y","a/**"]	a	descend
+["x/y","a/**"]	x	descend
+["x/y","a/**"]	b	pruned
+["x/y","a/**"]	a/q	descend-match
+["x/y","a/**"]	x/y	match
+
+## union.brace.equivalent.suffixes
+["**/*.ts","**/*.tsx"]	src	descend
+["**/*.ts","**/*.tsx"]	src/a	descend
+["**/*.ts","**/*.tsx"]	.git	pruned
+["**/*.ts","**/*.tsx"]	.git	descend	dot=true
+
+## union.dot.matrix
+["**/a","*/b"]	.x	pruned
+["**/a","*/b"]	.x	descend	dot=true
+
+## union.single.segment.states
+["?","a*"]	a	match
+["?","a*"]	ab	match
+["?","a*"]	b	match
+["?","a*"]	ba	pruned
+["?","a*"]	b/c	pruned
+
+## union.case.insensitive
+["A/*","x/y"]	a	descend	case_insensitive=true
+["A/*","x/y"]	a	pruned
+["A/*","x/y"]	A	descend
+["A/*","x/y"]	x	descend
+
+## union.empty.dir.is.cwd
+["src/**","tests/**"]		descend
+["a","b/c"]		descend
+
+## union.three.branches
+["a/**","b/**","c/**"]	b	descend
+["a/**","b/**","c/**"]	d	pruned
+["a/**","b/**","c/**"]	c/x	descend-match

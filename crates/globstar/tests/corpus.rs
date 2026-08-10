@@ -593,6 +593,137 @@ fn corpus_dir_engines_vs_truth() {
     }
 }
 
+// ── multi-pattern match_dir corpus ────────────────────────────────────
+
+#[derive(Debug)]
+struct MultiDirRow {
+    line_no: usize,
+    patterns: Vec<String>,
+    path: Vec<u8>,
+    expected: DirMatch,
+    dot: bool,
+    case_insensitive: bool,
+}
+
+fn load_multi_dir_corpus() -> Vec<MultiDirRow> {
+    let path = corpus_path("corpus-multi-dir.txt");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
+    let mut rows = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        let line_no = idx + 1;
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 3 {
+            continue;
+        }
+        let patterns = match parse_json_string_array(cols[0]) {
+            Some(p) if !p.is_empty() => p,
+            _ => panic!(
+                "corpus-multi-dir.txt:{line_no}: bad PATTERNS_JSON `{}`",
+                cols[0]
+            ),
+        };
+        let path = unescape(cols[1]);
+        let expected = match parse_dir_expected(cols[2]) {
+            Some(d) => d,
+            None => panic!(
+                "corpus-multi-dir.txt:{line_no}: unknown DirMatch `{}`",
+                cols[2]
+            ),
+        };
+        let (dot, ci) = if cols.len() >= 4 {
+            parse_flags_default(cols[3], false)
+        } else {
+            (false, false)
+        };
+        rows.push(MultiDirRow {
+            line_no,
+            patterns,
+            path,
+            expected,
+            dot,
+            case_insensitive: ci,
+        });
+    }
+    rows
+}
+
+fn run_globstar_multi_dir(row: &MultiDirRow) -> Option<DirMatch> {
+    let opts = CompileOptions::default()
+        .dot(row.dot)
+        .case_insensitive(row.case_insensitive);
+    let g = Glob::union_with(row.patterns.iter().map(|s| s.as_str()), opts).ok()?;
+    Some(g.match_dir(&row.path))
+}
+
+fn run_pikevm_multi_dir(row: &MultiDirRow) -> Option<DirMatch> {
+    let bodies = parse_bodies(&row.patterns)?;
+    let merged = factor_branches(bodies);
+    let program = lower(&merged, row.case_insensitive);
+    Some(PikeVm::new(program, row.dot).match_dir(&row.path))
+}
+
+fn fail_msg_multi_dir(row: &MultiDirRow, engine: &str, got: DirMatch) -> String {
+    format!(
+        "corpus-multi-dir.txt:{}: patterns={:?} dir={:?} dot={} ci={}: {} got {:?}, expected {:?}",
+        row.line_no,
+        row.patterns,
+        String::from_utf8_lossy(&row.path),
+        row.dot,
+        row.case_insensitive,
+        engine,
+        got,
+        row.expected
+    )
+}
+
+#[test]
+fn corpus_multi_dir_engines_vs_truth() {
+    let rows = load_multi_dir_corpus();
+    assert!(!rows.is_empty(), "no multi-dir corpus rows loaded");
+
+    let mut globstar_stats = Stats::default();
+    let mut pike_stats = Stats::default();
+
+    for row in &rows {
+        match run_globstar_multi_dir(row) {
+            Some(got) => globstar_stats
+                .record(got == row.expected, || fail_msg_multi_dir(row, "globstar", got)),
+            None => globstar_stats.skip += 1,
+        }
+        match run_pikevm_multi_dir(row) {
+            Some(got) => {
+                pike_stats.record(got == row.expected, || fail_msg_multi_dir(row, "PikeVm", got))
+            }
+            None => pike_stats.skip += 1,
+        }
+    }
+
+    println!(
+        "corpus=mdir   engine=globstar    pass={} fail={} skip={}",
+        globstar_stats.pass, globstar_stats.fail, globstar_stats.skip
+    );
+    println!(
+        "corpus=mdir   engine=PikeVm      pass={} fail={} skip={}",
+        pike_stats.pass, pike_stats.fail, pike_stats.skip
+    );
+
+    let total_fail = globstar_stats.fail + pike_stats.fail;
+    if total_fail > 0 {
+        for f in globstar_stats
+            .failures
+            .iter()
+            .chain(pike_stats.failures.iter())
+        {
+            eprintln!("  FAIL: {f}");
+        }
+        panic!("{total_fail} multi-dir corpus assertion(s) failed");
+    }
+}
+
 #[test]
 fn corpus_err_parse_failures() {
     let path = corpus_path("corpus-err.txt");

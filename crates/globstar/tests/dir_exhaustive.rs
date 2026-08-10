@@ -17,8 +17,10 @@
 //! (packages/globstar/tests/dir-exhaustive.mjs) runs the identical
 //! enumeration.
 
+use globstar::ast::Node;
 use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
+use globstar::factor::factor_branches;
 use globstar::parser::parse;
 use globstar::{CompileOptions, DirMatch, Glob};
 
@@ -85,9 +87,17 @@ fn build_pikevm(pattern: &str, dot: bool, ci: bool) -> PikeVm {
     PikeVm::new(lower(&ast.body, ci), dot)
 }
 
-fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
-    // Precompute the strictly-below relation once.
-    let below: Vec<Vec<usize>> = paths
+fn build_pikevm_union(patterns: &[&str], dot: bool, ci: bool) -> PikeVm {
+    let bodies: Vec<Node> = patterns
+        .iter()
+        .map(|p| parse(p.as_bytes()).expect("parse").body)
+        .collect();
+    PikeVm::new(lower(&factor_branches(bodies), ci), dot)
+}
+
+/// Precompute the strictly-below relation over the universe.
+fn below_map(paths: &[String]) -> Vec<Vec<usize>> {
+    paths
         .iter()
         .map(|d| {
             paths
@@ -97,7 +107,11 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
                 .map(|(j, _)| j)
                 .collect()
         })
-        .collect();
+        .collect()
+}
+
+fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
+    let below = below_map(paths);
 
     for pattern in patterns {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
@@ -149,12 +163,90 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
     }
 }
 
+/// Same four properties over OR-union matchers (`Glob::union` vs a forced
+/// merged PikeVm), on every ordered pair from an 8-pattern set plus every
+/// ordered triple from a 4-pattern core.
+fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool) {
+    let below = below_map(paths);
+
+    for set in sets {
+        let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
+        let default = Glob::union_with(set.iter().copied(), opts).expect("union");
+        let pike = build_pikevm_union(set, dot, ci);
+
+        let matched: Vec<bool> = paths
+            .iter()
+            .map(|p| default.is_match(p.as_bytes()))
+            .collect();
+
+        for (i, dir) in paths.iter().enumerate() {
+            let pm = pike.is_match(dir.as_bytes());
+            assert_eq!(
+                matched[i], pm,
+                "union is_match disagreement: patterns={set:?} path={dir:?} dot={dot} ci={ci}"
+            );
+
+            let dm = default.match_dir(dir.as_bytes());
+            let pdm = pike.match_dir(dir.as_bytes());
+            assert_eq!(
+                dm, pdm,
+                "union match_dir disagreement: patterns={set:?} dir={dir:?} dot={dot} ci={ci}"
+            );
+
+            assert_eq!(
+                dm.is_match(),
+                matched[i],
+                "union match flag != is_match: patterns={set:?} dir={dir:?} dot={dot} ci={ci} dm={dm:?}"
+            );
+
+            let any_below = below[i].iter().any(|&j| matched[j]);
+            if any_below {
+                assert!(
+                    dm.should_descend(),
+                    "union walker would lose a match: patterns={set:?} dir={dir:?} dot={dot} \
+                     ci={ci} dm={dm:?}"
+                );
+            }
+            if dm.is_pruned() {
+                assert!(
+                    !any_below,
+                    "union pruned but a descendant matches: patterns={set:?} dir={dir:?} dot={dot} ci={ci}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn dir_exhaustive_dot_matrix() {
     let pats = patterns();
     let paths = universe();
     check(&pats, &paths, false, false);
     check(&pats, &paths, true, false);
+}
+
+#[test]
+fn dir_exhaustive_unions() {
+    const UNION_PATTERNS: &[&str] = &["a/b", "a/*", "*/b", "**/b", "a/**", "{a,b}/c", ".a/*", "?"];
+    const UNION_CORE: &[&str] = &["a/*", "**/b", ".a/*", "?"];
+
+    let mut sets: Vec<Vec<&'static str>> = Vec::new();
+    for &a in UNION_PATTERNS {
+        for &b in UNION_PATTERNS {
+            sets.push(vec![a, b]);
+        }
+    }
+    for &a in UNION_CORE {
+        for &b in UNION_CORE {
+            for &c in UNION_CORE {
+                sets.push(vec![a, b, c]);
+            }
+        }
+    }
+
+    let paths = universe();
+    check_union(&sets, &paths, false, false);
+    check_union(&sets, &paths, true, false);
 }
 
 #[test]

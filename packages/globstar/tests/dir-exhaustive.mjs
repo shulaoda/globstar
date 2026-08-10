@@ -99,9 +99,59 @@ function check(pats, paths, dot, ci) {
   return cases;
 }
 
+// Same four properties over OR-union matchers, on every ordered pair from
+// an 8-pattern set plus every ordered triple from a 4-pattern core.
+function checkUnion(sets, paths, dot, ci) {
+  const below = paths.map((d) => {
+    const out = [];
+    for (let j = 0; j < paths.length; j++) if (isBelow(paths[j], d)) out.push(j);
+    return out;
+  });
+
+  let cases = 0;
+  for (const set of sets) {
+    const opts = { dot, caseInsensitive: ci };
+    const def = compileMatcher(set, opts);
+    const pike = compileMatcher(set, { ...opts, __engine: "pikevm" });
+
+    const matched = paths.map((p) => def.match(p));
+
+    for (let i = 0; i < paths.length; i++) {
+      const dir = paths[i];
+      const ctx = `patterns=${JSON.stringify(set)} dir=${JSON.stringify(dir)} dot=${dot} ci=${ci}`;
+
+      assert.equal(pike.match(dir), matched[i], `union is_match disagreement: ${ctx}`);
+
+      const dm = def.matchDir(dir);
+      assert.equal(pike.matchDir(dir), dm, `union matchDir disagreement: ${ctx}`);
+
+      assert.equal(DirMatch.isMatch(dm), matched[i], `union match flag != match: ${ctx} dm=${dm}`);
+
+      const anyBelow = below[i].some((j) => matched[j]);
+      if (anyBelow) {
+        assert.ok(DirMatch.shouldDescend(dm), `union walker would lose a match: ${ctx} dm=${dm}`);
+      }
+      if (dm === DirMatch.Pruned) {
+        assert.ok(!anyBelow, `union pruned but a descendant matches: ${ctx}`);
+      }
+      cases++;
+    }
+  }
+  return cases;
+}
+
 let total = 0;
 total += check(patterns, universe, false, false);
 total += check(patterns, universe, true, false);
+
+const UNION_PATTERNS = ["a/b", "a/*", "*/b", "**/b", "a/**", "{a,b}/c", ".a/*", "?"];
+const UNION_CORE = ["a/*", "**/b", ".a/*", "?"];
+const unionSets = [];
+for (const a of UNION_PATTERNS) for (const b of UNION_PATTERNS) unionSets.push([a, b]);
+for (const a of UNION_CORE)
+  for (const b of UNION_CORE) for (const c of UNION_CORE) unionSets.push([a, b, c]);
+total += checkUnion(unionSets, universe, false, false);
+total += checkUnion(unionSets, universe, true, false);
 
 const CI_SEGMENTS = ["A", "b", "A*", "*A", "[A-B]", "{A,b}"];
 const CI_PSEG = ["a", "A", "b", "ab"];
