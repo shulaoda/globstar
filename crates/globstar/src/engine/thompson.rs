@@ -259,6 +259,61 @@ impl Thompson {
 
         closures
     }
+
+    /// Packed [`Trans::DotGuard`] pass-expansions for the Pike VM, one record
+    /// of `1 + n_words` words per guard: the guard's state id, then the
+    /// bitmap the guard releases when it passes (its target's static closure,
+    /// with any chained guards' expansions folded in). Empty when the NFA has
+    /// no guard (every `dot=true` compile).
+    ///
+    /// The fold makes each record transitive, so the run loop expands every
+    /// active guard in one pass instead of chasing a work queue to a fixpoint.
+    pub(crate) fn guard_expansions(&self, closures: &[u64], n_words: usize) -> Box<[u64]> {
+        let guards: Vec<usize> = self
+            .states
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| matches!(t, Trans::DotGuard { .. }))
+            .map(|(s, _)| s)
+            .collect();
+        if guards.is_empty() {
+            return Box::new([]);
+        }
+
+        let stride = 1 + n_words;
+        let mut recs = vec![0u64; guards.len() * stride];
+        for (i, &g) in guards.iter().enumerate() {
+            let Trans::DotGuard { next } = &self.states[g] else {
+                unreachable!()
+            };
+            let rec = &mut recs[i * stride..(i + 1) * stride];
+            rec[0] = g as u64;
+            let base = *next as usize * n_words;
+            rec[1..].copy_from_slice(&closures[base..base + n_words]);
+        }
+
+        // Fold guard chains (a guard whose expansion holds another guard)
+        // until stable.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for i in 0..guards.len() {
+                for (j, &gj) in guards.iter().enumerate() {
+                    if i == j || recs[i * stride + 1 + (gj >> 6)] & (1u64 << (gj & 63)) == 0 {
+                        continue;
+                    }
+                    for w in 0..n_words {
+                        let merged = recs[i * stride + 1 + w] | recs[j * stride + 1 + w];
+                        if merged != recs[i * stride + 1 + w] {
+                            recs[i * stride + 1 + w] = merged;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        recs.into_boxed_slice()
+    }
 }
 
 /// Builds the NFA one op at a time. Each `compile_*` returns the fragment's

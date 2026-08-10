@@ -12,12 +12,14 @@
 //! are baked at build time, so per-step ε expansion is bitmap ORs instead of a
 //! recursive walk.
 //!
-//! # Two run paths
+//! # Dot guards
 //!
-//! - [`PikeVm::run_fast`] does one sweep per byte, when the NFA has no
-//!   [`Trans::DotGuard`] (the default `dot=true` compile).
-//! - [`PikeVm::run_dot_guard`] uses a work queue with `processed` dedup for
-//!   DotGuard's byte-conditional ε, when `dot=false` produces DotGuard states.
+//! `dot=false` compiles emit byte-conditional [`Trans::DotGuard`] ε-states
+//! that static closures cannot absorb (whether a guard passes depends on the
+//! upcoming byte). Each guard's transitive pass-expansion is precomputed at
+//! build time; when the guard condition holds, the run loop ORs the tables of
+//! the active guards in one pass before the sweep. A failing guard's thread
+//! simply dies, since `byte_step` ignores guard states.
 //!
 //! # Scratch on the stack
 //!
@@ -34,11 +36,11 @@ use crate::engine::thompson::{StateId, Thompson, Trans};
 /// states; larger ones heap-allocate.
 const STACK_WORDS: usize = 4;
 
-/// Scratch slots for `is_match` (current, next, processed).
-const RUN_SLOTS: usize = 3;
+/// Scratch slots for `is_match` (current, next).
+const RUN_SLOTS: usize = 2;
 /// Scratch slots for `match_dir`, `RUN_SLOTS` plus `after_sep` for the
 /// prefix-descent probe.
-const DIR_SLOTS: usize = 4;
+const DIR_SLOTS: usize = 3;
 
 /// Pike VM matcher, compiled once per pattern and `Send + Sync` (no interior
 /// mutability, scratch is per-call on the stack).
@@ -67,9 +69,10 @@ pub struct PikeVm {
     /// `accepts_at_eof` packed as a bitmap so the EOF accept check is
     /// one AND across `n_words` words.
     accept_bits: Box<[u64]>,
-    /// Drives dispatch between [`Self::run_fast`] (no DotGuard) and
-    /// [`Self::run_dot_guard`].
-    has_dot_guard: bool,
+    /// Packed DotGuard pass-expansions, one `1 + n_words` record per guard
+    /// (state id, then the transitive bitmap it releases when it passes).
+    /// Empty for `dot=true` compiles. See [`Thompson::guard_expansions`].
+    guard_exps: Box<[u64]>,
 }
 
 impl PikeVm {
@@ -104,10 +107,7 @@ impl PikeVm {
             }
         }
 
-        let has_dot_guard = thompson
-            .states
-            .iter()
-            .any(|t| matches!(t, Trans::DotGuard { .. }));
+        let guard_exps = thompson.guard_expansions(&static_closures, n_words);
 
         // Keep only `states`. `initial`, `accept`, and `accepts_at_eof` now
         // live in `init_bits`, `reach_to_accept`, and `accept_bits`.
@@ -122,7 +122,7 @@ impl PikeVm {
             static_closures,
             init_bits,
             accept_bits: accept_bits.into_boxed_slice(),
-            has_dot_guard,
+            guard_exps,
         }
     }
 
@@ -168,11 +168,7 @@ impl PikeVm {
     fn is_match_inner(&self, path: &[u8], buf: &mut [u64]) -> bool {
         let nw = self.n_words;
         buf[..nw].copy_from_slice(&self.init_bits);
-        if self.has_dot_guard {
-            self.run_dot_guard(path, buf, nw);
-        } else {
-            self.run_fast(path, buf, nw);
-        }
+        self.run(path, buf, nw);
         bitmap_intersects(&buf[..nw], &self.accept_bits)
     }
 
@@ -180,13 +176,9 @@ impl PikeVm {
         let nw = self.n_words;
         buf[..nw].copy_from_slice(&self.init_bits);
         // Split off the trailing `after_sep` slot before running so the
-        // run loop sees only `[current, next, processed]`.
+        // run loop sees only `[current, next]`.
         let (active, after_sep) = buf.split_at_mut(nw * RUN_SLOTS);
-        if self.has_dot_guard {
-            self.run_dot_guard(dir_path, active, nw);
-        } else {
-            self.run_fast(dir_path, active, nw);
-        }
+        self.run(dir_path, active, nw);
         let exact = bitmap_intersects(&active[..nw], &self.accept_bits);
 
         // Probe a hypothetical descendant `/` step, then a reach-to-accept
@@ -197,38 +189,12 @@ impl PikeVm {
         let states = &self.states;
         let closures = &self.static_closures;
 
-        // ε-expand DotGuard states before the hypothetical `/`. A separator is
-        // never a segment-start dot, so every DotGuard passes here. Static
-        // closures stop at a DotGuard, so a Sep or AnyByte consumer behind one
-        // (the trailing `/` of `*/` under dot=false, active set `{AnyNonSep,
-        // DotGuard→Sep}`) is invisible to the raw scan and the subtree would be
-        // wrongly pruned. No-op when the NFA has no DotGuard.
-        if self.has_dot_guard {
-            let cur = &mut active[..nw];
-            loop {
-                let mut changed = false;
-                for w_idx in 0..nw {
-                    let mut word = cur[w_idx];
-                    while word != 0 {
-                        let s = w_idx * 64 + word.trailing_zeros() as usize;
-                        word &= word - 1;
-                        if let Trans::DotGuard { next } = &states[s] {
-                            let base = (*next as usize) * nw;
-                            for j in 0..nw {
-                                let merged = cur[j] | closures[base + j];
-                                if merged != cur[j] {
-                                    cur[j] = merged;
-                                    changed = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                if !changed {
-                    break;
-                }
-            }
-        }
+        // ε-expand guards before the hypothetical `/`. A separator is never a
+        // segment-start dot, so every guard passes here. Static closures stop
+        // at a guard, so a Sep or AnyByte consumer behind one (the trailing
+        // `/` of `*/` under dot=false) would otherwise be invisible and the
+        // subtree wrongly pruned.
+        self.expand_guards(&mut active[..nw]);
 
         for s in iter_set_states(&active[..nw]) {
             if let Some(n) = byte_step(&states[s], b'/', true, false) {
@@ -248,12 +214,25 @@ impl PikeVm {
         DirMatch::from_exact_prefix(exact, prefix)
     }
 
-    // ── Per-byte run loops ──────────────────────────────────────────
+    // ── Per-byte run loop ───────────────────────────────────────────
 
-    /// Fast path with no DotGuard, one sweep per byte. `current` and `next`
-    /// flip by swapping offsets, and the final active set is copied back to
-    /// slot 0.
-    fn run_fast(&self, path: &[u8], buf: &mut [u64], nw: usize) {
+    /// One sweep per byte. When the guard condition holds, active guards
+    /// expand through their precomputed tables before the sweep; a failing
+    /// guard's thread dies since `byte_step` ignores guard states. `current`
+    /// and `next` flip by swapping offsets, and the final active set is
+    /// copied back to slot 0.
+    ///
+    /// Monomorphized on guard presence, so the guard-free (`dot=true`) loop
+    /// carries no per-byte check at all.
+    fn run(&self, path: &[u8], buf: &mut [u64], nw: usize) {
+        if self.guard_exps.is_empty() {
+            self.run_inner::<false>(path, buf, nw)
+        } else {
+            self.run_inner::<true>(path, buf, nw)
+        }
+    }
+
+    fn run_inner<const GUARDS: bool>(&self, path: &[u8], buf: &mut [u64], nw: usize) {
         // Hoist field reads out of the hot loop.
         let states = &self.states;
         let closures = &self.static_closures;
@@ -265,6 +244,10 @@ impl PikeVm {
             buf[nxt..nxt + nw].fill(0);
             let sep = std::path::is_separator(c as char);
             let dot_mask = at_seg_start && c == b'.';
+
+            if GUARDS && !dot_mask {
+                self.expand_guards(&mut buf[cur..cur + nw]);
+            }
 
             for w_idx in 0..nw {
                 let mut word = buf[cur + w_idx];
@@ -293,63 +276,18 @@ impl PikeVm {
         }
     }
 
-    /// DotGuard path. A byte-conditional ε can re-fill `current` mid-step, so
-    /// we drain it with a `processed`-deduped work queue before swapping to
-    /// `next`. Slots are fixed as [current, next, processed] since `current`
-    /// mutates in place.
-    fn run_dot_guard(&self, path: &[u8], buf: &mut [u64], nw: usize) {
-        let states = &self.states;
-        let closures = &self.static_closures;
-        let cur = 0;
-        let nxt = nw;
-        let proc = nw * 2;
-        let mut at_seg_start = true;
-
-        for &c in path {
-            buf[nxt..proc + nw].fill(0); // zero next AND processed
-            let sep = std::path::is_separator(c as char);
-            let dot_mask = at_seg_start && c == b'.';
-
-            // Drain `current` until no new bits are added.
-            loop {
-                let mut found_new_work = false;
-                for w_idx in 0..nw {
-                    let unprocessed = buf[cur + w_idx] & !buf[proc + w_idx];
-                    if unprocessed == 0 {
-                        continue;
-                    }
-                    found_new_work = true;
-                    buf[proc + w_idx] |= unprocessed;
-
-                    let mut word = unprocessed;
-                    while word != 0 {
-                        let s = w_idx * 64 + word.trailing_zeros() as usize;
-                        word &= word - 1;
-                        // Byte-consumers fire to `next`. DotGuard ε-additions
-                        // land in `current` for the drain loop to re-process.
-                        let (target, n) = match &states[s] {
-                            Trans::DotGuard { next: n } if !dot_mask => (cur, *n),
-                            Trans::DotGuard { .. } => continue, // guard fails
-                            other => match byte_step(other, c, sep, dot_mask) {
-                                Some(n) => (nxt, n),
-                                None => continue,
-                            },
-                        };
-                        let base = (n as usize) * nw;
-                        for j in 0..nw {
-                            buf[target + j] |= closures[base + j];
-                        }
-                    }
+    /// OR each active guard's precomputed pass-expansion into `cur`. The
+    /// records are transitive, so one pass covers guard chains. No-op when
+    /// the NFA has no guard.
+    #[inline]
+    fn expand_guards(&self, cur: &mut [u64]) {
+        let nw = self.n_words;
+        for rec in self.guard_exps.chunks_exact(1 + nw) {
+            let g = rec[0] as usize;
+            if cur[g >> 6] & (1u64 << (g & 63)) != 0 {
+                for (w, exp) in cur.iter_mut().zip(&rec[1..]) {
+                    *w |= exp;
                 }
-                if !found_new_work {
-                    break;
-                }
-            }
-
-            buf.copy_within(nxt..nxt + nw, cur);
-            at_seg_start = sep;
-            if buf[cur..cur + nw].iter().all(|&w| w == 0) {
-                break;
             }
         }
     }
@@ -386,10 +324,10 @@ fn iter_set_states(bits: &[u64]) -> impl Iterator<Item = usize> + '_ {
 /// Apply one leaf state's byte test against `c`. Returns the successor state
 /// if the transition fires, else `None`. The caller expands the ε-closure.
 ///
-/// `DotGuard` returns `None` because its byte-conditional ε writes to the
-/// current slot, not next, and is handled inline in [`PikeVm::run_dot_guard`].
-/// Match, Split, and Jump never appear in the active set after ε-closure, and
-/// Match consumes no byte.
+/// `DotGuard` returns `None` because it consumes nothing: a passing guard is
+/// expanded through its precomputed table before the sweep, and a failing one
+/// dies right here. Match, Split, and Jump never appear in the active set
+/// after ε-closure, and Match consumes no byte.
 #[inline]
 fn byte_step(t: &Trans, c: u8, sep: bool, dot_mask: bool) -> Option<StateId> {
     match t {

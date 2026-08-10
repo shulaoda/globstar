@@ -3,11 +3,12 @@
 // `nWords = ceil(nStates / 32)` words. Static ε-closures are precomputed at
 // construction so byte-stepping never expands SPLIT/JUMP edges.
 //
-// Two byte-step variants, picked at construction:
-//   _runFast      single pass, no work queue. Used when the NFA has no
-//                 T_DOT_GUARD (dot=true).
-//   _runDotGuard  work queue with `processed` dedup for the byte-conditional
-//                 ε of T_DOT_GUARD. Used when dot=false and a guard is present.
+// dot=false compiles emit byte-conditional T_DOT_GUARD ε-states that static
+// closures cannot absorb (whether a guard passes depends on the upcoming
+// byte). Each guard's transitive pass-expansion is precomputed at
+// construction; when the guard condition holds, `_run` ORs the tables of the
+// active guards in one pass before the sweep. A failing guard's thread simply
+// dies, since the byte switch ignores guard states.
 
 import {
   T_BYTE,
@@ -168,7 +169,7 @@ export class PikeVm {
     const flagBits = nfa.flagBits;
     const inClsRefs = nfa.clsRefs;
     let clsRefs = null;
-    let hasDotGuard = false;
+    const guardIds = [];
     for (let i = 0; i < n; i++) {
       const tag = tags[i];
       if (tag === T_SPLIT || tag === T_JUMP) {
@@ -176,7 +177,7 @@ export class PikeVm {
         continue;
       }
       combined[infoOff + i] = tag | (flagBits[i] << 4) | (byteVals[i] << 8) | (nexts[i] << 16);
-      if (tag === T_DOT_GUARD) hasDotGuard = true;
+      if (tag === T_DOT_GUARD) guardIds.push(i);
       if (tag === T_CLASS) {
         if (clsRefs === null) clsRefs = Array.from({ length: n });
         clsRefs[i] = inClsRefs[i];
@@ -187,14 +188,54 @@ export class PikeVm {
     this.acceptOff = acceptOff;
     this.infoOff = infoOff;
     this.clsRefs = clsRefs;
-    this.hasDotGuard = hasDotGuard;
+
+    // Packed T_DOT_GUARD pass-expansions, one record of `1 + nWords` words
+    // per guard: the guard's state id, then the bitmap it releases when it
+    // passes (its target's closure, with chained guards' expansions folded
+    // in). The fold makes records transitive, so `_run` expands every active
+    // guard in one pass. Null for dot=true compiles.
+    let guardExps = null;
+    if (guardIds.length > 0) {
+      const stride = 1 + nWords;
+      guardExps = new Uint32Array(guardIds.length * stride);
+      for (let i = 0; i < guardIds.length; i++) {
+        const g = guardIds[i];
+        guardExps[i * stride] = g;
+        const base = nexts[g] * nWords;
+        for (let w = 0; w < nWords; w++) guardExps[i * stride + 1 + w] = combined[base + w];
+      }
+      // Fold guard chains (a guard whose expansion holds another guard)
+      // until stable.
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (let i = 0; i < guardIds.length; i++) {
+          for (let j = 0; j < guardIds.length; j++) {
+            const gj = guardIds[j];
+            if (i === j || (guardExps[i * stride + 1 + (gj >>> 5)] & (1 << (gj & 31))) === 0) {
+              continue;
+            }
+            for (let w = 0; w < nWords; w++) {
+              // `>>> 0` forces unsigned: the OR yields a signed int32, but
+              // Uint32Array reads are unsigned, and a signed/unsigned compare
+              // with bit 31 set would never stabilize.
+              const merged = (guardExps[i * stride + 1 + w] | guardExps[j * stride + 1 + w]) >>> 0;
+              if (merged !== guardExps[i * stride + 1 + w]) {
+                guardExps[i * stride + 1 + w] = merged;
+                changed = true;
+              }
+            }
+          }
+        }
+      }
+    }
+    this.guardExps = guardExps;
 
     // Scratch buffers reused across match calls (single-threaded), packed
     // into one Uint32Array. Layout (nWords each):
     //   [0,         nWords)    cur
     //   [nWords,  2*nWords)    nxt
-    //   [2*nWords,3*nWords)    processed (only if hasDotGuard)
-    this._scratch = new Uint32Array(nWords * (hasDotGuard ? 3 : 2));
+    this._scratch = new Uint32Array(nWords * 2);
 
     // Lazy reach-to-accept (matchDir prefix mode). Computed on the first
     // matchDir call from `closures` + `acceptBits`. The compile-time `nfa`
@@ -247,38 +288,17 @@ export class PikeVm {
     // The separator step below consumes a `/`, never a segment-start dot, so
     // every `T_DOT_GUARD` in the live set passes here. Static closures stop at
     // a dot-guard (a byte-conditional ε-leaf), so a separator consumer behind
-    // one (e.g. the `SEP` of `*/` under `dot=false`, whose live set is
-    // `{ANY_NON_SEP, DOT_GUARD→SEP}`) is invisible to the raw `scratch` scan.
-    // ε-expand the guards to a fixpoint first, or the subtree is wrongly
-    // pruned. `_runFast`/`dot=true` programs have no guards, so `cur` equals
-    // the live set and this is a no-op.
+    // one (e.g. the `SEP` of `*/` under `dot=false`) would otherwise be
+    // invisible to the raw `scratch` scan and the subtree wrongly pruned.
     const cur = new Uint32Array(nWords);
     for (let w = 0; w < nWords; w++) cur[w] = scratch[w];
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (let w = 0; w < nWords; w++) {
-        let word = cur[w];
-        while (word !== 0) {
-          const off = ctz32(word);
-          const s = (w << 5) + off;
-          word &= word - 1;
-          const word2 = closures[infoOff + s];
-          if ((word2 & 0xf) === T_DOT_GUARD) {
-            const base = (word2 >>> 16) * nWords;
-            for (let j = 0; j < nWords; j++) {
-              // `>>> 0` forces unsigned. A bitwise OR yields a signed int32,
-              // but Uint32Array reads are unsigned. With bit 31 set the
-              // signed/unsigned compare never stabilizes and the fixpoint
-              // loops forever (found by the string-mode fuzzer on a 37-state
-              // dot=false pattern).
-              const merged = (cur[j] | closures[base + j]) >>> 0;
-              if (merged !== cur[j]) {
-                cur[j] = merged;
-                changed = true;
-              }
-            }
-          }
+    const guardExps = this.guardExps;
+    if (guardExps !== null) {
+      const stride = 1 + nWords;
+      for (let r = 0; r < guardExps.length; r += stride) {
+        const g = guardExps[r];
+        if (cur[g >>> 5] & (1 << (g & 31))) {
+          for (let j = 0; j < nWords; j++) cur[j] |= guardExps[r + 1 + j];
         }
       }
     }
@@ -317,15 +337,13 @@ export class PikeVm {
   }
 
   _run(path) {
-    return this.hasDotGuard ? this._runDotGuard(path) : this._runFast(path);
-  }
-
-  _runFast(path) {
     const closures = this.closures;
     const infoOff = this.infoOff;
     const clsRefs = this.clsRefs;
     const nWords = this.nWords;
     const scratch = this._scratch;
+    const guardExps = this.guardExps;
+    const stride = 1 + nWords;
     // cur slice: scratch[0..nWords)   nxt slice: scratch[nWords..2*nWords)
     const nxtBase = nWords;
     const initOff = this.initOff;
@@ -340,6 +358,17 @@ export class PikeVm {
       // dot, `dotMaskFlag = 0x10` so `!(word2 & dotMaskFlag)` rejects
       // dot-protected states; otherwise it's `0` and always passes.
       const dotMaskFlag = atSegStart && c === 0x2e ? 0x10 : 0;
+
+      // Passing guards release their precomputed transitive expansions; a
+      // failing guard's thread dies in the byte switch below.
+      if (guardExps !== null && dotMaskFlag === 0) {
+        for (let r = 0; r < guardExps.length; r += stride) {
+          const g = guardExps[r];
+          if (scratch[g >>> 5] & (1 << (g & 31))) {
+            for (let j = 0; j < nWords; j++) scratch[j] |= guardExps[r + 1 + j];
+          }
+        }
+      }
 
       for (let w = 0; w < nWords; w++) scratch[nxtBase + w] = 0;
 
@@ -376,104 +405,6 @@ export class PikeVm {
       }
 
       // Copy nxt → cur in scratch.
-      let allZero = true;
-      for (let w = 0; w < nWords; w++) {
-        const v = scratch[nxtBase + w];
-        scratch[w] = v;
-        if (v !== 0) allZero = false;
-      }
-      if (allZero) return;
-      atSegStart = sep;
-    }
-  }
-
-  _runDotGuard(path) {
-    const closures = this.closures;
-    const infoOff = this.infoOff;
-    const clsRefs = this.clsRefs;
-    const nWords = this.nWords;
-    const scratch = this._scratch;
-    // cur: [0..nWords)   nxt: [nWords..2*nWords)   processed: [2*nWords..3*nWords)
-    const nxtBase = nWords;
-    const procBase = nWords * 2;
-    const work = new Uint32Array(nWords);
-    const initOff = this.initOff;
-    for (let w = 0; w < nWords; w++) scratch[w] = closures[initOff + w];
-
-    let atSegStart = true;
-
-    for (let p = 0; p < path.length; p++) {
-      const c = path[p];
-      const sep = isPathSep(c);
-      const dotMaskFlag = atSegStart && c === 0x2e ? 0x10 : 0;
-
-      for (let w = 0; w < nWords; w++) {
-        scratch[nxtBase + w] = 0;
-        work[w] = scratch[w];
-        scratch[procBase + w] = 0;
-      }
-
-      let anyWork = true;
-      while (anyWork) {
-        anyWork = false;
-        for (let w = 0; w < nWords; w++) {
-          let word = work[w];
-          if (word === 0) continue;
-          work[w] = 0;
-          while (word !== 0) {
-            const off = ctz32(word);
-            const s = (w << 5) + off;
-            const bit = 1 << off;
-            word &= word - 1;
-            if (scratch[procBase + w] & bit) continue;
-            scratch[procBase + w] |= bit;
-            const word2 = closures[infoOff + s];
-            const tag = word2 & 0xf;
-            if (tag === T_BYTE) {
-              if (((word2 >>> 8) & 0xff) === c) {
-                const base = (word2 >>> 16) * nWords;
-                for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
-              }
-            } else if (tag === T_CLASS) {
-              if (classMatches(clsRefs[s], c) && !(word2 & dotMaskFlag)) {
-                const base = (word2 >>> 16) * nWords;
-                for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
-              }
-            } else if (tag === T_ANY_NON_SEP) {
-              if (!sep && !(word2 & dotMaskFlag)) {
-                const base = (word2 >>> 16) * nWords;
-                for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
-              }
-            } else if (tag === T_ANY_BYTE) {
-              if (!(word2 & dotMaskFlag)) {
-                const base = (word2 >>> 16) * nWords;
-                for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
-              }
-            } else if (tag === T_SEP) {
-              if (sep) {
-                const base = (word2 >>> 16) * nWords;
-                for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
-              }
-            } else if (tag === T_DOT_GUARD) {
-              if (dotMaskFlag === 0) {
-                const base = (word2 >>> 16) * nWords;
-                for (let j = 0; j < nWords; j++) work[j] |= closures[base + j];
-              }
-            }
-          }
-          if (work[w] !== 0) anyWork = true;
-        }
-        // Re-scan if any new work appeared (DOT_GUARD chains).
-        if (!anyWork) {
-          for (let w = 0; w < nWords; w++) {
-            if (work[w] !== 0) {
-              anyWork = true;
-              break;
-            }
-          }
-        }
-      }
-
       let allZero = true;
       for (let w = 0; w < nWords; w++) {
         const v = scratch[nxtBase + w];
