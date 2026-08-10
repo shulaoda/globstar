@@ -150,10 +150,6 @@ impl Thompson {
             rec[1..].copy_from_slice(&closures[base..base + n_words]);
         }
 
-        // Fold guard chains until stable. Chains point forward (a guard's
-        // expansion only ever holds later guards), so the reverse pass folds
-        // each chain in one go and the loop converges in ~2 passes. Order
-        // affects speed only, the fixpoint is unique.
         let mut changed = true;
         while changed {
             changed = false;
@@ -197,13 +193,10 @@ impl Builder {
         id
     }
 
-    /// Id the next `alloc` will assign. Fragments compute their intra-loop
-    /// targets from it up front instead of patching afterwards.
     fn next_id(&self) -> StateId {
         self.states.len() as StateId
     }
 
-    /// Point every `UNSET` field of `state` at `target`.
     fn patch(&mut self, state: StateId, target: StateId) {
         match &mut self.states[state as usize] {
             Trans::Match => panic!("cannot patch a Match state"),
@@ -305,7 +298,10 @@ impl Builder {
             (entry, vec![entry])
         } else {
             let dot_guard = entry + 2;
-            self.alloc(Trans::Split { a: body, b: dot_guard });
+            self.alloc(Trans::Split {
+                a: body,
+                b: dot_guard,
+            });
             self.alloc(Trans::AnyNonSep { next: entry });
             self.alloc(Trans::DotGuard { next: UNSET });
             (entry, vec![dot_guard])
@@ -336,7 +332,10 @@ impl Builder {
     fn compile_leading_seps(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.next_id();
         let loop_body = entry + 1;
-        self.alloc(Trans::Split { a: loop_body, b: UNSET });
+        self.alloc(Trans::Split {
+            a: loop_body,
+            b: UNSET,
+        });
         self.alloc(Trans::Sep { next: entry });
         (entry, vec![entry])
     }
@@ -345,12 +344,21 @@ impl Builder {
         let entry = self.next_id();
         let (seg_body, seg_cont, seg_body_loop, sep_start, sep_tail) =
             (entry + 1, entry + 2, entry + 3, entry + 4, entry + 5);
-        self.alloc(Trans::Split { a: seg_body, b: UNSET });
+        self.alloc(Trans::Split {
+            a: seg_body,
+            b: UNSET,
+        });
         self.alloc(Trans::AnyNonSep { next: seg_cont });
-        self.alloc(Trans::Split { a: seg_body_loop, b: sep_start });
+        self.alloc(Trans::Split {
+            a: seg_body_loop,
+            b: sep_start,
+        });
         self.alloc(Trans::AnyNonSep { next: seg_cont });
         self.alloc(Trans::Sep { next: sep_tail });
-        self.alloc(Trans::Split { a: sep_start, b: entry });
+        self.alloc(Trans::Split {
+            a: sep_start,
+            b: entry,
+        });
         (entry, vec![entry])
     }
 
@@ -359,7 +367,10 @@ impl Builder {
         let (post_sep, tail, tail_loop) = (entry + 1, entry + 2, entry + 3);
         self.alloc(Trans::Sep { next: post_sep });
         self.alloc(Trans::Split { a: entry, b: tail });
-        self.alloc(Trans::Split { a: tail_loop, b: UNSET });
+        self.alloc(Trans::Split {
+            a: tail_loop,
+            b: UNSET,
+        });
         self.alloc(Trans::AnyByte { next: tail });
         (entry, vec![tail])
     }
@@ -381,7 +392,6 @@ impl Builder {
             branch_entries.push(entry);
             branch_tails.extend(tails);
         }
-        // Chain Splits right to left, the last two branches share one.
         let mut entry = *branch_entries.last().unwrap();
         for &a in branch_entries[..branch_entries.len() - 1].iter().rev() {
             entry = self.alloc(Trans::Split { a, b: entry });

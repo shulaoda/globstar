@@ -47,8 +47,6 @@ class Builder {
     return id;
   }
 
-  // Id the next alloc will assign. Fragments compute their intra-loop
-  // targets from it up front instead of patching afterwards.
   nextId() {
     return this.tags.length;
   }
@@ -242,7 +240,6 @@ class Builder {
       branchEntries.push(entry);
       for (const t of tails) branchTails.push(t);
     }
-    // Chain Splits right to left, the last two branches share one.
     let entry = branchEntries[branchEntries.length - 1];
     for (let i = branchEntries.length - 2; i >= 0; i--) {
       entry = this.allocSplit(branchEntries[i], entry);
