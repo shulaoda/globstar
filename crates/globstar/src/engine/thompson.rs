@@ -84,13 +84,45 @@ impl Thompson {
             builder.patch(st, accept);
         }
         let states = builder.states;
-        let accepts_at_eof = compute_accepts_at_eof(&states);
+        let accepts_at_eof = Self::compute_accepts_at_eof(&states);
         Self {
             states,
             initial,
             accept,
             accepts_at_eof,
         }
+    }
+
+    /// `accepts_at_eof[s]` is true when `s` reaches [`Trans::Match`] through
+    /// ε-edges alone (Split, Jump, DotGuard). See [`Thompson::accepts_at_eof`]
+    /// for why DotGuard counts as ε here.
+    fn compute_accepts_at_eof(states: &[Trans]) -> Vec<bool> {
+        let n = states.len();
+        let mut acc = vec![false; n];
+        for (i, t) in states.iter().enumerate() {
+            if matches!(t, Trans::Match) {
+                acc[i] = true;
+            }
+        }
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (i, t) in states.iter().enumerate() {
+                if acc[i] {
+                    continue;
+                }
+                let reaches = match t {
+                    Trans::Jump { next } | Trans::DotGuard { next } => acc[*next as usize],
+                    Trans::Split { a, b } => acc[*a as usize] || acc[*b as usize],
+                    _ => false,
+                };
+                if reaches {
+                    acc[i] = true;
+                    changed = true;
+                }
+            }
+        }
+        acc
     }
 
     /// Reverse reachability to `accept` following at least one edge. ε edges
@@ -585,36 +617,4 @@ impl Builder {
         let entry = next_state.expect("at least 2 branches => at least 1 split");
         (entry, branch_tails)
     }
-}
-
-/// `accepts_at_eof[s]` is true when `s` reaches [`Trans::Match`] through
-/// ε-edges alone (Split, Jump, DotGuard). See [`Thompson::accepts_at_eof`]
-/// for why DotGuard counts as ε here.
-fn compute_accepts_at_eof(states: &[Trans]) -> Vec<bool> {
-    let n = states.len();
-    let mut acc = vec![false; n];
-    for (i, t) in states.iter().enumerate() {
-        if matches!(t, Trans::Match) {
-            acc[i] = true;
-        }
-    }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (i, t) in states.iter().enumerate() {
-            if acc[i] {
-                continue;
-            }
-            let reaches = match t {
-                Trans::Jump { next } | Trans::DotGuard { next } => acc[*next as usize],
-                Trans::Split { a, b } => acc[*a as usize] || acc[*b as usize],
-                _ => false,
-            };
-            if reaches {
-                acc[i] = true;
-                changed = true;
-            }
-        }
-    }
-    acc
 }
