@@ -63,7 +63,6 @@ class Builder {
     this.flagBits = [];
     this.splitsB = [];
     this.clsRefs = []; // sparse — null entries common
-    this.tailPatches = [];
   }
 
   _push(tag, next, byteVal, flags, cls, splitB) {
@@ -128,8 +127,7 @@ class Builder {
   compileOps(ops, dot) {
     if (ops.length === 0) {
       const s = this.allocJump(UNSET);
-      this.tailPatches.push(s);
-      return s;
+      return [s, [s]];
     }
     let entry = -1;
     let pendingTails = [];
@@ -139,8 +137,7 @@ class Builder {
       pendingTails = opTails;
       if (entry === -1) entry = opEntry;
     }
-    for (const t of pendingTails) this.tailPatches.push(t);
-    return entry;
+    return [entry, pendingTails];
   }
 
   compileOp(op, dot) {
@@ -168,7 +165,9 @@ class Builder {
       case OP_ALTERNATION:
         return this.compileAlternation(op.branches, dot);
       case OP_GLOBSTAR: {
-        const s = this.allocByte(0);
+        // Lowering folds raw globstars away. Release safety net: an empty
+        // class matches no byte, so a leak can never produce a false match.
+        const s = this.allocClass({ neg: false, items: [] }, false);
         return [s, [s]];
       }
     }
@@ -266,18 +265,11 @@ class Builder {
   }
 
   compileAlternation(branches, dot) {
-    if (branches.length === 1) {
-      const entry = this.compileOps(branches[0], dot);
-      const tails = this.tailPatches;
-      this.tailPatches = [];
-      return [entry, tails];
-    }
+    if (branches.length === 1) return this.compileOps(branches[0], dot);
     const branchEntries = [];
     const branchTails = [];
     for (const branch of branches) {
-      const entry = this.compileOps(branch, dot);
-      const tails = this.tailPatches;
-      this.tailPatches = [];
+      const [entry, tails] = this.compileOps(branch, dot);
       branchEntries.push(entry);
       for (const t of tails) branchTails.push(t);
     }
@@ -297,10 +289,10 @@ class Builder {
 export function compileThompson(program, dot) {
   const builder = new Builder(program.caseInsensitive);
   const initial = builder.allocJump(UNSET);
-  const bodyEntry = builder.compileOps(program.ops, dot);
+  const [bodyEntry, tails] = builder.compileOps(program.ops, dot);
   const accept = builder.allocMatch();
   builder.patch(initial, bodyEntry);
-  for (const st of builder.tailPatches) builder.patch(st, accept);
+  for (const st of tails) builder.patch(st, accept);
 
   const n = builder.tags.length;
   const tags = builder.tags;

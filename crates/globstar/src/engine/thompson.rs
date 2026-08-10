@@ -79,10 +79,9 @@ impl Thompson {
     pub(crate) fn compile(program: &OpProgram, dot: bool) -> Self {
         let mut builder = Builder::new(program.case_insensitive);
         let initial = builder.alloc(Trans::Jump { next: UNSET });
-        let body_entry = builder.compile_ops(&program.ops, dot);
+        let (body_entry, tails) = builder.compile_ops(&program.ops, dot);
         let accept = builder.alloc(Trans::Match);
         builder.patch(initial, body_entry);
-        let tails = std::mem::take(&mut builder.tail_patches);
         for st in tails {
             builder.patch(st, accept);
         }
@@ -98,11 +97,9 @@ impl Thompson {
 }
 
 /// Builds the NFA one op at a time. Each `compile_*` returns the fragment's
-/// entry state and appends its states. A fragment's dangling exits collect in
-/// `tail_patches` for the caller to wire onto the next op.
+/// entry state and its dangling exits for the caller to wire onward.
 struct Builder {
     states: Vec<Trans>,
-    tail_patches: Vec<StateId>,
     /// When set, a `Lit` byte that is an ASCII letter compiles to a two-item
     /// `Class` matching both cases instead of an exact `Byte`.
     case_insensitive: bool,
@@ -112,7 +109,6 @@ impl Builder {
     fn new(case_insensitive: bool) -> Self {
         Self {
             states: Vec::with_capacity(32),
-            tail_patches: Vec::new(),
             case_insensitive,
         }
     }
@@ -149,13 +145,12 @@ impl Builder {
         }
     }
 
-    /// Compile a sequence of ops into a chain and return its entry state. The
-    /// last op's exits are left in `tail_patches` for the caller.
-    fn compile_ops(&mut self, ops: &[Op], dot: bool) -> StateId {
+    /// Compile a sequence of ops into a chain, returning its entry state and
+    /// the last op's dangling exits.
+    fn compile_ops(&mut self, ops: &[Op], dot: bool) -> (StateId, Vec<StateId>) {
         if ops.is_empty() {
             let s = self.alloc(Trans::Jump { next: UNSET });
-            self.tail_patches.push(s);
-            return s;
+            return (s, vec![s]);
         }
         let mut entry: Option<StateId> = None;
         let mut pending_tails: Vec<StateId> = Vec::new();
@@ -170,8 +165,7 @@ impl Builder {
                 entry = Some(op_entry);
             }
         }
-        self.tail_patches.append(&mut pending_tails);
-        entry.unwrap()
+        (entry.unwrap(), pending_tails)
     }
 
     /// Compile one op. Returns its entry state and the exits to wire onward.
@@ -189,9 +183,18 @@ impl Builder {
             Op::GlobstarAny => self.compile_globstar_any(dot),
             Op::Alternation(branches) => self.compile_alternation(branches, dot),
             Op::Globstar => {
-                // Lowering should have folded raw globstars away. Emit an
-                // unmatchable state so a bug here fails loudly.
-                let s = self.alloc(Trans::Byte { b: 0, next: UNSET });
+                // Lowering folds raw globstars away; is_normalized asserts it
+                // in debug builds. As a release safety net, emit a truly dead
+                // state (an empty class matches no byte) so a leak can never
+                // produce a false match.
+                let s = self.alloc(Trans::Class {
+                    class: Box::new(CharClass {
+                        negated: false,
+                        items: Vec::new(),
+                    }),
+                    next: UNSET,
+                    dot_protected: false,
+                });
                 (s, vec![s])
             }
         }
@@ -428,17 +431,13 @@ impl Builder {
     fn compile_alternation(&mut self, branches: &[Vec<Op>], dot: bool) -> (StateId, Vec<StateId>) {
         debug_assert!(!branches.is_empty());
         if branches.len() == 1 {
-            return (
-                self.compile_ops(&branches[0], dot),
-                std::mem::take(&mut self.tail_patches),
-            );
+            return self.compile_ops(&branches[0], dot);
         }
         // Compile the branches first so the Splits can point at their entries.
         let mut branch_entries = Vec::with_capacity(branches.len());
         let mut branch_tails = Vec::new();
         for branch in branches {
-            let entry = self.compile_ops(branch, dot);
-            let tails = std::mem::take(&mut self.tail_patches);
+            let (entry, tails) = self.compile_ops(branch, dot);
             branch_entries.push(entry);
             branch_tails.extend(tails);
         }
