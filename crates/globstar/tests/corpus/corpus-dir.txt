@@ -208,3 +208,96 @@ src/**/*.ts		descend
 *.md		descend
 literalfile.txt		descend
 {a,}		descend-match
+
+## qmark.and.class.as.dir.segment
+# Single-char wildcards and classes deciding descent at the first segment.
+?/b	a	descend
+?/b	.a	pruned
+?/b	ab	pruned
+[ab]/c	a	descend
+[ab]/c	b	descend
+[ab]/c	c	pruned
+[ab]/c	.a	pruned
+[!a]/c	b	descend
+[!a]/c	a	pruned
+[!a]/c	.a	pruned
+[!a]/c	ab	pruned
+
+## single.segment.exact.states
+# A one-segment pattern can Match a dir but nothing deeper ever matches.
+*	a	match
+*	.a	pruned
+*	.a	match	dot=true
+?	a	match
+?	ab	pruned
+a*	ab	match
+a*	b	pruned
+?*/b	a	descend
+?*/b	.a	pruned
+
+## deep.literal.chain
+a/b/c/d	a	descend
+a/b/c/d	a/b	descend
+a/b/c/d	a/b/c	descend
+a/b/c/d	a/b/c/d	match
+a/b/c/d	a/b/x	pruned
+a/b/c/d	a/b/c/d/e	pruned
+a/b/c/d	x	pruned
+
+## trailing.slash.globstar.dirs
+# Strict `/**`: the head dir itself never matches, everything below does.
+src/**	src	descend
+src/**	src/a	descend-match
+src/**	src/.a	pruned
+src/**	src/.a	descend-match	dot=true
+src/**	other	pruned
+a/b/**	a	descend
+a/b/**	a/b	descend
+a/b/**	a/b/c	descend-match
+{src,lib}/**	src	descend
+{src,lib}/**	lib	descend
+{src,lib}/**	other	pruned
+
+## bare.globstar.dot.matrix
+**	a	descend-match
+**	a/b	descend-match
+**	.a	pruned
+**	.a	descend-match	dot=true
+**	a/.b	pruned
+**	a/.b	descend-match	dot=true
+
+## explicit.dot.heads
+.a/*	.a	descend
+.a/*	a	pruned
+.a/*	.a/b	match
+.a/**	.a	descend
+.a/**	.a/b	descend-match
+*/.a/b	a	descend
+*/.a/b	a/.a	descend
+*/.a/b	.a	pruned
+*/.a/b	a/.a/b	match
+
+## case.insensitive.dirs
+A*/b	a	descend	case_insensitive=true
+A*/b	ab	descend	case_insensitive=true
+A*/b	a	pruned
+[A-B]/c	a	descend	case_insensitive=true
+[A-B]/c	a	pruned
+{A,B}/c	b	descend	case_insensitive=true
+{A,B}/c	b	pruned
+
+## cross.segment.brace.dirs
+{a/b,c}/d	a	descend
+{a/b,c}/d	c	descend
+{a/b,c}/d	a/b	descend
+{a/b,c}/d	b	pruned
+{a/b,c}/d	a/b/d	match
+{a/b,c}/d	c/d	match
+
+## sandwiched.globstar.dirs
+**/a/**	a	descend
+**/a/**	b	descend
+**/a/**	b/a	descend
+**/a/**	a/b	descend-match
+**/a/**	.b	pruned
+**/a/**	.b	descend	dot=true
