@@ -633,6 +633,8 @@ The parser MUST return an error for the following inputs:
 
 > Note: stray `]`, `}`, `)`, `(` are NOT errors — see §9.1, they degrade to literal bytes under the context-meta rule. `(` and `)` have no opener role in this dialect, so there is no "unclosed paren" concept.
 
+> Implementation note: the JS runtime additionally rejects patterns whose NFA exceeds 65536 states (`TooManyStates`) — its packed state representation caps ids at 16 bits. Only near-64-KiB patterns can reach this. The Rust runtime has no such cap.
+
 The parser SHOULD be lenient (produce a sensible default rather than an error) for these:
 
 | Lenient case              | Example     | Output                                                           |

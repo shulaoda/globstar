@@ -20,7 +20,7 @@
 //   clsRefs: Array(n) | null
 //   tags, nexts, splitsB: kept as number[] for `staticClosuresN` —
 //                          dropped after closure computation.
-//   initial, acceptsAtEof, n.
+//   initial, accept, n.
 
 import {
   OP_LIT,
@@ -264,8 +264,10 @@ class Builder {
     return [entry, [entry]];
   }
 
+  // Every constructible Alternation has >= 2 branches: the parser collapses
+  // single-branch braces into literals (GLOB_SPEC §7.4) and the union
+  // factorer only wraps >= 2 patterns.
   compileAlternation(branches) {
-    if (branches.length === 1) return this.compileOps(branches[0]);
     const branchEntries = [];
     const branchTails = [];
     for (const branch of branches) {
@@ -298,8 +300,6 @@ export function compileThompson(program, dot) {
   const splitsB = builder.splitsB;
   const byteVals = builder.byteVals;
   const clsRefs = builder.clsRefs;
-  const acceptsAtEof = computeAcceptsAtEof(tags, nexts, splitsB, n);
-
   return {
     n,
     tags,
@@ -308,35 +308,7 @@ export function compileThompson(program, dot) {
     byteVals,
     clsRefs,
     initial,
-    acceptsAtEof,
+    accept,
     dot,
   };
-}
-
-// Forward fixed-point over the SoA arrays: ε-only states (T_SPLIT /
-// T_JUMP / T_DOT_GUARD) propagate the "reaches accept on no more
-// bytes" property through their ε-edges. (Rust twin: thompson.rs
-// `compute_accepts_at_eof`.)
-function computeAcceptsAtEof(tags, nexts, splitsB, n) {
-  const acc = new Uint8Array(n);
-  for (let i = 0; i < n; i++) if (tags[i] === T_MATCH) acc[i] = 1;
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (let i = 0; i < n; i++) {
-      if (acc[i]) continue;
-      const tag = tags[i];
-      let reaches = false;
-      if (tag === T_JUMP || tag === T_DOT_GUARD) {
-        reaches = !!acc[nexts[i]];
-      } else if (tag === T_SPLIT) {
-        reaches = !!acc[nexts[i]] || !!acc[splitsB[i]];
-      }
-      if (reaches) {
-        acc[i] = 1;
-        changed = true;
-      }
-    }
-  }
-  return acc;
 }

@@ -28,6 +28,7 @@ import { classMatches } from "../ast.js";
 import { DirMatch } from "../dir-match.js";
 import { computeStaticPrefixes } from "./ops/index.js";
 import { toBytes } from "../utf8.js";
+import { GlobError } from "../error.js";
 
 // Reach-to-accept fixed-point over byte-consumer states. reach[s] = true
 // iff from state s the matcher can reach the accept state via at least
@@ -85,42 +86,54 @@ function reachFromClosures(closures, infoOff, acceptOff, nWords) {
 // and walked transparently; everything else (byte-consumers, MATCH,
 // DOT_GUARD) is a closure leaf and gets its bit set in `out`.
 //
-// Algorithm: memoized recursion over the ε-graph. Thompson's NFA keeps the
-// ε-graph acyclic, since every loop in the source pattern (Star, SepRun,
-// OptSegmentsSlash, ..) is broken by a byte-consumer state that is a closure
-// leaf. Each state's closure then depends only on already-computed
-// sub-closures, folded with a single OR into `out`. Visits each state once,
-// O(n × nWords) total, versus the per-state BFS that rewalks ε-paths n times.
+// Thompson's NFA keeps the ε-graph acyclic, since every loop in the source
+// pattern (Star, SepRun, OptSegmentsSlash, ..) is broken by a byte-consumer
+// state that is a closure leaf. Each state's closure then depends only on
+// already-computed sub-closures, folded with a single OR into `out`. Visits
+// each state once, O(n × nWords) total.
+//
+// Post-order DFS on an explicit stack, mirroring the Rust twin: a recursive
+// version overflowed the call stack on long forward ε-chains (thousands of
+// `{,}` units). `~s` marks the exit phase (children done, fold closures).
 function staticClosuresN(tags, nexts, splitsB, n, nWords, out) {
-  const computed = new Uint8Array(n);
-  for (let s = 0; s < n; s++) {
-    computeClosure(s, tags, nexts, splitsB, nWords, out, computed);
-  }
-}
+  const seen = new Uint8Array(n);
+  const stack = [];
+  for (let root = 0; root < n; root++) {
+    if (seen[root]) continue;
+    stack.push(root);
+    while (stack.length > 0) {
+      const item = stack.pop();
+      if (item < 0) {
+        const s = ~item;
+        const tag = tags[s];
+        const base = s * nWords;
+        if (tag === T_SPLIT) {
+          const aBase = nexts[s] * nWords;
+          const bBase = splitsB[s] * nWords;
+          for (let w = 0; w < nWords; w++) out[base + w] = out[aBase + w] | out[bBase + w];
+        } else if (tag === T_JUMP) {
+          const nxBase = nexts[s] * nWords;
+          for (let w = 0; w < nWords; w++) out[base + w] = out[nxBase + w];
+        } else {
+          // Byte-consumer / DOT_GUARD / MATCH: closure(s) = {s}.
+          out[base + (s >>> 5)] = 1 << (s & 31);
+        }
+        continue;
+      }
 
-function computeClosure(s, tags, nexts, splitsB, nWords, out, computed) {
-  if (computed[s]) return;
-  computed[s] = 1;
-  const tag = tags[s];
-  const base = s * nWords;
-  if (tag === T_SPLIT) {
-    const a = nexts[s];
-    const b = splitsB[s];
-    computeClosure(a, tags, nexts, splitsB, nWords, out, computed);
-    computeClosure(b, tags, nexts, splitsB, nWords, out, computed);
-    const aBase = a * nWords;
-    const bBase = b * nWords;
-    for (let w = 0; w < nWords; w++) out[base + w] = out[aBase + w] | out[bBase + w];
-  } else if (tag === T_JUMP) {
-    const nx = nexts[s];
-    computeClosure(nx, tags, nexts, splitsB, nWords, out, computed);
-    const nxBase = nx * nWords;
-    for (let w = 0; w < nWords; w++) out[base + w] = out[nxBase + w];
-  } else {
-    // Byte-consumer / DOT_GUARD / MATCH: closure(s) = {s}.
-    const w = s >>> 5;
-    const bit = 1 << (s & 31);
-    out[base + w] = bit;
+      const s = item;
+      if (seen[s]) continue;
+      seen[s] = 1;
+      // Push the exit marker before the children so it pops after them.
+      stack.push(~s);
+      const tag = tags[s];
+      if (tag === T_SPLIT) {
+        if (!seen[nexts[s]]) stack.push(nexts[s]);
+        if (!seen[splitsB[s]]) stack.push(splitsB[s]);
+      } else if (tag === T_JUMP) {
+        if (!seen[nexts[s]]) stack.push(nexts[s]);
+      }
+    }
   }
 }
 
@@ -130,18 +143,22 @@ export class PikeVm {
     this.prefixes = prefixes;
 
     const n = nfa.n;
+    // The info word packs `next` into 16 bits; a larger NFA would silently
+    // truncate state ids and mis-match. Only near-64KB patterns can get
+    // here. (The Rust twin's u32 state ids carry no such cap.)
+    if (n > 0x10000) throw new GlobError("TooManyStates", { n, max: 0x10000 });
     const nWords = Math.max(1, (n + 31) >>> 5);
     this.nWords = nWords;
 
-    // Co-allocate closures + initBits + acceptBits + per-state `info`
-    // into one `Uint32Array`. Saves three TypedArray wrappers + their
-    // backing-store metadata vs separate arrays. Layout (each closure /
-    // bits region is `nWords` words, the `info` region is `n` words, one
-    // packed word per state):
-    //   [0,                       n*nWords)    closures (inner-loop hot)
-    //   [n*nWords,            (n+1)*nWords)    initBits (read once/match)
-    //   [(n+1)*nWords,        (n+2)*nWords)    acceptBits (read once/match)
-    //   [(n+2)*nWords, (n+2)*nWords + n)       info (per state, hot loop)
+    // Co-allocate closures + acceptBits + per-state `info` into one
+    // `Uint32Array`. Saves TypedArray wrappers + their backing-store
+    // metadata vs separate arrays. The initial state's closure row doubles
+    // as the init bits (`initOff` points into the closures region). Layout
+    // (the acceptBits region is `nWords` words, the `info` region is `n`
+    // words, one packed word per state):
+    //   [0,               n*nWords)        closures (inner-loop hot)
+    //   [n*nWords,    (n+1)*nWords)        acceptBits (read once/match)
+    //   [(n+1)*nWords, (n+1)*nWords + n)   info (per state, hot loop)
     //
     // Each state's `info` word packs:
     //   bits  0..3   tag      (T_MATCH..T_NULL = 0..9 fit in 4 bits)
@@ -155,17 +172,10 @@ export class PikeVm {
     // absorbed their edges, so they're never consumed at byte-step.
     // `clsRefs` stays an Object array (only ~10% of states use it, and
     // `cls` is a structured value we can't inline into bits).
-    const initOff = n * nWords;
-    const acceptOff = initOff + nWords;
+    const acceptOff = n * nWords;
     const infoOff = acceptOff + nWords;
     const combined = new Uint32Array(infoOff + n);
     staticClosuresN(nfa.tags, nfa.nexts, nfa.splitsB, n, nWords, combined);
-    const initBase = nfa.initial * nWords;
-    for (let w = 0; w < nWords; w++) combined[initOff + w] = combined[initBase + w];
-    const eof = nfa.acceptsAtEof;
-    for (let i = 0; i < eof.length; i++) {
-      if (eof[i]) combined[acceptOff + (i >>> 5)] |= 1 << (i & 31);
-    }
     const tags = nfa.tags;
     const nexts = nfa.nexts;
     const byteVals = nfa.byteVals;
@@ -191,7 +201,7 @@ export class PikeVm {
       }
     }
     this.closures = combined;
-    this.initOff = initOff;
+    this.initOff = nfa.initial * nWords;
     this.acceptOff = acceptOff;
     this.infoOff = infoOff;
     this.clsRefs = clsRefs;
@@ -238,6 +248,22 @@ export class PikeVm {
     }
     this.guardExps = guardExps;
 
+    // acceptBits: the Match state, plus every guard whose transitive
+    // expansion reaches it (a guard passes unconditionally at EOF — no next
+    // byte can trip it). Everything else an active set can hold is a byte
+    // consumer, which cannot accept without more input.
+    const accept = nfa.accept;
+    combined[acceptOff + (accept >>> 5)] |= 1 << (accept & 31);
+    if (guardExps !== null) {
+      const stride = 1 + nWords;
+      for (let r = 0; r < guardExps.length; r += stride) {
+        if (guardExps[r + 1 + (accept >>> 5)] & (1 << (accept & 31))) {
+          const g = guardExps[r];
+          combined[acceptOff + (g >>> 5)] |= 1 << (g & 31);
+        }
+      }
+    }
+
     // Scratch buffers reused across match calls (single-threaded), packed
     // into one Uint32Array. Layout (nWords each):
     //   [0,         nWords)    cur
@@ -283,7 +309,10 @@ export class PikeVm {
     // which cwd children don't have.
     if (dirPath.length === 0) return DirMatch.fromExactPrefix(this.isMatch(""), true);
     this._run(dirPath);
-    return DirMatch.fromExactPrefix(this._isAccept(this._scratch), this._hasPrefixDescent());
+    // Read the exact flag before the probe: `_hasPrefixDescent` reuses (and
+    // overwrites) both scratch slots.
+    const exact = this._isAccept(this._scratch);
+    return DirMatch.fromExactPrefix(exact, this._hasPrefixDescent());
   }
 
   _hasPrefixDescent() {
@@ -291,28 +320,30 @@ export class PikeVm {
     const infoOff = this.infoOff;
     const nWords = this.nWords;
     const scratch = this._scratch;
+    // Zero-alloc probe, mirroring the Rust twin: slot 0 (the final active
+    // set, dead after matchDir's exact check) is expanded in place, and
+    // slot 1 (stale `nxt` duplicate after `_run`) holds the post-`/` set.
+    const nxtBase = nWords;
 
     // The separator step below consumes a `/`, never a segment-start dot, so
     // every `T_DOT_GUARD` in the live set passes here. Static closures stop at
     // a dot-guard (a byte-conditional ε-leaf), so a separator consumer behind
     // one (e.g. the `SEP` of `*/` under `dot=false`) would otherwise be
     // invisible to the raw `scratch` scan and the subtree wrongly pruned.
-    const cur = new Uint32Array(nWords);
-    for (let w = 0; w < nWords; w++) cur[w] = scratch[w];
     const guardExps = this.guardExps;
     if (guardExps !== null) {
       const stride = 1 + nWords;
       for (let r = 0; r < guardExps.length; r += stride) {
         const g = guardExps[r];
-        if (cur[g >>> 5] & (1 << (g & 31))) {
-          for (let j = 0; j < nWords; j++) cur[j] |= guardExps[r + 1 + j];
+        if (scratch[g >>> 5] & (1 << (g & 31))) {
+          for (let j = 0; j < nWords; j++) scratch[j] |= guardExps[r + 1 + j];
         }
       }
     }
 
-    const next = new Uint32Array(nWords);
+    for (let w = 0; w < nWords; w++) scratch[nxtBase + w] = 0;
     for (let w = 0; w < nWords; w++) {
-      let word = cur[w];
+      let word = scratch[w];
       while (word !== 0) {
         const off = ctz32(word);
         const s = (w << 5) + off;
@@ -321,18 +352,21 @@ export class PikeVm {
         const tag = word2 & 0xf;
         if (tag === T_SEP || tag === T_ANY_BYTE) {
           const base = (word2 >>> 16) * nWords;
-          for (let j = 0; j < nWords; j++) next[j] |= closures[base + j];
+          for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
         }
       }
     }
-    if (this._isAccept(next)) return true;
+    const acceptOff = this.acceptOff;
+    for (let w = 0; w < nWords; w++) {
+      if (scratch[nxtBase + w] & closures[acceptOff + w]) return true;
+    }
     let reach = this._reachToAccept;
     if (reach === null) {
-      reach = reachFromClosures(closures, infoOff, this.acceptOff, nWords);
+      reach = reachFromClosures(closures, infoOff, acceptOff, nWords);
       this._reachToAccept = reach;
     }
     for (let w = 0; w < nWords; w++) {
-      let word = next[w];
+      let word = scratch[nxtBase + w];
       while (word !== 0) {
         const off = ctz32(word);
         const s = (w << 5) + off;

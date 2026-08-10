@@ -26,6 +26,8 @@ function formatMessage(kind, info) {
       return "pattern ends with lone backslash";
     case "EscapedSeparator":
       return `escaped separator \`\\/\` at byte ${info.at}`;
+    case "TooManyStates":
+      return `pattern compiles to ${info.n} NFA states, above the JS engine cap ${info.max}`;
     case "BraceNestingTooDeep":
       return `brace nesting exceeds limit ${info.max}`;
     case "InvalidRange":
