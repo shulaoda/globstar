@@ -128,20 +128,13 @@ impl SegmentMatcher {
         &self.prefixes
     }
 
-    #[inline(always)]
     pub(crate) fn is_match(&self, path: &[u8]) -> bool {
         if !self.facts.accept(path) {
             return false;
         }
-        self.is_match_slow(path)
-    }
-
-    #[inline(never)]
-    fn is_match_slow(&self, path: &[u8]) -> bool {
         if self.seqs.len() == 1 {
             return self.seq_matches(&self.seqs[0], path);
         }
-
         self.seqs.iter().any(|seq| {
             let qs = &seq.quick_suffix;
             if !qs.is_empty() {
