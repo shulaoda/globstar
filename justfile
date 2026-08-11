@@ -4,10 +4,11 @@
 default:
     @just --list
 
-# Install JS deps, prime Rust build cache, build memory-check binaries.
+# Install JS deps, prime Rust build cache, wire the pre-commit hook.
 setup:
     pnpm install
     cargo build --release --workspace
+    git config core.hooksPath .githooks
 
 # Cross-runtime correctness verification (Rust + JS × {single, multi, err}).
 verify *args:

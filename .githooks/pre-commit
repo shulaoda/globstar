@@ -1,0 +1,3 @@
+#!/bin/sh
+# Pre-commit gate: the same static checks CI's verify job runs.
+just lint
