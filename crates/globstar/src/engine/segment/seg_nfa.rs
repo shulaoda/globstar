@@ -7,7 +7,6 @@
 //! first byte is `.`, and dot-protected consumers refuse that `.`.
 
 use crate::ast::CharClass;
-use crate::engine::eq_byte;
 use crate::engine::ops::Op;
 
 /// In-segment NFA state budget (active set is one `u64`).
@@ -145,7 +144,7 @@ impl SegNfa {
                 bits &= bits - 1;
                 match &self.states[s] {
                     SegState::Byte(b, nx) => {
-                        if eq_byte::<false>(*b, c) {
+                        if *b == c {
                             next |= self.closures[*nx as usize];
                         }
                     }

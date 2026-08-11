@@ -31,7 +31,6 @@ use crate::dir_match::DirMatch;
 use crate::engine::facts::LiteralFacts;
 use crate::engine::ops::{OpProgram, compute_static_prefixes};
 
-use exec::{affix_eq, seq_match_dir, seq_matches};
 use seg_nfa::SegNfa;
 
 /// Fork budget: a pattern whose separator-crossing brace expansion
@@ -223,19 +222,15 @@ impl SegmentMatcher {
         if !self.facts.accept(path) {
             return false;
         }
-        if self.case_insensitive {
-            self.is_match_slow::<true>(path)
-        } else {
-            self.is_match_slow::<false>(path)
-        }
+        self.is_match_slow(path)
     }
 
     /// Post-prefilter body. `#[inline(never)]` keeps the (dominant)
     /// facts rejection path tiny inside `Glob::is_match`.
     #[inline(never)]
-    fn is_match_slow<const CI: bool>(&self, path: &[u8]) -> bool {
+    fn is_match_slow(&self, path: &[u8]) -> bool {
         if self.seqs.len() == 1 {
-            return seq_matches::<CI>(&self.seqs[0], path, self.dot);
+            return self.seq_matches(&self.seqs[0], path);
         }
         // Multi-fork: each fork's own suffix fact rejects without the
         // tail scan-back (the shared facts prefilter only knows the
@@ -244,11 +239,11 @@ impl SegmentMatcher {
             let qs = &seq.quick_suffix;
             if !qs.is_empty() {
                 let n = path.len();
-                if n < qs.len() || !affix_eq::<CI>(qs, &path[n - qs.len()..]) {
+                if n < qs.len() || !self.affix_eq(qs, &path[n - qs.len()..]) {
                     return false;
                 }
             }
-            seq_matches::<CI>(seq, path, self.dot)
+            self.seq_matches(seq, path)
         })
     }
 
@@ -262,11 +257,7 @@ impl SegmentMatcher {
         }
         let (mut exact, mut prefix) = (false, false);
         for seq in self.seqs.iter() {
-            let (e, p) = if self.case_insensitive {
-                seq_match_dir::<true>(seq, dir_path, self.dot)
-            } else {
-                seq_match_dir::<false>(seq, dir_path, self.dot)
-            };
+            let (e, p) = self.seq_match_dir(seq, dir_path);
             exact |= e;
             prefix |= p;
             if exact && prefix {
