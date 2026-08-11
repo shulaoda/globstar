@@ -1,5 +1,3 @@
-// Linear instruction tags and immutable zero-field op singletons.
-
 export const OP_LIT = 0;
 export const OP_ANYCHAR = 1;
 export const OP_STAR = 2;

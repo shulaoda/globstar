@@ -7,21 +7,19 @@ pub struct LiteralMatcher {
 }
 
 impl LiteralMatcher {
-    /// Pure literal: the literal IS the prefix. Strip any trailing `/`
-    /// for walker compatibility (mirrors the JS engine's staticPrefixes).
+    pub fn new(literal: Vec<u8>, case_insensitive: bool) -> Self {
+        Self {
+            literal,
+            case_insensitive,
+        }
+    }
+
     pub fn static_prefixes(&self) -> Vec<Vec<u8>> {
         let mut bytes = self.literal.clone();
         while bytes.last() == Some(&b'/') {
             bytes.pop();
         }
         vec![bytes]
-    }
-
-    pub fn new(literal: Vec<u8>, case_insensitive: bool) -> Self {
-        Self {
-            literal,
-            case_insensitive,
-        }
     }
 
     pub fn is_match(&self, path: &[u8]) -> bool {

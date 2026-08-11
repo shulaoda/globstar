@@ -34,8 +34,6 @@ function extractLeadingPrefix(ops) {
       acc.push(0x2f);
       lastBoundary = acc.length;
     } else {
-      // Strict trailing `/**` consumes a separator before matching anything,
-      // so the accumulated literal is a complete segment.
       if (op.kind === OP_SLASH_ANYTHING) lastBoundary = acc.length;
       fullyLiteral = false;
       break;
