@@ -38,12 +38,7 @@ fn enumerate(segs: &[&str], depth: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut idx = vec![0usize; depth];
     loop {
-        out.push(
-            idx.iter()
-                .map(|&i| segs[i])
-                .collect::<Vec<_>>()
-                .join("/"),
-        );
+        out.push(idx.iter().map(|&i| segs[i]).collect::<Vec<_>>().join("/"));
         let mut d = depth;
         loop {
             if d == 0 {
@@ -77,9 +72,7 @@ fn universe() -> Vec<String> {
 
 /// `child` is strictly below `dir` (dir + `/` + more).
 fn is_below(child: &str, dir: &str) -> bool {
-    child.len() > dir.len()
-        && child.as_bytes()[dir.len()] == b'/'
-        && child.starts_with(dir)
+    child.len() > dir.len() && child.as_bytes()[dir.len()] == b'/' && child.starts_with(dir)
 }
 
 fn build_pikevm(pattern: &str, dot: bool, ci: bool) -> PikeVm {

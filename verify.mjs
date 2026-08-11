@@ -344,7 +344,9 @@ async function runJsVerify() {
       try {
         patterns = JSON.parse(cols[0]);
       } catch (e) {
-        throw new Error(`corpus-multi-dir.txt:${lineNo}: bad PATTERNS_JSON ${cols[0]} (${e.message})`);
+        throw new Error(
+          `corpus-multi-dir.txt:${lineNo}: bad PATTERNS_JSON ${cols[0]} (${e.message})`,
+        );
       }
       const expected = cols[2];
       if (!DIR_TOKEN.includes(expected)) {

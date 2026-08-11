@@ -690,14 +690,15 @@ fn corpus_multi_dir_engines_vs_truth() {
 
     for row in &rows {
         match run_globstar_multi_dir(row) {
-            Some(got) => globstar_stats
-                .record(got == row.expected, || fail_msg_multi_dir(row, "globstar", got)),
+            Some(got) => globstar_stats.record(got == row.expected, || {
+                fail_msg_multi_dir(row, "globstar", got)
+            }),
             None => globstar_stats.skip += 1,
         }
         match run_pikevm_multi_dir(row) {
-            Some(got) => {
-                pike_stats.record(got == row.expected, || fail_msg_multi_dir(row, "PikeVm", got))
-            }
+            Some(got) => pike_stats.record(got == row.expected, || {
+                fail_msg_multi_dir(row, "PikeVm", got)
+            }),
             None => pike_stats.skip += 1,
         }
     }
