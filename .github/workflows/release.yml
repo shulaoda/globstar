@@ -67,6 +67,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # pnpm needs the workspace installed to rewrite `workspace:*`
+      # dependency ranges into real versions at pack time.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Publish to npm
         run: pnpm -r publish --access public --no-git-checks
 
