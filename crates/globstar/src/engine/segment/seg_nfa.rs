@@ -65,7 +65,7 @@ impl SegNfa {
             tails: Vec::new(),
             ci,
         };
-        let entry = b.compile_ops(ops, dot)?;
+        let entry = b.compile_ops(ops)?;
         let accept = b.alloc(SegState::Match)?;
         for t in std::mem::take(&mut b.tails) {
             b.patch(t, accept);
@@ -82,8 +82,8 @@ impl SegNfa {
             memo_closure(&states, &mut closures, s, false);
         }
         let init = closures[entry as usize];
-        // Under `dot` no DotGuard state exists (the only alloc site is
-        // gated on `!dot`), so the blocked closure is just `init`.
+        // Under `dot` a leading `.` needs no protection, so the blocked
+        // closure is just `init` (DotGuards behave like Jumps).
         let init_dot_blocked = if dot {
             init
         } else {
@@ -250,18 +250,14 @@ impl SegBuilder {
             | SegState::Class(_, n)
             | SegState::Any(n)
             | SegState::Jump(n)
-            | SegState::DotGuard(n) => {
-                if *n == UNSET {
-                    *n = target;
-                }
-            }
+            | SegState::DotGuard(n) => *n = target,
             // A Split is never a dangling tail: Star returns its exit state
             // and Alternation returns its branches' leaf tails.
             SegState::Split(..) | SegState::Match => unreachable!(),
         }
     }
 
-    fn compile_ops(&mut self, ops: &[Op], dot: bool) -> Option<u8> {
+    fn compile_ops(&mut self, ops: &[Op]) -> Option<u8> {
         if ops.is_empty() {
             let s = self.alloc(SegState::Jump(UNSET))?;
             self.tails.push(s);
@@ -270,7 +266,7 @@ impl SegBuilder {
         let mut entry: Option<u8> = None;
         let mut pending: Vec<u8> = Vec::new();
         for op in ops {
-            let (op_entry, mut op_tails) = self.compile_op(op, dot)?;
+            let (op_entry, mut op_tails) = self.compile_op(op)?;
             for t in pending.drain(..) {
                 self.patch(t, op_entry);
             }
@@ -283,7 +279,7 @@ impl SegBuilder {
         entry
     }
 
-    fn compile_op(&mut self, op: &Op, dot: bool) -> Option<(u8, Vec<u8>)> {
+    fn compile_op(&mut self, op: &Op) -> Option<(u8, Vec<u8>)> {
         match op {
             Op::Lit(bytes) => {
                 debug_assert!(!bytes.is_empty());
@@ -307,11 +303,9 @@ impl SegBuilder {
             Op::Star => {
                 let entry = self.alloc(SegState::Split(UNSET, UNSET))?;
                 let body = self.alloc(SegState::Any(entry))?;
-                let exit = if !dot {
-                    self.alloc(SegState::DotGuard(UNSET))?
-                } else {
-                    self.alloc(SegState::Jump(UNSET))?
-                };
+                // Under `dot` the guard is inert (blocked closures are
+                // never built), so DotGuard serves both compiles.
+                let exit = self.alloc(SegState::DotGuard(UNSET))?;
                 if let SegState::Split(a, b) = &mut self.states[entry as usize] {
                     *a = body;
                     *b = exit;
@@ -320,23 +314,19 @@ impl SegBuilder {
             }
             Op::Alternation(branches) => {
                 debug_assert!(!branches.is_empty());
+                // `self.tails` is empty here (every caller drains it),
+                // so the branch tails can be collected straight out of it.
                 let mut entries = Vec::with_capacity(branches.len());
                 let mut tails: Vec<u8> = Vec::new();
                 for branch in branches {
-                    let saved = std::mem::take(&mut self.tails);
-                    let e = self.compile_ops(branch, dot)?;
-                    let branch_tails = std::mem::replace(&mut self.tails, saved);
-                    entries.push(e);
-                    tails.extend(branch_tails);
+                    entries.push(self.compile_ops(branch)?);
+                    tails.append(&mut self.tails);
                 }
-                let mut next_state: Option<u8> = None;
-                for i in (0..branches.len().saturating_sub(1)).rev() {
-                    let a = entries[i];
-                    let b = next_state.unwrap_or(entries[i + 1]);
-                    let s = self.alloc(SegState::Split(a, b))?;
-                    next_state = Some(s);
+                let mut chain = entries[branches.len() - 1];
+                for i in (0..branches.len() - 1).rev() {
+                    chain = self.alloc(SegState::Split(entries[i], chain))?;
                 }
-                Some((next_state.unwrap_or(entries[0]), tails))
+                Some((chain, tails))
             }
             // Separator-crossing ops never appear inside a segment.
             _ => None,

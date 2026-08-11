@@ -122,9 +122,7 @@ impl SegmentMatcher {
         match seq.elems[g] {
             Elem::G0 => {}
             Elem::G0Strict => {
-                if mid_exists
-                    && (mid_start >= path.len() || std::path::is_separator(path[mid_start] as char))
-                {
+                if mid_exists && std::path::is_separator(path[mid_start] as char) {
                     return false;
                 }
             }
@@ -153,7 +151,7 @@ impl SegmentMatcher {
     }
 
     fn nfa_run(&self, seq: &ElemSeq, path: &[u8]) -> u64 {
-        let mut active = seq.eps[seq.state_of[0] as usize];
+        let mut active = seq.eps[0];
         for (s, t) in SegIter::new(path) {
             if active == 0 {
                 return 0;
@@ -165,47 +163,38 @@ impl SegmentMatcher {
 
     fn nfa_step(&self, seq: &ElemSeq, active: u64, seg: &[u8]) -> u64 {
         let mut next: u64 = 0;
-        let m = seq.elems.len();
         let seg_dot_led = !seg.is_empty() && seg[0] == b'.';
         let absorb_ok = self.dot || !seg_dot_led;
-        let mut bits = active;
+        let mut bits = active & !(1u64 << (seq.num_states - 1));
         while bits != 0 {
             let s = bits.trailing_zeros() as usize;
             bits &= bits - 1;
-            if s as u8 == seq.num_states - 1 {
-                continue;
-            }
             let i = seq.elem_of[s] as usize;
-            let entry = seq.state_of[i] as usize;
-            let next_entry = if i + 1 < m {
-                seq.state_of[i + 1] as usize
-            } else {
-                (seq.num_states - 1) as usize
-            };
             match &seq.elems[i] {
                 Elem::Lit(lit) => {
                     if self.lit_eq(lit, seg) {
-                        next |= seq.eps[next_entry];
+                        next |= seq.eps[s + 1];
                     }
                 }
                 Elem::Wild(w) => {
                     if self.wild_consumes(w, seg) {
-                        next |= seq.eps[next_entry];
+                        next |= seq.eps[s + 1];
                     }
                 }
                 Elem::G0 => {
                     if absorb_ok {
-                        next |= seq.eps[entry];
+                        next |= seq.eps[s];
                     }
                 }
                 Elem::G0Strict => {
+                    let entry = seq.state_of[i] as usize;
                     if absorb_ok && !(s == entry && seg.is_empty()) {
                         next |= seq.eps[entry + 1];
                     }
                 }
                 Elem::G1 => {
                     if absorb_ok {
-                        next |= seq.eps[entry + 1];
+                        next |= seq.eps[seq.state_of[i] as usize + 1];
                     }
                 }
             }

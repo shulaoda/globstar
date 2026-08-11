@@ -377,25 +377,18 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
     let mut reach1: u64 = 0;
     let mut sat_tail = true;
     for i in (0..m).rev() {
-        let sat_i = match &elems[i] {
-            Elem::Wild(w) => match &w.kind {
-                WildKind::Generic(nfa) => nfa.satisfiable,
-                _ => true,
-            },
-            _ => true,
-        };
-        let s = state_of[i] as usize;
-        let can = match &elems[i] {
-            Elem::G0 | Elem::G0Strict | Elem::G1 => sat_tail,
-            Elem::Lit(_) | Elem::Wild(_) => sat_i && sat_tail,
-        };
-        if can {
+        if let Elem::Wild(w) = &elems[i] {
+            if let WildKind::Generic(nfa) = &w.kind {
+                sat_tail &= nfa.satisfiable;
+            }
+        }
+        if sat_tail {
+            let s = state_of[i] as usize;
             reach1 |= 1u64 << s;
             if matches!(elems[i], Elem::G0Strict | Elem::G1) {
                 reach1 |= 1u64 << (s + 1);
             }
         }
-        sat_tail = sat_i && sat_tail;
     }
 
     let g_count = elems.iter().filter(|e| e.is_globstar()).count() as u8;

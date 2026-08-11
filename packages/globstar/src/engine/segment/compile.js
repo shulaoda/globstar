@@ -421,16 +421,14 @@ function finishSeq(elems) {
   let satTail = true;
   for (let i = m - 1; i >= 0; i--) {
     const e = elems[i];
-    const satI = e.kind === EL_WILD && e.wild.kind === WK_GENERIC ? e.wild.nfa.satisfiable : true;
-    const s = stateOf[i];
-    const k = e.kind;
-    const isG = k === EL_G0 || k === EL_G0_STRICT || k === EL_G1;
-    const can = isG ? satTail : satI && satTail;
-    if (can) {
-      reach1 |= 1 << s;
-      if (k === EL_G0_STRICT || k === EL_G1) reach1 |= 1 << (s + 1);
+    if (e.kind === EL_WILD && e.wild.kind === WK_GENERIC) {
+      satTail = satTail && e.wild.nfa.satisfiable;
     }
-    satTail = satI && satTail;
+    if (satTail) {
+      const s = stateOf[i];
+      reach1 |= 1 << s;
+      if (e.kind === EL_G0_STRICT || e.kind === EL_G1) reach1 |= 1 << (s + 1);
+    }
   }
 
   let gCount = 0;

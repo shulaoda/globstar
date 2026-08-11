@@ -111,9 +111,7 @@ function matchSingleG(seq, str, dot, ci, bail) {
   if (gk === EL_G1) {
     if (!midExists) return NO;
   } else if (gk === EL_G0_STRICT) {
-    if (midExists && (midStart >= str.length || isPathSep(str.charCodeAt(midStart)))) {
-      return NO;
-    }
+    if (midExists && isPathSep(str.charCodeAt(midStart))) return NO;
   }
 
   if (dot || !midExists) return YES;
@@ -135,7 +133,7 @@ function lastSepBefore(str, end) {
 }
 
 export function nfaRun(seq, str, dot, ci, bail) {
-  let active = seq.eps[seq.stateOf[0]];
+  let active = seq.eps[0];
   let pos = 0;
   for (;;) {
     if (active === 0) return 0;
@@ -152,43 +150,39 @@ export function nfaRun(seq, str, dot, ci, bail) {
 function nfaStep(seq, active, str, s0, e0, dot, ci, bail) {
   let next = 0;
   const elems = seq.elems;
-  const m = elems.length;
-  const stateOf = seq.stateOf;
   const eps = seq.eps;
   const segEmpty = e0 === s0;
   const segDotLed = !segEmpty && str.charCodeAt(s0) === 0x2e;
   const absorbOk = dot || !segDotLed;
-  let bits = active;
+  let bits = active & ~(1 << (seq.numStates - 1));
   while (bits !== 0) {
     const s = ctz32(bits);
     bits &= bits - 1;
-    if (s === seq.numStates - 1) continue; // accept
     const i = seq.elemOf[s];
-    const entry = stateOf[i];
-    const nextEntry = i + 1 < m ? stateOf[i + 1] : seq.numStates - 1;
     const e = elems[i];
     switch (e.kind) {
       case EL_LIT: {
         const r = litEq(e.litStr, str, s0, e0, ci);
-        if (r === YES) next |= eps[nextEntry];
+        if (r === YES) next |= eps[s + 1];
         break;
       }
       case EL_WILD: {
         const r = wildConsumes(e.wild, str, s0, e0, ci, bail);
         if (r === BAIL) return -1;
-        if (r === YES) next |= eps[nextEntry];
+        if (r === YES) next |= eps[s + 1];
         break;
       }
       case EL_G0: {
-        if (absorbOk) next |= eps[entry];
+        if (absorbOk) next |= eps[s];
         break;
       }
       case EL_G0_STRICT: {
+        const entry = seq.stateOf[i];
         if (absorbOk && !(s === entry && segEmpty)) next |= eps[entry + 1];
         break;
       }
       case EL_G1: {
-        if (absorbOk) next |= eps[entry + 1];
+        if (absorbOk) next |= eps[seq.stateOf[i] + 1];
         break;
       }
     }

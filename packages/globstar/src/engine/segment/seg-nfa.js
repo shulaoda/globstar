@@ -33,8 +33,8 @@ export class SegNfa {
     for (let s = 0; s < n; s++) memoClosure(kinds, nexts, splitBs, clsRefs, closures, s, false);
     this.closures = closures;
     this.init = closures[entry];
-    // Under `dot` no S_DOT_GUARD state exists (the only alloc site is
-    // gated on `!dot`), so the blocked closure is just `init`.
+    // Under `dot` a leading `.` needs no protection, so the blocked
+    // closure is just `init` (DotGuards behave like Jumps).
     this.initDotBlocked = dot
       ? this.init
       : memoClosure(kinds, nexts, splitBs, clsRefs, new Array(n).fill(-1), entry, true);
@@ -59,7 +59,7 @@ export class SegNfa {
 
   static compile(ops, dot, ci) {
     const b = new SegBuilder(ci);
-    const entry = b.compileOps(ops, dot);
+    const entry = b.compileOps(ops);
     if (entry === -1) return null;
     const accept = b.alloc(S_MATCH, 0, UNSET);
     if (accept === -1) return null;
@@ -203,10 +203,10 @@ class SegBuilder {
     // A Split is never a dangling tail: Star returns its exit state and
     // Alternation returns its branches' leaf tails.
     if (this.kinds[state] === S_SPLIT) throw new Error("patch: unreachable Split");
-    if (this.nexts[state] === UNSET) this.nexts[state] = target;
+    this.nexts[state] = target;
   }
 
-  compileOps(ops, dot) {
+  compileOps(ops) {
     if (ops.length === 0) {
       const s = this.alloc(S_JUMP, 0, UNSET);
       if (s === -1) return -1;
@@ -216,7 +216,7 @@ class SegBuilder {
     let entry = -1;
     let pending = [];
     for (const op of ops) {
-      const res = this.compileOp(op, dot);
+      const res = this.compileOp(op);
       if (res === null) return -1;
       const [opEntry, opTails] = res;
       for (const t of pending) this.patch(t, opEntry);
@@ -227,7 +227,7 @@ class SegBuilder {
     return entry;
   }
 
-  compileOp(op, dot) {
+  compileOp(op) {
     switch (op.kind) {
       case OP_LIT: {
         const bytes = op.bytes;
@@ -257,34 +257,32 @@ class SegBuilder {
         if (entry === -1) return null;
         const body = this.alloc(S_ANY, 0, entry);
         if (body === -1) return null;
-        const exit = this.alloc(dot ? S_JUMP : S_DOT_GUARD, 0, UNSET);
+        // Under `dot` the guard is inert (blocked closures are never
+        // built), so S_DOT_GUARD serves both compiles.
+        const exit = this.alloc(S_DOT_GUARD, 0, UNSET);
         if (exit === -1) return null;
         this.nexts[entry] = body;
         this.splitBs[entry] = exit;
         return [entry, [exit]];
       }
       case OP_ALTERNATION: {
+        // `this.tails` is empty here (every caller drains it), so the
+        // branch tails can be collected straight out of it.
         const entries = [];
         let tails = [];
         for (const branch of op.branches) {
-          const saved = this.tails;
-          this.tails = [];
-          const e = this.compileOps(branch, dot);
-          const branchTails = this.tails;
-          this.tails = saved;
+          const e = this.compileOps(branch);
           if (e === -1) return null;
           entries.push(e);
-          tails = tails.concat(branchTails);
+          tails = tails.concat(this.tails);
+          this.tails = [];
         }
-        let nextState = -1;
+        let chain = entries[entries.length - 1];
         for (let i = op.branches.length - 2; i >= 0; i--) {
-          const a = entries[i];
-          const b = nextState === -1 ? entries[i + 1] : nextState;
-          const s = this.alloc(S_SPLIT, 0, a, b);
-          if (s === -1) return null;
-          nextState = s;
+          chain = this.alloc(S_SPLIT, 0, entries[i], chain);
+          if (chain === -1) return null;
         }
-        return [nextState === -1 ? entries[0] : nextState, tails];
+        return [chain, tails];
       }
       default:
         return null; // separator-crossing ops never appear in-segment
