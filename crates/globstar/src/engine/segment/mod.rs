@@ -69,7 +69,7 @@ enum Elem {
 
     /// Globstar absorbing ≥ 1 segment. From trailing `/**`
     /// (`a/**` matches `a/` but not `a`) and from spliced bare `**`
-    /// that sits behind or in front of a mandatory separator.
+    /// that sits behind a mandatory separator.
     G1,
 }
 

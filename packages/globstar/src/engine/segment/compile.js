@@ -91,14 +91,8 @@ function collapseOpenGlobstars(ops) {
 }
 
 function expandForks(ops) {
-  let crossing = false;
-  for (const op of ops) {
-    if (opIsCrossingAlt(op)) {
-      crossing = true;
-      break;
-    }
-  }
-  if (!crossing) return [ops];
+  // No base case needed: with no crossing alternation every op takes
+  // the push branch and the loop yields `[ops-copy]` itself.
   let seqs = [[]];
   for (const op of ops) {
     if (opIsCrossingAlt(op)) {
@@ -169,8 +163,9 @@ const B_FRESH = 0;
 const B_STRICT = 1;
 const B_LENIENT = 2;
 // An absorber whose op form does not self-delimit (GlobstarAny,
-// SlashAnything) was just pushed as the last element. Only the Sep
-// that closes it may follow.
+// SlashAnything) was just pushed as the last element. Nothing may
+// follow it — a further op means the sequence is not segment-
+// expressible.
 const B_OPEN = 3;
 
 const EMPTY_BYTES = new Uint8Array(0);
@@ -204,7 +199,6 @@ function segmentize(ops, dot, ci) {
   const elems = [];
   let buf = [];
   let state = B_FRESH;
-  let leadingSeps = false;
 
   const closeSegment = () => {
     if (buf.length === 0) return makeElem(EL_LIT, EMPTY_BYTES, null);
@@ -219,17 +213,13 @@ function segmentize(ops, dot, ci) {
 
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
-    // The only op that may follow an open absorber is the separator
-    // closing its right edge, and it upgrades the lenient `.*` to "at
-    // least one segment". A G1 absorber (SlashAnything, or GlobstarAny
-    // behind a strict Sep) is never followed by a Sep after lowering;
-    // bail rather than drop the separator.
-    if (state === B_OPEN) {
-      if (op.kind !== OP_SEP || elems[elems.length - 1]?.kind !== EL_G0) return null;
-      elems[elems.length - 1] = makeElem(EL_G1, null, null);
-      state = B_FRESH;
-      continue;
-    }
+    // An open absorber ends the sequence: `.*` runs to the end of the
+    // path, so nothing may follow it. Lowering never leaves a Sep behind
+    // one (the fold turns `Globstar Sep` into OptSegmentsSlash and
+    // distributeSeps pushes a brace-flanking `/` inside every branch), so
+    // only a fork splice can glue anything here; bail and let the Pike VM
+    // answer.
+    if (state === B_OPEN) return null;
     switch (op.kind) {
       case OP_LIT:
       case OP_ANYCHAR:
@@ -257,7 +247,6 @@ function segmentize(ops, dot, ci) {
       }
       case OP_LEADING_SEPS: {
         if (i !== 0) return null;
-        leadingSeps = true;
         break;
       }
       case OP_OPT_SEGMENTS_SLASH: {
@@ -265,13 +254,15 @@ function segmentize(ops, dot, ci) {
         // any `**` that does not own a whole segment, §8.1). Defensive
         // bail, PikeVm answers correctly if one ever appears.
         if (buf.length > 0) return null;
+        // Fresh with elements already emitted is a spliced head-of-branch
+        // OSS. (A pattern-head OSS arrives with `elems` empty,
+        // LeadingSeps or not.)
         let strictEntry;
-        if (state === B_FRESH) strictEntry = !leadingSeps && elems.length > 0;
+        if (state === B_FRESH) strictEntry = elems.length > 0;
         else if (state === B_STRICT) strictEntry = true;
         else strictEntry = false; // B_LENIENT
         elems.push(makeElem(strictEntry ? EL_G0_STRICT : EL_G0, null, null));
         state = B_FRESH;
-        leadingSeps = false;
         break;
       }
       case OP_SLASH_ANYTHING: {

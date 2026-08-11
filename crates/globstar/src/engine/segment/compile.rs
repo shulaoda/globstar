@@ -77,11 +77,8 @@ fn collapse_open_globstars(ops: &mut Vec<Op>) {
 /// [`MAX_FORKS`]). In-segment alternations stay inline. `None` on cap
 /// overflow.
 fn expand_forks(ops: &[Op]) -> Option<Vec<Vec<Op>>> {
-    if !ops.iter().any(op_is_crossing_alt) {
-        // Recursion base: a branch without crossing braces is one
-        // ready-made sequence.
-        return Some(vec![ops.to_vec()]);
-    }
+    // No base case needed: with no crossing alternation every op takes
+    // the push branch and the loop yields `vec![ops.to_vec()]` itself.
     let mut seqs: Vec<Vec<Op>> = vec![Vec::with_capacity(ops.len())];
     for op in ops {
         if op_is_crossing_alt(op) {
@@ -154,8 +151,9 @@ enum Boundary {
     Lenient,
 
     /// An absorber whose op form does not self-delimit (`GlobstarAny`,
-    /// `SlashAnything`) was just pushed as the last element. Only the
-    /// `Sep` that closes it may follow.
+    /// `SlashAnything`) was just pushed as the last element. Nothing may
+    /// follow it — a further op means the sequence is not segment-
+    /// expressible.
     Open,
 }
 
@@ -170,8 +168,6 @@ enum Boundary {
 ///
 /// - `[.., Sep, GlobstarAny]`. The strict separator demands at least one
 ///   absorbed segment, so G1.
-/// - `[GlobstarAny, Sep, ..]`. The separator after `.*` likewise forces at
-///   least one segment, so upgrade to G1.
 /// - `[.., Sep, OSS, ..]`. OSS behind a strict `Sep` has no separator-run
 ///   leniency, so G0Strict with no leading empty segment.
 /// - `GlobstarAny` or `SlashAnything` glued to in-segment ops. `.*` ends
@@ -180,21 +176,16 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
     let mut elems: Vec<Elem> = Vec::with_capacity(8);
     let mut buf: Vec<Op> = Vec::new();
     let mut state = Boundary::Fresh;
-    let mut leading_seps = false;
 
     for (i, op) in ops.iter().enumerate() {
-        // The only op that may follow an open absorber is the separator
-        // closing its right edge, and it upgrades the lenient `.*` to
-        // "at least one segment". A `G1` absorber (`SlashAnything`, or
-        // `GlobstarAny` behind a strict `Sep`) is never followed by a
-        // `Sep` after lowering; bail rather than drop the separator.
+        // An open absorber ends the sequence: `.*` runs to the end of the
+        // path, so nothing may follow it. Lowering never leaves a `Sep`
+        // behind one (the fold turns `Globstar Sep` into `OptSegmentsSlash`
+        // and `distribute_seps` pushes a brace-flanking `/` inside every
+        // branch), so only a fork splice can glue anything here; bail and
+        // let the Pike VM answer.
         if state == Boundary::Open {
-            if !matches!(op, Op::Sep) || !matches!(elems.last(), Some(Elem::G0)) {
-                return None;
-            }
-            *elems.last_mut().unwrap() = Elem::G1;
-            state = Boundary::Fresh;
-            continue;
+            return None;
         }
         match op {
             Op::Lit(_) | Op::AnyChar | Op::Star | Op::Class(_) | Op::Alternation(_) => {
@@ -220,7 +211,6 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 if i != 0 {
                     return None;
                 }
-                leading_seps = true;
             }
             Op::OptSegmentsSlash => {
                 // A glued absorber cannot be produced today (the parser
@@ -231,10 +221,10 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                     return None;
                 }
                 let strict_entry = match state {
-                    // Pattern-head OSS always carries LeadingSeps; a
-                    // spliced head-of-branch OSS deeper in the
-                    // sequence only ever follows a boundary op.
-                    Boundary::Fresh => !leading_seps && !elems.is_empty(),
+                    // Fresh with elements already emitted is a spliced
+                    // head-of-branch OSS. (A pattern-head OSS arrives with
+                    // `elems` empty, LeadingSeps or not.)
+                    Boundary::Fresh => !elems.is_empty(),
                     Boundary::Strict => true,
                     Boundary::Lenient => false,
                     Boundary::Open => unreachable!("handled at the loop top"),
@@ -245,7 +235,6 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                     Elem::G0
                 });
                 state = Boundary::Fresh;
-                leading_seps = false;
             }
             Op::SlashAnything => {
                 // Trailing `/**`: brings its own leading boundary.

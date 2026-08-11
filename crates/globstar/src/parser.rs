@@ -201,7 +201,6 @@ impl<'a> Parser<'a> {
                     nodes.push(Node::Class(class));
                 }
                 b'{' => {
-                    flush_literal(&mut lit_buf, &mut nodes);
                     // A single-branch brace is the literal `{...}` (§7.4):
                     // the branch's outer edges neighbor the literal `{`/`}`,
                     // never a boundary, so any edge `**` inside it degrades
@@ -212,30 +211,35 @@ impl<'a> Parser<'a> {
                     let (prev_boundary, next_boundary) = if single {
                         (false, false)
                     } else {
-                        (ctx.boundary_before(nodes.last()), next_after_brace)
+                        (lit_buf.is_empty() && ctx.boundary_before(nodes.last()), next_after_brace)
                     };
                     // `<[Node; 1]>::try_from` checks the length and moves the
                     // single element out in one step.
                     match <[Node; 1]>::try_from(self.parse_brace(prev_boundary, next_boundary)?) {
                         Ok([single]) => {
-                            nodes.push(Node::Literal(b"{".to_vec()));
+                            // The braces and a separator-free literal branch
+                            // are plain text: accumulate into `lit_buf` so
+                            // `a{b}c` stays one Literal node and `{}` never
+                            // spawns an empty one. A branch holding a `/`
+                            // (always structural, never literal) or a
+                            // wildcard is spliced between the brace bytes
+                            // instead: `x{a/b}y` equals `x\{a/b\}y`.
+                            lit_buf.push(b'{');
                             match single.to_literal_bytes() {
-                                // A separator is always structural (it can
-                                // be neither escaped nor literal), so a
-                                // branch holding one is spliced instead of
-                                // flattened, keeping its `Sep` nodes.
-                                // `x{a/b}y` then equals `x\{a/b\}y`.
                                 Some(bytes) if !bytes.contains(&b'/') => {
-                                    nodes.push(Node::Literal(bytes));
+                                    lit_buf.extend_from_slice(&bytes);
                                 }
-                                // Non-literal or separator-holding branch —
-                                // keep the surrounding `{}` as literals and
-                                // splice (matches picomatch / fast-glob).
-                                _ => nodes.push(single),
+                                _ => {
+                                    flush_literal(&mut lit_buf, &mut nodes);
+                                    nodes.push(single);
+                                }
                             }
-                            nodes.push(Node::Literal(b"}".to_vec()));
+                            lit_buf.push(b'}');
                         }
-                        Err(branches) => nodes.push(Node::Brace(branches)),
+                        Err(branches) => {
+                            flush_literal(&mut lit_buf, &mut nodes);
+                            nodes.push(Node::Brace(branches));
+                        }
                     }
                 }
                 _ => {
@@ -321,11 +325,9 @@ impl<'a> Parser<'a> {
             // Parse one item, possibly a range `a-z`.
             let low = self.parse_class_byte(start_pos)?;
 
-            // Range?
-            if self.peek() == Some(b'-')
-                && self.peek_at(1).is_some()
-                && self.peek_at(1) != Some(b']')
-            {
+            // Range? (An unterminated `[a-` takes this path too;
+            // parse_class_byte raises the same UnterminatedClass.)
+            if self.peek() == Some(b'-') && self.peek_at(1) != Some(b']') {
                 self.pos += 1; // consume `-`
                 let high = self.parse_class_byte(start_pos)?;
                 if high < low {

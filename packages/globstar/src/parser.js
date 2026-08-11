@@ -109,12 +109,12 @@ export function parse(input) {
 function parseSequence(state, ctx) {
   const { input } = state;
   const nodes = [];
-  let litBuf = [];
+  const litBuf = [];
 
   function flushLit() {
     if (litBuf.length > 0) {
       nodes.push(lit(Uint8Array.from(litBuf)));
-      litBuf = [];
+      litBuf.length = 0;
     }
   }
 
@@ -158,16 +158,15 @@ function parseSequence(state, ctx) {
         nodes.push(parseClass(state));
         break;
       case LBRACE: {
-        flushLit();
         // A single-branch brace is the literal `{...}` (§7.4): the
         // branch's outer edges neighbor the literal `{`/`}`, never a
         // boundary, so any edge `**` inside it degrades (§8.1). Judge
         // branch-edge globstars with non-boundary neighbors in that
         // case; otherwise use the expanded-form neighbors (§7.0 / §8.1).
         const [single, nextAfterBrace] = scanBrace(state, ctx);
-        const prevBoundary = single ? false : boundaryBefore(nodes, ctx);
+        const prevBoundary = single ? false : litBuf.length === 0 && boundaryBefore(nodes, ctx);
         const nextBoundary = single ? false : nextAfterBrace;
-        parseBraceInto(state, nodes, prevBoundary, nextBoundary);
+        parseBraceInto(state, nodes, litBuf, flushLit, prevBoundary, nextBoundary);
         break;
       }
       default:
@@ -241,11 +240,9 @@ function parseClass(state) {
       return klass(negated, items);
     }
     const lo = parseClassByte(state, startPos);
-    if (
-      input[state.pos] === DASH &&
-      state.pos + 1 < input.length &&
-      input[state.pos + 1] !== RBRACK
-    ) {
+    // Range? (An unterminated `[a-` takes this path too; parseClassByte
+    // throws the same UnterminatedClass.)
+    if (input[state.pos] === DASH && input[state.pos + 1] !== RBRACK) {
       state.pos++; // consume '-'
       const hi = parseClassByte(state, startPos);
       if (hi < lo) throw new GlobError("InvalidRange", { at: startPos, low: lo, high: hi });
@@ -277,22 +274,26 @@ function parseClassByte(state, classStart) {
 // Append the parsed brace's nodes onto `nodes`. Single-branch braces
 // `{a}` revert to literal `{a}` (GLOB_SPEC §7.4 — matches picomatch /
 // fast-glob / bash).
-function parseBraceInto(state, nodes, prevBoundary, nextBoundary) {
+function parseBraceInto(state, nodes, litBuf, flushLit, prevBoundary, nextBoundary) {
   const branches = parseBrace(state, prevBoundary, nextBoundary);
   if (branches.length === 1) {
-    nodes.push(lit(Uint8Array.from([LBRACE])));
+    // The braces and a separator-free literal branch are plain text:
+    // accumulate into litBuf so `a{b}c` stays one Literal node and `{}`
+    // never spawns an empty one. A branch holding a `/` (always
+    // structural, never literal) or a wildcard is spliced between the
+    // brace bytes instead: `x{a/b}y` equals `x\{a/b\}y`.
+    litBuf.push(LBRACE);
     const single = branches[0];
     const litBytes = nodeToLiteralBytes(single);
-    // A separator is always structural (it can be neither escaped nor
-    // literal), so a branch holding one is spliced instead of flattened,
-    // keeping its Sep nodes. `x{a/b}y` then equals `x\{a/b\}y`.
     if (litBytes !== null && !litBytes.includes(SLASH)) {
-      nodes.push(lit(litBytes));
+      for (let i = 0; i < litBytes.length; i++) litBuf.push(litBytes[i]);
     } else {
+      flushLit();
       nodes.push(single);
     }
-    nodes.push(lit(Uint8Array.from([RBRACE])));
+    litBuf.push(RBRACE);
   } else {
+    flushLit();
     nodes.push(brace(branches));
   }
 }

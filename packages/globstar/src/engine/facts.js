@@ -71,8 +71,6 @@ function extractSuffixSet(ops) {
   const set = [];
   for (const branch of last.branches) {
     const branchSuffix = suffixArray(branch, branch.length);
-    if (branchSuffix.length === 0 && branch.length > 0) return [];
-
     let allLiteral = true;
     for (const op of branch) {
       if (op.kind !== OP_LIT && op.kind !== OP_SEP) {

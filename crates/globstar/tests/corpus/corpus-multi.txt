@@ -114,3 +114,12 @@
 ["a[x]","b[x]"]	ax	match
 ["a[x]","b[x]"]	bx	match
 ["a[x]","b[x]"]	cx	no-match
+
+## empty.brace.factoring
+# Factoring `{}`-bearing unions strands an empty literal in a branch;
+# lowering must skip it (Rust panicked at seg_nfa bytes[0], 2026-08).
+["**{}","**{*}"]	a{}	match
+["**{}","**{*}"]	{}	match
+["**{}","**{*}"]	a{b}	match
+["**{}","**{*}"]	x	no-match
+["{}**","{a}**"]	{}x	match

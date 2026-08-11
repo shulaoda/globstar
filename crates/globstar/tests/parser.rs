@@ -172,13 +172,10 @@ fn brace_nested() {
 
 #[test]
 fn brace_single_is_literal() {
-    // `{a}` should be the literal `{a}` (GLOB_SPEC §7.4).
+    // `{a}` is the literal `{a}` (GLOB_SPEC §7.4) — one merged node,
+    // exactly as if the braces had been escaped.
     let a = p("{a}");
-    assert!(matches!(a.body, Node::Concat(_)));
-    // First child should be `{`.
-    if let Node::Concat(xs) = &a.body {
-        assert_eq!(xs[0], Node::Literal(b"{".to_vec()));
-    }
+    assert_eq!(a.body, Node::Literal(b"{a}".to_vec()));
 }
 
 #[test]
