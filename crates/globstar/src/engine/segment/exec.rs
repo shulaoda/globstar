@@ -1,10 +1,5 @@
-//! Segment-at-a-time matching over compiled [`ElemSeq`]s.
-
 use super::{Elem, ElemSeq, SegmentMatcher, Wild, WildKind};
 
-/// Iterator over `(start, end)` byte ranges of a path's segments.
-/// Splits on every `Seps` byte; the empty path yields one empty
-/// segment.
 #[derive(Clone, Copy)]
 struct SegIter<'a> {
     path: &'a [u8],
@@ -30,34 +25,9 @@ impl<'a> Iterator for SegIter<'a> {
         while i < self.path.len() && !std::path::is_separator(self.path[i] as char) {
             i += 1;
         }
-        // Advance unconditionally: after the final segment `pos` is
-        // `len + 1`, a sentinel no real segment start can equal.
-        // Exhaustion and the single-globstar overlap check both read it.
         self.pos = i + 1;
         Some((start, i))
     }
-}
-
-#[inline]
-fn accept_bit(seq: &ElemSeq) -> u64 {
-    1u64 << (seq.num_states - 1)
-}
-
-/// Any nonempty segment beginning in `[start, end)` that starts with
-/// `.`? Segments begin at `start` and after every separator.
-#[inline]
-fn has_dot_led_segment(path: &[u8], start: usize, end: usize) -> bool {
-    if start < end && path[start] == b'.' {
-        return true;
-    }
-    let mut i = start;
-    while i < end {
-        if std::path::is_separator(path[i] as char) && i + 1 < end && path[i + 1] == b'.' {
-            return true;
-        }
-        i += 1;
-    }
-    false
 }
 
 impl SegmentMatcher {
@@ -66,12 +36,10 @@ impl SegmentMatcher {
         match seq.g_count {
             0 => self.match_fixed(seq, path),
             1 => self.match_single_g(seq, path),
-            _ => self.nfa_run(seq, path) & accept_bit(seq) != 0,
+            _ => self.nfa_run(seq, path) & (1u64 << (seq.num_states - 1)) != 0,
         }
     }
 
-    /// Fixed-depth: element count must equal segment count; positional
-    /// compare.
     fn match_fixed(&self, seq: &ElemSeq, path: &[u8]) -> bool {
         let mut segs = SegIter::new(path);
         for e in seq.elems.iter() {
@@ -85,18 +53,11 @@ impl SegmentMatcher {
         segs.next().is_none()
     }
 
-    /// Single-globstar: anchored tail (checked first — it rejects
-    /// fastest), anchored head, globstar absorbs the middle. No
-    /// searching, and at most one pass over the head + tail byte ranges.
-    #[inline(always)]
     fn match_single_g(&self, seq: &ElemSeq, path: &[u8]) -> bool {
         let g = seq.single_g as usize;
         let m = seq.elems.len();
         let tail_len = m - g - 1;
 
-        // Tail: the last `tail_len` elements against the last `tail_len`
-        // segments, right-to-left. `ts` ends up at the byte start of the
-        // FIRST tail segment.
         let mut tail_end = path.len();
         let mut ts = 0usize;
         for j in (0..tail_len).rev() {
@@ -109,22 +70,15 @@ impl SegmentMatcher {
             }
             if j > 0 {
                 if s == 0 {
-                    return false; // fewer segments than tail elements
+                    return false;
                 }
                 tail_end = s - 1;
             }
             ts = s;
         }
 
-        // Head: elements 0..g against the first g segments. All-literal
-        // heads (`src/**/…`) compare as one pre-joined sep-aware prefix.
         let mid_start = if !seq.joined_head.is_empty() {
             let head = &seq.joined_head;
-            // The joined head includes the separator after each head
-            // segment; when the path lacks that final separator the
-            // sequence can never match (the globstar and any tail all
-            // sit beyond it) — same verdict the arity checks below give
-            // on the iterator path.
             if path.len() < head.len() {
                 return false;
             }
@@ -133,7 +87,11 @@ impl SegmentMatcher {
                 let ok = if hb == b'/' {
                     std::path::is_separator(pb as char)
                 } else {
-                    self.eq_byte(hb, pb)
+                    if self.case_insensitive {
+                        hb.eq_ignore_ascii_case(&pb)
+                    } else {
+                        hb == pb
+                    }
                 };
                 if !ok {
                     return false;
@@ -150,17 +108,12 @@ impl SegmentMatcher {
                     return false;
                 }
             }
-            // Start of segment g — `len + 1` sentinel when the path ran
-            // out of segments (see `SegIter::next`), which fails the
-            // overlap check below whenever the tail (or G1) still needs
-            // one.
             iter.pos
         };
 
-        // Overlap / arity check and the absorbed middle's byte range.
         let (mid_exists, mid_end) = if tail_len > 0 {
             if ts < mid_start {
-                return false; // head and tail would share segments
+                return false;
             }
             (ts > mid_start, ts.saturating_sub(1))
         } else {
@@ -170,8 +123,6 @@ impl SegmentMatcher {
         match seq.elems[g] {
             Elem::G0 => {}
             Elem::G0Strict => {
-                // First absorbed segment must be nonempty: empty ⇔ the
-                // range starts at path end or on a separator.
                 if mid_exists
                     && (mid_start >= path.len() || std::path::is_separator(path[mid_start] as char))
                 {
@@ -186,17 +137,22 @@ impl SegmentMatcher {
             _ => unreachable!(),
         }
 
-        // Dot rule over the absorbed middle (dot=false compiles only).
         if self.dot || !mid_exists {
             return true;
         }
-        // `mid_exists` already implies `mid_start <= mid_end` in both arms above.
-        !has_dot_led_segment(path, mid_start, mid_end)
+        if mid_start < mid_end && path[mid_start] == b'.' {
+            return false;
+        }
+        let mut i = mid_start;
+        while i < mid_end {
+            if std::path::is_separator(path[i] as char) && i + 1 < mid_end && path[i + 1] == b'.' {
+                return false;
+            }
+            i += 1;
+        }
+        true
     }
 
-    /// General element-NFA run (multi-globstar `is_match` and every
-    /// `match_dir`). Returns the active state mask after consuming all
-    /// segments.
     fn nfa_run(&self, seq: &ElemSeq, path: &[u8]) -> u64 {
         let mut active = seq.eps[seq.state_of[0] as usize];
         for (s, t) in SegIter::new(path) {
@@ -208,7 +164,6 @@ impl SegmentMatcher {
         active
     }
 
-    /// One segment step of the element NFA.
     fn nfa_step(&self, seq: &ElemSeq, active: u64, seg: &[u8]) -> u64 {
         let mut next: u64 = 0;
         let m = seq.elems.len();
@@ -219,7 +174,7 @@ impl SegmentMatcher {
             let s = bits.trailing_zeros() as usize;
             bits &= bits - 1;
             if s as u8 == seq.num_states - 1 {
-                continue; // accept has no outgoing transitions
+                continue;
             }
             let i = seq.elem_of[s] as usize;
             let entry = seq.state_of[i] as usize;
@@ -245,10 +200,7 @@ impl SegmentMatcher {
                     }
                 }
                 Elem::G0Strict => {
-                    let at_entry = s == entry;
-                    // Entry additionally demands a nonempty first
-                    // absorbed segment.
-                    if absorb_ok && !(at_entry && seg.is_empty()) {
+                    if absorb_ok && !(s == entry && seg.is_empty()) {
                         next |= seq.eps[entry + 1];
                     }
                 }
@@ -262,24 +214,19 @@ impl SegmentMatcher {
         next
     }
 
-    /// `match_dir` for one sequence: `(exact, prefix)`.
     pub(super) fn seq_match_dir(&self, seq: &ElemSeq, dir: &[u8]) -> (bool, bool) {
         let active = self.nfa_run(seq, dir);
-        let exact = active & accept_bit(seq) != 0;
+        let exact = active & (1u64 << (seq.num_states - 1)) != 0;
         let prefix = active & seq.reach1 != 0;
         (exact, prefix)
     }
-
-    // ---------------------------------------------------------------------------
-    // Element / wild consumption (dot protection is baked in at compile)
-    // ---------------------------------------------------------------------------
 
     #[inline(always)]
     fn elem_consumes(&self, e: &Elem, seg: &[u8]) -> bool {
         match e {
             Elem::Lit(lit) => self.lit_eq(lit, seg),
             Elem::Wild(w) => self.wild_consumes(w, seg),
-            _ => false, // globstars are never positionally consumed
+            _ => false,
         }
     }
 
@@ -333,14 +280,6 @@ impl SegmentMatcher {
                 })
             }
             WildKind::Generic(nfa) => nfa.matches(seg),
-        }
-    }
-
-    fn eq_byte(&self, a: u8, b: u8) -> bool {
-        if self.case_insensitive {
-            a.eq_ignore_ascii_case(&b)
-        } else {
-            a == b
         }
     }
 }

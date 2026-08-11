@@ -1,13 +1,3 @@
-// Segment-at-a-time matching over a compiled `ElemSeq`. JS port of the
-// Rust module `crates/globstar/src/engine/segment/exec.rs`.
-//
-// Everything below runs on a JS string. Two subject forms share the
-// code: the caller's own UTF-16 string (fast path, `bail` = true) and
-// the Latin-1 rendering of its UTF-8 bytes (`bail` = false), where one
-// char is one byte. Only the unit-COUNTING constructs (`?`, negated
-// classes) can tell the two apart, so they BAIL out of the UTF-16 form
-// on a non-ASCII segment and the caller re-runs on the Latin-1 form.
-
 import {
   EL_LIT,
   EL_WILD,
@@ -22,20 +12,15 @@ import {
 } from "./index.js";
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../options.js";
 
-export function acceptBit(seq) {
-  return 1 << (seq.numStates - 1);
-}
-
 export function seqMatches(seq, str, dot, ci, bail) {
   if (seq.gCount === 0) return matchFixed(seq, str, ci, bail);
   if (seq.gCount === 1) return matchSingleG(seq, str, dot, ci, bail);
   const active = nfaRun(seq, str, dot, ci, bail);
   if (active === -1) return BAIL;
-  return (active & acceptBit(seq)) !== 0 ? YES : NO;
+  return (active & (1 << (seq.numStates - 1))) !== 0 ? YES : NO;
 }
 
 function nextSep(str, from) {
-  // `/` is the overwhelmingly common separator; use the intrinsic.
   const i = str.indexOf("/", from);
   if (!IS_WINDOWS_SEP) return i;
   const j = str.indexOf("\\", from);
@@ -53,9 +38,9 @@ function matchFixed(seq, str, ci, bail) {
     const last = end === -1;
     if (last) end = str.length;
     if (i + 1 < m) {
-      if (last) return NO; // fewer segments than elements
+      if (last) return NO;
     } else if (!last) {
-      return NO; // more segments than elements
+      return NO;
     }
     const r = elemConsumes(elems[i], str, pos, end, ci, bail);
     if (r !== YES) return r;
@@ -70,7 +55,6 @@ function matchSingleG(seq, str, dot, ci, bail) {
   const m = elems.length;
   const tailLen = m - g - 1;
 
-  // Tail, right-to-left.
   let tailEnd = str.length;
   let ts = 0;
   for (let j = tailLen - 1; j >= 0; j--) {
@@ -85,13 +69,9 @@ function matchSingleG(seq, str, dot, ci, bail) {
     ts = s;
   }
 
-  // Head: all-literal heads ("src/**/…") compare as one pre-joined
-  // sep-aware prefix (mirrors Rust `match_single_g`).
   let midStart;
   const jh = seq.joinedHeadStr;
   if (jh !== null) {
-    // The joined head includes the separator after each head
-    // segment; a shorter path can never match.
     if (str.length < jh.length) return NO;
     if (!ci && !IS_WINDOWS_SEP) {
       if (!str.startsWith(jh)) return NO;
@@ -104,8 +84,6 @@ function matchSingleG(seq, str, dot, ci, bail) {
     }
     midStart = jh.length;
   } else {
-    // `pos` lands on `len + 1` after the final segment, a sentinel no
-    // real segment start can equal (mirrors Rust SegIter).
     let pos = 0;
     for (let i = 0; i < g; i++) {
       if (pos > str.length) return NO;
@@ -121,7 +99,7 @@ function matchSingleG(seq, str, dot, ci, bail) {
   let midExists;
   let midEnd;
   if (tailLen > 0) {
-    if (ts < midStart) return NO; // head/tail overlap
+    if (ts < midStart) return NO;
     midExists = ts > midStart;
     midEnd = ts > 0 ? ts - 1 : 0;
   } else {
@@ -139,29 +117,21 @@ function matchSingleG(seq, str, dot, ci, bail) {
   }
 
   if (dot || !midExists) return YES;
-  // `midExists` already implies `midStart <= midEnd` in both arms above.
-  return hasDotLedSegment(str, midStart, midEnd) ? NO : YES;
+  if (midStart < midEnd && str.charCodeAt(midStart) === 0x2e) return NO;
+  for (let i = midStart; ; ) {
+    i = nextSep(str, i);
+    if (i === -1 || i + 1 >= midEnd) return YES;
+    if (str.charCodeAt(i + 1) === 0x2e) return NO;
+    i += 1;
+  }
 }
 
 function lastSepBefore(str, end) {
-  // `lastIndexOf` clamps a negative position to 0 instead of returning -1,
-  // which would report a separator AT index 0 when there is none before it.
   if (end <= 0) return -1;
   const i = str.lastIndexOf("/", end - 1);
   if (!IS_WINDOWS_SEP) return i;
   const j = str.lastIndexOf("\\", end - 1);
   return i > j ? i : j;
-}
-
-function hasDotLedSegment(str, start, end) {
-  if (start < end && str.charCodeAt(start) === 0x2e) return true;
-  let i = start;
-  for (;;) {
-    i = nextSep(str, i);
-    if (i === -1 || i + 1 >= end) return false;
-    if (str.charCodeAt(i + 1) === 0x2e) return true;
-    i += 1;
-  }
 }
 
 export function nfaRun(seq, str, dot, ci, bail) {
@@ -261,7 +231,6 @@ function wildConsumes(w, str, s, t, ci, bail) {
   const len = t - s;
   switch (w.kind) {
     case WK_AFFIX: {
-      // `?` counts BYTES; bail when the segment holds non-ASCII.
       if (bail && w.anychars > 0 && segHasNonAscii(str, s, t)) return BAIL;
       const need = w.minLen;
       if (len < need || (!w.variable && len !== need)) return NO;
@@ -292,7 +261,6 @@ function wildConsumes(w, str, s, t, ci, bail) {
   }
 }
 
-// Separator-aware `endsWith` for the facts prefilter.
 export function endsWithSepAware(str, suffix, ci) {
   let si = suffix.length;
   let pi = str.length;

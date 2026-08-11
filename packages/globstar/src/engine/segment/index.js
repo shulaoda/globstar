@@ -21,7 +21,7 @@ import { IS_WINDOWS_SEP } from "../../options.js";
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSeqs, opsHaveNonAscii } from "./compile.js";
-import { seqMatches, nfaRun, acceptBit, endsWithSepAware } from "./exec.js";
+import { seqMatches, nfaRun, endsWithSepAware } from "./exec.js";
 
 // Fork / element-NFA budgets (masks are 32-bit here; Rust uses 64 —
 // overflow just takes the PikeVM fallback, with identical results).
@@ -139,7 +139,7 @@ export class SegmentMatcher {
     for (let i = 0; i < seqs.length; i++) {
       const active = nfaRun(seqs[i], str, this.dot, this.ci, bail);
       if (active === -1) return -1;
-      if ((active & acceptBit(seqs[i])) !== 0) exact = true;
+      if ((active & (1 << (seqs[i].numStates - 1))) !== 0) exact = true;
       if ((active & seqs[i].reach1) !== 0) prefix = true;
       if (exact && prefix) break;
     }
