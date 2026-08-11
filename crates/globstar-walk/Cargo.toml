@@ -15,8 +15,6 @@ criterion = { version = "0.5", default-features = false }
 globwalk = "0.9"
 ignore = "0.4"
 
-# End-to-end walker comparison across tree scales. Mirrored by JS-side
-# `packages/bench/benches/walker.js`.
 [[bench]]
 name = "walker"
 harness = false

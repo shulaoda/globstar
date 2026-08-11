@@ -13,16 +13,11 @@ globset = "0.4"
 fast-glob = "0.4"
 wax = "0.6"
 glob = "0.3"
-# Single-pattern head-to-head: production globstar, forced PikeVM,
-# and third-party matchers. Mirrored by JS-side
-# `packages/bench/benches/matcher_single.js`.
+
 [[bench]]
 name = "matcher_single"
 harness = false
 
-# Multi-pattern union vs OR for PikeVM, plus third-party matchers
-# (globset / wax / fast_glob / glob). Mirrored by JS-side
-# `packages/bench/benches/matcher_multi.js`.
 [[bench]]
 name = "matcher_multi"
 harness = false
