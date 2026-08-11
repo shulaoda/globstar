@@ -1,6 +1,3 @@
-// Recursive-descent glob parser. Bytes → AST.
-// Implements GLOB_SPEC.md §3 grammar with the byte-level conventions of §2.
-
 import {
   N_SEPARATOR,
   N_BRACE,

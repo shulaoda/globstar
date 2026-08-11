@@ -23,7 +23,13 @@ use crate::ast::Node;
 /// prefix/suffix lifted out and the residuals re-wrapped in a fresh
 /// brace (or returned bare if exactly one residual remains).
 pub fn factor_branches(branches: Vec<Node>) -> Node {
-    let mut seqs: Vec<Vec<Node>> = branches.into_iter().map(into_seq).collect();
+    let mut seqs: Vec<Vec<Node>> = branches
+        .into_iter()
+        .map(|n| match n {
+            Node::Concat(xs) => xs,
+            other => vec![other],
+        })
+        .collect();
     let prefix = lift_prefix(&mut seqs);
     let suffix = lift_suffix(&mut seqs);
 
@@ -68,18 +74,6 @@ fn node_eq(a: &Node, b: &Node) -> bool {
         | (Node::AnyChar, Node::AnyChar)
         | (Node::Star, Node::Star) => true,
         _ => false,
-    }
-}
-
-/// Element-wise [`node_eq`] over two equal-length node slices.
-fn slice_eq(a: &[Node], b: &[Node]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| node_eq(x, y))
-}
-
-fn into_seq(node: Node) -> Vec<Node> {
-    match node {
-        Node::Concat(xs) => xs,
-        other => vec![other],
     }
 }
 
@@ -145,10 +139,9 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
             return lifted;
         }
         let head = &seqs[0][..size];
-        let same = seqs
-            .iter()
-            .skip(1)
-            .all(|s| fold_group_at_start(s) == size && slice_eq(&s[..size], head));
+        let same = seqs.iter().skip(1).all(|s| {
+            fold_group_at_start(s) == size && s[..size].iter().zip(head).all(|(x, y)| node_eq(x, y))
+        });
         if !same {
             break;
         }
@@ -166,7 +159,8 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
     {
         return lifted;
     }
-    let n = common_byte_prefix(seqs.iter().map(|s| first_lit_bytes(s)));
+    let lits: Vec<&[u8]> = seqs.iter().map(|s| first_lit_bytes(s)).collect();
+    let n = common_byte_prefix(&lits);
     if n == 0 {
         return lifted;
     }
@@ -205,10 +199,13 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
         }
         let len0 = seqs[0].len();
         let tail = &seqs[0][len0 - size..];
-        let same = seqs
-            .iter()
-            .skip(1)
-            .all(|s| fold_group_at_end(s) == size && slice_eq(&s[s.len() - size..], tail));
+        let same = seqs.iter().skip(1).all(|s| {
+            fold_group_at_end(s) == size
+                && s[s.len() - size..]
+                    .iter()
+                    .zip(tail)
+                    .all(|(x, y)| node_eq(x, y))
+        });
         if !same {
             break;
         }
@@ -225,7 +222,8 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
         .iter()
         .all(|s| matches!(s.last(), Some(Node::Literal(_))))
     {
-        let n = common_byte_suffix(seqs.iter().map(|s| last_lit_bytes(s)));
+        let lits: Vec<&[u8]> = seqs.iter().map(|s| last_lit_bytes(s)).collect();
+        let n = common_byte_suffix(&lits);
         if n > 0 {
             // Same in-place strategy as the prefix phase: take the
             // lifted bytes from `seqs[0]`, truncate the rest in place.
@@ -271,8 +269,7 @@ fn last_lit_bytes(seq: &[Node]) -> &[u8] {
     }
 }
 
-fn common_byte_prefix<'a, I: IntoIterator<Item = &'a [u8]>>(iter: I) -> usize {
-    let lits: Vec<&[u8]> = iter.into_iter().collect();
+fn common_byte_prefix(lits: &[&[u8]]) -> usize {
     let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
     (0..min)
         .take_while(|&i| {
@@ -282,8 +279,7 @@ fn common_byte_prefix<'a, I: IntoIterator<Item = &'a [u8]>>(iter: I) -> usize {
         .count()
 }
 
-fn common_byte_suffix<'a, I: IntoIterator<Item = &'a [u8]>>(iter: I) -> usize {
-    let lits: Vec<&[u8]> = iter.into_iter().collect();
+fn common_byte_suffix(lits: &[&[u8]]) -> usize {
     let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
     (0..min)
         .take_while(|&i| {

@@ -10,7 +10,7 @@ import {
   YES,
   BAIL,
 } from "./index.js";
-import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../options.js";
+import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
 
 export function seqMatches(seq, str, dot, ci, bail) {
   if (seq.gCount === 0) return matchFixed(seq, str, ci, bail);

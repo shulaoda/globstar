@@ -23,7 +23,7 @@ import { N_CONCAT, N_GLOBSTAR, N_LITERAL, N_SEPARATOR, brace, concat, lit } from
 // residual branches are re-wrapped in a fresh brace, or returned bare
 // when only one residual remains.
 export function factorBranches(branches) {
-  const seqs = branches.map(intoSeq);
+  const seqs = branches.map((n) => (n.tag === N_CONCAT ? n.children.slice() : [n]));
   const prefix = liftPrefix(seqs);
   const suffix = liftSuffix(seqs);
 
@@ -35,10 +35,6 @@ export function factorBranches(branches) {
   else out.push(inner);
   out.push(...suffix);
   return out.length === 1 ? out[0] : concat(out);
-}
-
-function intoSeq(node) {
-  return node.tag === N_CONCAT ? node.children.slice() : [node];
 }
 
 function fromSeq(seq) {

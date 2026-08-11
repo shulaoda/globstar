@@ -14,7 +14,7 @@ import {
   SLASH_ANY_OP,
 } from "../ops/index.js";
 import { CI_BYTE } from "../../ast.js";
-import { isPathSep } from "../../options.js";
+import { isPathSep } from "../../bytes.js";
 import { latin1 } from "../../utf8.js";
 import {
   EL_LIT,

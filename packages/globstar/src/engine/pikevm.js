@@ -11,7 +11,7 @@ import {
   T_NULL,
   compileThompson,
 } from "./thompson.js";
-import { isPathSep, ctz32 } from "../options.js";
+import { isPathSep, ctz32 } from "../bytes.js";
 import { classMatches } from "../ast.js";
 import { DirMatch } from "../dir-match.js";
 import { computeStaticPrefixes } from "./ops/index.js";

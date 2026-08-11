@@ -1,7 +1,3 @@
-//! Recursive-descent parser: a `&[u8]` pattern into an [`Ast`].
-//! Implements the BNF in GLOB_SPEC.md §3 with the byte conventions of §2.
-//! Hand-written (no combinator library) for precise byte-offset errors.
-
 use crate::ast::*;
 use crate::error::*;
 

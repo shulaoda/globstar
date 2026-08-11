@@ -1,4 +1,4 @@
-import { isPathSep, eqByteCi } from "../options.js";
+import { isPathSep, eqByteCi } from "../bytes.js";
 import { OP_LIT, OP_SEP, OP_ALTERNATION } from "./ops/ir.js";
 
 export class LiteralFacts {

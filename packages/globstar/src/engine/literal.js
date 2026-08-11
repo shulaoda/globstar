@@ -1,4 +1,4 @@
-import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../options.js";
+import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../bytes.js";
 import { DirMatch } from "../dir-match.js";
 import { toBytes, latin1 } from "../utf8.js";
 

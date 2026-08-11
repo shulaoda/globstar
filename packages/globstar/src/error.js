@@ -1,5 +1,3 @@
-// Defense-in-depth limits for adversarial input. Both align with the
-// Rust crate's GlobError limits (`spec/GLOB_SPEC.md` §10).
 export const MAX_PATTERN_LEN = 64 * 1024;
 export const MAX_BRACE_NESTING = 32;
 

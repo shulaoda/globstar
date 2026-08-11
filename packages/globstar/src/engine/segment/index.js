@@ -1,5 +1,5 @@
 import { computeStaticPrefixes } from "../ops/index.js";
-import { IS_WINDOWS_SEP } from "../../options.js";
+import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSeqs, opsHaveNonAscii } from "./compile.js";

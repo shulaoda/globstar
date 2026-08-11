@@ -1,10 +1,6 @@
-// Bit `0x20` is ASCII's case bit: setting it lowercases, clearing it
-// uppercases; any non-letter byte is returned unchanged.
-export function asciiCaseAlt(b) {
-  if (b >= 0x41 && b <= 0x5a) return b | 0x20;
-  if (b >= 0x61 && b <= 0x7a) return b & ~0x20;
-  return b;
-}
+// Byte and bit primitives the Rust side gets from std:
+// `std::path::is_separator`, `u32::trailing_zeros`,
+// `u8::eq_ignore_ascii_case`.
 
 // Path separators per GLOB_SPEC §12.3: `/` always, `\` on Windows.
 const IS_WINDOWS = typeof process !== "undefined" && process.platform === "win32";
@@ -21,10 +17,11 @@ export const IS_WINDOWS_SEP = isPathSep(0x5c);
 // caller iterates set bits under a `word !== 0` guard.
 export const ctz32 = (v) => 31 - Math.clz32(v & -v);
 
-// ASCII case-insensitive byte equality; non-ASCII bytes compare verbatim.
-// Fold one side only — toggling both via asciiCaseAlt just swaps them
-// (`r`/`R` → `R`/`r`) and still compares unequal.
+// ASCII case-insensitive byte equality, the twin of Rust's
+// `u8::eq_ignore_ascii_case`: lowercase both via the `0x20` case bit,
+// then require a letter so non-letter pairs (`@`/`` ` ``) stay unequal.
 export function eqByteCi(a, b) {
   if (a === b) return true;
-  return asciiCaseAlt(a) === b;
+  const l = a | 0x20;
+  return l === (b | 0x20) && l >= 0x61 && l <= 0x7a;
 }

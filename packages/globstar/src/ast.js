@@ -6,7 +6,7 @@
 // allocations. Bigger nodes (Literal, Class, Brace, Concat) carry
 // payload arrays so they are allocated per parse.
 
-import { isPathSep, asciiCaseAlt } from "./options.js";
+import { isPathSep } from "./bytes.js";
 
 // Node tags.
 export const N_CONCAT = 0;
@@ -57,6 +57,15 @@ export function classItemByte(b) {
 }
 export function classItemRange(lo, hi) {
   return { tag: CI_RANGE, lo, hi };
+}
+
+// The ASCII case-flip of a byte (`A`↔`a`), or the byte unchanged if it
+// isn't an ASCII letter. Bit `0x20` is ASCII's case bit: setting it
+// lowercases, clearing it uppercases.
+function asciiCaseAlt(b) {
+  if (b >= 0x41 && b <= 0x5a) return b | 0x20;
+  if (b >= 0x61 && b <= 0x7a) return b & ~0x20;
+  return b;
 }
 
 // The 2-item positive class a case-insensitive ASCII letter folds to —

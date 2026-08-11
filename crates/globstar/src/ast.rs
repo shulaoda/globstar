@@ -73,6 +73,18 @@ impl ClassItem {
     }
 }
 
+/// The ASCII case-flip of a byte (`A`↔`a`), or the byte unchanged if it
+/// isn't an ASCII letter. Bit `0x20` is ASCII's case bit: setting it
+/// lowercases, clearing it uppercases.
+#[inline]
+fn ascii_case_alt(b: u8) -> u8 {
+    match b {
+        b'A'..=b'Z' => b | 0x20,
+        b'a'..=b'z' => b & !0x20,
+        _ => b,
+    }
+}
+
 impl CharClass {
     /// Whether byte `b` is in the class, honoring `negated`. Path
     /// separators are never members, either polarity (§6.2 / §12.3 —
@@ -91,7 +103,7 @@ impl CharClass {
     /// to — `{b, alt}` with `alt` the opposite-case byte — or `None` when
     /// `b` isn't a foldable letter (caller emits a plain byte match).
     pub(crate) fn ci_letter(b: u8) -> Option<Self> {
-        let alt = crate::options::ascii_case_alt(b);
+        let alt = ascii_case_alt(b);
         (alt != b).then(|| CharClass {
             negated: false,
             items: vec![ClassItem::Byte(b), ClassItem::Byte(alt)],
@@ -108,7 +120,7 @@ impl CharClass {
             items.push(*item);
             match *item {
                 ClassItem::Byte(b) => {
-                    let alt = crate::options::ascii_case_alt(b);
+                    let alt = ascii_case_alt(b);
                     if alt != b {
                         items.push(ClassItem::Byte(alt));
                     }
@@ -122,7 +134,7 @@ impl CharClass {
                         items.push(ClassItem::Range(lo & !0x20, hi & !0x20));
                     } else {
                         for b in lo..=hi {
-                            let alt = crate::options::ascii_case_alt(b);
+                            let alt = ascii_case_alt(b);
                             if alt != b {
                                 items.push(ClassItem::Byte(alt));
                             }

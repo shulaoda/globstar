@@ -3,7 +3,7 @@
 
 import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION } from "../ops/index.js";
 import { classMatches, ciLetter } from "../../ast.js";
-import { ctz32 } from "../../options.js";
+import { ctz32 } from "../../bytes.js";
 
 const MAX_SEG_NFA_STATES = 32;
 
