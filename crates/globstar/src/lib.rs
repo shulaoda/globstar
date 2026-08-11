@@ -1,21 +1,3 @@
-//! `globstar` — pure glob matcher engine.
-//!
-//! No filesystem dependencies. Implements the syntax defined in
-//! `spec/GLOB_SPEC.md`.
-//!
-//! ## Engine tiers
-//!
-//! | Tier | Pattern shape                              | Engine    |
-//! |------|--------------------------------------------|-----------|
-//! | 0    | Pure literal (`src/main.rs`)               | `Literal` |
-//! | 1/2  | Segment-expressible wildcards and braces   | `Segment` |
-//! | 1/2  | Segment budget/shape fallback (rare)       | `PikeVm`  |
-//!
-//! Every tier implements both `is_match` and `match_dir` natively
-//! without recursive backtracking — literal byte-compare, per-segment
-//! anchored/NFA stepping, or the Pike VM's reach-to-accept bitset —
-//! so ReDoS is eliminated by construction.
-
 #![forbid(unsafe_code)]
 
 #[doc(hidden)]
@@ -45,33 +27,20 @@ use engine::pikevm::PikeVm;
 use engine::segment::SegmentMatcher;
 use factor::factor_branches;
 
-/// Tier classification for compiled patterns. Each glob is routed at
-/// compile time to exactly one tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
-    /// Pure literal (no metacharacter). Routed to a byte-compare
-    /// matcher; uncommon as a single `Glob::new` argument but
-    /// frequent in ignore-list contexts where many literal entries
-    /// are merged via `Glob::union`.
+    /// Pure literal (no metacharacter).
     Literal,
-
     /// Simple wildcards (`*`, `?`, `[]`) without `**` or brace.
     SimpleWildcard,
-
     /// Contains `**` or brace expansion.
     Globstar,
 }
 
-/// A compiled glob pattern.
 #[derive(Debug, Clone)]
 pub struct Glob {
-    /// Tier classification.
     tier: Tier,
-
-    /// Tier-specific matcher engine.
     engine: Engine,
-
-    /// Whether the overall pattern is negated (odd `!` count prefix).
     negated: bool,
 }
 
@@ -79,50 +48,23 @@ pub struct Glob {
 enum Engine {
     /// Tier 0 — pure literal byte comparison.
     Literal(LiteralMatcher),
-
     /// Tier 1/2 — segment-structured matcher for the dominant shapes.
     Segment(Box<SegmentMatcher>),
-
     /// Linear-time O(n·m) fallback for shapes or bounded expansions
     /// the segment representation cannot express.
     PikeVm(Box<PikeVm>),
 }
 
 impl Glob {
-    /// Compile a glob pattern with default options.
     pub fn new(pattern: &str) -> Result<Self, GlobError> {
         Self::new_with(pattern, CompileOptions::default())
     }
 
-    /// Compile a glob pattern with custom options.
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
         let ast = parser::parse(pattern.as_bytes())?;
         Self::from_ast(ast, opts)
     }
 
-    /// Compile `patterns` as the boolean OR of their matches, returning a
-    /// single `Glob`. Branches are factored and lowered once; separator-
-    /// crossing alternatives become bounded segment sequences.
-    ///
-    /// ## Constraints
-    ///
-    /// - At least one pattern is required (empty input → [`GlobError::EmptyPatternSet`])
-    /// - Negated (`!`-prefixed) patterns are rejected (→ [`GlobError::NegatedInUnion`]).
-    ///   For include / exclude semantics, call `Glob::union` twice and
-    ///   compose with `inc.is_match(p) && !exc.is_match(p)` at the call
-    ///   site
-    /// - All patterns share one [`CompileOptions`] — split mixed-options
-    ///   groups in the caller
-    ///
-    /// A single-pattern input is degenerate but still enforces the union
-    /// restriction against negated patterns.
-    ///
-    /// ## Implementation note
-    ///
-    /// AST-level prefix/suffix factoring lifts shared leading and trailing
-    /// fragments out of the branches before lowering, so
-    /// `union(["**/*.ts", "**/*.tsx"])` produces the same segment program
-    /// as the hand-written `**/*.{ts,tsx}`.
     pub fn union<I, S>(patterns: I) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -131,7 +73,6 @@ impl Glob {
         Self::union_with(patterns, CompileOptions::default())
     }
 
-    /// [`Glob::union`] with custom options.
     pub fn union_with<I, S>(patterns: I, opts: CompileOptions) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -170,14 +111,8 @@ impl Glob {
         }
     }
 
-    /// Internal: compile from a pre-parsed AST. Used by both `new_with`
-    /// (which parses first) and `union_with` (which builds the AST by
-    /// merging parsed sub-bodies into a synthetic `Brace`).
     fn from_ast(ast: Ast, opts: CompileOptions) -> Result<Self, GlobError> {
         let negated = ast.is_negated();
-        // The literal rendering IS the Tier::Literal proof, so routing
-        // needs no separate classification pass (and no `expect` on an
-        // invariant two functions have to keep in sync).
         let (tier, engine) = match ast.body.to_literal_bytes() {
             Some(lit) => (
                 Tier::Literal,
@@ -204,13 +139,10 @@ impl Glob {
         })
     }
 
-    /// The tier this pattern was routed to.
     pub fn tier(&self) -> Tier {
         self.tier
     }
 
-    /// Diagnostic: which concrete engine variant compiled this
-    /// pattern. Intended for bench instrumentation and tests.
     pub fn engine_name(&self) -> &'static str {
         match &self.engine {
             Engine::Literal(_) => "Literal",
@@ -219,7 +151,6 @@ impl Glob {
         }
     }
 
-    /// Whether `path` matches this glob.
     #[inline]
     pub fn is_match(&self, path: &[u8]) -> bool {
         let raw = match &self.engine {
@@ -227,58 +158,21 @@ impl Glob {
             Engine::Segment(m) => m.is_match(path),
             Engine::PikeVm(m) => m.is_match(path),
         };
-        if self.negated { !raw } else { raw }
+        raw ^ self.negated
     }
 
-    /// Compute the set of **static path prefixes** for this glob, suitable
-    /// for use by a walker to jump directly to the deepest pre-determined
-    /// directory instead of scanning the top-level tree.
-    ///
-    /// The return value is a deduplicated list where each entry is the
-    /// longest segment-bounded literal prefix of one brace-expanded program
-    /// variant. Shorter prefixes subsume longer ones (so `[src, src/cli]`
-    /// deduplicates to `[src]`).
-    ///
-    /// Examples:
-    /// - `src/*.ts` → `[b"src"]`
-    /// - `src/**/*.ts` → `[b"src"]`
-    /// - `**/*.ts` → `[b""]`
-    /// - `{src,tests}/*.rs` → `[b"src", b"tests"]`
-    /// - `src/main.rs` → `[b"src/main.rs"]` (fully literal)
-    ///
-    /// A return value of `[b""]` means "no useful prefix" — the walker
-    /// should start from the user-supplied root with no shortcut.
     pub fn static_prefixes(&self) -> Vec<Vec<u8>> {
-        // A negated pattern `!P` matches (almost) everything, so the
-        // body's prefixes describe the exact set a match must AVOID —
-        // the inverse of a useful seed. Fall back to "no prefix" so a
-        // walker starts from the root (§13.4 conservative direction).
         if self.negated {
             return vec![Vec::new()];
         }
         match &self.engine {
             Engine::Literal(m) => m.static_prefixes(),
-            // Cached at build time inside the engine — see
-            // `compute_static_prefixes` in `engine::ops`. Already
-            // deduplicated; we just clone into the public `Vec<Vec<u8>>`
-            // shape that callers expect.
             Engine::Segment(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
             Engine::PikeVm(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
         }
     }
 
-    /// `match_dir` query for walker integration. See [`DirMatch`].
-    ///
-    /// Every engine answers "could some descendant match?" via a
-    /// hypothetical `/` step followed by a reach-to-accept lookup
-    /// precomputed at build time — no recursive descent.
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        // Whole-pattern negation `!P` yields almost no pruning
-        // information: a negated pattern normally means "every path NOT
-        // matching P", whose descendants are unbounded. Conservatively
-        // descend rather than inverting the body's verdict (which would
-        // prune subtrees that in fact contain matches) — GLOB_SPEC
-        // §13.4, matching the JS `matchDir` reference.
         if self.negated {
             return DirMatch::Descend;
         }
