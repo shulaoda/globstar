@@ -64,18 +64,6 @@ function opIsCrossingAlt(op) {
   return op.kind === OP_ALTERNATION && opCrossesSegment(op);
 }
 
-function hasOpenGlobstarAdjacency(ops) {
-  for (let i = 1; i < ops.length; i++) {
-    if (
-      ops[i].kind === OP_GLOBSTAR_ANY &&
-      (ops[i - 1].kind === OP_OPT_SEGMENTS_SLASH || ops[i - 1].kind === OP_SEP_RUN)
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 // `(?:[^/]*/)* .*` = `.*` → GlobstarAny; `/+ .*` = `/.*` → SlashAnything.
 // Both language-preserving. Without them the segmentizer turns the `**`
 // fork of `x/{**,a}/**` (`SepRun OSS GlobstarAny`) into `[Lit, G0, G0]`,
@@ -198,7 +186,13 @@ export function compileSeqs(ops, dot, ci) {
     // Collapse open-globstar adjacencies fork-splicing / separator
     // distribution can create, before segmentizing. Copy first — the
     // no-crossing path returns the caller's ops verbatim.
-    if (hasOpenGlobstarAdjacency(fork)) fork = collapseOpenGlobstars(fork.slice());
+    const glued = fork.some(
+      (op, i) =>
+        i > 0 &&
+        op.kind === OP_GLOBSTAR_ANY &&
+        (fork[i - 1].kind === OP_OPT_SEGMENTS_SLASH || fork[i - 1].kind === OP_SEP_RUN),
+    );
+    if (glued) fork = collapseOpenGlobstars(fork.slice());
     const seq = segmentize(fork, dot, ci);
     if (seq === null) return null;
     seqs.push(seq);
@@ -475,7 +469,9 @@ function finishSeq(elems) {
 
   const satFrom = new Array(m + 1).fill(true);
   for (let i = m - 1; i >= 0; i--) {
-    satFrom[i] = elemSatisfiable(elems[i]) && satFrom[i + 1];
+    const e = elems[i];
+    const sat = e.kind === EL_WILD && e.wild.kind === WK_GENERIC ? e.wild.nfa.satisfiable : true;
+    satFrom[i] = sat && satFrom[i + 1];
   }
   let reach1 = 0;
   for (let i = 0; i < m; i++) {
@@ -540,10 +536,4 @@ function finishSeq(elems) {
     quickSuffixStr: quickStr,
     joinedHeadStr,
   };
-}
-
-function elemSatisfiable(e) {
-  if (e.kind !== EL_WILD) return true;
-  const w = e.wild;
-  return w.kind === WK_GENERIC ? w.nfa.satisfiable : true;
 }

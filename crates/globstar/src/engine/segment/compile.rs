@@ -35,19 +35,15 @@ pub(super) fn compile_seqs(ops: &[Op], dot: bool, ci: bool) -> Option<Vec<ElemSe
 /// matching `x` (GLOB_SPEC §8.3). The PikeVM never flattens, so this keeps the
 /// two engines in agreement.
 fn segmentize_fork(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
-    if has_open_globstar_adjacency(ops) {
-        let mut flat = ops.to_vec();
-        collapse_open_globstars(&mut flat);
-        segmentize(&flat, dot, ci)
-    } else {
-        segmentize(ops, dot, ci)
-    }
-}
-
-fn has_open_globstar_adjacency(ops: &[Op]) -> bool {
-    ops.windows(2).any(|w| {
+    let glued = ops.windows(2).any(|w| {
         matches!(w[1], Op::GlobstarAny) && matches!(w[0], Op::OptSegmentsSlash | Op::SepRun)
-    })
+    });
+    if !glued {
+        return segmentize(ops, dot, ci);
+    }
+    let mut flat = ops.to_vec();
+    collapse_open_globstars(&mut flat);
+    segmentize(&flat, dot, ci)
 }
 
 fn collapse_open_globstars(ops: &mut Vec<Op>) {
@@ -502,9 +498,19 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
     }
 
     // sat_from[i] is true when elements from i on can match some segments.
+    // Only a Generic wild can be unsatisfiable: literals and absorbers
+    // always take a segment, and affix shapes are matched by their own
+    // literal or any non-dot-led segment.
     let mut sat_from = vec![true; m + 1];
     for i in (0..m).rev() {
-        sat_from[i] = elem_satisfiable(&elems[i]) && sat_from[i + 1];
+        let sat = match &elems[i] {
+            Elem::Wild(w) => match &w.kind {
+                WildKind::Generic(nfa) => nfa.satisfiable,
+                _ => true,
+            },
+            _ => true,
+        };
+        sat_from[i] = sat && sat_from[i + 1];
     }
     // Per-state "can consume ≥ 1 further segment on a path to
     // accept" (the `match_dir` prefix bit).
@@ -566,18 +572,4 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
         reach1,
         quick_suffix,
     })
-}
-
-/// Is there ANY segment this element consumes / absorbs?
-fn elem_satisfiable(e: &Elem) -> bool {
-    match e {
-        Elem::Lit(_) | Elem::G0 | Elem::G0Strict | Elem::G1 => true,
-        Elem::Wild(w) => match &w.kind {
-            // Affix shapes are always satisfiable: wildcard-led ones
-            // by a non-dot-led segment, literal-led ones by their own
-            // literal (a leading literal `.` is never dot-protected).
-            WildKind::Affix { .. } | WildKind::AffixSet { .. } => true,
-            WildKind::Generic(nfa) => nfa.satisfiable,
-        },
-    }
 }
