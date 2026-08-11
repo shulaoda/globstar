@@ -1,6 +1,6 @@
 //! Segment-at-a-time matching over compiled [`ElemSeq`]s.
 
-use super::{Elem, ElemSeq, SegmentMatcher, Wild, WildKind, is_sep};
+use super::{Elem, ElemSeq, SegmentMatcher, Wild, WildKind};
 
 /// Iterator over `(start, end)` byte ranges of a path's segments.
 /// Splits on every `Seps` byte; the empty path yields one empty
@@ -27,7 +27,7 @@ impl<'a> Iterator for SegIter<'a> {
             return None;
         }
         let mut i = start;
-        while i < self.path.len() && !is_sep(self.path[i]) {
+        while i < self.path.len() && !std::path::is_separator(self.path[i] as char) {
             i += 1;
         }
         // Advance unconditionally: after the final segment `pos` is
@@ -52,7 +52,7 @@ fn has_dot_led_segment(path: &[u8], start: usize, end: usize) -> bool {
     }
     let mut i = start;
     while i < end {
-        if is_sep(path[i]) && i + 1 < end && path[i + 1] == b'.' {
+        if std::path::is_separator(path[i] as char) && i + 1 < end && path[i + 1] == b'.' {
             return true;
         }
         i += 1;
@@ -101,7 +101,7 @@ impl SegmentMatcher {
         let mut ts = 0usize;
         for j in (0..tail_len).rev() {
             let mut s = tail_end;
-            while s > 0 && !is_sep(path[s - 1]) {
+            while s > 0 && !std::path::is_separator(path[s - 1] as char) {
                 s -= 1;
             }
             if !self.elem_consumes(&seq.elems[g + 1 + j], &path[s..tail_end]) {
@@ -131,7 +131,7 @@ impl SegmentMatcher {
             for (i, &hb) in head.iter().enumerate() {
                 let pb = path[i];
                 let ok = if hb == b'/' {
-                    is_sep(pb)
+                    std::path::is_separator(pb as char)
                 } else {
                     self.eq_byte(hb, pb)
                 };
@@ -172,7 +172,9 @@ impl SegmentMatcher {
             Elem::G0Strict => {
                 // First absorbed segment must be nonempty: empty ⇔ the
                 // range starts at path end or on a separator.
-                if mid_exists && (mid_start >= path.len() || is_sep(path[mid_start])) {
+                if mid_exists
+                    && (mid_start >= path.len() || std::path::is_separator(path[mid_start] as char))
+                {
                     return false;
                 }
             }

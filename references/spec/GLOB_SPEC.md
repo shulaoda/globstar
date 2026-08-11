@@ -659,9 +659,11 @@ pub enum GlobError {
     UnterminatedClass { at: usize },
     UnterminatedBrace { at: usize },
     TrailingBackslash,
+    EscapedSeparator { at: usize },
     BraceNestingTooDeep { max: usize },
     InvalidRange { at: usize, low: u8, high: u8 },
     EmptyPatternSet,
+    NegatedInUnion, // Rust `union` only; JS accepts negated members
 }
 ```
 
@@ -674,9 +676,11 @@ class GlobError extends Error {
     | "UnterminatedClass"
     | "UnterminatedBrace"
     | "TrailingBackslash"
+    | "EscapedSeparator"
     | "BraceNestingTooDeep"
     | "InvalidRange"
-    | "EmptyPatternSet";
+    | "EmptyPatternSet"
+    | "TooManyStates"; // JS only: packed-NFA state cap (see §10 note)
 }
 ```
 

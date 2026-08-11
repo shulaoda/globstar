@@ -42,11 +42,6 @@ const MAX_FORKS: usize = 64;
 /// Element-NFA state budget per sequence (active set is one `u64`).
 const MAX_SEQ_STATES: usize = 64;
 
-#[inline(always)]
-fn is_sep(b: u8) -> bool {
-    std::path::is_separator(b as char)
-}
-
 // ---------------------------------------------------------------------------
 // Compiled shape
 // ---------------------------------------------------------------------------

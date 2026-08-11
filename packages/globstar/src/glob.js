@@ -83,8 +83,6 @@ function buildEngine(asts, opts) {
 function makeMatcher(positiveEngine, negativeEngines) {
   const hasNegatives = negativeEngines.length > 0;
 
-  // Segment and literal engines consume strings natively. Fallback/reference
-  // engines receive a lazily encoded byte view, at most once per call.
   const match = (input) => {
     if (positiveEngine !== null && positiveEngine.isMatch(input)) return true;
     for (let i = 0; i < negativeEngines.length; i++) {
@@ -103,13 +101,13 @@ function makeMatcher(positiveEngine, negativeEngines) {
     return dm;
   };
 
-  // Negated branches don't contribute — a negation has no useful
-  // jump-in point.
-  // With a negated branch, matches can fall anywhere the negation rejects,
-  // so seed from the cwd — the Rust twin's negated convention (a single
-  // empty prefix, never an empty list).
+  // With a negated branch, matches can fall anywhere the negation
+  // rejects, so seed from the cwd (a single empty prefix, never an
+  // empty list — the Rust twin's negated convention). No positive
+  // patterns implies a negative one, so `hasNegatives` covers the
+  // `positiveEngine === null` case too.
   const staticPrefixes = () =>
-    hasNegatives || positiveEngine === null ? [new Uint8Array(0)] : positiveEngine.staticPrefixes();
+    hasNegatives ? [new Uint8Array(0)] : positiveEngine.staticPrefixes();
 
   return { match, matchDir, staticPrefixes };
 }

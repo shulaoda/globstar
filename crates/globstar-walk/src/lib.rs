@@ -388,8 +388,11 @@ impl Walk {
         };
 
         let child_depth = frame.depth + 1;
-        let mut new_frames: Vec<Frame> = Vec::new();
-        let mut dir_results: Vec<Result<DirEntry, WalkError>> = Vec::new();
+        // Push straight onto the walker's own buffers and fix the order on
+        // the appended tails below. `ready` is provably empty here (next()
+        // only expands after draining it), so the tail marks are cheap.
+        let ready_mark = self.ready.len();
+        let stack_mark = self.stack.len();
 
         // Hoist matcher / ignore deref out of the per-entry loop. Frames
         // never reach here when `matcher` is `None` (init_from_prefixes
@@ -404,7 +407,7 @@ impl Walk {
             let entry = match entry_result {
                 Ok(e) => e,
                 Err(source) => {
-                    dir_results.push(Err(WalkError::Io {
+                    self.ready.push(Err(WalkError::Io {
                         path: frame.absolute.clone(),
                         source,
                     }));
@@ -412,39 +415,10 @@ impl Walk {
                 }
             };
 
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            let name_bytes = name_str.as_bytes();
-
-            let mut child_rel = Vec::with_capacity(frame.relative.len() + 1 + name_bytes.len());
-            child_rel.extend_from_slice(&frame.relative);
-            if !frame.relative.is_empty() {
-                child_rel.push(b'/');
-            }
-            child_rel.extend_from_slice(name_bytes);
-
             let file_type = match entry.file_type() {
                 Ok(t) => t,
                 Err(source) => {
-                    dir_results.push(Err(WalkError::Io {
-                        path: entry.path(),
-                        source,
-                    }));
-                    continue;
-                }
-            };
-
-            // On Windows, `std::fs::DirEntry::metadata` is free — the data
-            // was already pulled from `FindFirstFileW` during readdir.
-            // Cache it so `DirEntry::metadata` is also syscall-free later.
-            // On Unix we skip this (metadata would cost one stat syscall
-            // per entry even if the user never asks for it) and fall back
-            // to lazy `symlink_metadata` on demand.
-            #[cfg(windows)]
-            let cached_metadata = match entry.metadata() {
-                Ok(m) => m,
-                Err(source) => {
-                    dir_results.push(Err(WalkError::Io {
+                    self.ready.push(Err(WalkError::Io {
                         path: entry.path(),
                         source,
                     }));
@@ -459,6 +433,43 @@ impl Walk {
                 continue;
             }
 
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            let name_bytes = name_str.as_bytes();
+
+            let mut child_rel = Vec::with_capacity(frame.relative.len() + 1 + name_bytes.len());
+            child_rel.extend_from_slice(&frame.relative);
+            if !frame.relative.is_empty() {
+                child_rel.push(b'/');
+            }
+            child_rel.extend_from_slice(name_bytes);
+
+            // Ignore-filter before any stat, so an ignored symlink never
+            // costs a metadata resolution (WALKER_SPEC §7.1 order).
+            if let Some(ig) = ignore {
+                if ig.is_match(&child_rel) {
+                    continue;
+                }
+            }
+
+            // On Windows, `std::fs::DirEntry::metadata` is free — the data
+            // was already pulled from `FindFirstFileW` during readdir.
+            // Cache it so `DirEntry::metadata` is also syscall-free later.
+            // On Unix we skip this (metadata would cost one stat syscall
+            // per entry even if the user never asks for it) and fall back
+            // to lazy `symlink_metadata` on demand.
+            #[cfg(windows)]
+            let cached_metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(source) => {
+                    self.ready.push(Err(WalkError::Io {
+                        path: entry.path(),
+                        source,
+                    }));
+                    continue;
+                }
+            };
+
             let is_dir = if file_type.is_symlink() {
                 fs::metadata(entry.path())
                     .map(|m| m.is_dir())
@@ -466,12 +477,6 @@ impl Walk {
             } else {
                 file_type.is_dir()
             };
-
-            if let Some(ig) = ignore {
-                if ig.is_match(&child_rel) {
-                    continue;
-                }
-            }
 
             let make_entry = |path: PathBuf| DirEntry {
                 path,
@@ -484,7 +489,7 @@ impl Walk {
             if is_dir {
                 let dm = matcher.match_dir(&child_rel);
                 if dm.is_match() {
-                    dir_results.push(Ok(make_entry(entry.path())));
+                    self.ready.push(Ok(make_entry(entry.path())));
                 }
                 if dm.should_descend() {
                     // Cycle break: when descending through a symlink
@@ -505,7 +510,7 @@ impl Walk {
                     } else {
                         frame.symlink_ancestors.clone()
                     };
-                    new_frames.push(Frame {
+                    self.stack.push(Frame {
                         absolute: entry.path(),
                         relative: child_rel,
                         depth: child_depth,
@@ -513,19 +518,15 @@ impl Walk {
                     });
                 }
             } else if matcher.is_match(&child_rel) {
-                dir_results.push(Ok(make_entry(entry.path())));
+                self.ready.push(Ok(make_entry(entry.path())));
             }
         }
 
-        // Populate `ready` in forward order (pop drains in reverse).
-        dir_results.reverse();
-        self.ready.extend(dir_results);
-
-        // Push subdirectories in reverse so the first one is processed
-        // next (LIFO → DFS with forward order per level).
-        for frame in new_frames.into_iter().rev() {
-            self.stack.push(frame);
-        }
+        // Both buffers drain via pop (reverse), so flip the appended tails
+        // to keep forward emission order and DFS with forward order per
+        // level.
+        self.ready[ready_mark..].reverse();
+        self.stack[stack_mark..].reverse();
     }
 }
 

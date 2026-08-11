@@ -8,8 +8,8 @@
 //! - [`pikevm`] — total linear-time fallback for patterns outside the
 //!   segment engine's bounded representation.
 
-pub mod facts;
-pub mod literal;
+pub(crate) mod facts;
+pub(crate) mod literal;
 pub mod ops;
 pub mod pikevm;
 pub(crate) mod segment;

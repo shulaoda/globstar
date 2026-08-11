@@ -87,7 +87,7 @@ export function classMatches(cls, b) {
 
 // Return a copy of `cls` with ASCII case-alternates added so `[A]` matches
 // `A` and `a`, `[A-Z]` matches `[A-Za-z]`, etc. ASCII-only by design
-// (GLOB_SPEC §11.3 / §12.5).
+// (GLOB_SPEC §11.2 / §12.5).
 export function classExpandedAsciiCi(cls) {
   const items = [];
   for (const it of cls.items) {

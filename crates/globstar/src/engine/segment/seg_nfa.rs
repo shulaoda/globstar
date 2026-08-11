@@ -39,7 +39,6 @@ pub(super) struct SegNfa {
     /// No entry-closure state can consume a leading `.` as a literal
     /// or positive class ⇒ the matcher is fully dot-protected.
     pub(super) wild_led: bool,
-
 }
 
 #[derive(Debug, Clone)]

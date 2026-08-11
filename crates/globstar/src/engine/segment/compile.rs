@@ -4,7 +4,7 @@
 use crate::engine::ops::Op;
 
 use super::seg_nfa::SegNfa;
-use super::{Elem, ElemSeq, MAX_FORKS, MAX_SEQ_STATES, Wild, WildKind, is_sep};
+use super::{Elem, ElemSeq, MAX_FORKS, MAX_SEQ_STATES, Wild, WildKind};
 
 /// Compile the lowered ops into fork sequences. `None` means not
 /// segment-expressible, so the caller falls back to the Pike VM.
@@ -282,7 +282,7 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
 /// produce one (`\/` is a parse error).
 fn lit_contains_sep(op: &Op) -> bool {
     match op {
-        Op::Lit(bytes) => bytes.iter().any(|&b| is_sep(b)),
+        Op::Lit(bytes) => bytes.iter().any(|&b| std::path::is_separator(b as char)),
         Op::Alternation(branches) => branches.iter().any(|b| b.iter().any(lit_contains_sep)),
         _ => false,
     }

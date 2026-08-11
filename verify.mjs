@@ -456,9 +456,10 @@ if (!SKIP_JS) {
   const rows = await runJsVerify();
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   process.stderr.write(`[verify]   done in ${dt}s\n`);
-  // Per-engine failures are surfaced via row totals; failure samples
-  // would need plumbing back from runJsVerify if we wanted them here.
-  sides.push({ runtime: "JS", rows, spawnStatus: 0, rawStderr: "" });
+  // Rows carry up to 10 failure samples each (makeStats); join them so
+  // the failure-samples block below prints JS diagnostics too.
+  const jsFailures = rows.flatMap((r) => r.failures.map((m) => `[${r.corpus}/${r.engine}] ${m}`));
+  sides.push({ runtime: "JS", rows, spawnStatus: 0, rawStderr: jsFailures.join("\n") });
 }
 
 // ── unified summary ─────────────────────────────────────────────────

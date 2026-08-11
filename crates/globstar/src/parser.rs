@@ -318,13 +318,6 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 return Ok(CharClass { negated, items });
             }
-            // Raw `/` at the class top means the class never closed in its
-            // segment (§6.2). `\` is an escape prefix, so its check is
-            // deferred to parse_class_byte (which sees the resolved byte).
-            if b == b'/' {
-                return Err(GlobError::UnterminatedClass { at: start_pos });
-            }
-
             // Parse one item, possibly a range `a-z`.
             let low = self.parse_class_byte(start_pos)?;
 

@@ -72,7 +72,7 @@ function rangeEq(seqA, offA, seqB, offB, len) {
   return true;
 }
 
-// Size of the fold group anchored at `seq[i]` looking forward. Mirrors
+// Size of the fold group anchored at `seq[0]` looking forward. Mirrors
 // the `foldGlobstars` passes in `engine/ops/index.js`. Lifting a partial
 // group would change the lowered semantics, so the lift loops below
 // only consume whole groups.
@@ -80,14 +80,14 @@ function rangeEq(seqA, offA, seqB, offB, len) {
 //   - `Globstar [Sep]`     → 2 (or 1 if no trailing Sep)
 //   - `Sep Globstar [Sep]` → 2 or 3 (matches `/**` or mid-pattern `/**/`)
 //   - anything else        → 1 (atomic)
-function foldGroupAtStart(seq, i) {
-  const a = seq[i];
+function foldGroupAtStart(seq) {
+  const a = seq[0];
   if (a === undefined) return 0;
   if (a.tag === N_GLOBSTAR) {
-    return seq[i + 1]?.tag === N_SEPARATOR ? 2 : 1;
+    return seq[1]?.tag === N_SEPARATOR ? 2 : 1;
   }
-  if (a.tag === N_SEPARATOR && seq[i + 1]?.tag === N_GLOBSTAR) {
-    return seq[i + 2]?.tag === N_SEPARATOR ? 3 : 2;
+  if (a.tag === N_SEPARATOR && seq[1]?.tag === N_GLOBSTAR) {
+    return seq[2]?.tag === N_SEPARATOR ? 3 : 2;
   }
   return 1;
 }
@@ -138,10 +138,10 @@ function liftPrefix(seqs) {
 
   // Phase 1: atomic fold groups shared across all branches.
   while (true) {
-    const size = foldGroupAtStart(seqs[0], 0);
+    const size = foldGroupAtStart(seqs[0]);
     if (size === 0) return lifted;
     const same = seqs.every(
-      (s, i) => i === 0 || (foldGroupAtStart(s, 0) === size && rangeEq(s, 0, seqs[0], 0, size)),
+      (s, i) => i === 0 || (foldGroupAtStart(s) === size && rangeEq(s, 0, seqs[0], 0, size)),
     );
     if (!same) break;
     for (let k = 0; k < size; k++) lifted.push(seqs[0][k]);

@@ -15,7 +15,7 @@ pub struct CompileOptions {
     /// When `true`, ASCII letters match regardless of case (`false` by
     /// default). ASCII only — non-ASCII bytes compare verbatim, so callers
     /// needing Unicode folding must normalize pattern and path first.
-    /// See GLOB_SPEC.md §11.3 / §12.5.
+    /// See GLOB_SPEC.md §11.2 / §12.5.
     pub case_insensitive: bool,
 }
 

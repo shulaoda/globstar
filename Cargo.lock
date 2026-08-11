@@ -260,7 +260,6 @@ dependencies = [
  "globstar",
  "globwalk",
  "ignore",
- "wax",
 ]
 
 [[package]]

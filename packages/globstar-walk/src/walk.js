@@ -118,9 +118,11 @@ function prepare(patterns, optsInput) {
     (bangs & 1 ? negatives : positives).push(bangs === 0 ? s : s.slice(bangs));
   }
 
+  // Compile the ignore set before the no-positives early return, so an
+  // invalid ignore pattern fails loudly either way (mirrors Rust).
+  const ignore = compilePositive([...opts.ignore, ...negatives], matcherOpts);
   const matcher = compilePositive(positives, matcherOpts);
   if (matcher === null) return null;
-  const ignore = compilePositive([...opts.ignore, ...negatives], matcherOpts);
 
   // Lock cwd to an absolute path so `process.chdir` after construction
   // doesn't redirect the walk. Validate up front: a bad cwd should

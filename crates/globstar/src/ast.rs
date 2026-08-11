@@ -101,7 +101,7 @@ impl CharClass {
     /// A copy of this class with ASCII case-alternates added, so `[A]`
     /// matches `A` and `a`, `[A-Z]` matches `[A-Za-z]`, etc. Non-letters
     /// and non-ASCII bytes are left as-is — ASCII-only by design
-    /// (spec §11.3 / §12.5).
+    /// (spec §11.2 / §12.5).
     pub fn expanded_ascii_case_insensitive(&self) -> Self {
         let mut items = Vec::with_capacity(self.items.len() * 2);
         for item in &self.items {

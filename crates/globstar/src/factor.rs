@@ -91,7 +91,7 @@ fn from_seq(mut seq: Vec<Node>) -> Node {
     }
 }
 
-/// Size of the fold group anchored at `seq[i]` looking forward. Mirrors
+/// Size of the fold group anchored at `seq[0]` looking forward. Mirrors
 /// the `fold_globstars` passes in `engine::ops`. Lifting a partial group
 /// would change the lowered semantics, so the lift loops below only
 /// consume whole groups.
@@ -99,14 +99,14 @@ fn from_seq(mut seq: Vec<Node>) -> Node {
 /// - `Globstar [Sep]`     → 2 (or 1 if no trailing Sep)
 /// - `Sep Globstar [Sep]` → 2 or 3 (matches `/**` or mid-pattern `/**/`)
 /// - anything else        → 1 (atomic)
-fn fold_group_at_start(seq: &[Node], i: usize) -> usize {
-    let Some(a) = seq.get(i) else { return 0 };
+fn fold_group_at_start(seq: &[Node]) -> usize {
+    let Some(a) = seq.first() else { return 0 };
     match a {
-        Node::Globstar => match seq.get(i + 1) {
+        Node::Globstar => match seq.get(1) {
             Some(Node::Separator) => 2,
             _ => 1,
         },
-        Node::Separator if matches!(seq.get(i + 1), Some(Node::Globstar)) => match seq.get(i + 2) {
+        Node::Separator if matches!(seq.get(1), Some(Node::Globstar)) => match seq.get(2) {
             Some(Node::Separator) => 3,
             _ => 2,
         },
@@ -140,7 +140,7 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
     // Phase 1: atomic fold groups shared across all branches. Move out
     // of `seqs[0]` (no clones); drop the same prefix from the rest.
     loop {
-        let size = fold_group_at_start(&seqs[0], 0);
+        let size = fold_group_at_start(&seqs[0]);
         if size == 0 {
             return lifted;
         }
@@ -148,7 +148,7 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
         let same = seqs
             .iter()
             .skip(1)
-            .all(|s| fold_group_at_start(s, 0) == size && slice_eq(&s[..size], head));
+            .all(|s| fold_group_at_start(s) == size && slice_eq(&s[..size], head));
         if !same {
             break;
         }

@@ -257,15 +257,7 @@ impl Glob {
             return vec![Vec::new()];
         }
         match &self.engine {
-            Engine::Literal(m) => {
-                // Pure literal: the literal IS the prefix. Strip any
-                // trailing `/` for walker compatibility.
-                let mut bytes = m.literal.clone();
-                while bytes.last() == Some(&b'/') {
-                    bytes.pop();
-                }
-                vec![bytes]
-            }
+            Engine::Literal(m) => m.static_prefixes(),
             // Cached at build time inside the engine — see
             // `compute_static_prefixes` in `engine::ops`. Already
             // deduplicated; we just clone into the public `Vec<Vec<u8>>`

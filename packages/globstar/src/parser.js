@@ -240,10 +240,6 @@ function parseClass(state) {
       state.pos++;
       return klass(negated, items);
     }
-    // Raw `/` mid-class means the class never closed inside its segment
-    // (§6.2). Same outcome whether reached by raw or `\/`.
-    if (b === SLASH) throw new GlobError("UnterminatedClass", { at: startPos });
-
     const lo = parseClassByte(state, startPos);
     if (
       input[state.pos] === DASH &&

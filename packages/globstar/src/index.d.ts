@@ -115,8 +115,20 @@ export class GlobError extends Error {
     | "UnterminatedClass"
     | "UnterminatedBrace"
     | "TrailingBackslash"
+    | "EscapedSeparator"
     | "BraceNestingTooDeep"
     | "InvalidRange"
-    | "EmptyPatternSet";
+    | "EmptyPatternSet"
+    | "TooManyStates";
+  /** Byte offset of the offending construct (kind-dependent). */
+  readonly at?: number;
+  /** Pattern length / cap for "TooLong". */
+  readonly len?: number;
+  readonly max?: number;
+  /** Range bounds for "InvalidRange". */
+  readonly low?: number;
+  readonly high?: number;
+  /** State count for "TooManyStates". */
+  readonly n?: number;
   constructor(kind: GlobError["kind"], info?: Record<string, unknown>);
 }
