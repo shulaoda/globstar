@@ -1,6 +1,6 @@
 {
   "name": "@globstar/walk",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Filesystem walker powered by @globstar/core. Prefix jump-start, match_dir pruning, literal O(1) lookup.",
   "license": "MIT",
   "repository": {

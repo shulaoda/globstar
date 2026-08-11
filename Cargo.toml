@@ -8,15 +8,15 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 license = "MIT"
 rust-version = "1.85.0"
 repository = "https://github.com/shulaoda/globstar"
 
 [workspace.dependencies]
-globstar = { path = "crates/globstar", version = "0.0.1" }
-globstar-walk = { path = "crates/globstar-walk", version = "0.0.1" }
+globstar = { path = "crates/globstar", version = "0.0.2" }
+globstar-walk = { path = "crates/globstar-walk", version = "0.0.2" }
 
 [profile.release]
 lto = "thin"
