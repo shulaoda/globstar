@@ -6,6 +6,27 @@ use globstar::parser::parse;
 
 const CASES: &str = include_str!("../../../fixtures/compiler-stages.tsv");
 
+/// Lowering's output invariant, checked here over the golden corpus
+/// (the twin of `assertNormalizedProgram` in compiler-stages.mjs).
+fn is_normalized(ops: &[Op]) -> bool {
+    let mut previous_lit = false;
+    let mut previous_star = false;
+    for op in ops {
+        match op {
+            Op::Globstar => return false,
+            Op::Lit(_) if previous_lit => return false,
+            Op::Star if previous_star => return false,
+            Op::Alternation(branches) if !branches.iter().all(|b| is_normalized(b)) => {
+                return false;
+            }
+            _ => {}
+        }
+        previous_lit = matches!(op, Op::Lit(_));
+        previous_star = matches!(op, Op::Star);
+    }
+    true
+}
+
 fn bytes(out: &mut String, value: &[u8]) {
     for &b in value {
         match b {
@@ -126,6 +147,7 @@ fn parser_and_lowering_match_shared_golden_cases() {
         assert_eq!(actual_ast, expected_ast, "AST for {pattern:?}");
 
         let program = lower(&parsed.body, false);
+        assert!(is_normalized(program.ops()), "ops not normalized for {pattern:?}");
         let mut actual_ops = String::new();
         ops_dump(program.ops(), &mut actual_ops);
         assert_eq!(actual_ops, expected_ops, "ops for {pattern:?}");

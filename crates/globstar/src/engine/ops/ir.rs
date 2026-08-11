@@ -38,8 +38,11 @@ pub struct OpProgram {
 }
 
 impl OpProgram {
+    pub fn ops(&self) -> &[Op] {
+        &self.ops
+    }
+
     pub(super) fn from_normalized(ops: Vec<Op>, case_insensitive: bool) -> Self {
-        debug_assert!(is_normalized(&ops));
         let facts = LiteralFacts::extract(&ops, case_insensitive);
         Self {
             ops,
@@ -47,27 +50,4 @@ impl OpProgram {
             case_insensitive,
         }
     }
-
-    pub fn ops(&self) -> &[Op] {
-        &self.ops
-    }
-}
-
-fn is_normalized(ops: &[Op]) -> bool {
-    let mut previous_lit = false;
-    let mut previous_star = false;
-    for op in ops {
-        match op {
-            Op::Globstar => return false,
-            Op::Lit(_) if previous_lit => return false,
-            Op::Star if previous_star => return false,
-            Op::Alternation(branches) if !branches.iter().all(|b| is_normalized(b)) => {
-                return false;
-            }
-            _ => {}
-        }
-        previous_lit = matches!(op, Op::Lit(_));
-        previous_star = matches!(op, Op::Star);
-    }
-    true
 }

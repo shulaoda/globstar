@@ -2,8 +2,7 @@ use crate::ast::Node;
 
 use super::ir::{Op, OpProgram};
 
-/// Lower an AST into one normalized [`OpProgram`]. Brace alternatives remain
-/// nested, so ordinary in-segment braces never incur cartesian expansion.
+/// Lower an AST into one normalized [`OpProgram`].
 pub fn lower(node: &Node, case_insensitive: bool) -> OpProgram {
     let mut ops = Vec::new();
     let mut needs_distribution = false;
