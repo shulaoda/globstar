@@ -19,13 +19,7 @@ import { computeStaticPrefixes } from "../ops/index.js";
 import { IS_WINDOWS_SEP } from "../../options.js";
 import { toBytes, latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
-import {
-  expandForks,
-  opsHaveNonAscii,
-  hasOpenGlobstarAdjacency,
-  collapseOpenGlobstars,
-  segmentize,
-} from "./compile.js";
+import { compileSeqs, opsHaveNonAscii } from "./compile.js";
 import {
   seqMatchesStr,
   seqMatchesBytes,
@@ -82,23 +76,9 @@ export class SegmentMatcher {
 
   // `null` ⇒ not segment-expressible; caller falls back.
   static build(program, dot) {
-    const opSeqs = expandForks(program.ops);
-    if (opSeqs === null) return null;
-    // Fork expansion introduces no new bytes — one scan of the
-    // original ops decides the mode.
-    const byteOnly = opsHaveNonAscii(program.ops);
-    const seqs = [];
-    for (let ops of opSeqs) {
-      // Collapse open-globstar adjacencies fork-splicing / separator
-      // distribution can create, before segmentizing (ports
-      // `segmentize_fork` in engine/compile.rs). Copy first — the
-      // no-crossing path returns `program.ops` verbatim.
-      if (hasOpenGlobstarAdjacency(ops)) ops = collapseOpenGlobstars(ops.slice());
-      const seq = segmentize(ops, dot, !!program.caseInsensitive);
-      if (seq === null) return null;
-      seqs.push(seq);
-    }
-    return new SegmentMatcher(seqs, program, byteOnly, dot);
+    const seqs = compileSeqs(program.ops, dot, !!program.caseInsensitive);
+    if (seqs === null) return null;
+    return new SegmentMatcher(seqs, program, opsHaveNonAscii(program.ops), dot);
   }
 
   staticPrefixes() {
@@ -182,7 +162,7 @@ export class SegmentMatcher {
     const quick = seqs.length > 1 && !this.ci;
     for (let i = 0; i < seqs.length; i++) {
       const seq = seqs[i];
-      const qs = seq.quickSuffixBytes;
+      const qs = seq.quickSuffixStr;
       if (
         quick &&
         qs.length > 0 &&

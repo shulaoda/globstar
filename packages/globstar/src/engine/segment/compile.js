@@ -37,7 +37,7 @@ import { SegNfa } from "./seg-nfa.js";
 const MAX_SUFFIX_PRODUCT = 16;
 
 function makeElem(kind, litBytes, wild) {
-  return { kind, litBytes, litStr: litBytes !== null ? latin1(litBytes) : null, wild };
+  return { kind, litStr: litBytes !== null ? latin1(litBytes) : null, wild };
 }
 
 function opCrossesSegment(op) {
@@ -61,14 +61,10 @@ function opCrossesSegment(op) {
 }
 
 function opIsCrossingAlt(op) {
-  if (op.kind !== OP_ALTERNATION) return false;
-  for (const b of op.branches) {
-    for (const o of b) if (opCrossesSegment(o)) return true;
-  }
-  return false;
+  return op.kind === OP_ALTERNATION && opCrossesSegment(op);
 }
 
-export function hasOpenGlobstarAdjacency(ops) {
+function hasOpenGlobstarAdjacency(ops) {
   for (let i = 1; i < ops.length; i++) {
     if (
       ops[i].kind === OP_GLOBSTAR_ANY &&
@@ -85,7 +81,7 @@ export function hasOpenGlobstarAdjacency(ops) {
 // fork of `x/{**,a}/**` (`SepRun OSS GlobstarAny`) into `[Lit, G0, G0]`,
 // dropping the mandatory separator and matching `x` (§8.3). Mutates and
 // returns `ops` (caller passes a copy).
-export function collapseOpenGlobstars(ops) {
+function collapseOpenGlobstars(ops) {
   let i = 0;
   while (i < ops.length) {
     if (i > 0 && ops[i].kind === OP_GLOBSTAR_ANY) {
@@ -106,7 +102,7 @@ export function collapseOpenGlobstars(ops) {
   return ops;
 }
 
-export function expandForks(ops) {
+function expandForks(ops) {
   let crossing = false;
   for (const op of ops) {
     if (opIsCrossingAlt(op)) {
@@ -184,16 +180,36 @@ function litContainsSep(op) {
 const B_FRESH = 0;
 const B_STRICT = 1;
 const B_LENIENT = 2;
-const B_IN_SEGMENT = 3;
+// An absorber whose op form does not self-delimit (GlobstarAny,
+// SlashAnything) was just pushed as the last element. Only the Sep
+// that closes it may follow.
+const B_OPEN = 3;
 
 const EMPTY_BYTES = new Uint8Array(0);
 
-export function segmentize(ops, dot, ci) {
+// Compile the lowered ops into fork sequences. `null` means not
+// segment-expressible, so the caller falls back to the PikeVm (ports
+// `compile_seqs` + `segmentize_fork` in engine/segment/compile.rs).
+export function compileSeqs(ops, dot, ci) {
+  const opSeqs = expandForks(ops);
+  if (opSeqs === null) return null;
+  const seqs = [];
+  for (let fork of opSeqs) {
+    // Collapse open-globstar adjacencies fork-splicing / separator
+    // distribution can create, before segmentizing. Copy first — the
+    // no-crossing path returns the caller's ops verbatim.
+    if (hasOpenGlobstarAdjacency(fork)) fork = collapseOpenGlobstars(fork.slice());
+    const seq = segmentize(fork, dot, ci);
+    if (seq === null) return null;
+    seqs.push(seq);
+  }
+  return seqs;
+}
+
+function segmentize(ops, dot, ci) {
   const elems = [];
   let buf = [];
   let state = B_FRESH;
-  let gOpen = false;
-  let gUpgradeable = false;
   let leadingSeps = false;
 
   const closeSegment = () => {
@@ -209,40 +225,36 @@ export function segmentize(ops, dot, ci) {
 
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
+    // The only op that may follow an open absorber is the separator
+    // closing its right edge, and it upgrades the lenient `.*` to "at
+    // least one segment". A G1 absorber (SlashAnything, or GlobstarAny
+    // behind a strict Sep) is never followed by a Sep after lowering;
+    // bail rather than drop the separator.
+    if (state === B_OPEN) {
+      if (op.kind !== OP_SEP || elems[elems.length - 1]?.kind !== EL_G0) return null;
+      elems[elems.length - 1] = makeElem(EL_G1, null, null);
+      state = B_FRESH;
+      continue;
+    }
     switch (op.kind) {
       case OP_LIT:
       case OP_ANYCHAR:
       case OP_STAR:
       case OP_CLASS:
       case OP_ALTERNATION: {
-        if (gOpen) return null; // `.*` glued to segment content
         if (litContainsSep(op)) return null; // escaped separator
         pushInSeg(buf, op);
-        state = B_IN_SEGMENT;
         break;
       }
       case OP_SEP: {
-        if (gOpen) {
-          // The separator is the open absorber's right boundary and
-          // upgrades the lenient `.*` to "at least one segment". A
-          // non-upgradeable absorber (SlashAnything) is never followed by
-          // a Sep after lowering; bail if one shows up rather than
-          // dropping the separator.
-          if (!gUpgradeable) return null;
-          elems[elems.length - 1] = makeElem(EL_G1, null, null);
-          gOpen = false;
-          gUpgradeable = false;
-          state = B_FRESH;
-        } else {
-          const e = closeSegment();
-          if (e === null) return null;
-          elems.push(e);
-          state = B_STRICT;
-        }
+        const e = closeSegment();
+        if (e === null) return null;
+        elems.push(e);
+        state = B_STRICT;
         break;
       }
       case OP_SEP_RUN: {
-        if (gOpen) return null;
+        // Generated only immediately before an OSS.
         const e = closeSegment();
         if (e === null) return null;
         elems.push(e);
@@ -255,7 +267,10 @@ export function segmentize(ops, dot, ci) {
         break;
       }
       case OP_OPT_SEGMENTS_SLASH: {
-        if (buf.length > 0 || state === B_IN_SEGMENT || gOpen) return null;
+        // A glued absorber cannot be produced today (the parser degrades
+        // any `**` that does not own a whole segment, §8.1). Defensive
+        // bail, PikeVm answers correctly if one ever appears.
+        if (buf.length > 0) return null;
         let strictEntry;
         if (state === B_FRESH) strictEntry = !leadingSeps && elems.length > 0;
         else if (state === B_STRICT) strictEntry = true;
@@ -266,23 +281,22 @@ export function segmentize(ops, dot, ci) {
         break;
       }
       case OP_SLASH_ANYTHING: {
-        if (gOpen) return null;
+        // Trailing `/**`: brings its own leading boundary.
         const e = closeSegment();
         if (e === null) return null;
         elems.push(e);
         elems.push(makeElem(EL_G1, null, null));
-        gOpen = true;
-        gUpgradeable = false;
-        state = B_FRESH;
+        state = B_OPEN;
         break;
       }
       case OP_GLOBSTAR_ANY: {
-        if (buf.length > 0 || state === B_IN_SEGMENT || gOpen) return null;
+        // Defensive bail, same as the OSS arm above.
+        if (buf.length > 0) return null;
+        // Behind a strict separator the absorber must consume >= 1
+        // segment (`a/{**,x}` rejects `a`).
         const strict = state === B_STRICT;
         elems.push(makeElem(strict ? EL_G1 : EL_G0, null, null));
-        gOpen = true;
-        gUpgradeable = !strict;
-        state = B_FRESH;
+        state = B_OPEN;
         break;
       }
       default:
@@ -290,7 +304,7 @@ export function segmentize(ops, dot, ci) {
     }
   }
 
-  if (!gOpen) {
+  if (state !== B_OPEN) {
     const e = closeSegment();
     if (e === null) return null;
     elems.push(e);
@@ -317,11 +331,8 @@ function pushInSeg(buf, op) {
 function makeWild(kind, fields) {
   return {
     kind,
-    prefixBytes: fields.prefixBytes ?? EMPTY_BYTES,
     prefixStr: fields.prefixStr ?? "",
-    suffixBytes: fields.suffixBytes ?? EMPTY_BYTES,
     suffixStr: fields.suffixStr ?? "",
-    suffixSetBytes: fields.suffixSetBytes ?? null,
     suffixSetStr: fields.suffixSetStr ?? null,
     minLen: fields.minLen ?? 0,
     variable: fields.variable ?? true,
@@ -352,7 +363,6 @@ function compileWild(ops, dot, ci) {
 
   if (idx === ops.length) {
     return makeWild(WK_AFFIX, {
-      prefixBytes: prefix,
       prefixStr: latin1(prefix),
       minLen: prefix.length + anychars,
       variable: hasStar,
@@ -364,9 +374,7 @@ function compileWild(ops, dot, ci) {
   if (suffixes !== null) {
     if (suffixes.length === 1) {
       return makeWild(WK_AFFIX, {
-        prefixBytes: prefix,
         prefixStr: latin1(prefix),
-        suffixBytes: suffixes[0],
         suffixStr: latin1(suffixes[0]),
         minLen: prefix.length + suffixes[0].length + anychars,
         variable: hasStar,
@@ -375,9 +383,7 @@ function compileWild(ops, dot, ci) {
       });
     }
     return makeWild(WK_AFFIX_SET, {
-      prefixBytes: prefix,
       prefixStr: latin1(prefix),
-      suffixSetBytes: suffixes,
       suffixSetStr: suffixes.map(latin1),
       minLen: prefix.length + anychars,
       variable: hasStar,
@@ -515,11 +521,11 @@ function finishSeq(elems) {
 
   // Per-fork quick-reject suffix from the final element (only
   // consulted by multi-fork matchers).
-  let quickBytes = EMPTY_BYTES;
+  let quickStr = "";
   const lastEl = elems[m - 1];
-  if (lastEl.kind === EL_LIT) quickBytes = lastEl.litBytes;
+  if (lastEl.kind === EL_LIT) quickStr = lastEl.litStr;
   else if (lastEl.kind === EL_WILD && lastEl.wild.kind === WK_AFFIX) {
-    quickBytes = lastEl.wild.suffixBytes;
+    quickStr = lastEl.wild.suffixStr;
   }
 
   return {
@@ -531,8 +537,7 @@ function finishSeq(elems) {
     numStates: n,
     eps,
     reach1,
-    quickSuffixBytes: quickBytes,
-    quickSuffixStr: latin1(quickBytes),
+    quickSuffixStr: quickStr,
     joinedHeadStr,
   };
 }

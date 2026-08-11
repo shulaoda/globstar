@@ -136,11 +136,13 @@ struct ElemSeq {
     elems: Box<[Elem]>,
 
     /// Index of the single globstar element when the sequence has
-    /// exactly one (fast anchored path); `usize::MAX` otherwise.
-    single_g: usize,
+    /// exactly one (fast anchored path); `u8::MAX` otherwise. Every
+    /// element owns ≥ 1 state and `MAX_SEQ_STATES` caps a sequence at
+    /// 63 elements, so an index always fits.
+    single_g: u8,
 
     /// Number of globstar elements.
-    g_count: usize,
+    g_count: u8,
 
     /// Single-globstar fast path: when every head element is a `Lit`,
     /// the joined head bytes (`"src/"` — each segment plus one `/`),

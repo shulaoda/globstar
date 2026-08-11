@@ -23,8 +23,8 @@ pub(super) struct SegNfa {
     /// non-dot-led segments, and for the EOF/empty-segment accept).
     init: u64,
 
-    /// ε-closure of the entry with DotGuards blocked (dot-led segment
-    /// under a dot=false compile).
+    /// Entry ε-closure for a protected leading `.`: DotGuards blocked
+    /// and dot-protected consumers (`Any`, negated classes) dropped.
     init_dot_blocked: u64,
 
     /// Per-state successor ε-closure (guards pass — positions ≥ 1 are
@@ -49,11 +49,11 @@ pub(super) struct SegNfa {
 enum SegState {
     /// byte, next
     Byte(u8, u8),
-    /// class, next, dot_protected (negated class under dot=false)
-    Class(Box<CharClass>, u8, bool),
-    /// next, dot_protected — `?` and star bodies (segments contain no
-    /// separators, so "any byte" ≡ "any non-separator byte" here).
-    Any(u8, bool),
+    /// class, next
+    Class(Box<CharClass>, u8),
+    /// next — `?` and star bodies (segments contain no separators, so
+    /// "any byte" ≡ "any non-separator byte" here).
+    Any(u8),
     Split(u8, u8),
     Jump(u8),
     DotGuard(u8),
@@ -83,23 +83,30 @@ impl SegNfa {
         // children exactly once.
         let mut closures = vec![u64::MAX; n];
         for s in 0..n {
-            memo_closure(&states, &mut closures, s);
+            memo_closure(&states, &mut closures, s, false);
         }
         let init = closures[entry as usize];
-        let init_dot_blocked = closure_of_dot_blocked(&states, entry as usize);
+        // Under `dot` no DotGuard state exists (the only alloc site is
+        // gated on `!dot`), so the blocked closure is just `init`.
+        let init_dot_blocked = if dot {
+            init
+        } else {
+            let mut blocked = [u64::MAX; MAX_SEG_NFA_STATES];
+            memo_closure(&states, &mut blocked, entry as usize, true)
+        };
         let accept_mask = 1u64 << (n - 1);
 
-        // wild_led: can any entry state consume `.` as a literal or
-        // positive class? If not, a dot-led segment can never match
-        // under dot=false and the whole matcher is protected.
+        // wild_led: can any state of the protected entry set consume a
+        // leading `.`? If not, a dot-led segment can never match under
+        // dot=false and the whole matcher is protected.
         let mut can_lit_dot = false;
-        let mut bits = init;
+        let mut bits = init_dot_blocked;
         while bits != 0 {
             let s = bits.trailing_zeros() as usize;
             bits &= bits - 1;
             match &states[s] {
                 SegState::Byte(x, _) => can_lit_dot |= *x == b'.',
-                SegState::Class(cls, _, dp) => can_lit_dot |= !*dp && cls.matches(b'.'),
+                SegState::Class(cls, _) => can_lit_dot |= cls.matches(b'.'),
                 _ => {}
             }
         }
@@ -127,11 +134,10 @@ impl SegNfa {
         } else {
             self.init
         };
-        for (idx, &c) in seg.iter().enumerate() {
+        for &c in seg {
             if active == 0 {
                 return false;
             }
-            let guard_dot = idx == 0 && !self.dot && c == b'.';
             let mut next: u64 = 0;
             let mut bits = active;
             while bits != 0 {
@@ -143,15 +149,13 @@ impl SegNfa {
                             next |= self.closures[*nx as usize];
                         }
                     }
-                    SegState::Class(cls, nx, dp) => {
-                        if cls.matches(c) && !(*dp && guard_dot) {
+                    SegState::Class(cls, nx) => {
+                        if cls.matches(c) {
                             next |= self.closures[*nx as usize];
                         }
                     }
-                    SegState::Any(nx, dp) => {
-                        if !(*dp && guard_dot) {
-                            next |= self.closures[*nx as usize];
-                        }
+                    SegState::Any(nx) => {
+                        next |= self.closures[*nx as usize];
                     }
                     _ => {}
                 }
@@ -162,56 +166,31 @@ impl SegNfa {
     }
 }
 
-/// Memoized guard-passing closure. `u64::MAX` marks "uncomputed" — a
+/// Memoized ε-closure. `block` builds the entry set for a protected
+/// leading `.`, cutting DotGuard edges and dropping the consumers that
+/// refuse that `.` (`Any` and negated classes); otherwise guards pass
+/// and every consumer is a leaf. `u64::MAX` marks "uncomputed" — a
 /// real closure can never be all-ones (Split states are never closure
-/// members, and a splitless NFA has single-bit closures).
-fn memo_closure(states: &[SegState], memo: &mut [u64], s: usize) -> u64 {
+/// members, and a splitless NFA has single-bit closures). The ε-graph
+/// is acyclic, so plain memoized recursion terminates and folds each
+/// state exactly once.
+fn memo_closure(states: &[SegState], memo: &mut [u64], s: usize, block: bool) -> u64 {
     if memo[s] != u64::MAX {
         return memo[s];
     }
     let out = match &states[s] {
         SegState::Split(a, b) => {
-            memo_closure(states, memo, *a as usize) | memo_closure(states, memo, *b as usize)
+            memo_closure(states, memo, *a as usize, block)
+                | memo_closure(states, memo, *b as usize, block)
         }
-        SegState::Jump(n) | SegState::DotGuard(n) => memo_closure(states, memo, *n as usize),
+        SegState::Jump(n) => memo_closure(states, memo, *n as usize, block),
+        SegState::DotGuard(n) if !block => memo_closure(states, memo, *n as usize, block),
+        SegState::DotGuard(_) => 0,
+        SegState::Any(_) if block => 0,
+        SegState::Class(cls, _) if block && cls.negated => 0,
         _ => 1u64 << s,
     };
     memo[s] = out;
-    out
-}
-
-/// ε-closure of `s` with DotGuard edges blocked — the entry closure
-/// for a protected leading `.`. (Guard-passing closures come from
-/// [`memo_closure`].)
-fn closure_of_dot_blocked(states: &[SegState], start: usize) -> u64 {
-    let mut seen: u64 = 0;
-    let mut out: u64 = 0;
-    let mut stack = [0u8; 2 * MAX_SEG_NFA_STATES];
-    let mut sp = 0usize;
-    stack[sp] = start as u8;
-    sp += 1;
-    while sp > 0 {
-        sp -= 1;
-        let cur = stack[sp] as usize;
-        if seen & (1u64 << cur) != 0 {
-            continue;
-        }
-        seen |= 1u64 << cur;
-        match &states[cur] {
-            SegState::Split(a, b) => {
-                stack[sp] = *a;
-                sp += 1;
-                stack[sp] = *b;
-                sp += 1;
-            }
-            SegState::Jump(n) => {
-                stack[sp] = *n;
-                sp += 1;
-            }
-            SegState::DotGuard(_) => {} // blocked
-            _ => out |= 1u64 << cur,
-        }
-    }
     out
 }
 
@@ -224,8 +203,8 @@ fn compute_satisfiable(states: &[SegState], closures: &[u64], init: u64, accept_
     let mut fires: u64 = 0;
     for (s, st) in states.iter().enumerate() {
         let next = match st {
-            SegState::Byte(_, n) | SegState::Any(n, _) => Some(*n),
-            SegState::Class(cls, n, _) => {
+            SegState::Byte(_, n) | SegState::Any(n) => Some(*n),
+            SegState::Class(cls, n) => {
                 if (0u16..=255).any(|b| cls.matches(b as u8)) {
                     Some(*n)
                 } else {
@@ -271,8 +250,8 @@ impl SegBuilder {
     fn patch(&mut self, state: u8, target: u8) {
         match &mut self.states[state as usize] {
             SegState::Byte(_, n)
-            | SegState::Class(_, n, _)
-            | SegState::Any(n, _)
+            | SegState::Class(_, n)
+            | SegState::Any(n)
             | SegState::Jump(n)
             | SegState::DotGuard(n) => {
                 if *n == UNSET {
@@ -321,17 +300,16 @@ impl SegBuilder {
                 Some((entry, vec![prev]))
             }
             Op::AnyChar => {
-                let s = self.alloc(SegState::Any(UNSET, !dot))?;
+                let s = self.alloc(SegState::Any(UNSET))?;
                 Some((s, vec![s]))
             }
             Op::Class(cls) => {
-                let dp = !dot && cls.negated;
-                let s = self.alloc(SegState::Class(Box::new(cls.clone()), UNSET, dp))?;
+                let s = self.alloc(SegState::Class(Box::new(cls.clone()), UNSET))?;
                 Some((s, vec![s]))
             }
             Op::Star => {
                 let entry = self.alloc(SegState::Split(UNSET, UNSET))?;
-                let body = self.alloc(SegState::Any(entry, !dot))?;
+                let body = self.alloc(SegState::Any(entry))?;
                 let exit = if !dot {
                     self.alloc(SegState::DotGuard(UNSET))?
                 } else {
@@ -371,7 +349,7 @@ impl SegBuilder {
     fn lit_state(&mut self, b: u8) -> Option<u8> {
         let class = self.ci.then(|| CharClass::ci_letter(b)).flatten();
         match class {
-            Some(cls) => self.alloc(SegState::Class(Box::new(cls), UNSET, false)),
+            Some(cls) => self.alloc(SegState::Class(Box::new(cls), UNSET)),
             None => self.alloc(SegState::Byte(b, UNSET)),
         }
     }

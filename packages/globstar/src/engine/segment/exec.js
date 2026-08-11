@@ -86,7 +86,6 @@ function matchSingleGStr(seq, str, dot, ci) {
   // Head: all-literal heads ("src/**/…") compare as one pre-joined
   // sep-aware prefix (mirrors Rust `match_single_g`).
   let midStart;
-  let headExhausted = false;
   const jh = seq.joinedHeadStr;
   if (jh !== null) {
     // The joined head includes the separator after each head
@@ -103,14 +102,13 @@ function matchSingleGStr(seq, str, dot, ci) {
     }
     midStart = jh.length;
   } else {
+    // `pos` lands on `len + 1` after the final segment, a sentinel no
+    // real segment start can equal (mirrors Rust SegIter).
     let pos = 0;
     for (let i = 0; i < g; i++) {
-      if (headExhausted) return NO;
+      if (pos > str.length) return NO;
       let end = nextSepStr(str, pos);
-      if (end === -1) {
-        end = str.length;
-        headExhausted = true;
-      }
+      if (end === -1) end = str.length;
       const r = elemConsumesStr(elems[i], str, pos, end, ci);
       if (r !== YES) return r;
       pos = end + 1;
@@ -125,7 +123,7 @@ function matchSingleGStr(seq, str, dot, ci) {
     midExists = ts > midStart;
     midEnd = ts > 0 ? ts - 1 : 0;
   } else {
-    midExists = !headExhausted;
+    midExists = midStart <= str.length;
     midEnd = str.length;
   }
 
@@ -368,15 +366,13 @@ function matchSingleGBytes(seq, bytes, dot, ci) {
     ts = s;
   }
 
+  // `pos` lands on `len + 1` after the final segment, a sentinel no
+  // real segment start can equal (mirrors Rust SegIter).
   let pos = 0;
-  let headExhausted = false;
   for (let i = 0; i < g; i++) {
-    if (headExhausted) return false;
+    if (pos > bytes.length) return false;
     let end = nextSepBytes(bytes, pos);
-    if (end === -1) {
-      end = bytes.length;
-      headExhausted = true;
-    }
+    if (end === -1) end = bytes.length;
     if (!elemConsumesBytes(elems[i], bytes, pos, end, ci)) return false;
     pos = end + 1;
   }
@@ -389,7 +385,7 @@ function matchSingleGBytes(seq, bytes, dot, ci) {
     midExists = ts > midStart;
     midEnd = ts > 0 ? ts - 1 : 0;
   } else {
-    midExists = !headExhausted;
+    midExists = midStart <= bytes.length;
     midEnd = bytes.length;
   }
 
@@ -448,7 +444,7 @@ function nfaStepBytes(seq, active, bytes, s0, e0, dot, ci) {
     const e = elems[i];
     switch (e.kind) {
       case EL_LIT: {
-        if (litEqBytes(e.litBytes, bytes, s0, e0, ci)) next |= eps[nextEntry];
+        if (litEqBytes(e.litStr, bytes, s0, e0, ci)) next |= eps[nextEntry];
         break;
       }
       case EL_WILD: {
@@ -473,24 +469,18 @@ function nfaStepBytes(seq, active, bytes, s0, e0, dot, ci) {
 }
 
 function elemConsumesBytes(e, bytes, s, t, ci) {
-  if (e.kind === EL_LIT) return litEqBytes(e.litBytes, bytes, s, t, ci);
+  if (e.kind === EL_LIT) return litEqBytes(e.litStr, bytes, s, t, ci);
   if (e.kind === EL_WILD) return wildConsumesBytes(e.wild, bytes, s, t, ci);
   return false;
 }
 
 function litEqBytes(lit, bytes, s, t, ci) {
-  if (t - s !== lit.length) return false;
-  for (let i = 0; i < lit.length; i++) {
-    const a = lit[i];
-    const b = bytes[s + i];
-    if (ci ? !eqByteCi(a, b) : a !== b) return false;
-  }
-  return true;
+  return t - s === lit.length && affixEqBytes(lit, bytes, s, ci);
 }
 
 export function affixEqBytes(part, bytes, at, ci) {
   for (let i = 0; i < part.length; i++) {
-    const a = part[i];
+    const a = part.charCodeAt(i);
     const b = bytes[at + i];
     if (ci ? !eqByteCi(a, b) : a !== b) return false;
   }
@@ -504,19 +494,16 @@ function wildConsumesBytes(w, bytes, s, t, ci) {
     case WK_AFFIX: {
       const need = w.minLen;
       if (len < need || (!w.variable && len !== need)) return false;
-      if (w.prefixBytes.length > 0 && !affixEqBytes(w.prefixBytes, bytes, s, ci)) return false;
-      if (
-        w.suffixBytes.length > 0 &&
-        !affixEqBytes(w.suffixBytes, bytes, t - w.suffixBytes.length, ci)
-      ) {
+      if (w.prefixStr.length > 0 && !affixEqBytes(w.prefixStr, bytes, s, ci)) return false;
+      if (w.suffixStr.length > 0 && !affixEqBytes(w.suffixStr, bytes, t - w.suffixStr.length, ci)) {
         return false;
       }
       return true;
     }
     case WK_AFFIX_SET: {
-      const p = w.prefixBytes;
+      const p = w.prefixStr;
       if (len < p.length || (p.length > 0 && !affixEqBytes(p, bytes, s, ci))) return false;
-      const set = w.suffixSetBytes;
+      const set = w.suffixSetStr;
       for (let i = 0; i < set.length; i++) {
         const suf = set[i];
         const need = w.minLen + suf.length;

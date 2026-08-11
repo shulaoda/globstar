@@ -109,9 +109,7 @@ function makeMatcher(positiveEngine, negativeEngines) {
   // so seed from the cwd — the Rust twin's negated convention (a single
   // empty prefix, never an empty list).
   const staticPrefixes = () =>
-    hasNegatives || positiveEngine === null
-      ? [new Uint8Array(0)]
-      : positiveEngine.staticPrefixes();
+    hasNegatives || positiveEngine === null ? [new Uint8Array(0)] : positiveEngine.staticPrefixes();
 
   return { match, matchDir, staticPrefixes };
 }

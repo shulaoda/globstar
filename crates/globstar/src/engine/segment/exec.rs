@@ -11,16 +11,11 @@ use super::{Elem, ElemSeq, Wild, WildKind, is_sep};
 struct SegIter<'a> {
     path: &'a [u8],
     pos: usize,
-    done: bool,
 }
 
 impl<'a> SegIter<'a> {
     fn new(path: &'a [u8]) -> Self {
-        Self {
-            path,
-            pos: 0,
-            done: false,
-        }
+        Self { path, pos: 0 }
     }
 }
 
@@ -29,20 +24,17 @@ impl<'a> Iterator for SegIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<(usize, usize)> {
-        if self.done {
+        let start = self.pos;
+        if start > self.path.len() {
             return None;
         }
-        let start = self.pos;
         let mut i = start;
         while i < self.path.len() && !is_sep(self.path[i]) {
             i += 1;
         }
-        if i == self.path.len() {
-            self.done = true;
-        }
         // Advance unconditionally: after the final segment `pos` is
-        // `len + 1`, a sentinel no real segment start can equal —
-        // the single-globstar overlap check relies on it.
+        // `len + 1`, a sentinel no real segment start can equal.
+        // Exhaustion and the single-globstar overlap check both read it.
         self.pos = i + 1;
         Some((start, i))
     }
@@ -82,7 +74,7 @@ fn match_fixed<const CI: bool>(seq: &ElemSeq, path: &[u8]) -> bool {
 /// searching, and at most one pass over the head + tail byte ranges.
 #[inline(always)]
 fn match_single_g<const CI: bool>(seq: &ElemSeq, path: &[u8], dot: bool) -> bool {
-    let g = seq.single_g;
+    let g = seq.single_g as usize;
     let m = seq.elems.len();
     let tail_len = m - g - 1;
 
@@ -110,9 +102,7 @@ fn match_single_g<const CI: bool>(seq: &ElemSeq, path: &[u8], dot: bool) -> bool
 
     // Head: elements 0..g against the first g segments. All-literal
     // heads (`src/**/…`) compare as one pre-joined sep-aware prefix.
-    let mid_start;
-    let head_exhausted;
-    if !seq.joined_head.is_empty() {
+    let mid_start = if !seq.joined_head.is_empty() {
         let head = &seq.joined_head;
         // The joined head includes the separator after each head
         // segment; when the path lacks that final separator the
@@ -133,8 +123,7 @@ fn match_single_g<const CI: bool>(seq: &ElemSeq, path: &[u8], dot: bool) -> bool
                 return false;
             }
         }
-        mid_start = head.len();
-        head_exhausted = false;
+        head.len()
     } else {
         let mut iter = SegIter::new(path);
         for e in seq.elems[..g].iter() {
@@ -149,9 +138,8 @@ fn match_single_g<const CI: bool>(seq: &ElemSeq, path: &[u8], dot: bool) -> bool
         // out of segments (see `SegIter::next`), which fails the
         // overlap check below whenever the tail (or G1) still needs
         // one.
-        mid_start = iter.pos;
-        head_exhausted = iter.done;
-    }
+        iter.pos
+    };
 
     // Overlap / arity check and the absorbed middle's byte range.
     let (mid_exists, mid_end) = if tail_len > 0 {
@@ -160,7 +148,7 @@ fn match_single_g<const CI: bool>(seq: &ElemSeq, path: &[u8], dot: bool) -> bool
         }
         (ts > mid_start, ts.saturating_sub(1))
     } else {
-        (!head_exhausted, path.len())
+        (mid_start <= path.len(), path.len())
     };
 
     match seq.elems[g] {

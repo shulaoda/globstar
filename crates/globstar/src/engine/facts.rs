@@ -93,9 +93,7 @@ fn extract_suffix_set(ops: &[Op]) -> Vec<Box<[u8]>> {
         if branch_suffix.is_empty() && !branch.is_empty() {
             return Vec::new();
         }
-        let branch_all_literal = branch
-            .iter()
-            .all(|op| matches!(op, Op::Lit(_) | Op::Sep));
+        let branch_all_literal = branch.iter().all(|op| matches!(op, Op::Lit(_) | Op::Sep));
         let full = if branch_all_literal {
             let mut v = Vec::with_capacity(common_tail.len() + branch_suffix.len());
             v.extend_from_slice(&common_tail);

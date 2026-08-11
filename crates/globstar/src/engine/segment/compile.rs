@@ -126,10 +126,7 @@ fn expand_forks(ops: &[Op]) -> Option<Vec<Vec<Op>>> {
 /// Does this op force a fork (an alternation containing separators /
 /// globstar forms at any depth)?
 fn op_is_crossing_alt(op: &Op) -> bool {
-    match op {
-        Op::Alternation(branches) => branches.iter().any(|b| b.iter().any(op_crosses_segment)),
-        _ => false,
-    }
+    matches!(op, Op::Alternation(_)) && op_crosses_segment(op)
 }
 
 fn op_crosses_segment(op: &Op) -> bool {
@@ -146,8 +143,8 @@ fn op_crosses_segment(op: &Op) -> bool {
     }
 }
 
-/// Boundary state between elements while segmentizing. Invariant:
-/// `state == InSegment` ⇔ the in-segment buffer is nonempty.
+/// Boundary state between elements while segmentizing. While the
+/// in-segment buffer is nonempty the value is stale and never read.
 #[derive(PartialEq, Clone, Copy)]
 enum Boundary {
     /// Sequence start, or right after a globstar boundary. A segment start
@@ -160,8 +157,10 @@ enum Boundary {
     /// A lenient `SepRun` was just consumed (native `**` boundary).
     Lenient,
 
-    /// Accumulating in-segment ops.
-    InSegment,
+    /// An absorber whose op form does not self-delimit (`GlobstarAny`,
+    /// `SlashAnything`) was just pushed as the last element. Only the
+    /// `Sep` that closes it may follow.
+    Open,
 }
 
 /// Lower one flat op sequence into an [`ElemSeq`]. `None` means not
@@ -185,23 +184,25 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
     let mut elems: Vec<Elem> = Vec::with_capacity(8);
     let mut buf: Vec<Op> = Vec::new();
     let mut state = Boundary::Fresh;
-    // Set right after emitting a globstar element whose op form does
-    // not self-delimit (`GlobstarAny` / `SlashAnything`): the next op
-    // decides how the absorber's right edge composes.
-    let mut g_open = false;
-    // The open globstar came from `GlobstarAny` at a lenient boundary
-    // and upgrades G0 → G1 if a `Sep` follows.
-    let mut g_upgradeable = false;
     let mut leading_seps = false;
 
     for (i, op) in ops.iter().enumerate() {
-        debug_assert_eq!(buf.is_empty(), state != Boundary::InSegment);
+        // The only op that may follow an open absorber is the separator
+        // closing its right edge, and it upgrades the lenient `.*` to
+        // "at least one segment". A `G1` absorber (`SlashAnything`, or
+        // `GlobstarAny` behind a strict `Sep`) is never followed by a
+        // `Sep` after lowering; bail rather than drop the separator.
+        if state == Boundary::Open {
+            if !matches!(op, Op::Sep) || !matches!(elems.last(), Some(Elem::G0)) {
+                return None;
+            }
+            *elems.last_mut().unwrap() = Elem::G1;
+            state = Boundary::Fresh;
+            continue;
+        }
         match op {
             Op::Lit(_) | Op::AnyChar | Op::Star | Op::Class(_) | Op::Alternation(_) => {
                 debug_assert!(!op_is_crossing_alt(op), "forks expanded before segmentize");
-                if g_open {
-                    return None; // `.*` glued to segment content
-                }
                 // On Windows a `\\` escape puts a separator byte inside a
                 // Lit. Segments are separator-free by construction, so such
                 // a literal is not segment-expressible. Fall back.
@@ -209,32 +210,13 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                     return None;
                 }
                 push_in_seg(&mut buf, op);
-                state = Boundary::InSegment;
             }
             Op::Sep => {
-                if g_open {
-                    // The separator is the open absorber's right boundary
-                    // and upgrades the lenient `.*` to "at least one
-                    // segment". A non-upgradeable absorber (`SlashAnything`)
-                    // is never followed by a `Sep` after lowering; bail if
-                    // one shows up rather than dropping the separator.
-                    if !g_upgradeable {
-                        return None;
-                    }
-                    *elems.last_mut().unwrap() = Elem::G1;
-                    g_open = false;
-                    g_upgradeable = false;
-                    state = Boundary::Fresh;
-                } else {
-                    elems.push(close_segment(&mut buf, dot, ci)?);
-                    state = Boundary::Strict;
-                }
+                elems.push(close_segment(&mut buf, dot, ci)?);
+                state = Boundary::Strict;
             }
             Op::SepRun => {
                 // Generated only immediately before an OSS.
-                if g_open {
-                    return None;
-                }
                 elems.push(close_segment(&mut buf, dot, ci)?);
                 state = Boundary::Lenient;
             }
@@ -249,7 +231,7 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 // degrades any `**` that does not own a whole segment,
                 // §8.1). Defensive bail, PikeVm answers correctly if one
                 // ever appears.
-                if state == Boundary::InSegment || g_open {
+                if !buf.is_empty() {
                     return None;
                 }
                 let strict_entry = match state {
@@ -259,7 +241,7 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                     Boundary::Fresh => !leading_seps && !elems.is_empty(),
                     Boundary::Strict => true,
                     Boundary::Lenient => false,
-                    Boundary::InSegment => unreachable!(),
+                    Boundary::Open => unreachable!("handled at the loop top"),
                 };
                 elems.push(if strict_entry {
                     Elem::G0Strict
@@ -270,34 +252,27 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 leading_seps = false;
             }
             Op::SlashAnything => {
-                if g_open {
-                    return None;
-                }
                 // Trailing `/**`: brings its own leading boundary.
                 elems.push(close_segment(&mut buf, dot, ci)?);
                 elems.push(Elem::G1);
-                g_open = true;
-                g_upgradeable = false;
-                state = Boundary::Fresh;
+                state = Boundary::Open;
             }
             Op::GlobstarAny => {
                 // Defensive bail, same as the OSS arm above.
-                if state == Boundary::InSegment || g_open {
+                if !buf.is_empty() {
                     return None;
                 }
                 // Behind a strict separator the absorber must consume
                 // ≥ 1 segment (`a/{**,x}` rejects `a`).
                 let strict = state == Boundary::Strict;
                 elems.push(if strict { Elem::G1 } else { Elem::G0 });
-                g_open = true;
-                g_upgradeable = !strict;
-                state = Boundary::Fresh;
+                state = Boundary::Open;
             }
             Op::Globstar => return None, // never survives the fold
         }
     }
 
-    if !g_open {
+    if state != Boundary::Open {
         // Close the final segment. A trailing boundary (`a/`,
         // `a/**/`) leaves an empty buffer and correctly emits
         // `Lit("")`.
@@ -548,19 +523,19 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
         }
     }
 
-    let g_count = elems.iter().filter(|e| e.is_globstar()).count();
+    let g_count = elems.iter().filter(|e| e.is_globstar()).count() as u8;
     let single_g = if g_count == 1 {
-        elems.iter().position(Elem::is_globstar).unwrap()
+        elems.iter().position(Elem::is_globstar).unwrap() as u8
     } else {
-        usize::MAX
+        u8::MAX
     };
 
     // Pre-join all-literal heads for the single-globstar fast path.
     let mut joined_head = Vec::new();
     if g_count == 1 && single_g > 0 {
-        let all_lit = elems[..single_g].iter().all(|e| matches!(e, Elem::Lit(_)));
-        if all_lit {
-            for e in &elems[..single_g] {
+        let head = &elems[..single_g as usize];
+        if head.iter().all(|e| matches!(e, Elem::Lit(_))) {
+            for e in head {
                 if let Elem::Lit(bytes) = e {
                     joined_head.extend_from_slice(bytes);
                     joined_head.push(b'/');
