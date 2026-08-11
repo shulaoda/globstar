@@ -90,9 +90,10 @@ class Builder {
   patch(state, target) {
     const tag = this.tags[state];
     if (tag === T_MATCH) throw new Error("cannot patch a Match state");
+    // Every Split allocation site sets `a` (nexts) eagerly; only the
+    // `b` leg can dangle (the zero-match exit of a dot=true star).
     if (tag === T_SPLIT) {
-      if (this.nexts[state] === UNSET) this.nexts[state] = target;
-      else if (this.splitsB[state] === UNSET) this.splitsB[state] = target;
+      if (this.splitsB[state] === UNSET) this.splitsB[state] = target;
       return;
     }
     if (this.nexts[state] === UNSET) this.nexts[state] = target;

@@ -40,8 +40,6 @@ pub(super) struct SegNfa {
     /// or positive class ⇒ the matcher is fully dot-protected.
     pub(super) wild_led: bool,
 
-    /// Compile-time dot option (drives the offset-0 gates).
-    dot: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -121,13 +119,14 @@ impl SegNfa {
             accept_mask,
             satisfiable,
             wild_led,
-            dot,
         }))
     }
 
     /// Match a whole segment.
     pub(super) fn matches(&self, seg: &[u8]) -> bool {
-        let protected_start = !self.dot && !seg.is_empty() && seg[0] == b'.';
+        // Under dot=true the blocked closure equals `init`, so the compile
+        // already collapsed the dot decision into which set this picks.
+        let protected_start = !seg.is_empty() && seg[0] == b'.';
         let mut active = if protected_start {
             self.init_dot_blocked
         } else {

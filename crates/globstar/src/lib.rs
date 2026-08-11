@@ -175,21 +175,26 @@ impl Glob {
     /// merging parsed sub-bodies into a synthetic `Brace`).
     fn from_ast(ast: Ast, opts: CompileOptions) -> Result<Self, GlobError> {
         let negated = ast.is_negated();
-        let tier = classify(&ast);
-        let engine = match tier {
-            Tier::Literal => {
-                let lit = ast
-                    .body
-                    .to_literal_bytes()
-                    .expect("Tier::Literal implies pure literal body");
-                Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive))
-            }
-            Tier::SimpleWildcard | Tier::Globstar => {
+        // The literal rendering IS the Tier::Literal proof, so routing
+        // needs no separate classification pass (and no `expect` on an
+        // invariant two functions have to keep in sync).
+        let (tier, engine) = match ast.body.to_literal_bytes() {
+            Some(lit) => (
+                Tier::Literal,
+                Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive)),
+            ),
+            None => {
+                let tier = if ast.body.has_globstar() || contains_brace(&ast.body) {
+                    Tier::Globstar
+                } else {
+                    Tier::SimpleWildcard
+                };
                 let program = lower(&ast.body, opts.case_insensitive);
-                match SegmentMatcher::build(program, opts.dot) {
+                let engine = match SegmentMatcher::build(program, opts.dot) {
                     Ok(segment) => Engine::Segment(segment),
                     Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),
-                }
+                };
+                (tier, engine)
             }
         };
         Ok(Self {
@@ -293,23 +298,10 @@ impl Glob {
     }
 }
 
-/// Compile-time tier waterfall.
-fn classify(ast: &Ast) -> Tier {
-    if ast.body.has_globstar() || contains_brace(&ast.body) {
-        // `contains_brace` implies !is_pure_literal (any Brace node
-        // breaks pure-literalness), so no extra guard needed here.
-        Tier::Globstar
-    } else if ast.body.is_pure_literal() {
-        Tier::Literal
-    } else {
-        Tier::SimpleWildcard
-    }
-}
-
-fn contains_brace(node: &ast::Node) -> bool {
+fn contains_brace(node: &Node) -> bool {
     match node {
-        ast::Node::Brace(_) => true,
-        ast::Node::Concat(xs) => xs.iter().any(contains_brace),
+        Node::Brace(_) => true,
+        Node::Concat(xs) => xs.iter().any(contains_brace),
         _ => false,
     }
 }

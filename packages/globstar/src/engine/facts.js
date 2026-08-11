@@ -9,7 +9,9 @@ export class LiteralFacts {
   }
 
   static extract(ops, caseInsensitive) {
-    const suffix = Uint8Array.from(suffixArray(ops, ops.length));
+    // Latin-1 strings: string mode aliases them directly, and byte mode
+    // reads the bytes back through charCodeAt.
+    const suffix = String.fromCharCode(...suffixArray(ops, ops.length));
     const suffixSet = suffix.length === 0 ? extractSuffixSet(ops) : [];
     return new LiteralFacts(suffix, suffixSet, caseInsensitive);
   }
@@ -31,7 +33,7 @@ export class LiteralFacts {
       if (pi === 0) return false;
       si--;
       pi--;
-      const sb = suffix[si];
+      const sb = suffix.charCodeAt(si);
       const pb = path[pi];
       if (sb === 0x2f) {
         if (!isPathSep(pb)) return false;
@@ -80,8 +82,8 @@ function extractSuffixSet(ops) {
     }
 
     const full = allLiteral
-      ? Uint8Array.from(commonTail.concat(branchSuffix))
-      : Uint8Array.from(branchSuffix);
+      ? String.fromCharCode(...commonTail.concat(branchSuffix))
+      : String.fromCharCode(...branchSuffix);
     if (full.length === 0) return [];
     set.push(full);
   }

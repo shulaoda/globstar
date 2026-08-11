@@ -2,33 +2,26 @@
 // `crates/globstar/src/engine/segment/` (its `mod.rs`); see
 // `references/decisions/segment-engine-design.md`.
 //
-// One algorithm, two execution modes:
+// One algorithm, one subject type — a JS string — in two forms:
 //
-// - **String mode** (default): matches directly on the JS string with
+// - **UTF-16 form** (default): the caller's own string, matched with
 //   `charCodeAt` / `startsWith` / `endsWith` / `indexOf` intrinsics —
 //   zero per-call allocation, no UTF-8 encode. The only two constructs
 //   whose semantics depend on *counting* (`?`, one BYTE; negated
-//   classes) BAIL to byte mode when they would touch a char > 0x7F.
-// - **Byte mode**: `toBytes(input)` once, same algorithm over the bytes.
-//   Entered only when the pattern itself contains non-ASCII bytes.
+//   classes) BAIL when they would touch a char > 0x7F.
+// - **Latin-1 form**: `utf8Latin1(input)` renders the UTF-8 bytes one
+//   char per byte, so counting is exact and nothing bails. Entered on a
+//   BAIL, or straight away when the pattern itself is non-ASCII.
 //
 // Patterns the segment model cannot express return `null` from `build`
 // and the caller falls back to the PikeVm.
 
 import { computeStaticPrefixes } from "../ops/index.js";
 import { IS_WINDOWS_SEP } from "../../options.js";
-import { toBytes, latin1 } from "../../utf8.js";
+import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSeqs, opsHaveNonAscii } from "./compile.js";
-import {
-  seqMatchesStr,
-  seqMatchesBytes,
-  nfaRunStr,
-  nfaRunBytes,
-  acceptBit,
-  endsWithSepAwareStr,
-  affixEqBytes,
-} from "./exec.js";
+import { seqMatches, nfaRun, acceptBit, endsWithSepAware } from "./exec.js";
 
 // Fork / element-NFA budgets (masks are 32-bit here; Rust uses 64 —
 // overflow just takes the PikeVM fallback, with identical results).
@@ -47,7 +40,7 @@ export const WK_AFFIX = 0;
 export const WK_AFFIX_SET = 1;
 export const WK_GENERIC = 2;
 
-// Tri-state results for string-mode matchers.
+// Tri-state match results (`BAIL` ⇒ retry on the Latin-1 form).
 export const NO = 0;
 export const YES = 1;
 export const BAIL = 2;
@@ -55,7 +48,6 @@ export const BAIL = 2;
 export class SegmentMatcher {
   constructor(seqs, program, byteOnly, dot) {
     this.seqs = seqs;
-    this.facts = program.facts;
     this.ci = !!program.caseInsensitive;
     this.dot = dot;
     this.byteOnly = byteOnly;
@@ -70,8 +62,8 @@ export class SegmentMatcher {
     // String forms of the facts prefilter so string mode never
     // touches bytes.
     const f = program.facts;
-    this.factsSuffixStr = f.suffix.length > 0 ? latin1(f.suffix) : null;
-    this.factsSuffixSetStr = f.suffixSet.length > 0 ? f.suffixSet.map(latin1) : null;
+    this.factsSuffixStr = f.suffix.length > 0 ? f.suffix : null;
+    this.factsSuffixSetStr = f.suffixSet.length > 0 ? f.suffixSet : null;
   }
 
   // `null` ⇒ not segment-expressible; caller falls back.
@@ -82,15 +74,16 @@ export class SegmentMatcher {
   }
 
   staticPrefixes() {
-    return this.prefixes;
+    // Prefixes live as Latin-1 strings; the walker contract is bytes.
+    return this.prefixes.map(latin1Bytes);
   }
 
   isMatch(input) {
     if (!this.byteOnly) {
-      const r = this._isMatchStr(input);
+      const r = this._isMatch(input, true);
       if (r !== BAIL) return r === YES;
     }
-    return this._isMatchBytes(toBytes(input));
+    return this._isMatch(utf8Latin1(input), false) === YES;
   }
 
   matchDir(input) {
@@ -98,16 +91,15 @@ export class SegmentMatcher {
     // is always on.
     if (input.length === 0) return DirMatch.fromExactPrefix(this.isMatch(input), true);
     if (!this.byteOnly) {
-      const r = this._matchDirStr(input);
+      const r = this._matchDir(input, true);
       if (r !== -1) return r;
     }
-    return this._matchDirBytes(toBytes(input));
+    return this._matchDir(utf8Latin1(input), false);
   }
 
-  // ---- string mode ----
-
-  _isMatchStr(str) {
-    if (!this._factsAcceptStr(str)) return NO;
+  // `BAIL` ⇒ re-run on the Latin-1 form.
+  _isMatch(str, bail) {
+    if (!this._factsAccept(str)) return NO;
     const seqs = this.seqs;
     // Fork-local suffix prefilter (multi-fork only; skipped under ci
     // — it is an optimization, the full match re-checks everything).
@@ -116,71 +108,37 @@ export class SegmentMatcher {
     for (let i = 0; i < seqs.length; i++) {
       const seq = seqs[i];
       if (quick && seq.quickSuffixStr.length > 0 && !str.endsWith(seq.quickSuffixStr)) continue;
-      const r = seqMatchesStr(seq, str, this.dot, this.ci);
+      const r = seqMatches(seq, str, this.dot, this.ci, bail);
       if (r === YES) return YES;
       if (r === BAIL) bailed = true;
     }
     return bailed ? BAIL : NO;
   }
 
-  _factsAcceptStr(str) {
+  _factsAccept(str) {
     const plain = this.factsPlain;
     const suf = this.factsSuffixStr;
     if (suf !== null) {
-      return plain ? str.endsWith(suf) : endsWithSepAwareStr(str, suf, this.ci);
+      return plain ? str.endsWith(suf) : endsWithSepAware(str, suf, this.ci);
     }
     const set = this.factsSuffixSetStr;
     if (set !== null) {
       for (let i = 0; i < set.length; i++) {
-        if (plain ? str.endsWith(set[i]) : endsWithSepAwareStr(str, set[i], this.ci)) return true;
+        if (plain ? str.endsWith(set[i]) : endsWithSepAware(str, set[i], this.ci)) return true;
       }
       return false;
     }
     return true;
   }
 
-  // -1 ⇒ bail to byte mode.
-  _matchDirStr(str) {
+  // -1 ⇒ re-run on the Latin-1 form.
+  _matchDir(str, bail) {
     let exact = false;
     let prefix = false;
     const seqs = this.seqs;
     for (let i = 0; i < seqs.length; i++) {
-      const active = nfaRunStr(seqs[i], str, this.dot, this.ci);
+      const active = nfaRun(seqs[i], str, this.dot, this.ci, bail);
       if (active === -1) return -1;
-      if ((active & acceptBit(seqs[i])) !== 0) exact = true;
-      if ((active & seqs[i].reach1) !== 0) prefix = true;
-      if (exact && prefix) break;
-    }
-    return DirMatch.fromExactPrefix(exact, prefix);
-  }
-
-  // ---- byte mode ----
-
-  _isMatchBytes(bytes) {
-    if (!this.facts.accept(bytes)) return false;
-    const seqs = this.seqs;
-    const quick = seqs.length > 1 && !this.ci;
-    for (let i = 0; i < seqs.length; i++) {
-      const seq = seqs[i];
-      const qs = seq.quickSuffixStr;
-      if (
-        quick &&
-        qs.length > 0 &&
-        (bytes.length < qs.length || !affixEqBytes(qs, bytes, bytes.length - qs.length, false))
-      ) {
-        continue;
-      }
-      if (seqMatchesBytes(seq, bytes, this.dot, this.ci)) return true;
-    }
-    return false;
-  }
-
-  _matchDirBytes(bytes) {
-    let exact = false;
-    let prefix = false;
-    const seqs = this.seqs;
-    for (let i = 0; i < seqs.length; i++) {
-      const active = nfaRunBytes(seqs[i], bytes, this.dot, this.ci);
       if ((active & acceptBit(seqs[i])) !== 0) exact = true;
       if ((active & seqs[i].reach1) !== 0) prefix = true;
       if (exact && prefix) break;

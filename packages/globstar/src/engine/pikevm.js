@@ -15,7 +15,7 @@ import { isPathSep, ctz32 } from "../options.js";
 import { classMatches } from "../ast.js";
 import { DirMatch } from "../dir-match.js";
 import { computeStaticPrefixes } from "./ops/index.js";
-import { toBytes } from "../utf8.js";
+import { toBytes, latin1Bytes } from "../utf8.js";
 import { GlobError } from "../error.js";
 
 function reachFromClosures(closures, infoOff, acceptOff, nWords) {
@@ -197,7 +197,8 @@ export class PikeVm {
   }
 
   staticPrefixes() {
-    return this.prefixes;
+    // Prefixes live as Latin-1 strings; the walker contract is bytes.
+    return this.prefixes.map(latin1Bytes);
   }
 
   _isAccept(bits) {

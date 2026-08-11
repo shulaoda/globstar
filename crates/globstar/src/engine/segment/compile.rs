@@ -497,29 +497,26 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
         }
     }
 
-    // sat_from[i] is true when elements from i on can match some segments.
-    // Only a Generic wild can be unsatisfiable: literals and absorbers
-    // always take a segment, and affix shapes are matched by their own
-    // literal or any non-dot-led segment.
-    let mut sat_from = vec![true; m + 1];
+    // Per-state "can consume ≥ 1 further segment on a path to accept"
+    // (the `match_dir` prefix bit). One backward pass, `sat_tail` is
+    // "elements after i can match some segments". Only a Generic wild
+    // can be unsatisfiable: literals and absorbers always take a
+    // segment, and affix shapes are matched by their own literal or
+    // any non-dot-led segment.
+    let mut reach1: u64 = 0;
+    let mut sat_tail = true;
     for i in (0..m).rev() {
-        let sat = match &elems[i] {
+        let sat_i = match &elems[i] {
             Elem::Wild(w) => match &w.kind {
                 WildKind::Generic(nfa) => nfa.satisfiable,
                 _ => true,
             },
             _ => true,
         };
-        sat_from[i] = sat && sat_from[i + 1];
-    }
-    // Per-state "can consume ≥ 1 further segment on a path to
-    // accept" (the `match_dir` prefix bit).
-    let mut reach1: u64 = 0;
-    for i in 0..m {
         let s = state_of[i] as usize;
         let can = match &elems[i] {
-            Elem::G0 | Elem::G0Strict | Elem::G1 => sat_from[i + 1],
-            Elem::Lit(_) | Elem::Wild(_) => sat_from[i],
+            Elem::G0 | Elem::G0Strict | Elem::G1 => sat_tail,
+            Elem::Lit(_) | Elem::Wild(_) => sat_i && sat_tail,
         };
         if can {
             reach1 |= 1u64 << s;
@@ -527,6 +524,7 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
                 reach1 |= 1u64 << (s + 1);
             }
         }
+        sat_tail = sat_i && sat_tail;
     }
 
     let g_count = elems.iter().filter(|e| e.is_globstar()).count() as u8;

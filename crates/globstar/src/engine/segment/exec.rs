@@ -188,7 +188,8 @@ impl SegmentMatcher {
         if self.dot || !mid_exists {
             return true;
         }
-        !(mid_start <= mid_end && has_dot_led_segment(path, mid_start, mid_end))
+        // `mid_exists` already implies `mid_start <= mid_end` in both arms above.
+        !has_dot_led_segment(path, mid_start, mid_end)
     }
 
     /// General element-NFA run (multi-globstar `is_match` and every

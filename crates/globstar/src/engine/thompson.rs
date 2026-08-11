@@ -211,10 +211,9 @@ impl Builder {
                     *next = target;
                 }
             }
-            Trans::Split { a, b } => {
-                if *a == UNSET {
-                    *a = target;
-                }
+            // Every Split allocation site sets `a` eagerly; only `b` can
+            // dangle (the zero-match exit of a dot=true star).
+            Trans::Split { b, .. } => {
                 if *b == UNSET {
                     *b = target;
                 }

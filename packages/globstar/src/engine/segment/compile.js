@@ -467,22 +467,22 @@ function finishSeq(elems) {
     }
   }
 
-  const satFrom = new Array(m + 1).fill(true);
+  // One backward pass, `satTail` is "elements after i can match some
+  // segments". Only a Generic wild can be unsatisfiable.
+  let reach1 = 0;
+  let satTail = true;
   for (let i = m - 1; i >= 0; i--) {
     const e = elems[i];
-    const sat = e.kind === EL_WILD && e.wild.kind === WK_GENERIC ? e.wild.nfa.satisfiable : true;
-    satFrom[i] = sat && satFrom[i + 1];
-  }
-  let reach1 = 0;
-  for (let i = 0; i < m; i++) {
+    const satI = e.kind === EL_WILD && e.wild.kind === WK_GENERIC ? e.wild.nfa.satisfiable : true;
     const s = stateOf[i];
-    const k = elems[i].kind;
+    const k = e.kind;
     const isG = k === EL_G0 || k === EL_G0_STRICT || k === EL_G1;
-    const can = isG ? satFrom[i + 1] : satFrom[i];
+    const can = isG ? satTail : satI && satTail;
     if (can) {
       reach1 |= 1 << s;
       if (k === EL_G0_STRICT || k === EL_G1) reach1 |= 1 << (s + 1);
     }
+    satTail = satI && satTail;
   }
 
   let gCount = 0;
@@ -498,7 +498,7 @@ function finishSeq(elems) {
 
   // Pre-join all-literal heads for the single-globstar fast path (mirrors
   // Rust `finish`). "src/**/.." heads become one prefix compare instead of a
-  // segment loop. String form only. Byte mode is rare and keeps the loop.
+  // segment loop.
   let joinedHeadStr = null;
   if (gCount === 1 && singleG > 0) {
     let allLit = true;

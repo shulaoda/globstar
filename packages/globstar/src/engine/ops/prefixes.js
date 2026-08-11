@@ -43,52 +43,21 @@ function extractLeadingPrefix(ops) {
   }
   let length = fullyLiteral ? acc.length : lastBoundary;
   while (length > 0 && acc[length - 1] === 0x2f) length--;
-  return Uint8Array.from(acc.slice(0, length));
+  return String.fromCharCode(...acc.slice(0, length));
 }
 
 function dedupePrefixes(prefixes) {
   if (prefixes.length <= 1) return prefixes;
-  prefixes.sort((a, b) => a.length - b.length || compareBytes(a, b));
-  const root = { terminal: false, children: new Map() };
-  const result = [];
+  const order = (a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
+  prefixes.sort(order);
+  const accepted = new Set();
   for (const prefix of prefixes) {
     if (prefix.length === 0) return [prefix];
-    let node = root;
     let covered = false;
-    let complete = true;
     for (let i = 0; !covered && i < prefix.length; i++) {
-      if (prefix[i] === 0x2f && node.terminal) {
-        covered = true;
-        break;
-      }
-      const next = node.children.get(prefix[i]);
-      if (next === undefined) {
-        complete = false;
-        break;
-      }
-      node = next;
+      if (prefix.charCodeAt(i) === 0x2f && accepted.has(prefix.slice(0, i))) covered = true;
     }
-    if (covered || (complete && node.terminal)) continue;
-
-    node = root;
-    for (const byte of prefix) {
-      let next = node.children.get(byte);
-      if (next === undefined) {
-        next = { terminal: false, children: new Map() };
-        node.children.set(byte, next);
-      }
-      node = next;
-    }
-    node.terminal = true;
-    result.push(prefix);
+    if (!covered) accepted.add(prefix);
   }
-  return result;
-}
-
-function compareBytes(a, b) {
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    if (a[i] !== b[i]) return a[i] - b[i];
-  }
-  return a.length - b.length;
+  return [...accepted].sort(order);
 }

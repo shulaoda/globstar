@@ -23,7 +23,6 @@ export class SegNfa {
     this.byteVals = byteVals;
     this.nexts = nexts;
     this.clsRefs = clsRefs;
-    this.dot = dot;
     const n = kinds.length;
 
     // Memoized guard-passing closures: the ε-graph (Split/Jump/Guard
@@ -77,8 +76,10 @@ export class SegNfa {
     );
   }
 
-  matchesStr(str, s0, e0) {
-    const protectedStart = !this.dot && e0 > s0 && str.charCodeAt(s0) === 0x2e;
+  matches(str, s0, e0) {
+    // Under dot=true the blocked closure equals `init`, so the compile
+    // already collapsed the dot decision into which set this picks.
+    const protectedStart = e0 > s0 && str.charCodeAt(s0) === 0x2e;
     let active = protectedStart ? this.initDotBlocked : this.init;
     const kinds = this.kinds;
     const byteVals = this.byteVals;
@@ -88,36 +89,6 @@ export class SegNfa {
     for (let i = s0; i < e0; i++) {
       if (active === 0) return false;
       const c = str.charCodeAt(i);
-      let next = 0;
-      let bits = active;
-      while (bits !== 0) {
-        const s = ctz32(bits);
-        bits &= bits - 1;
-        const k = kinds[s];
-        if (k === S_BYTE) {
-          if (byteVals[s] === c) next |= closures[nexts[s]];
-        } else if (k === S_CLASS) {
-          if (classMatches(clsRefs[s], c)) next |= closures[nexts[s]];
-        } else if (k === S_ANY) {
-          next |= closures[nexts[s]];
-        }
-      }
-      active = next;
-    }
-    return (active & this.acceptMask) !== 0;
-  }
-
-  matchesBytes(bytes, s0, e0) {
-    const protectedStart = !this.dot && e0 > s0 && bytes[s0] === 0x2e;
-    let active = protectedStart ? this.initDotBlocked : this.init;
-    const kinds = this.kinds;
-    const byteVals = this.byteVals;
-    const nexts = this.nexts;
-    const clsRefs = this.clsRefs;
-    const closures = this.closures;
-    for (let i = s0; i < e0; i++) {
-      if (active === 0) return false;
-      const c = bytes[i];
       let next = 0;
       let bits = active;
       while (bits !== 0) {

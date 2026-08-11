@@ -22,7 +22,7 @@ use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
 use globstar::factor::factor_branches;
 use globstar::parser::parse;
-use globstar::{CompileOptions, DirMatch, Glob};
+use globstar::{CompileOptions, Glob};
 
 /// Full alphabet: literals, wildcards, classes, dot heads, braces, globstar.
 const SEGMENTS: &[&str] = &[
