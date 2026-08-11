@@ -285,7 +285,11 @@ impl SegmentMatcher {
         if !self.case_insensitive {
             return lit == seg;
         }
-        lit.len() == seg.len() && lit.iter().zip(seg).all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
+        lit.len() == seg.len()
+            && lit
+                .iter()
+                .zip(seg)
+                .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
     }
 
     #[inline]

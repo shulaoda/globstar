@@ -14,14 +14,3 @@ pub mod ops;
 pub mod pikevm;
 pub(crate) mod segment;
 pub(crate) mod thompson;
-
-/// Per-byte equality, strict or ASCII-case-folding by the const-generic
-/// `CI` — chosen at each call site, so the loop carries no per-byte branch.
-#[inline(always)]
-pub fn eq_byte<const CI: bool>(a: u8, b: u8) -> bool {
-    if CI {
-        a.eq_ignore_ascii_case(&b)
-    } else {
-        a == b
-    }
-}
