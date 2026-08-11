@@ -1,18 +1,13 @@
-//! Ops → element sequences: fork expansion, the segmentizer, and
-//! in-segment wildcard classification.
-
 use crate::engine::ops::Op;
 
 use super::seg_nfa::SegNfa;
 use super::{Elem, ElemSeq, MAX_FORKS, MAX_SEQ_STATES, Wild, WildKind};
 
-/// Compile the lowered ops into fork sequences. `None` means not
-/// segment-expressible, so the caller falls back to the Pike VM.
-///
-/// The common no-brace case segmentizes in place. Only real forks pay for
-/// expansion copies.
 pub(super) fn compile_seqs(ops: &[Op], dot: bool, ci: bool) -> Option<Vec<ElemSeq>> {
-    if !ops.iter().any(op_is_crossing_alt) {
+    if !ops
+        .iter()
+        .any(|op| matches!(op, Op::Alternation(_)) && op_crosses_segment(op))
+    {
         return Some(vec![segmentize_fork(ops, dot, ci)?]);
     }
     let op_seqs = expand_forks(ops)?;
@@ -23,17 +18,6 @@ pub(super) fn compile_seqs(ops: &[Op], dot: bool, ci: bool) -> Option<Vec<ElemSe
     Some(seqs)
 }
 
-/// Segmentize one flat fork, first collapsing open-globstar adjacencies that
-/// fork-splicing or separator distribution can create. Both rewrites preserve
-/// the language.
-///
-/// - `OptSegmentsSlash GlobstarAny` = `(?:[^/]*/)* .*` = `.*` → `GlobstarAny`
-/// - `SepRun GlobstarAny`           = `/+ .*`         = `/.*` → `SlashAnything`
-///
-/// Without them the `**` fork of `x/{**,a}/**` (`SepRun OSS GlobstarAny`)
-/// would flatten to `[Lit, G0, G0]`, dropping the mandatory separator and
-/// matching `x` (GLOB_SPEC §8.3). The PikeVM never flattens, so this keeps the
-/// two engines in agreement.
 fn segmentize_fork(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
     let glued = ops.windows(2).any(|w| {
         matches!(w[1], Op::GlobstarAny) && matches!(w[0], Op::OptSegmentsSlash | Op::SepRun)
@@ -52,15 +36,11 @@ fn collapse_open_globstars(ops: &mut Vec<Op>) {
         if i > 0 && matches!(ops[i], Op::GlobstarAny) {
             match ops[i - 1] {
                 Op::OptSegmentsSlash => {
-                    // `(?:[^/]*/)* .*` = `.*`: drop the OSS, then
-                    // re-examine the GlobstarAny against its new
-                    // predecessor (a SepRun can now sit right behind it).
                     ops.remove(i - 1);
                     i -= 1;
                     continue;
                 }
                 Op::SepRun => {
-                    // `/+ .*` = `/.*`.
                     ops[i - 1] = Op::SlashAnything;
                     ops.remove(i);
                     continue;
@@ -72,21 +52,13 @@ fn collapse_open_globstars(ops: &mut Vec<Op>) {
     }
 }
 
-/// Expand separator-crossing brace alternations into flat op
-/// sequences (cartesian across multiple crossing braces, capped at
-/// [`MAX_FORKS`]). In-segment alternations stay inline. `None` on cap
-/// overflow.
 fn expand_forks(ops: &[Op]) -> Option<Vec<Vec<Op>>> {
-    // No base case needed: with no crossing alternation every op takes
-    // the push branch and the loop yields `vec![ops.to_vec()]` itself.
     let mut seqs: Vec<Vec<Op>> = vec![Vec::with_capacity(ops.len())];
     for op in ops {
-        if op_is_crossing_alt(op) {
+        if matches!(op, Op::Alternation(_)) && op_crosses_segment(op) {
             let Op::Alternation(branches) = op else {
                 unreachable!()
             };
-            // Each branch may itself need expansion (nested crossing
-            // braces).
             let mut expanded: Vec<Vec<Op>> = Vec::new();
             for branch in branches {
                 let sub = expand_forks(branch)?;
@@ -116,12 +88,6 @@ fn expand_forks(ops: &[Op]) -> Option<Vec<Vec<Op>>> {
     Some(seqs)
 }
 
-/// Does this op force a fork (an alternation containing separators /
-/// globstar forms at any depth)?
-fn op_is_crossing_alt(op: &Op) -> bool {
-    matches!(op, Op::Alternation(_)) && op_crosses_segment(op)
-}
-
 fn op_crosses_segment(op: &Op) -> bool {
     match op {
         Op::Sep
@@ -136,63 +102,30 @@ fn op_crosses_segment(op: &Op) -> bool {
     }
 }
 
-/// Boundary state between elements while segmentizing. While the
-/// in-segment buffer is nonempty the value is stale and never read.
 #[derive(PartialEq, Clone, Copy)]
 enum Boundary {
-    /// Sequence start, or right after a globstar boundary. A segment start
-    /// with no pending separator obligation.
+    /// Sequence start, or right after a globstar element.
     Fresh,
-
-    /// A strict `Sep` was just consumed.
+    /// Just consumed a `Sep`.
     Strict,
-
-    /// A lenient `SepRun` was just consumed (native `**` boundary).
+    /// Just consumed a `SepRun` (lenient `**` boundary).
     Lenient,
-
-    /// An absorber whose op form does not self-delimit (`GlobstarAny`,
-    /// `SlashAnything`) was just pushed as the last element. Nothing may
-    /// follow it — a further op means the sequence is not segment-
-    /// expressible.
+    /// A `GlobstarAny`/`SlashAnything` absorbs the rest of the path;
+    /// any op after it makes the sequence non-expressible.
     Open,
 }
 
-/// Lower one flat op sequence into an [`ElemSeq`]. `None` means not
-/// segment-expressible, so the caller falls back to the Pike VM.
-///
-/// The hard cases are splices, where fork expansion creates adjacencies the
-/// globstar fold never saw. Lowering distributes brace-flanking separators
-/// into globstar-edged branches (GLOB_SPEC §7.0), so these only arise from the
-/// shared-separator corner. In `{a,**}/{**,b}` the middle `/` belongs to the
-/// left brace, leaving the right branch's absorber bare.
-///
-/// - `[.., Sep, GlobstarAny]`. The strict separator demands at least one
-///   absorbed segment, so G1.
-/// - `[.., Sep, OSS, ..]`. OSS behind a strict `Sep` has no separator-run
-///   leniency, so G0Strict with no leading empty segment.
-/// - `GlobstarAny` or `SlashAnything` glued to in-segment ops. `.*` ends
-///   mid-segment, so fall back.
 fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
     let mut elems: Vec<Elem> = Vec::with_capacity(8);
     let mut buf: Vec<Op> = Vec::new();
     let mut state = Boundary::Fresh;
 
     for (i, op) in ops.iter().enumerate() {
-        // An open absorber ends the sequence: `.*` runs to the end of the
-        // path, so nothing may follow it. Lowering never leaves a `Sep`
-        // behind one (the fold turns `Globstar Sep` into `OptSegmentsSlash`
-        // and `distribute_seps` pushes a brace-flanking `/` inside every
-        // branch), so only a fork splice can glue anything here; bail and
-        // let the Pike VM answer.
         if state == Boundary::Open {
             return None;
         }
         match op {
             Op::Lit(_) | Op::AnyChar | Op::Star | Op::Class(_) | Op::Alternation(_) => {
-                debug_assert!(!op_is_crossing_alt(op), "forks expanded before segmentize");
-                // On Windows a `\\` escape puts a separator byte inside a
-                // Lit. Segments are separator-free by construction, so such
-                // a literal is not segment-expressible. Fall back.
                 if lit_contains_sep(op) {
                     return None;
                 }
@@ -203,7 +136,6 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 state = Boundary::Strict;
             }
             Op::SepRun => {
-                // Generated only immediately before an OSS.
                 elems.push(close_segment(&mut buf, dot, ci)?);
                 state = Boundary::Lenient;
             }
@@ -213,17 +145,10 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 }
             }
             Op::OptSegmentsSlash => {
-                // A glued absorber cannot be produced today (the parser
-                // degrades any `**` that does not own a whole segment,
-                // §8.1). Defensive bail, PikeVm answers correctly if one
-                // ever appears.
                 if !buf.is_empty() {
                     return None;
                 }
                 let strict_entry = match state {
-                    // Fresh with elements already emitted is a spliced
-                    // head-of-branch OSS. (A pattern-head OSS arrives with
-                    // `elems` empty, LeadingSeps or not.)
                     Boundary::Fresh => !elems.is_empty(),
                     Boundary::Strict => true,
                     Boundary::Lenient => false,
@@ -237,38 +162,28 @@ fn segmentize(ops: &[Op], dot: bool, ci: bool) -> Option<ElemSeq> {
                 state = Boundary::Fresh;
             }
             Op::SlashAnything => {
-                // Trailing `/**`: brings its own leading boundary.
                 elems.push(close_segment(&mut buf, dot, ci)?);
                 elems.push(Elem::G1);
                 state = Boundary::Open;
             }
             Op::GlobstarAny => {
-                // Defensive bail, same as the OSS arm above.
                 if !buf.is_empty() {
                     return None;
                 }
-                // Behind a strict separator the absorber must consume
-                // ≥ 1 segment (`a/{**,x}` rejects `a`).
                 let strict = state == Boundary::Strict;
                 elems.push(if strict { Elem::G1 } else { Elem::G0 });
                 state = Boundary::Open;
             }
-            Op::Globstar => return None, // never survives the fold
+            Op::Globstar => return None,
         }
     }
 
     if state != Boundary::Open {
-        // Close the final segment. A trailing boundary (`a/`,
-        // `a/**/`) leaves an empty buffer and correctly emits
-        // `Lit("")`.
         elems.push(close_segment(&mut buf, dot, ci)?);
     }
     finish(elems)
 }
 
-/// Does this in-segment op (or any nested alternation branch) hold a
-/// literal byte from the `Seps` set? Only a Windows `\\` escape can
-/// produce one (`\/` is a parse error).
 fn lit_contains_sep(op: &Op) -> bool {
     match op {
         Op::Lit(bytes) => bytes.iter().any(|&b| std::path::is_separator(b as char)),
@@ -277,8 +192,6 @@ fn lit_contains_sep(op: &Op) -> bool {
     }
 }
 
-/// Append an in-segment op to the buffer, merging adjacent literals
-/// (splices can produce `Lit,Lit` runs the lowering never sees).
 fn push_in_seg(buf: &mut Vec<Op>, op: &Op) {
     if let (Op::Lit(bytes), Some(Op::Lit(prev))) = (op, buf.last_mut()) {
         prev.extend_from_slice(bytes);
@@ -287,7 +200,6 @@ fn push_in_seg(buf: &mut Vec<Op>, op: &Op) {
     buf.push(op.clone());
 }
 
-/// Convert the accumulated in-segment ops into an element.
 fn close_segment(buf: &mut Vec<Op>, dot: bool, ci: bool) -> Option<Elem> {
     if buf.is_empty() {
         return Some(Elem::Lit(Box::from(&b""[..])));
@@ -301,11 +213,7 @@ fn close_segment(buf: &mut Vec<Op>, dot: bool, ci: bool) -> Option<Elem> {
     Some(Elem::Wild(compile_wild(&ops, dot, ci)?))
 }
 
-/// Classify in-segment ops into a [`Wild`].
 fn compile_wild(ops: &[Op], dot: bool, ci: bool) -> Option<Wild> {
-    // Shape scan: optional leading Lit, then a run of Star/AnyChar,
-    // then either nothing, a trailing Lit, or a trailing all-literal
-    // alternation. Anything else → Generic.
     let mut idx = 0;
     let prefix: &[u8] = match ops.first() {
         Some(Op::Lit(b)) => {
@@ -325,13 +233,9 @@ fn compile_wild(ops: &[Op], dot: bool, ci: bool) -> Option<Wild> {
         idx += 1;
     }
     let has_wilds = has_star || anychars > 0;
-    // Wildcard-led matchers reject dot-led segments under dot=false.
-    // A pure literal-set matcher (`{tob,crazy}`, no leading wilds) is
-    // literal-led per branch and never protected.
     let dot_protect = !dot && prefix.is_empty() && has_wilds;
 
     if idx == ops.len() {
-        // `lit`, `lit*??`, `*`, `???`. Affix with an empty suffix.
         return Some(Wild {
             kind: WildKind::Affix {
                 prefix: Box::from(prefix),
@@ -342,10 +246,6 @@ fn compile_wild(ops: &[Op], dot: bool, ci: bool) -> Option<Wild> {
             dot_protect,
         });
     }
-    // Trailing suffix product: everything after the wild run must be
-    // Lit / all-literal Alternation ops. `*.{ts,tsx}` (Star, Lit ".",
-    // Alt) glues to {".ts", ".tsx"}; `{tob,crazy}` (no wilds) becomes
-    // an exact literal set via `variable=false`.
     if let Some(suffixes) = suffix_product(&ops[idx..]) {
         if suffixes.len() == 1 {
             let suffix = suffixes.into_iter().next().unwrap();
@@ -383,14 +283,9 @@ fn compile_wild(ops: &[Op], dot: bool, ci: bool) -> Option<Wild> {
     })
 }
 
-/// Cap on the suffix-product breadth (`*{a,b}{c,d}{e,f}{g,h}` = 16).
-/// Wider products stay in the Generic NFA where cost is linear.
 const MAX_SUFFIX_PRODUCT: usize = 16;
 
-/// Cartesian product of trailing Lit / all-literal-Alternation ops.
-/// `None` when any op is non-literal or the product exceeds the cap.
 fn suffix_product(ops: &[Op]) -> Option<Vec<Vec<u8>>> {
-    // Overwhelmingly common tail: one literal op (`*.ts`).
     if let [Op::Lit(bytes)] = ops {
         return Some(vec![bytes.clone()]);
     }
@@ -431,11 +326,8 @@ fn suffix_product(ops: &[Op]) -> Option<Vec<Vec<u8>>> {
     Some(parts)
 }
 
-/// Build the element-NFA metadata and wrap up.
 fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
     let m = elems.len();
-    // Assign states: one entry state per element; G0Strict and G1 own
-    // a second (body) state. Accept state last.
     let mut state_of = Vec::with_capacity(m);
     let mut n: usize = 0;
     for e in &elems {
@@ -451,7 +343,6 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
     let accept = n;
     n += 1;
 
-    // Inverse map: owning element per state (accept slot unused).
     let mut elem_of = vec![0u8; n];
     for (i, &entry) in state_of.iter().enumerate() {
         let end = if i + 1 < m {
@@ -462,8 +353,6 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
         elem_of[entry as usize..end].fill(i as u8);
     }
 
-    // ε-closures: globstar states that may stop absorbing skip to the
-    // next element's entry. Right-to-left so skips chain.
     let mut eps: Vec<u64> = (0..n).map(|s| 1u64 << s).collect();
     for i in (0..m).rev() {
         let s = state_of[i] as usize;
@@ -479,19 +368,12 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
                 eps[s + 1] |= eps[next_entry];
             }
             Elem::G1 => {
-                // Entry must absorb at least one, so no skip. The body may stop.
                 eps[s + 1] |= eps[next_entry];
             }
             _ => {}
         }
     }
 
-    // Per-state "can consume ≥ 1 further segment on a path to accept"
-    // (the `match_dir` prefix bit). One backward pass, `sat_tail` is
-    // "elements after i can match some segments". Only a Generic wild
-    // can be unsatisfiable: literals and absorbers always take a
-    // segment, and affix shapes are matched by their own literal or
-    // any non-dot-led segment.
     let mut reach1: u64 = 0;
     let mut sat_tail = true;
     for i in (0..m).rev() {
@@ -523,7 +405,6 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
         u8::MAX
     };
 
-    // Pre-join all-literal heads for the single-globstar fast path.
     let mut joined_head = Vec::new();
     if g_count == 1 && single_g > 0 {
         let head = &elems[..single_g as usize];
@@ -537,7 +418,6 @@ fn finish(elems: Vec<Elem>) -> Option<ElemSeq> {
         }
     }
 
-    // Per-fork quick-reject suffix from the final element.
     let quick_suffix: Box<[u8]> = match elems.last() {
         Some(Elem::Lit(bytes)) => bytes.clone(),
         Some(Elem::Wild(w)) => match &w.kind {

@@ -211,7 +211,10 @@ impl<'a> Parser<'a> {
                     let (prev_boundary, next_boundary) = if single {
                         (false, false)
                     } else {
-                        (lit_buf.is_empty() && ctx.boundary_before(nodes.last()), next_after_brace)
+                        (
+                            lit_buf.is_empty() && ctx.boundary_before(nodes.last()),
+                            next_after_brace,
+                        )
                     };
                     // `<[Node; 1]>::try_from` checks the length and moves the
                     // single element out in one step.

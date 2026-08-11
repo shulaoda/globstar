@@ -1,7 +1,3 @@
-// Ops → element sequences: fork expansion, the segmentizer, and
-// in-segment wildcard classification. JS port of the Rust module
-// `crates/globstar/src/engine/segment/compile.rs`.
-
 import {
   OP_LIT,
   OP_ANYCHAR,
@@ -64,18 +60,13 @@ function opIsCrossingAlt(op) {
   return op.kind === OP_ALTERNATION && opCrossesSegment(op);
 }
 
-// `(?:[^/]*/)* .*` = `.*` → GlobstarAny; `/+ .*` = `/.*` → SlashAnything.
-// Both language-preserving. Without them the segmentizer turns the `**`
-// fork of `x/{**,a}/**` (`SepRun OSS GlobstarAny`) into `[Lit, G0, G0]`,
-// dropping the mandatory separator and matching `x` (§8.3). Mutates and
-// returns `ops` (caller passes a copy).
 function collapseOpenGlobstars(ops) {
   let i = 0;
   while (i < ops.length) {
     if (i > 0 && ops[i].kind === OP_GLOBSTAR_ANY) {
       const prev = ops[i - 1].kind;
       if (prev === OP_OPT_SEGMENTS_SLASH) {
-        ops.splice(i - 1, 1); // drop OSS, re-examine GlobstarAny
+        ops.splice(i - 1, 1);
         i -= 1;
         continue;
       }
@@ -91,8 +82,6 @@ function collapseOpenGlobstars(ops) {
 }
 
 function expandForks(ops) {
-  // No base case needed: with no crossing alternation every op takes
-  // the push branch and the loop yields `[ops-copy]` itself.
   let seqs = [[]];
   for (const op of ops) {
     if (opIsCrossingAlt(op)) {
@@ -158,41 +147,38 @@ function litContainsSep(op) {
   return false;
 }
 
-// Boundary states while segmentizing.
 const B_FRESH = 0;
 const B_STRICT = 1;
 const B_LENIENT = 2;
-// An absorber whose op form does not self-delimit (GlobstarAny,
-// SlashAnything) was just pushed as the last element. Nothing may
-// follow it — a further op means the sequence is not segment-
-// expressible.
 const B_OPEN = 3;
 
 const EMPTY_BYTES = new Uint8Array(0);
 
-// Compile the lowered ops into fork sequences. `null` means not
-// segment-expressible, so the caller falls back to the PikeVm (ports
-// `compile_seqs` + `segmentize_fork` in engine/segment/compile.rs).
 export function compileSeqs(ops, dot, ci) {
+  if (!ops.some(opIsCrossingAlt)) {
+    const seq = segmentizeFork(ops, dot, ci);
+    return seq === null ? null : [seq];
+  }
   const opSeqs = expandForks(ops);
   if (opSeqs === null) return null;
   const seqs = [];
-  for (let fork of opSeqs) {
-    // Collapse open-globstar adjacencies fork-splicing / separator
-    // distribution can create, before segmentizing. Copy first — the
-    // no-crossing path returns the caller's ops verbatim.
-    const glued = fork.some(
-      (op, i) =>
-        i > 0 &&
-        op.kind === OP_GLOBSTAR_ANY &&
-        (fork[i - 1].kind === OP_OPT_SEGMENTS_SLASH || fork[i - 1].kind === OP_SEP_RUN),
-    );
-    if (glued) fork = collapseOpenGlobstars(fork.slice());
-    const seq = segmentize(fork, dot, ci);
+  for (const fork of opSeqs) {
+    const seq = segmentizeFork(fork, dot, ci);
     if (seq === null) return null;
     seqs.push(seq);
   }
   return seqs;
+}
+
+function segmentizeFork(ops, dot, ci) {
+  const glued = ops.some(
+    (op, i) =>
+      i > 0 &&
+      op.kind === OP_GLOBSTAR_ANY &&
+      (ops[i - 1].kind === OP_OPT_SEGMENTS_SLASH || ops[i - 1].kind === OP_SEP_RUN),
+  );
+  if (!glued) return segmentize(ops, dot, ci);
+  return segmentize(collapseOpenGlobstars(ops.slice()), dot, ci);
 }
 
 function segmentize(ops, dot, ci) {
@@ -213,12 +199,6 @@ function segmentize(ops, dot, ci) {
 
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
-    // An open absorber ends the sequence: `.*` runs to the end of the
-    // path, so nothing may follow it. Lowering never leaves a Sep behind
-    // one (the fold turns `Globstar Sep` into OptSegmentsSlash and
-    // distributeSeps pushes a brace-flanking `/` inside every branch), so
-    // only a fork splice can glue anything here; bail and let the Pike VM
-    // answer.
     if (state === B_OPEN) return null;
     switch (op.kind) {
       case OP_LIT:
@@ -226,7 +206,7 @@ function segmentize(ops, dot, ci) {
       case OP_STAR:
       case OP_CLASS:
       case OP_ALTERNATION: {
-        if (litContainsSep(op)) return null; // escaped separator
+        if (litContainsSep(op)) return null;
         pushInSeg(buf, op);
         break;
       }
@@ -238,7 +218,6 @@ function segmentize(ops, dot, ci) {
         break;
       }
       case OP_SEP_RUN: {
-        // Generated only immediately before an OSS.
         const e = closeSegment();
         if (e === null) return null;
         elems.push(e);
@@ -250,13 +229,7 @@ function segmentize(ops, dot, ci) {
         break;
       }
       case OP_OPT_SEGMENTS_SLASH: {
-        // A glued absorber cannot be produced today (the parser degrades
-        // any `**` that does not own a whole segment, §8.1). Defensive
-        // bail, PikeVm answers correctly if one ever appears.
         if (buf.length > 0) return null;
-        // Fresh with elements already emitted is a spliced head-of-branch
-        // OSS. (A pattern-head OSS arrives with `elems` empty,
-        // LeadingSeps or not.)
         let strictEntry;
         if (state === B_FRESH) strictEntry = elems.length > 0;
         else if (state === B_STRICT) strictEntry = true;
@@ -266,7 +239,6 @@ function segmentize(ops, dot, ci) {
         break;
       }
       case OP_SLASH_ANYTHING: {
-        // Trailing `/**`: brings its own leading boundary.
         const e = closeSegment();
         if (e === null) return null;
         elems.push(e);
@@ -275,17 +247,14 @@ function segmentize(ops, dot, ci) {
         break;
       }
       case OP_GLOBSTAR_ANY: {
-        // Defensive bail, same as the OSS arm above.
         if (buf.length > 0) return null;
-        // Behind a strict separator the absorber must consume >= 1
-        // segment (`a/{**,x}` rejects `a`).
         const strict = state === B_STRICT;
         elems.push(makeElem(strict ? EL_G1 : EL_G0, null, null));
         state = B_OPEN;
         break;
       }
       default:
-        return null; // raw OP_GLOBSTAR never survives the fold
+        return null;
     }
   }
 
@@ -308,10 +277,6 @@ function pushInSeg(buf, op) {
   }
   buf.push(op);
 }
-
-// ---------------------------------------------------------------------------
-// Wild classification
-// ---------------------------------------------------------------------------
 
 function makeWild(kind, fields) {
   return {
@@ -385,7 +350,6 @@ function compileWild(ops, dot, ci) {
 }
 
 function suffixProduct(ops, from) {
-  // Overwhelmingly common tail: one literal op (`*.ts`).
   if (from + 1 === ops.length && ops[from].kind === OP_LIT) {
     return [ops[from].bytes];
   }
@@ -420,10 +384,6 @@ function suffixProduct(ops, from) {
   return parts.map((p) => Uint8Array.from(p));
 }
 
-// ---------------------------------------------------------------------------
-// Element-NFA metadata (ports `finish` in engine/compile.rs)
-// ---------------------------------------------------------------------------
-
 function finishSeq(elems) {
   const m = elems.length;
   const stateOf = [];
@@ -436,7 +396,6 @@ function finishSeq(elems) {
   const accept = n;
   n += 1;
 
-  // Inverse map: owning element per state (accept slot unused).
   const elemOf = new Array(n).fill(0);
   for (let i = 0; i < m; i++) {
     const end = i + 1 < m ? stateOf[i + 1] : accept;
@@ -458,8 +417,6 @@ function finishSeq(elems) {
     }
   }
 
-  // One backward pass, `satTail` is "elements after i can match some
-  // segments". Only a Generic wild can be unsatisfiable.
   let reach1 = 0;
   let satTail = true;
   for (let i = m - 1; i >= 0; i--) {
@@ -487,9 +444,6 @@ function finishSeq(elems) {
   }
   if (gCount !== 1) singleG = -1;
 
-  // Pre-join all-literal heads for the single-globstar fast path (mirrors
-  // Rust `finish`). "src/**/.." heads become one prefix compare instead of a
-  // segment loop.
   let joinedHeadStr = null;
   if (gCount === 1 && singleG > 0) {
     let allLit = true;
@@ -506,8 +460,6 @@ function finishSeq(elems) {
     }
   }
 
-  // Per-fork quick-reject suffix from the final element (only
-  // consulted by multi-fork matchers).
   let quickStr = "";
   const lastEl = elems[m - 1];
   if (lastEl.kind === EL_LIT) quickStr = lastEl.litStr;
