@@ -109,10 +109,8 @@ impl Thompson {
                             stack.push(*b);
                         }
                     }
-                    Trans::Jump { next } => {
-                        if !seen[*next as usize] {
-                            stack.push(*next);
-                        }
+                    Trans::Jump { next } if !seen[*next as usize] => {
+                        stack.push(*next);
                     }
                     _ => {}
                 }
