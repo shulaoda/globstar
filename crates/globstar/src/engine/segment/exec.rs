@@ -15,7 +15,6 @@ impl<'a> SegIter<'a> {
 impl<'a> Iterator for SegIter<'a> {
     type Item = (usize, usize);
 
-    #[inline]
     fn next(&mut self) -> Option<(usize, usize)> {
         let start = self.pos;
         if start > self.path.len() {
