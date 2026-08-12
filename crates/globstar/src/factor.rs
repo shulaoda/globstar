@@ -33,9 +33,18 @@ pub fn factor_branches(branches: Vec<Node>) -> Node {
     let prefix = lift_prefix(&mut seqs);
     let suffix = lift_suffix(&mut seqs);
 
-    let inner = match seqs.len() {
-        1 => from_seq(seqs.into_iter().next().unwrap()),
-        _ => Node::Brace(seqs.into_iter().map(from_seq).collect()),
+    let mut branches: Vec<Node> = seqs
+        .into_iter()
+        .map(|mut seq| match seq.len() {
+            0 => Node::Concat(Vec::new()), // epsilon branch
+            1 => seq.pop().unwrap(),
+            _ => Node::Concat(seq),
+        })
+        .collect();
+    let inner = if branches.len() == 1 {
+        branches.pop().unwrap()
+    } else {
+        Node::Brace(branches)
     };
 
     let mut out = prefix;
@@ -70,14 +79,6 @@ fn node_eq(a: &Node, b: &Node) -> bool {
         | (Node::AnyChar, Node::AnyChar)
         | (Node::Star, Node::Star) => true,
         _ => false,
-    }
-}
-
-fn from_seq(mut seq: Vec<Node>) -> Node {
-    match seq.len() {
-        0 => Node::Concat(Vec::new()), // epsilon branch
-        1 => seq.pop().unwrap(),
-        _ => Node::Concat(seq),
     }
 }
 

@@ -27,19 +27,16 @@ export function factorBranches(branches) {
   const prefix = liftPrefix(seqs);
   const suffix = liftSuffix(seqs);
 
-  const inner = seqs.length === 1 ? fromSeq(seqs[0]) : brace(seqs.map(fromSeq));
+  const residual = seqs.map((s) =>
+    s.length === 0 ? concat([]) : s.length === 1 ? s[0] : concat(s),
+  );
+  const inner = residual.length === 1 ? residual[0] : brace(residual);
 
   const out = prefix;
   if (inner.tag === N_CONCAT) out.push(...inner.children);
   else out.push(inner);
   out.push(...suffix);
   return out.length === 1 ? out[0] : concat(out);
-}
-
-function fromSeq(seq) {
-  if (seq.length === 0) return concat([]); // epsilon branch
-  if (seq.length === 1) return seq[0];
-  return concat(seq);
 }
 
 // Structural equality for the node kinds we lift. Singletons (Sep,
