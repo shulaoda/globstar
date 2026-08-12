@@ -1,14 +1,5 @@
-// AST shared by the parser and the lowering pass.
-//
-// Node shape: `{ tag, ... }`. Zero-field tags (Sep / AnyChar / Star /
-// Globstar) reuse a frozen module-level singleton — a typical pattern
-// has 5-15 of these, so singleton-ing skips that many per-parse object
-// allocations. Bigger nodes (Literal, Class, Brace, Concat) carry
-// payload arrays so they are allocated per parse.
-
 import { isPathSep } from "./bytes.js";
 
-// Node tags.
 export const N_CONCAT = 0;
 export const N_LITERAL = 1;
 export const N_SEPARATOR = 2;
@@ -18,7 +9,6 @@ export const N_GLOBSTAR = 5;
 export const N_CLASS = 6;
 export const N_BRACE = 7;
 
-// ClassItem tags (used by N_CLASS payload).
 export const CI_BYTE = 0;
 const CI_RANGE = 1;
 
@@ -59,27 +49,17 @@ export function classItemRange(lo, hi) {
   return { tag: CI_RANGE, lo, hi };
 }
 
-// The ASCII case-flip of a byte (`A`↔`a`), or the byte unchanged if it
-// isn't an ASCII letter. Bit `0x20` is ASCII's case bit: setting it
-// lowercases, clearing it uppercases.
 function asciiCaseAlt(b) {
   if (b >= 0x41 && b <= 0x5a) return b | 0x20;
   if (b >= 0x61 && b <= 0x7a) return b & ~0x20;
   return b;
 }
 
-// The 2-item positive class a case-insensitive ASCII letter folds to —
-// `{b, alt}` with `alt` the opposite-case byte — or `null` when `b`
-// isn't a foldable letter (caller emits a plain byte match). Mirrors
-// Rust `CharClass::ci_letter`.
 export function ciLetter(b) {
   const alt = asciiCaseAlt(b);
   return alt !== b ? klass(false, [classItemByte(b), classItemByte(alt)]) : null;
 }
 
-// `cls.matches(b)` semantics. Path separators are never class members
-// regardless of polarity (GLOB_SPEC §6.2 / §12.3 — classes are
-// segment-local). The negated polarity check happens AFTER iteration.
 export function classMatches(cls, b) {
   if (isPathSep(b)) return false;
   const items = cls.items;
@@ -94,9 +74,6 @@ export function classMatches(cls, b) {
   return cls.neg ? !listed : listed;
 }
 
-// Return a copy of `cls` with ASCII case-alternates added so `[A]` matches
-// `A` and `a`, `[A-Z]` matches `[A-Za-z]`, etc. ASCII-only by design
-// (GLOB_SPEC §11.2 / §12.5).
 export function classExpandedAsciiCi(cls) {
   const items = [];
   for (const it of cls.items) {
@@ -106,8 +83,6 @@ export function classExpandedAsciiCi(cls) {
       if (alt !== it.b) items.push(classItemByte(alt));
     } else {
       const { lo, hi } = it;
-      // Pure-upper or pure-lower ranges fold via a symmetric range; mixed
-      // ranges fall back to per-byte items.
       if (lo >= 0x41 && hi <= 0x5a) {
         items.push(classItemRange(lo | 0x20, hi | 0x20));
       } else if (lo >= 0x61 && hi <= 0x7a) {
@@ -123,8 +98,6 @@ export function classExpandedAsciiCi(cls) {
   return { neg: cls.neg, items };
 }
 
-// Render a pure-literal AST to its bytes, or null if any node isn't a
-// literal or separator.
 export function nodeToLiteralBytes(n) {
   const out = [];
   return appendLiteralBytes(n, out) ? Uint8Array.from(out) : null;
