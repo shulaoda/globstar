@@ -159,8 +159,20 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
     {
         return lifted;
     }
-    let lits: Vec<&[u8]> = seqs.iter().map(|s| first_lit_bytes(s)).collect();
-    let n = common_byte_prefix(&lits);
+    let lits: Vec<&[u8]> = seqs
+        .iter()
+        .map(|s| match &s[0] {
+            Node::Literal(b) => b.as_slice(),
+            _ => unreachable!("checked above"),
+        })
+        .collect();
+    let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
+    let n = (0..min)
+        .take_while(|&i| {
+            let b = lits[0][i];
+            lits.iter().skip(1).all(|l| l[i] == b)
+        })
+        .count();
     if n == 0 {
         return lifted;
     }
@@ -222,8 +234,20 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
         .iter()
         .all(|s| matches!(s.last(), Some(Node::Literal(_))))
     {
-        let lits: Vec<&[u8]> = seqs.iter().map(|s| last_lit_bytes(s)).collect();
-        let n = common_byte_suffix(&lits);
+        let lits: Vec<&[u8]> = seqs
+            .iter()
+            .map(|s| match s.last().unwrap() {
+                Node::Literal(b) => b.as_slice(),
+                _ => unreachable!("checked above"),
+            })
+            .collect();
+        let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
+        let n = (0..min)
+            .take_while(|&i| {
+                let b = lits[0][lits[0].len() - 1 - i];
+                lits.iter().skip(1).all(|l| l[l.len() - 1 - i] == b)
+            })
+            .count();
         if n > 0 {
             // Same in-place strategy as the prefix phase: take the
             // lifted bytes from `seqs[0]`, truncate the rest in place.
@@ -251,40 +275,4 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
 
     lifted_reverse.reverse();
     lifted_reverse
-}
-
-// ── Byte-prefix / byte-suffix helpers ───────────────────────────────────
-
-fn first_lit_bytes(seq: &[Node]) -> &[u8] {
-    match &seq[0] {
-        Node::Literal(b) => b.as_slice(),
-        _ => unreachable!("caller ensures seq starts with a Literal"),
-    }
-}
-
-fn last_lit_bytes(seq: &[Node]) -> &[u8] {
-    match seq.last().unwrap() {
-        Node::Literal(b) => b.as_slice(),
-        _ => unreachable!("caller ensures seq ends with a Literal"),
-    }
-}
-
-fn common_byte_prefix(lits: &[&[u8]]) -> usize {
-    let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
-    (0..min)
-        .take_while(|&i| {
-            let b = lits[0][i];
-            lits.iter().skip(1).all(|l| l[i] == b)
-        })
-        .count()
-}
-
-fn common_byte_suffix(lits: &[&[u8]]) -> usize {
-    let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
-    (0..min)
-        .take_while(|&i| {
-            let b = lits[0][lits[0].len() - 1 - i];
-            lits.iter().skip(1).all(|l| l[l.len() - 1 - i] == b)
-        })
-        .count()
 }

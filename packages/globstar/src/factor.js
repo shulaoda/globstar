@@ -102,33 +102,6 @@ function foldGroupAtEnd(seq) {
   return 1;
 }
 
-// Longest common opening byte run across N Uint8Arrays.
-function commonBytePrefix(byteArrays) {
-  if (byteArrays.length === 0) return 0;
-  const min = byteArrays.reduce((m, l) => Math.min(m, l.length), Infinity);
-  for (let n = 0; n < min; n++) {
-    const b = byteArrays[0][n];
-    for (let i = 1; i < byteArrays.length; i++) {
-      if (byteArrays[i][n] !== b) return n;
-    }
-  }
-  return min;
-}
-
-// Longest common closing byte run across N Uint8Arrays.
-function commonByteSuffix(byteArrays) {
-  if (byteArrays.length === 0) return 0;
-  const min = byteArrays.reduce((m, l) => Math.min(m, l.length), Infinity);
-  for (let n = 0; n < min; n++) {
-    const b = byteArrays[0][byteArrays[0].length - 1 - n];
-    for (let i = 1; i < byteArrays.length; i++) {
-      const l = byteArrays[i];
-      if (l[l.length - 1 - n] !== b) return n;
-    }
-  }
-  return min;
-}
-
 function liftPrefix(seqs) {
   const lifted = [];
 
@@ -147,7 +120,9 @@ function liftPrefix(seqs) {
   // Phase 2: byte-level Lit prefix. Lits are never fold-bound.
   if (!seqs.every((s) => s.length > 0 && s[0].tag === N_LITERAL)) return lifted;
   const lits = seqs.map((s) => s[0].bytes);
-  const n = commonBytePrefix(lits);
+  const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
+  let n = 0;
+  while (n < min && lits.every((l) => l[n] === lits[0][n])) n++;
   if (n === 0) return lifted;
   // Uint8Arrays are immutable in length — strip the prefix by replacing
   // the head Lit with a fresh `slice(n)` per branch.
@@ -185,7 +160,11 @@ function liftSuffix(seqs) {
   // Phase 2: byte-level Lit suffix.
   if (seqs.every((s) => s.length > 0 && s[s.length - 1].tag === N_LITERAL)) {
     const lits = seqs.map((s) => s[s.length - 1].bytes);
-    const n = commonByteSuffix(lits);
+    const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
+    let n = 0;
+    while (n < min && lits.every((l) => l[l.length - 1 - n] === lits[0][lits[0].length - 1 - n])) {
+      n++;
+    }
     if (n > 0) {
       const ref = lits[0];
       liftedReverse.push(lit(ref.slice(ref.length - n)));
