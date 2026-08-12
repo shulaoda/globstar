@@ -28,9 +28,8 @@ export function factorBranches(branches) {
   const suffix = liftSuffix(seqs);
 
   const inner = seqs.length === 1 ? fromSeq(seqs[0]) : brace(seqs.map(fromSeq));
-  if (prefix.length === 0 && suffix.length === 0) return inner;
 
-  const out = prefix.slice();
+  const out = prefix;
   if (inner.tag === N_CONCAT) out.push(...inner.children);
   else out.push(inner);
   out.push(...suffix);
@@ -68,37 +67,20 @@ function rangeEq(seqA, offA, seqB, offB, len) {
   return true;
 }
 
-// Size of the fold group anchored at `seq[0]` looking forward. Mirrors
-// the `foldGlobstars` passes in `engine/ops/index.js`. Lifting a partial
-// group would change the lowered semantics, so the lift loops below
-// only consume whole groups.
+// Size of the fold group at one edge of a branch, read inward from the
+// edge (liftSuffix passes the nodes reversed; the group shapes are
+// symmetric, so one table serves both sides). Mirrors the foldGlobstars
+// passes in `engine/ops/index.js` — lifting a partial group would change
+// the lowered semantics, so the lift loops below only consume whole
+// groups.
 //
-//   - `Globstar [Sep]`     → 2 (or 1 if no trailing Sep)
-//   - `Sep Globstar [Sep]` → 2 or 3 (matches `/**` or mid-pattern `/**/`)
-//   - anything else        → 1 (atomic)
-function foldGroupAtStart(seq) {
-  const a = seq[0];
+//   - `Globstar [Sep]`     → 2 (or 1 with no adjacent Sep)
+//   - `Sep Globstar [Sep]` → 2 or 3 (`/**` or mid-pattern `/**/`)
+//   - empty → 0; anything else → 1 (atomic)
+function foldGroupAtEdge(a, b, c) {
   if (a === undefined) return 0;
-  if (a.tag === N_GLOBSTAR) {
-    return seq[1]?.tag === N_SEPARATOR ? 2 : 1;
-  }
-  if (a.tag === N_SEPARATOR && seq[1]?.tag === N_GLOBSTAR) {
-    return seq[2]?.tag === N_SEPARATOR ? 3 : 2;
-  }
-  return 1;
-}
-
-// Mirror of `foldGroupAtStart` for the trailing edge.
-function foldGroupAtEnd(seq) {
-  const len = seq.length;
-  if (len === 0) return 0;
-  const last = seq[len - 1];
-  if (last.tag === N_GLOBSTAR) {
-    return seq[len - 2]?.tag === N_SEPARATOR ? 2 : 1;
-  }
-  if (last.tag === N_SEPARATOR && seq[len - 2]?.tag === N_GLOBSTAR) {
-    return seq[len - 3]?.tag === N_SEPARATOR ? 3 : 2;
-  }
+  if (a.tag === N_GLOBSTAR) return b?.tag === N_SEPARATOR ? 2 : 1;
+  if (a.tag === N_SEPARATOR && b?.tag === N_GLOBSTAR) return c?.tag === N_SEPARATOR ? 3 : 2;
   return 1;
 }
 
@@ -107,10 +89,11 @@ function liftPrefix(seqs) {
 
   // Phase 1: atomic fold groups shared across all branches.
   while (true) {
-    const size = foldGroupAtStart(seqs[0]);
+    const size = foldGroupAtEdge(seqs[0][0], seqs[0][1], seqs[0][2]);
     if (size === 0) return lifted;
     const same = seqs.every(
-      (s, i) => i === 0 || (foldGroupAtStart(s) === size && rangeEq(s, 0, seqs[0], 0, size)),
+      (s, i) =>
+        i === 0 || (foldGroupAtEdge(s[0], s[1], s[2]) === size && rangeEq(s, 0, seqs[0], 0, size)),
     );
     if (!same) break;
     for (let k = 0; k < size; k++) lifted.push(seqs[0][k]);
@@ -142,13 +125,14 @@ function liftSuffix(seqs) {
 
   // Phase 1: atomic fold groups at the trailing edge.
   while (true) {
-    const size = foldGroupAtEnd(seqs[0]);
-    if (size === 0) break;
     const len0 = seqs[0].length;
+    const size = foldGroupAtEdge(seqs[0][len0 - 1], seqs[0][len0 - 2], seqs[0][len0 - 3]);
+    if (size === 0) break;
     const same = seqs.every(
       (s, i) =>
         i === 0 ||
-        (foldGroupAtEnd(s) === size && rangeEq(s, s.length - size, seqs[0], len0 - size, size)),
+        (foldGroupAtEdge(s[s.length - 1], s[s.length - 2], s[s.length - 3]) === size &&
+          rangeEq(s, s.length - size, seqs[0], len0 - size, size)),
     );
     if (!same) break;
     // Push trailing-range in reverse so the elements land in

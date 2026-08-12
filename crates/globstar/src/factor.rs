@@ -38,18 +38,14 @@ pub fn factor_branches(branches: Vec<Node>) -> Node {
         _ => Node::Brace(seqs.into_iter().map(from_seq).collect()),
     };
 
-    if prefix.is_empty() && suffix.is_empty() {
-        return inner;
-    }
-    let mut out = Vec::with_capacity(prefix.len() + 1 + suffix.len());
-    out.extend(prefix);
+    let mut out = prefix;
     match inner {
         Node::Concat(xs) => out.extend(xs),
         other => out.push(other),
     }
     out.extend(suffix);
     if out.len() == 1 {
-        out.into_iter().next().unwrap()
+        out.pop().unwrap()
     } else {
         Node::Concat(out)
     }
@@ -85,40 +81,22 @@ fn from_seq(mut seq: Vec<Node>) -> Node {
     }
 }
 
-/// Size of the fold group anchored at `seq[0]` looking forward. Mirrors
-/// the `fold_globstars` passes in `engine::ops`. Lifting a partial group
+/// Size of the fold group at one edge of a branch, read inward from the
+/// edge (`lift_suffix` feeds the nodes reversed; the group shapes are
+/// symmetric, so one table serves both sides). Mirrors the
+/// `fold_globstars` passes in `engine::ops` — lifting a partial group
 /// would change the lowered semantics, so the lift loops below only
 /// consume whole groups.
 ///
-/// - `Globstar [Sep]`     → 2 (or 1 if no trailing Sep)
-/// - `Sep Globstar [Sep]` → 2 or 3 (matches `/**` or mid-pattern `/**/`)
-/// - anything else        → 1 (atomic)
-fn fold_group_at_start(seq: &[Node]) -> usize {
-    let Some(a) = seq.first() else { return 0 };
-    match a {
-        Node::Globstar => match seq.get(1) {
-            Some(Node::Separator) => 2,
-            _ => 1,
-        },
-        Node::Separator if matches!(seq.get(1), Some(Node::Globstar)) => match seq.get(2) {
-            Some(Node::Separator) => 3,
-            _ => 2,
-        },
-        _ => 1,
-    }
-}
-
-/// Mirror of [`fold_group_at_start`] for the trailing edge.
-fn fold_group_at_end(seq: &[Node]) -> usize {
-    let n = seq.len();
-    if n == 0 {
-        return 0;
-    }
-    match &seq[n - 1] {
-        Node::Globstar if n >= 2 && matches!(seq[n - 2], Node::Separator) => 2,
-        Node::Globstar => 1,
-        Node::Separator if n >= 2 && matches!(seq[n - 2], Node::Globstar) => {
-            if n >= 3 && matches!(seq[n - 3], Node::Separator) {
+/// - `Globstar [Sep]`     → 2 (or 1 with no adjacent Sep)
+/// - `Sep Globstar [Sep]` → 2 or 3 (`/**` or mid-pattern `/**/`)
+/// - empty → 0; anything else → 1 (atomic)
+fn fold_group_at_edge<'a>(mut it: impl Iterator<Item = &'a Node>) -> usize {
+    match (it.next(), it.next()) {
+        (None, _) => 0,
+        (Some(Node::Globstar), Some(Node::Separator)) => 2,
+        (Some(Node::Separator), Some(Node::Globstar)) => {
+            if matches!(it.next(), Some(Node::Separator)) {
                 3
             } else {
                 2
@@ -134,13 +112,14 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
     // Phase 1: atomic fold groups shared across all branches. Move out
     // of `seqs[0]` (no clones); drop the same prefix from the rest.
     loop {
-        let size = fold_group_at_start(&seqs[0]);
+        let size = fold_group_at_edge(seqs[0].iter());
         if size == 0 {
             return lifted;
         }
         let head = &seqs[0][..size];
         let same = seqs.iter().skip(1).all(|s| {
-            fold_group_at_start(s) == size && s[..size].iter().zip(head).all(|(x, y)| node_eq(x, y))
+            fold_group_at_edge(s.iter()) == size
+                && s[..size].iter().zip(head).all(|(x, y)| node_eq(x, y))
         });
         if !same {
             break;
@@ -176,16 +155,8 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
     if n == 0 {
         return lifted;
     }
-    // Take the lifted bytes from `seqs[0]`'s first Lit (no clone of the
-    // shared run), then drain the same prefix from each branch in place.
-    let Node::Literal(b0) = &mut seqs[0][0] else {
-        unreachable!("checked above");
-    };
-    let lifted_bytes: Vec<u8> = b0.drain(..n).collect();
-    if b0.is_empty() {
-        seqs[0].remove(0);
-    }
-    for s in seqs.iter_mut().skip(1) {
+    lifted.push(Node::Literal(lits[0][..n].to_vec()));
+    for s in seqs.iter_mut() {
         let Node::Literal(b) = &mut s[0] else {
             unreachable!("checked above");
         };
@@ -194,7 +165,6 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
             s.remove(0);
         }
     }
-    lifted.push(Node::Literal(lifted_bytes));
     lifted
 }
 
@@ -205,14 +175,14 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
 
     // Phase 1: atomic fold groups at the trailing edge.
     loop {
-        let size = fold_group_at_end(&seqs[0]);
+        let size = fold_group_at_edge(seqs[0].iter().rev());
         if size == 0 {
             break;
         }
         let len0 = seqs[0].len();
         let tail = &seqs[0][len0 - size..];
         let same = seqs.iter().skip(1).all(|s| {
-            fold_group_at_end(s) == size
+            fold_group_at_edge(s.iter().rev()) == size
                 && s[s.len() - size..]
                     .iter()
                     .zip(tail)
@@ -249,17 +219,8 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
             })
             .count();
         if n > 0 {
-            // Same in-place strategy as the prefix phase: take the
-            // lifted bytes from `seqs[0]`, truncate the rest in place.
-            let last0 = seqs[0].len() - 1;
-            let Node::Literal(b0) = &mut seqs[0][last0] else {
-                unreachable!("checked above");
-            };
-            let lifted_bytes = b0.split_off(b0.len() - n);
-            if b0.is_empty() {
-                seqs[0].pop();
-            }
-            for s in seqs.iter_mut().skip(1) {
+            lifted_reverse.push(Node::Literal(lits[0][lits[0].len() - n..].to_vec()));
+            for s in seqs.iter_mut() {
                 let last = s.len() - 1;
                 let Node::Literal(b) = &mut s[last] else {
                     unreachable!("checked above");
@@ -269,7 +230,6 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
                     s.pop();
                 }
             }
-            lifted_reverse.push(Node::Literal(lifted_bytes));
         }
     }
 
