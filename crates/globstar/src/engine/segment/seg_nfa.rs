@@ -1,15 +1,6 @@
-//! In-segment mini NFA — the [`super::WildKind::Generic`] matcher.
-//!
-//! Thompson-lite over in-segment ops. ≤ 64 states, `u64` active set,
-//! per-state successor ε-closures precomputed. Dot protection is
-//! realized exactly as in the byte engines: offset 0 is the only
-//! segment start inside a segment, so DotGuards block there when the
-//! first byte is `.`, and dot-protected consumers refuse that `.`.
-
 use crate::ast::CharClass;
 use crate::engine::ops::Op;
 
-/// In-segment NFA state budget (active set is one `u64`).
 const MAX_SEG_NFA_STATES: usize = 64;
 
 const UNSET: u8 = u8::MAX;
@@ -57,8 +48,6 @@ enum SegState {
 }
 
 impl SegNfa {
-    /// `None` when the ops exceed the state budget or contain a
-    /// separator-crossing op (which never appears in-segment).
     pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> Option<Box<Self>> {
         let mut b = SegBuilder {
             states: Vec::with_capacity(16),
@@ -121,7 +110,6 @@ impl SegNfa {
         }))
     }
 
-    /// Match a whole segment.
     pub(super) fn matches(&self, seg: &[u8]) -> bool {
         // Under dot=true the blocked closure equals `init`, so the compile
         // already collapsed the dot decision into which set this picks.
@@ -163,14 +151,6 @@ impl SegNfa {
     }
 }
 
-/// Memoized ε-closure. `block` builds the entry set for a protected
-/// leading `.`, cutting DotGuard edges and dropping the consumers that
-/// refuse that `.` (`Any` and negated classes); otherwise guards pass
-/// and every consumer is a leaf. `u64::MAX` marks "uncomputed" — a
-/// real closure can never be all-ones (Split states are never closure
-/// members, and a splitless NFA has single-bit closures). The ε-graph
-/// is acyclic, so plain memoized recursion terminates and folds each
-/// state exactly once.
 fn memo_closure(states: &[SegState], memo: &mut [u64], s: usize, block: bool) -> u64 {
     if memo[s] != u64::MAX {
         return memo[s];
@@ -191,10 +171,6 @@ fn memo_closure(states: &[SegState], memo: &mut [u64], s: usize, block: bool) ->
     out
 }
 
-/// Does the NFA accept any string at all? Fixpoint over consuming
-/// states whose byte test is satisfiable by some byte. Per-state
-/// satisfiability (the 256-scan for classes) and successor closures
-/// are computed once, outside the fixpoint.
 fn compute_satisfiable(states: &[SegState], closures: &[u64], init: u64, accept_mask: u64) -> bool {
     let mut fire_next = [0u8; MAX_SEG_NFA_STATES];
     let mut fires: u64 = 0;
