@@ -10,10 +10,11 @@ export function factorBranches(branches) {
   );
   const inner = residual.length === 1 ? residual[0] : brace(residual);
 
+  // Loops, not spreads: ~64k lifted nodes would overflow the argument limit.
   const out = prefix;
-  if (inner.tag === N_CONCAT) out.push(...inner.children);
+  if (inner.tag === N_CONCAT) for (const child of inner.children) out.push(child);
   else out.push(inner);
-  out.push(...suffix);
+  for (const node of suffix) out.push(node);
   return out.length === 1 ? out[0] : concat(out);
 }
 

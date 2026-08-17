@@ -8,13 +8,13 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use globstar_walk::Walk;
 //!
 //! for entry in Walk::new("**/*.rs", ".")? {
 //!     match entry {
-//!         Ok(path) => println!("{}", path.display()),
-//!         Err(e)   => eprintln!("walker error: {e}"),
+//!         Ok(entry) => println!("{}", entry.path().display()),
+//!         Err(e) => eprintln!("walker error: {e}"),
 //!     }
 //! }
 //! # Ok::<(), globstar_walk::WalkError>(())
@@ -60,11 +60,13 @@
 //! U+FFFD. Non-UTF-8 paths (rare, Unix-only) may therefore not match
 //! exactly.
 //!
-//! # Separator normalization
+//! # Separators
 //!
-//! All matching treats `/` and `\` as equivalent path separators. The
-//! walker always builds relative paths using `/` internally, so matching
-//! is consistent across platforms.
+//! Patterns use `/` exclusively (GLOB_SPEC §2.2). In matched paths `/`
+//! is always a separator, and on Windows `\` is one too — the
+//! separator set follows [`std::path::is_separator`]. The walker
+//! builds relative paths with `/` internally, so matching behaves the
+//! same across platforms.
 
 #![forbid(unsafe_code)]
 
@@ -77,6 +79,7 @@ pub use error::WalkError;
 pub use options::WalkOptions;
 
 use std::fs;
+use std::io;
 use std::path;
 use std::path::{Path, PathBuf};
 
@@ -155,7 +158,7 @@ impl Walk {
     /// routes it into the positive set. `["**/*.ts", "!**/*.test.ts"]`
     /// is equivalent to `patterns: ["**/*.ts"]` + `ignore: ["**/*.test.ts"]`.
     /// To match a filename literally starting with `!`, escape it
-    /// (`\!foo` or `[!]foo`) per GLOB_SPEC §9.4.
+    /// (`\!foo` or `[\!]foo`) per GLOB_SPEC §9.4.
     pub fn from_patterns<I, S>(patterns: I, opts: impl Into<WalkOptions>) -> Result<Self, WalkError>
     where
         I: IntoIterator<Item = S>,
@@ -173,26 +176,44 @@ impl Walk {
         let mut positives: Vec<String> = Vec::new();
         let mut negatives: Vec<String> = Vec::new();
         for p in patterns {
-            let s = p.as_ref();
-            let bangs = s.bytes().take_while(|&b| b == b'!').count();
-            let body = if bangs == 0 { s } else { &s[bangs..] };
-            if bangs & 1 == 1 {
-                negatives.push(body.to_string());
+            let raw = p.as_ref();
+            // Normalize before the `!`-parity split (§4.3 before §4.2,
+            // so `/!x` ≡ `!x`), then re-normalize the body (`!/x`
+            // exposes a fresh `/`).
+            let n1 = normalize_pattern(raw);
+            if n1.is_empty() && !raw.is_empty() {
+                continue; // `.`, `//` — selects nothing
+            }
+            let bangs = n1.bytes().take_while(|&b| b == b'!').count();
+            let tail = &n1[bangs..];
+            let body = if bangs == 0 {
+                tail.to_string()
             } else {
-                positives.push(body.to_string());
+                normalize_pattern(tail)
+            };
+            if body.is_empty() && !tail.is_empty() {
+                continue; // `!.` — ignores nothing
+            }
+            if bangs & 1 == 1 {
+                negatives.push(body);
+            } else {
+                positives.push(body);
             }
         }
 
         let matcher = compile_union(positives.iter().map(|s| s.as_str()), compile_opts)?;
-        // `opts.ignore` is the user-explicit ignore list; auto-split
-        // negatives append to it.
-        let ignore = compile_union(
-            opts.ignore
-                .iter()
-                .map(|s| s.as_str())
-                .chain(negatives.iter().map(|s| s.as_str())),
-            compile_opts,
-        )?;
+        // `opts.ignore` entries are normalized but never `!`-split
+        // (§3.2); auto-split negatives append to them.
+        let mut ignore_patterns: Vec<String> = Vec::new();
+        for s in &opts.ignore {
+            let n = normalize_pattern(s);
+            if n.is_empty() && !s.is_empty() {
+                continue;
+            }
+            ignore_patterns.push(n);
+        }
+        ignore_patterns.extend(negatives);
+        let ignore = compile_union(ignore_patterns.iter().map(|s| s.as_str()), compile_opts)?;
         // Lock the base to an absolute path at construction. `path::absolute`
         // resolves against the current CWD without touching the filesystem and
         // without resolving symlinks — so later `set_current_dir` calls don't
@@ -221,7 +242,7 @@ impl Walk {
     /// `base`). Combine with [`Path::strip_prefix`] to get a path
     /// relative to the walk root:
     ///
-    /// ```ignore
+    /// ```no_run
     /// use globstar_walk::Walk;
     ///
     /// let walker = Walk::new("**/*.rs", "./src")?;
@@ -250,27 +271,44 @@ impl Walk {
         let prefixes = matcher.static_prefixes();
         for prefix in prefixes {
             if prefix.is_empty() {
-                if let Ok(meta) = fs::metadata(&self.base) {
-                    if meta.is_dir() {
-                        self.stack.push(Frame {
-                            absolute: self.base.clone(),
-                            relative: Vec::new(),
-                            depth: 0,
-                            symlink_ancestors: Vec::new(),
-                        });
-                    }
+                // A bad base must fail loudly, not walk as silently empty.
+                match fs::metadata(&self.base) {
+                    Ok(meta) if meta.is_dir() => self.stack.push(Frame {
+                        absolute: self.base.clone(),
+                        relative: Vec::new(),
+                        depth: 0,
+                        symlink_ancestors: Vec::new(),
+                    }),
+                    Ok(_) => self.ready.push(Err(WalkError::Io {
+                        path: self.base.clone(),
+                        source: io::Error::new(
+                            io::ErrorKind::NotADirectory,
+                            "base is not a directory",
+                        ),
+                    })),
+                    Err(err) => self.ready.push(Err(WalkError::Io {
+                        path: self.base.clone(),
+                        source: err,
+                    })),
                 }
                 continue;
             }
 
-            // A `..` segment escapes `base` when joined: the lexical
-            // `strip_prefix` guard below treats `base/../secret` as
-            // still under `base`, then the OS resolves the `..` and the
-            // walk leaks outside the sandbox. Such a prefix also cannot
-            // match any real walked path — `read_dir` never yields `..`
-            // — so skip it, keeping the walk inside `base`.
-            if prefix.split(|&b| b == b'/').any(|seg| seg == b"..") {
+            // `..` escapes `base` when joined (the `strip_prefix` guard
+            // below is lexical) and `read_dir` yields neither `..` nor
+            // `.`. Split on every platform separator so a Windows
+            // `..\secret` can't slip past.
+            if prefix
+                .split(|&b| std::path::is_separator(b as char))
+                .any(|seg| seg == b".." || seg == b".")
+            {
                 continue;
+            }
+
+            if let Some(ig) = &self.ignore {
+                if seed_ignored(ig, &prefix) {
+                    continue;
+                }
             }
 
             let absolute = match std::str::from_utf8(&prefix) {
@@ -299,14 +337,20 @@ impl Walk {
             }
 
             // Depth of the prefix from the base: one per segment.
-            let depth = 1 + prefix.iter().filter(|&&b| b == b'/').count();
+            let depth = 1 + prefix
+                .iter()
+                .filter(|&&b| std::path::is_separator(b as char))
+                .count();
 
             match fs::metadata(&absolute) {
                 Ok(meta) if meta.is_dir() => {
                     let dm = matcher.match_dir(&prefix);
                     if dm.is_match() {
-                        self.ready
-                            .push(Ok(self.make_entry(&absolute, &meta, depth)));
+                        // Entries carry symlink-preserving file_type.
+                        if let Ok(lmeta) = fs::symlink_metadata(&absolute) {
+                            self.ready
+                                .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
+                        }
                     }
                     if dm.should_descend() {
                         self.stack.push(Frame {
@@ -317,18 +361,40 @@ impl Walk {
                         });
                     }
                 }
-                Ok(meta) => {
+                Ok(_) => {
                     if matcher.is_match(&prefix) {
-                        self.ready
-                            .push(Ok(self.make_entry(&absolute, &meta, depth)));
+                        if let Ok(lmeta) = fs::symlink_metadata(&absolute) {
+                            self.ready
+                                .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
+                        }
                     }
                 }
-                Err(_) => {
-                    // Missing prefix target — silently skip. Other
-                    // brace-alternative prefixes may still succeed.
-                }
+                Err(_) => match fs::symlink_metadata(&absolute) {
+                    // Still lstat-able ⇒ the entry exists (broken or
+                    // looping symlink): the walk emits those as
+                    // non-directories (§10), so the seed must too.
+                    Ok(lmeta) => {
+                        if matcher.is_match(&prefix) {
+                            self.ready
+                                .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
+                        }
+                    }
+                    Err(lerr) => match lerr.kind() {
+                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => {} // §9.4
+                        // EACCES etc.: a root walk fails loudly here.
+                        _ => self.ready.push(Err(WalkError::Io {
+                            path: absolute,
+                            source: lerr,
+                        })),
+                    },
+                },
             }
         }
+
+        // Buffers drain via pop; reverse so the first prefix walks first
+        // (§7.2 step 1).
+        self.ready.reverse();
+        self.stack.reverse();
     }
 
     /// Does any component of `joined` (from `base` down) resolve to a
@@ -352,14 +418,8 @@ impl Walk {
         false
     }
 
-    /// Build a [`DirEntry`] from an already-stat'd prefix path. The
-    /// init-from-prefixes path has follow-link semantics (we use
-    /// `fs::metadata`, not `symlink_metadata`, to decide dir-vs-file),
-    /// so the cached metadata here also follows symlinks — different
-    /// from entries produced by [`Self::expand_next_frame`], which
-    /// cache symlink-preserving metadata. This asymmetry is an artifact
-    /// of how glob prefixes are resolved; it only matters when a
-    /// top-level literal prefix is itself a symlink.
+    /// Build a [`DirEntry`] from symlink-preserving metadata (the
+    /// canonical `file_type` flavor for every yielded entry).
     fn make_entry(&self, absolute: &Path, meta: &fs::Metadata, depth: usize) -> DirEntry {
         DirEntry {
             path: absolute.to_path_buf(),
@@ -546,6 +606,45 @@ impl Iterator for Walk {
     }
 }
 
+/// WALKER_SPEC §4.3: spell patterns the way walked paths are spelled —
+/// strip leading `/`s, collapse `//`, drop `.` segments. `/` in a
+/// pattern is always structural (`\/` is a parse error), so textual
+/// splitting is safe. Returns `""` when nothing remains (`.`, `./`).
+fn normalize_pattern(s: &str) -> String {
+    let s = s.trim_start_matches('/');
+    if !s.contains('/') {
+        return if s == "." {
+            String::new()
+        } else {
+            s.to_string()
+        };
+    }
+    let trailing = s.ends_with('/');
+    let segs: Vec<&str> = s
+        .split('/')
+        .filter(|seg| !seg.is_empty() && *seg != ".")
+        .collect();
+    if segs.is_empty() {
+        return String::new();
+    }
+    let mut out = segs.join("/");
+    if trailing {
+        out.push('/');
+    }
+    out
+}
+
+/// An ignored directory prunes its subtree (§7.1 step 3), so a seed is
+/// dead if `ignore` matches it or any `/`-bounded ancestor.
+fn seed_ignored(ignore: &Glob, prefix: &[u8]) -> bool {
+    for i in 0..prefix.len() {
+        if std::path::is_separator(prefix[i] as char) && ignore.is_match(&prefix[..i]) {
+            return true;
+        }
+    }
+    ignore.is_match(prefix)
+}
+
 /// Compile a sequence of patterns into a single brace-merged
 /// [`Glob`] via [`Glob::union_with`]. Returns `None` for an empty
 /// input list.
@@ -553,9 +652,10 @@ impl Iterator for Walk {
 /// A per-pattern compile failure becomes [`WalkError::InvalidPattern`]
 /// with the offending pattern attached.
 ///
-/// Leading `/` is stripped up front so `Glob::static_prefixes()`
-/// always returns relative bytes — prevents `Path::join`'s
-/// "absolute-replaces-base" behavior from escaping the sandbox.
+/// Patterns arrive already normalized by [`normalize_pattern`] (leading
+/// `/` stripped, so `Glob::static_prefixes()` always returns relative
+/// bytes — prevents `Path::join`'s "absolute-replaces-base" behavior
+/// from escaping the sandbox).
 ///
 /// Single-pattern inputs bypass `Glob::union_with` (and its internal
 /// `Vec<String>` collect) and call `Glob::new_with` directly so the
@@ -574,16 +674,15 @@ where
         reason: e.to_string(),
     };
     let Some(second) = iter.next() else {
-        let s = first.trim_start_matches('/');
-        return Glob::new_with(s, opts)
+        return Glob::new_with(first, opts)
             .map(Some)
-            .map_err(|e| invalid(s.to_string(), e));
+            .map_err(|e| invalid(first.to_string(), e));
     };
     let mut all: Vec<String> = Vec::with_capacity(2);
-    all.push(first.trim_start_matches('/').to_string());
-    all.push(second.trim_start_matches('/').to_string());
+    all.push(first.to_string());
+    all.push(second.to_string());
     for s in iter {
-        all.push(s.trim_start_matches('/').to_string());
+        all.push(s.to_string());
     }
     Glob::union_with(&all, opts)
         .map(Some)

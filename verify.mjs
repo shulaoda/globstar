@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Corpus-driven correctness verification for both runtimes.
 //
-// Three corpora share the same harness:
+// Five corpora share the same harness:
 //
-//   single — `tests/corpus/corpus*.txt`        single-pattern × 2 engines
-//   multi  — `tests/corpus/corpus-multi.txt`   N-pattern OR × 2 engines
-//   err    — `tests/corpus/corpus-err.txt`     parse-error variants × public API
+//   single — SINGLE_FILES list below              single-pattern × 2 engines
+//   multi  — `tests/corpus/corpus-multi.txt`      N-pattern OR × 2 engines
+//   dir    — `tests/corpus/corpus-dir.txt`        match_dir × 2 engines
+//   mdir   — `tests/corpus/corpus-multi-dir.txt`  N-pattern match_dir
+//   err    — `tests/corpus/corpus-err.txt`        parse-error variants
 //
 // Two engines per match-corpus row:
 //   - globstar     — public API (`globstar(...)`, `Glob::new` / `Glob::union`)

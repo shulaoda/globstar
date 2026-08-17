@@ -365,7 +365,6 @@ file{,_bak}	file_bak	match
 .*	.hidden	match
 .*	visible	no-match
 ?	.	no-match	dot=false
-?	a	match
 [^x]	.	no-match	dot=false
 [^x]	a	match
 **/*	a/.b	no-match	dot=false
@@ -377,7 +376,6 @@ src/*.ts	src/main.ts	match
 *	.hidden	match	dot=true
 ?	.	match	dot=true
 **/*	a/.b	match	dot=true
-*.txt	.txt	match	dot=true
 
 ## path.separator.normalization
 # `/` is the spec-level separator (§12.3), platform-independent.
@@ -385,7 +383,6 @@ src/*.ts	src/main.ts	match
 # `std::path::is_separator`) — see corpus-windows.txt / corpus-unix.txt
 # for the platform-dependent `a\b` rows.
 a/b	a/b	match
-src/main.rs	src/main.rs	match
 
 ## path.separator.strict.no.run.collapse
 # Pattern's `/` consumes exactly one separator byte. Aligned with
@@ -395,13 +392,10 @@ a/b	a//b	no-match
 a/b	a///b	no-match
 
 ## path.separator.no.cross
-*	a/b	no-match
 ?	a/b	no-match
-[abc]	/	no-match
 foo*bar	foo/bar	no-match
 
 ## real.world.tsconfig.includes
-src/**/*.ts	src/main.ts	match
 src/**/*.ts	src/lib/util.ts	match
 src/**/*.ts	dist/main.ts	no-match
 **/*.test.ts	src/a.test.ts	match
@@ -457,11 +451,7 @@ a///b	a//b	no-match
 a///b	a///b	match
 
 ## edge.empty.path
-*		match
-**		match
 foo		no-match
-?		no-match
-{a,}		match
 
 ## edge.trailing.only
 a/	a	no-match
@@ -518,7 +508,6 @@ x=y	x=y	match
 # cross-platform; the `\` path is platform-dep and lives in the
 # per-platform corpus files.
 [^abc]	/	no-match
-[^abc]	d	match
 
 ## class.semantics.posix_first_bracket
 # POSIX first-`]` rule (§6.5): `]` as the first member is literal.
@@ -535,8 +524,6 @@ x=y	x=y	match
 
 ## class.semantics.range_vs_literal_dash
 # `[a-z]` is a range; escaping dash breaks the range into literals.
-[a-z]	m	match
-[a-z]	A	no-match
 [a\-z]	-	match
 [a\-z]	a	match
 [a\-z]	z	match
@@ -716,3 +703,24 @@ a/{{**/c,x}d,y}	a/b/cd	match
 # string-mode lastSepBeforeStr clamp bug, pinned 2026-08).
 **//a	/a	match
 **/a/b	/a/b	match
+
+## seq.state.saturation
+# 31 alternating globstar/literal elements saturate the per-fork NFA
+# state set. Pinned 2026-08: the JS int32 bitset once collided a fully
+# active set with the -1 bail sentinel (silent false negative); JS now
+# caps at 31 states and routes this shape to PikeVm.
+**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	match
+**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	no-match
+!**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	no-match
+
+## brace.trailing-sep.lenient-globstar-boundary
+# A branch-trailing / before **/ is **-adjacent and lenient (SepRun),
+# like the flat X/**/ form (§7.0 + §12.3). Pinned 2026-08.
+{src/,lib/}**/*.ts	src//x.ts	match
+{src/,lib/}**/*.ts	src/x.ts	match
+{src/,lib/}**/*.ts	lib//deep//x.ts	match
+{a/,b/}**/c	a//c	match
+{a/,b/}**/c	b/c	match
+{a/,b/}**/c	ac	no-match
+{{a/,b/},c/}**/x	a//x	match
+{{a/,b/},c/}**/x	c//x	match

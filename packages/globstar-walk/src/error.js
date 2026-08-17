@@ -4,10 +4,19 @@
 
 export class WalkError extends Error {
   constructor(kind, info) {
-    super(formatMessage(kind, info));
+    super(formatMessage(kind, info ?? {}));
     this.name = "WalkError";
     this.kind = kind;
     if (info) Object.assign(this, info);
+  }
+
+  toJSON() {
+    // Keep `message`, drop the noisy raw `cause`.
+    const out = { name: this.name, kind: this.kind, message: this.message };
+    if (this.pattern !== undefined) out.pattern = this.pattern;
+    if (this.reason !== undefined) out.reason = this.reason;
+    if (this.path !== undefined) out.path = this.path;
+    return out;
   }
 }
 

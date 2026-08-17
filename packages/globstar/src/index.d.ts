@@ -16,24 +16,28 @@ export interface GlobstarOptions {
  * filesystem access — pure string matching).
  *
  * Multi-pattern combines via OR; each pattern's own `!`-prefix
- * negation applies independently. Auto-splitting `!`-patterns into
- * ignores is the walker layer's job, not the matcher's.
+ * negation applies independently — a negated member contributes its
+ * COMPLEMENT to the union, it does not subtract from the other
+ * members. `["src/**", "!*.test.ts"]` therefore matches (almost)
+ * everything. Include/exclude filtering is the walker layer's job
+ * (`@globstar/walk` auto-splits `!`-patterns into its ignore set).
  *
  * ```ts
- * const m = globstar("**​/*.ts");
- * m("foo.ts");                         // true
- * m("foo.md");                         // false
+ * const m = globstar("src/**");
+ * m("src/foo.ts");                     // true
+ * m("lib/foo.ts");                     // false
  *
- * // Plug into Array.filter directly — same shape as picomatch:
- * paths.filter(globstar(["**​/*.ts", "!**​/*.test.ts"]));
+ * // Plug into Array.filter directly:
+ * paths.filter(globstar(["src/**", "lib/**"]));
  *
  * // Single negated pattern flips the predicate:
- * const notTest = globstar("!**​/*.test.ts");
+ * const notTest = globstar("!*.test.ts");
  * notTest("a.ts");          // true
  * notTest("a.test.ts");     // false
  * ```
  *
- * Throws a {@link GlobError} if any pattern fails to compile.
+ * Throws a {@link GlobError} if any pattern fails to compile, and a
+ * `TypeError` if a pattern is not a string.
  */
 export function globstar(
   patterns: string | readonly string[],
@@ -74,9 +78,15 @@ export declare const DirMatch: {
 
 /** Compiled pattern set returned by {@link compileMatcher}. */
 export interface Matcher {
-  /** Full-path match — same predicate {@link globstar} returns. */
+  /**
+   * Full-path match — same predicate {@link globstar} returns.
+   * Throws a `TypeError` on non-string input.
+   */
   match(input: string): boolean;
-  /** Directory-level verdict for walker pruning (see {@link DirMatch}). */
+  /**
+   * Directory-level verdict for walker pruning (see {@link DirMatch}).
+   * Throws a `TypeError` on non-string input.
+   */
   matchDir(input: string): DirMatchValue;
   /** Literal path prefixes a walker can seed traversal from. */
   staticPrefixes(): Uint8Array[];

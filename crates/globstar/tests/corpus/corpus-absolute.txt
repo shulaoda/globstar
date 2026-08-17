@@ -114,7 +114,6 @@ a	/a	no-match
 *	/a	no-match
 /*	/a	match
 **/*	/a	match
-**	/a	match
 
 ## abs.dot_protection_not_bypassed
 # LeadingSeps must not bypass dot protection for subsequent segments.

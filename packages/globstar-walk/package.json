@@ -2,6 +2,16 @@
   "name": "@globstar/walk",
   "version": "0.0.3",
   "description": "Filesystem walker powered by @globstar/core. Prefix jump-start, match_dir pruning, literal O(1) lookup.",
+  "keywords": [
+    "fast-glob",
+    "filesystem",
+    "glob",
+    "globbing",
+    "globstar",
+    "tinyglobby",
+    "walker"
+  ],
+  "homepage": "https://github.com/shulaoda/globstar#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -21,5 +31,8 @@
   },
   "dependencies": {
     "@globstar/core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

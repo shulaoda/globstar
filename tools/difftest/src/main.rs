@@ -3,7 +3,7 @@
 //! Reads one request per line on stdin and writes one result token per line
 //! on stdout, using ONLY `globstar`'s public API — exactly what a real caller
 //! sees. The JS driver (`fuzz.mjs` at the repo root) generates random inputs,
-//! feeds the SAME inputs to this binary and to the `@globstar/globstar` JS
+//! feeds the SAME inputs to this binary and to the `@globstar/core` JS
 //! port, and asserts the two agree. This measures JS↔Rust drift on the
 //! infinite out-of-corpus input space, which the fixed hand corpus cannot.
 //!
@@ -18,6 +18,7 @@
 //! | `m <flags> <pattern> <path>`          | `Glob::is_match`  | `match` / `no-match` / `err:<Kind>`             |
 //! | `d <flags> <pattern> <dir>`           | `Glob::match_dir` | `pruned` / `descend` / `match` / `descend-match` / `err:<Kind>` |
 //! | `u <flags> <path> <pat1> [pat2 ...]`  | `Glob::union`     | `match` / `no-match` / `err:<Kind>`             |
+//! | `s <flags> <pat1> [pat2 ...]`         | `Glob::static_prefixes` (union when >1) | `px:<escaped,sorted>` / `err:<Kind>` |
 //!
 //! ## Byte escaping
 //!
@@ -53,9 +54,7 @@ fn main() {
 /// silent false "agreement".
 fn handle(line: &str) -> String {
     let cols: Vec<&str> = line.split('\t').collect();
-    // `m`/`d` need 4 columns, `u` checks its own arity below; a bare
-    // 3-column `m`/`d` line used to panic on `cols[3]`.
-    if cols.len() < 4 {
+    if cols.len() < 3 {
         return "err:BadRequest".to_string();
     }
     let cmd = cols[0];
@@ -67,11 +66,10 @@ fn handle(line: &str) -> String {
     match cmd {
         // m <flags> <pattern> <path>
         "m" => {
-            let pat = match decode_pattern(cols[2]) {
-                Ok(p) => p,
-                Err(t) => return t,
+            let (pat, path) = match (decode_pattern(cols[2]), cols.get(3)) {
+                (Ok(p), Some(f)) => (p, unescape(f)),
+                _ => return "err:BadRequest".to_string(),
             };
-            let path = unescape(cols[3]);
             match Glob::new_with(&pat, opts) {
                 Ok(g) => is_match_token(g.is_match(&path)),
                 Err(e) => err_token(&e),
@@ -79,11 +77,10 @@ fn handle(line: &str) -> String {
         }
         // d <flags> <pattern> <dir>
         "d" => {
-            let pat = match decode_pattern(cols[2]) {
-                Ok(p) => p,
-                Err(t) => return t,
+            let (pat, dir) = match (decode_pattern(cols[2]), cols.get(3)) {
+                (Ok(p), Some(f)) => (p, unescape(f)),
+                _ => return "err:BadRequest".to_string(),
             };
-            let dir = unescape(cols[3]);
             match Glob::new_with(&pat, opts) {
                 Ok(g) => dir_token(g.match_dir(&dir)),
                 Err(e) => err_token(&e),
@@ -107,8 +104,47 @@ fn handle(line: &str) -> String {
                 Err(e) => err_token(&e),
             }
         }
+        // s <flags> <pat1> [pat2 ...]
+        "s" => {
+            let mut patterns = Vec::with_capacity(cols.len() - 2);
+            for raw in &cols[2..] {
+                match decode_pattern(raw) {
+                    Ok(p) => patterns.push(p),
+                    Err(t) => return t,
+                }
+            }
+            let compiled = if patterns.len() == 1 {
+                Glob::new_with(&patterns[0], opts)
+            } else {
+                Glob::union_with(&patterns, opts)
+            };
+            match compiled {
+                Ok(g) => {
+                    let mut px: Vec<String> =
+                        g.static_prefixes().iter().map(|p| escape(p)).collect();
+                    px.sort();
+                    format!("px:{}", px.join(","))
+                }
+                Err(e) => err_token(&e),
+            }
+        }
         _ => "err:BadRequest".to_string(),
     }
+}
+
+/// Inverse of [`unescape`], mirroring the JS driver's `escapeBytes`.
+fn escape(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for &b in bytes {
+        if b == b'\\' {
+            out.push_str("\\\\");
+        } else if (0x20..=0x7e).contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("\\x{b:02x}"));
+        }
+    }
+    out
 }
 
 /// Two chars: dot then case_insensitive, each `0`/`1`.

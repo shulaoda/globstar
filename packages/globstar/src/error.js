@@ -3,7 +3,7 @@ export const MAX_BRACE_NESTING = 32;
 
 export class GlobError extends Error {
   constructor(kind, info) {
-    super(formatMessage(kind, info));
+    super(formatMessage(kind, info ?? {}));
     this.name = "GlobError";
     this.kind = kind;
     if (info) Object.assign(this, info);

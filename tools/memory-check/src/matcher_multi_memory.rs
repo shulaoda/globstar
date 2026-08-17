@@ -39,7 +39,7 @@ static A: Counter = Counter;
 
 /// Returns net heap-byte delta around `f`. Inline size of the value
 /// is intentionally NOT included here — multi-mode data depends on
-/// how the caller wraps the matcher (Vec<Glob> vs single GlobSet),
+/// how the caller wraps the matcher (`Vec<Glob>` vs one `globset::GlobSet`),
 /// so we report heap-only and add the obvious wrapper inline cost
 /// outside.
 fn measure_heap<T>(f: impl FnOnce() -> T) -> (T, usize) {

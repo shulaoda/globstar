@@ -253,11 +253,7 @@ export class PikeVm {
         word &= word - 1;
         const word2 = closures[infoOff + s];
         const tag = word2 & 0xf;
-        if (
-          tag === T_SEP ||
-          tag === T_ANY_BYTE ||
-          (tag === T_BYTE && ((word2 >>> 8) & 0xff) === 0x2f)
-        ) {
+        if (tag === T_SEP || tag === T_ANY_BYTE) {
           const base = (word2 >>> 16) * nWords;
           for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
         }
@@ -324,7 +320,8 @@ export class PikeVm {
           let matched = false;
           switch (word2 & 0xf) {
             case T_BYTE:
-              matched = ((word2 >>> 8) & 0xff) === c;
+              // A literal byte never consumes a separator (§2.2).
+              matched = ((word2 >>> 8) & 0xff) === c && !sep;
               break;
             case T_CLASS:
               matched = classMatches(clsRefs[s], c) && !(word2 & dotMaskFlag);

@@ -2,6 +2,17 @@
   "name": "@globstar/core",
   "version": "0.0.3",
   "description": "Cross-platform, high-performance glob matching library.",
+  "keywords": [
+    "glob",
+    "globbing",
+    "globstar",
+    "matcher",
+    "minimatch",
+    "pattern",
+    "picomatch",
+    "wildcard"
+  ],
+  "homepage": "https://github.com/shulaoda/globstar#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,5 +29,8 @@
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
     }
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

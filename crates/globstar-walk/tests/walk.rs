@@ -1111,3 +1111,231 @@ fn walker_seed_symlink_follow_false() {
     let got = collect_rel(Walk::new("link/*.txt", opts(true)).unwrap(), t.root());
     assert_eq!(got, ["link/a.txt"].iter().map(|s| s.to_string()).collect());
 }
+
+// ── 2026-08 audit regressions ───────────────────────────────────────────
+
+#[test]
+fn walker_ignore_applies_to_seeded_prefixes() {
+    // Pinned 2026-08: static-prefix seeds (file emissions AND dir
+    // frames) skipped the ignore filter entirely, so fully-literal
+    // patterns escaped `ignore` while glob-shaped ones honored it.
+    let t = TmpTree::new("ignore_seed");
+    t.touch("src/generated/api.ts");
+    t.touch("src/index.ts");
+
+    let opts = |ignore: &[&str]| WalkOptions {
+        ignore: ignore.iter().map(|s| s.to_string()).collect(),
+        ..WalkOptions::new(t.root())
+    };
+
+    // Seeded literal FILE.
+    let got = collect_rel(
+        Walk::new("src/generated/api.ts", opts(&["**/generated/**"])).unwrap(),
+        t.root(),
+    );
+    assert!(got.is_empty(), "seeded file escaped ignore: {got:?}");
+
+    // §4.2 equivalence: the auto-split negative must behave identically.
+    let got = collect_rel(
+        Walk::from_patterns(["src/generated/api.ts", "!**/generated/**"], t.root()).unwrap(),
+        t.root(),
+    );
+    assert!(
+        got.is_empty(),
+        "auto-split negative escaped seeding: {got:?}"
+    );
+
+    // Seeded DIR whose own relative path is ignored.
+    let got = collect_rel(
+        Walk::new("src/generated/*.ts", opts(&["**/generated"])).unwrap(),
+        t.root(),
+    );
+    assert!(got.is_empty(), "seeded dir escaped ignore: {got:?}");
+
+    // Seeded prefix under an ignored ANCESTOR directory.
+    let got = collect_rel(
+        Walk::new("src/generated/api.ts", opts(&["src"])).unwrap(),
+        t.root(),
+    );
+    assert!(
+        got.is_empty(),
+        "seed under ignored ancestor escaped: {got:?}"
+    );
+
+    // Control: the non-seeded glob form agrees.
+    let got = collect_rel(
+        Walk::new("src/**/*.ts", opts(&["**/generated/**"])).unwrap(),
+        t.root(),
+    );
+    let expected: BTreeSet<String> = ["src/index.ts"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn walker_slash_bang_routes_to_ignore() {
+    // Pinned 2026-08: the leading-`/` strip ran AFTER the `!`-parity
+    // split, so `/!x` reached the matcher as whole-pattern negation
+    // (single-pattern walks matched nearly everything; unions errored).
+    // §4.3 now runs before §4.2: `/!x` ≡ `!x`.
+    let t = TmpTree::new("slash_bang");
+    t.touch("a.txt");
+    t.touch("b.txt");
+
+    let got = collect_rel(
+        Walk::from_patterns(["**/*.txt", "/!b.txt"], t.root()).unwrap(),
+        t.root(),
+    );
+    let expected: BTreeSet<String> = ["a.txt"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(got, expected, "`/!b.txt` must act as ignore, not negation");
+
+    let got = collect_rel(Walk::new("/!b.txt", t.root()).unwrap(), t.root());
+    assert!(
+        got.is_empty(),
+        "ignore-only input must yield nothing: {got:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn walker_seed_emits_broken_symlink_like_walk() {
+    // Pinned 2026-08: a broken symlink was emitted by `links/*` (walk
+    // path, §10) but silently dropped by the literal `links/broken`
+    // (seed path, §9.4) — the seed now falls back to symlink_metadata.
+    let t = TmpTree::new("broken_seed");
+    t.mkdir("links");
+    std::os::unix::fs::symlink("/nonexistent-target-xyz", t.root().join("links/broken.txt"))
+        .unwrap();
+
+    let via_walk = collect_rel(Walk::new("links/*.txt", t.root()).unwrap(), t.root());
+    let via_seed = collect_rel(Walk::new("links/broken.txt", t.root()).unwrap(), t.root());
+    let expected: BTreeSet<String> = ["links/broken.txt"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(via_walk, expected);
+    assert_eq!(via_seed, expected, "seed must surface the broken symlink");
+
+    // The seeded entry's file_type is symlink-preserving, like every
+    // walk-produced entry (entry.rs: the canonical is_symlink check).
+    let entry = Walk::new("links/broken.txt", t.root())
+        .unwrap()
+        .next()
+        .expect("one entry")
+        .expect("no error");
+    assert!(entry.file_type().is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn walker_seed_surfaces_permission_error() {
+    use std::os::unix::fs::PermissionsExt;
+    // Pinned 2026-08: an EACCES on the seed stat was silently swallowed
+    // where a root walk would have yielded a loud per-entry error.
+    let t = TmpTree::new("eacces_seed");
+    t.touch("locked/b.txt");
+    let locked = t.root().join("locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+    // Running as root defeats the permission wall — skip there.
+    if fs::read_dir(&locked).is_ok() {
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let results: Vec<_> = Walk::new("locked/b.txt", t.root()).unwrap().collect();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        matches!(results.as_slice(), [Err(WalkError::Io { .. })]),
+        "seed EACCES must surface as an Io error: {results:?}"
+    );
+}
+
+#[test]
+fn walker_normalizes_dot_and_doubleslash_patterns() {
+    // Pinned 2026-08: `./` and `//` spellings leaked verbatim into
+    // emitted paths (and inflated depth); patterns now normalize to the
+    // walked-path spelling (§4.3), and a bare `.` matches nothing.
+    let t = TmpTree::new("normalize");
+    t.touch("a/b/x.txt");
+
+    for pat in ["./a/b/*.txt", "a//b/*.txt", "a/./b/*.txt", ".//a/b/*.txt"] {
+        let got = collect_rel(Walk::new(pat, t.root()).unwrap(), t.root());
+        let expected: BTreeSet<String> = ["a/b/x.txt"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            got, expected,
+            "pattern {pat:?} must emit the clean spelling"
+        );
+    }
+
+    let entry = Walk::new("./a/b/*.txt", t.root())
+        .unwrap()
+        .next()
+        .expect("one entry")
+        .expect("no error");
+    assert_eq!(entry.depth(), 3, "normalized prefix must not inflate depth");
+
+    let got = collect_rel(Walk::new(".", t.root()).unwrap(), t.root());
+    assert!(got.is_empty(), "`.` must not emit the base itself: {got:?}");
+}
+
+#[test]
+fn walker_seed_order_is_forward() {
+    // Pinned 2026-08: seeds were pushed in prefix order onto a LIFO
+    // stack without the final reverse, so brace seeds walked backwards
+    // (spec §7.2 step 1; JS walks forward).
+    let t = TmpTree::new("seed_order");
+    t.touch("sa/1.txt");
+    t.touch("sb/2.txt");
+    t.touch("sc/3.txt");
+
+    let got: Vec<String> = Walk::new("{sc,sa,sb}/*.txt", t.root())
+        .unwrap()
+        .map(|r| r.unwrap().into_path())
+        .map(|p| {
+            p.strip_prefix(t.root())
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec!["sa/1.txt", "sb/2.txt", "sc/3.txt"],
+        "seeds must drain in (sorted) prefix order"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn walker_seed_emits_looping_symlink_like_walk() {
+    // Any stat error probes lstat: a self-loop symlink (ELOOP) exists
+    // as an entry, so seed and walk agree on emitting it.
+    let t = TmpTree::new("loop_seed");
+    t.mkdir("links");
+    std::os::unix::fs::symlink("loop.txt", t.root().join("links/loop.txt")).unwrap();
+
+    let expected: BTreeSet<String> = ["links/loop.txt"].iter().map(|s| s.to_string()).collect();
+    let via_walk = collect_rel(Walk::new("links/*.txt", t.root()).unwrap(), t.root());
+    let via_seed = collect_rel(Walk::new("links/loop.txt", t.root()).unwrap(), t.root());
+    assert_eq!(via_walk, expected);
+    assert_eq!(via_seed, expected);
+}
+
+#[test]
+fn walker_missing_base_yields_error() {
+    // A bad base fails loudly (one inline Err), not as a silent empty walk.
+    let results: Vec<_> = Walk::new("**/*.rs", "/nonexistent-globstar-base")
+        .unwrap()
+        .collect();
+    assert!(matches!(results.as_slice(), [Err(WalkError::Io { .. })]));
+}
+
+#[test]
+fn walker_slash_only_pattern_is_dropped() {
+    // A pattern that normalizes to nothing selects nothing — it must not
+    // poison the sibling patterns.
+    let t = TmpTree::new("slash_only");
+    t.touch("a.txt");
+    let got = collect_rel(
+        Walk::from_patterns(["*.txt", "//"], t.root()).unwrap(),
+        t.root(),
+    );
+    assert_eq!(got, ["a.txt"].iter().map(|s| s.to_string()).collect());
+}

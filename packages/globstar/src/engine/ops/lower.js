@@ -126,12 +126,27 @@ function trailsGlobstar(node) {
 }
 
 function applyLeadingSepsAtStart(ops) {
+  applyLeadingSeps(ops, false);
+}
+
+// `tailIsOss`: the enclosing program continues with an OptSegmentsSlash
+// (union factoring lifts shared trailing `**/` behind the alternation),
+// so an empty branch's fork starts with `**/` and needs the §8.5
+// LeadingSeps.
+function applyLeadingSeps(ops, tailIsOss) {
   if (ops.length === 0) return;
+  const nextIsOss = ops.length > 1 ? ops[1].kind === OP_OPT_SEGMENTS_SLASH : tailIsOss;
   const first = ops[0];
   if (first.kind === OP_OPT_SEGMENTS_SLASH) {
     ops.unshift(LEADING_SEPS_OP);
   } else if (first.kind === OP_ALTERNATION) {
-    for (const branch of first.branches) applyLeadingSepsAtStart(branch);
+    for (const branch of first.branches) {
+      if (branch.length === 0) {
+        if (nextIsOss) branch.push(LEADING_SEPS_OP);
+      } else {
+        applyLeadingSeps(branch, nextIsOss);
+      }
+    }
   }
 }
 
@@ -164,7 +179,8 @@ function distributeSeps(node) {
       const branches = child.branches.map((branch) => {
         const sequence = [];
         if (absorbPrev) sequence.push(sep());
-        if (branch.tag === N_CONCAT) sequence.push(...branch.children);
+        // Loop, not spread: ~64k children would overflow the argument limit.
+        if (branch.tag === N_CONCAT) for (const child of branch.children) sequence.push(child);
         else sequence.push(branch);
         if (absorbNext) sequence.push(sep());
         return distributeSeps(concat(sequence));
@@ -176,6 +192,15 @@ function distributeSeps(node) {
   }
   if (node.tag === N_BRACE) return brace(node.branches.map(distributeSeps));
   return node;
+}
+
+function upgradeTrailingSeps(branches) {
+  for (const branch of branches) {
+    const last = branch.length > 0 ? branch[branch.length - 1] : undefined;
+    if (last === undefined) continue;
+    if (last.kind === OP_SEP) branch[branch.length - 1] = SEP_RUN_OP;
+    else if (last.kind === OP_ALTERNATION) upgradeTrailingSeps(last.branches);
+  }
 }
 
 function foldGlobstars(ops) {
@@ -194,7 +219,11 @@ function foldGlobstars(ops) {
   ops.length = write;
 
   for (let i = 0; i + 1 < ops.length; i++) {
-    if (ops[i].kind === OP_SEP && ops[i + 1].kind === OP_OPT_SEGMENTS_SLASH) ops[i] = SEP_RUN_OP;
+    if (ops[i + 1].kind !== OP_OPT_SEGMENTS_SLASH) continue;
+    if (ops[i].kind === OP_SEP) ops[i] = SEP_RUN_OP;
+    // A branch-trailing `/` before `**/` is `**`-adjacent too:
+    // `{src/,lib/}**/x` ≡ `src/**/x` ∪ `lib/**/x` (§7.0 + §12.3).
+    else if (ops[i].kind === OP_ALTERNATION) upgradeTrailingSeps(ops[i].branches);
   }
 
   write = 0;

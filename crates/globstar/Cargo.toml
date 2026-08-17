@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+readme = "README.md"
+exclude = ["tests/"]
 description = "Cross-platform, high-performance glob matching library."
 
 [dev-dependencies]

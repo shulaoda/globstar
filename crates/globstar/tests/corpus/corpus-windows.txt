@@ -39,3 +39,9 @@ foo*bar	foo\\bar	no-match
 # oppositely (`\` ∉ Seps, matches as a regular byte) — see corpus-unix.txt.
 [\\\\]	\\	no-match
 [\\\\a]	\\	no-match
+
+## escaped-backslash.literal-never-separator
+# Only / separates in patterns (§2.2); a separator byte never matches
+# literal content, so an escaped backslash cannot match on Windows.
+a\\\\b	a\\b	no-match
+a\\\\b	a/b	no-match

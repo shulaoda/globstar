@@ -17,8 +17,11 @@ export interface GlobOptions {
    * Default `true` — matches tinyglobby's `followSymbolicLinks`.
    */
   followSymlinks?: boolean;
-  /** Extra patterns to exclude (in addition to any `!`-prefixed entries). */
-  ignore?: readonly string[];
+  /**
+   * Extra patterns to exclude (in addition to any `!`-prefixed
+   * entries). A bare string means a one-element list.
+   */
+  ignore?: string | readonly string[];
 }
 
 /**
@@ -30,16 +33,18 @@ export interface GlobOptions {
  * the ignore set (globby-style):
  *
  * ```ts
- * await glob("**​/*.ts", { cwd: "./src" });
- * await glob(["**​/*.ts", "!**​/*.test.ts"]);
- * await glob("**​/*.ts", { ignore: ["**​/*.test.ts"] });
+ * await glob("src/**", { cwd: projectRoot });
+ * await glob(["src/**", "!src/generated/**"]);
+ * await glob("src/**", { ignore: ["src/generated/**"] }); // same thing
  * ```
  *
  * Output is always **absolute file paths** rooted at the resolved
  * `cwd`. Directory matches aren't emitted. Callers wanting paths
  * relative to `cwd` should `path.relative(cwd, p)` at their boundary.
  * Errors throw a {@link WalkError} (the returned Promise rejects;
- * never silent).
+ * never silent); wrongly-typed patterns or options throw a
+ * `TypeError`. An option key explicitly set to `undefined` keeps its
+ * default.
  */
 export function glob(
   patterns: string | readonly string[],
@@ -55,7 +60,7 @@ export function glob(
  * Errors throw a {@link WalkError} synchronously.
  *
  * ```ts
- * for (const p of globSync("**​/*.ts", { cwd: "./src" })) {
+ * for (const p of globSync("src/**", { cwd: projectRoot })) {
  *   compile(p);
  * }
  * ```
@@ -77,7 +82,7 @@ export function globSync(patterns: string | readonly string[], options?: GlobOpt
  *
  * ```ts
  * try {
- *   await glob("**​/*.ts", { cwd: "./does-not-exist" });
+ *   await glob("src/**", { cwd: "./does-not-exist" });
  * } catch (e) {
  *   if (e instanceof WalkError && e.kind === "Io") {
  *     console.error(`cannot read ${e.path}:`, e.cause?.message);

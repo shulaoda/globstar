@@ -5,12 +5,18 @@ implementation claiming spec conformance must pass every test here.
 
 ## Files
 
-- `corpus.txt` — core `is_match` cases (hand-authored, ~250 rows)
-- `corpus-dir.txt` — `match_dir` pruning cases (~50 rows)
-- `corpus-err.txt` — parse-error cases (~30 rows)
-- `corpus-realworld.txt` — patterns observed in real-world projects
-- `corpus-fast-glob.txt` — cases imported from oxc-project/fast-glob
-- `corpus-utf8.txt` — UTF-8 / multibyte path and pattern coverage
+Single-pattern `is_match` corpora: `corpus.txt` (core, spec-sourced),
+`corpus-class.txt`, `corpus-case.txt`, `corpus-utf8.txt`,
+`corpus-absolute.txt`, `corpus-comprehensive.txt`,
+`corpus-realworld.txt`, `corpus-fast-glob.txt`,
+`corpus-fast-glob-diff.txt`, plus the platform-gated `corpus-unix.txt`
+and `corpus-windows.txt`.
+
+Other surfaces: `corpus-dir.txt` (`match_dir`), `corpus-multi.txt` /
+`corpus-multi-dir.txt` (unions), `corpus-err.txt` (parse errors).
+
+The file lists are hard-coded in `tests/corpus.rs` and `verify.mjs` —
+a new corpus file must be registered in BOTH, or it runs nowhere.
 
 ## Format
 
@@ -51,11 +57,9 @@ example, `*<TAB><TAB>match` is "pattern `*` matches the empty path".
 
 ### Default flags
 
-When FLAGS is omitted, the spec defaults apply:
-
-- `dot = false`
-- case-sensitive
-- brace / globstar always enabled (no toggle — see decision D-006).
+When FLAGS is omitted, the matcher defaults apply: `dot = true` for the
+`is_match` and multi corpora, `dot = false` for the dir corpora (the
+walker-layer default), case-sensitive everywhere.
 
 ## Minimal driver sketch (reference)
 
@@ -89,9 +93,7 @@ from a specific section of `GLOB_SPEC.md`. Cases pulled from external
 corpora (fast-glob, real-world repos) live in separate files so the
 spec-authoritative corpus stays clean.
 
-## Scope target
+## Scope
 
-Initial scale: ~300 hand-authored rows across the three spec files, plus
-whatever the external corpora contribute. If a bug is found in the
-implementation, add a regression row here **first**, then fix the code —
-the corpus is a live document.
+If a bug is found in the implementation, add a regression row here
+**first**, then fix the code — the corpus is a live document.

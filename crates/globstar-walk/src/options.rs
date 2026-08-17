@@ -5,8 +5,11 @@
 //! struct. For base + one tweak, use struct-update syntax on top of
 //! [`WalkOptions::new`]:
 //!
-//! ```ignore
-//! WalkOptions { dot: true, ..WalkOptions::new("./src") }
+//! ```
+//! use globstar_walk::WalkOptions;
+//!
+//! let opts = WalkOptions { dot: true, ..WalkOptions::new("./src") };
+//! # let _ = opts;
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -37,9 +40,12 @@ pub struct WalkOptions {
     /// on-disk casing differs from the pattern is silently skipped even
     /// though the matcher accepts it. On case-insensitive filesystems the
     /// seed resolves through the filesystem's own folding and the walk
-    /// works, with emitted paths carrying the pattern's casing. Workaround:
-    /// write the prefix in the on-disk casing, or make it non-literal with
-    /// a class like `[Ss]rc/...`.
+    /// works, with emitted paths carrying the pattern's casing — which
+    /// also means that with `case_insensitive: false` on such a
+    /// filesystem, a seeded literal prefix still folds through the
+    /// filesystem (and case-variant brace prefixes can emit one file
+    /// once per spelling). Workaround: write the prefix in the on-disk
+    /// casing, or make it non-literal with a class like `[Ss]rc/...`.
     pub case_insensitive: bool,
 
     /// Follow symbolic links when descending. Cycles are detected via

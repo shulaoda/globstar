@@ -46,7 +46,7 @@ export class LiteralMatcher {
     while (n < llen && n < olen) {
       const lb = literal[n];
       const ob = other[n];
-      if (lb === 0x2f ? isPathSep(ob) : ci ? eqByteCi(lb, ob) : lb === ob) {
+      if (lb === 0x2f ? isPathSep(ob) : !isPathSep(ob) && (ci ? eqByteCi(lb, ob) : lb === ob)) {
         n++;
       } else {
         break;
@@ -74,7 +74,9 @@ export class LiteralMatcher {
     for (let i = 0; i < llen; i++) {
       const lb = lit.charCodeAt(i);
       const pb = path.charCodeAt(i);
-      if (lb === 0x2f ? isPathSep(pb) : ci ? eqByteCi(lb, pb) : lb === pb) continue;
+      if (lb === 0x2f ? isPathSep(pb) : !isPathSep(pb) && (ci ? eqByteCi(lb, pb) : lb === pb)) {
+        continue;
+      }
       return false;
     }
     return true;

@@ -5,6 +5,8 @@ import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION } from "../ops/in
 import { classMatches, ciLetter } from "../../ast.js";
 import { ctz32 } from "../../bytes.js";
 
+// Half of Rust's 64 (int32 bitmaps). Unlike MAX_SEQ_STATES, 32 is safe:
+// closures can never fill all 32 bits, so no -1 sentinel collision.
 const MAX_SEG_NFA_STATES = 32;
 
 const S_BYTE = 0;

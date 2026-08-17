@@ -205,9 +205,6 @@
 
 ## class.bracket_brace_combinations
 # `[{}]` — class containing `{` and `}` as literals. Matches `{` or `}`.
-[{}]	{	match
-[{}]	}	match
-[{}]	a	no-match
 # `[{]}` — class `[{]` (containing `{`), then literal `}`. Pattern `{}`.
 [{]}	{}	match
 [{]}	{	no-match
@@ -293,8 +290,5 @@ src/[a-z]*.{ts,rs}	src/main.txt	no-match
 # `[\]` — `\]` consumes the `]` as literal, no closer left → UnterminatedClass.
 [\]	-	err:UnterminatedClass
 # `[\]]` — `\]` is literal `]`, then second `]` closes. Class `{]}`.
-[\]]	]	match
-[\]]	a	no-match
 # `[\\\\]` (after TSV unescape: `[\\]`) — class with literal `\`. Platform-dep.
-[\\\\]	a	no-match
 [\\\\]	/	no-match

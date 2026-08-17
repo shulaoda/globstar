@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: pnpm install --frozen-lockfile
+      - run: just lint
+      - run: just test
+      - run: just verify
+      - name: Docs
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Fuzz (smoke)
+        run: just fuzz --count 20000
+
+  # The only place `corpus-windows.txt` and the `\`-separator paths run.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: cargo test --workspace
+      - run: node packages/globstar/tests/compiler-stages.mjs
+      - run: node packages/globstar/tests/string-mode.mjs
+      - run: node packages/globstar/tests/dir-exhaustive.mjs
+      - run: node packages/globstar-walk/tests/walk.mjs
+      - run: node verify.mjs

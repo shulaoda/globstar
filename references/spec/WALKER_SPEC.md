@@ -1,6 +1,6 @@
 # WALKER_SPEC — Filesystem Walker Built on the Glob Matcher
 
-> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.0 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `impl/packages/globstar` (`glob` / `globSync` exports). The Rust crate `impl/crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
+> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.0 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
 
 ## Table of Contents
 
@@ -74,9 +74,11 @@ interface GlobOptions {
   dot?: boolean; // default: false
   caseInsensitive?: boolean; // default: false
   followSymlinks?: boolean; // default: true
-  ignore?: readonly string[]; // default: []
+  ignore?: string | readonly string[]; // default: []; bare string ≡ one-element array
 }
 ```
+
+An option key explicitly present with the value `undefined` means "use the default" (TypeScript optional-property semantics) — it MUST NOT clobber the default the way a naive object spread would. Wrongly-typed option values (a numeric `cwd`, a non-string ignore member) throw a `TypeError` with a clear message.
 
 ### 3.2 Per-option semantics
 
@@ -133,10 +135,12 @@ The walker exposes 5 options. The following toggles, common in other walkers, ar
 
 ### 4.2 `!`-prefix split (parity rule)
 
-For each pattern in the input array, the walker counts the run of leading `!` bytes and routes by parity (matching the matcher's internal parity rule from GLOB_SPEC.md §9.5):
+For each pattern in the input array — AFTER the §4.3 normalization, so a leading `/` cannot shield a `!` from the split (`/!x` ≡ `!x`; before this ordering was pinned, `/!x` reached the matcher as whole-pattern negation and walked nearly the whole tree) — the walker counts the run of leading `!` bytes and routes by parity (matching the matcher's internal parity rule from GLOB_SPEC.md §9.5):
 
 - count is odd → strip ALL `!`s, push the body into the ignore set;
 - count is even → strip ALL `!`s, push the body into the positive set.
+
+The body is normalized again after the strip (`!/x` exposes a fresh leading `/`).
 
 Examples:
 
@@ -154,16 +158,20 @@ glob(["src/**/*.ts", "!**/*.test.ts"], { cwd })
 ≡  glob(["src/**/*.ts"], { cwd, ignore: ["**/*.test.ts"] })
 ```
 
-Filenames that literally start with `!` MUST be escaped (`\!foo` or `[!]foo`), as documented in GLOB_SPEC.md §9.4.
+Filenames that literally start with `!` MUST be escaped (`\!foo` or `[\!]foo`), as documented in GLOB_SPEC.md §9.4.
 
-### 4.3 Leading `/` strip
+### 4.3 Pattern normalization
 
-Each individual pattern (in BOTH the positive and ignore sets, BOTH from the input array and from `opts.ignore`) has its leading `/` run stripped before compilation:
+Each individual pattern (in BOTH the positive and ignore sets, BOTH from the input array and from `opts.ignore`) is normalized before compilation, so patterns are spelled the way walked relative paths are spelled:
 
-- `/a/b/*.ts` ≡ `a/b/*.ts`;
-- `//foo` ≡ `foo`.
+- the leading `/` run is stripped: `/a/b/*.ts` ≡ `a/b/*.ts`, `//foo` ≡ `foo`;
+- `//` runs collapse to a single `/`: `a//b/*` ≡ `a/b/*`;
+- plain `.` segments are dropped (`readdir` never yields `.`): `./src/**` ≡ `src/**`, `a/./b` ≡ `a/b`;
+- a pattern that normalizes to nothing (`.`, `./`) matches nothing and is dropped.
 
-This guarantees that the matcher's static prefixes (used for traversal seeding, §6) always come out relative to `cwd`. Patterns are scoped to `cwd`; absolute filesystem paths cannot be glob'd through the walker API — callers wanting to walk `/etc/...` MUST pass `cwd: "/etc"`.
+Escaped forms (`\.`) are untouched; `/` in a pattern is always structural (`\/` is a parse error, GLOB_SPEC §2.4), so the textual rewrite is safe. Without this, `./`/`//` spellings leaked verbatim into static prefixes and therefore into emitted absolute paths — the same file got different spellings depending on how the pattern was written.
+
+The leading-`/` strip guarantees that the matcher's static prefixes (used for traversal seeding, §6) always come out relative to `cwd`. Patterns are scoped to `cwd`; absolute filesystem paths cannot be glob'd through the walker API — callers wanting to walk `/etc/...` MUST pass `cwd: "/etc"`.
 
 ### 4.4 Compilation
 
@@ -191,11 +199,13 @@ A typo'd or non-existent `cwd` therefore fails loudly at the start of the walk, 
 
 **Case-insensitive seeding caveat.** The walker's static-prefix optimization (§6) seeds traversal at literal pattern prefixes using their original case, even under `caseInsensitive: true`. On a case-SENSITIVE filesystem (Linux ext4, case-sensitive APFS) where the on-disk casing differs from the pattern, the seed does not resolve and the whole subtree is silently skipped — `walk("src/*.rs", { caseInsensitive: true })` yields nothing when the directory is named `SRC`, even though `isMatch("SRC/a.rs")` is true. On case-insensitive filesystems (default macOS APFS, Windows NTFS) the seed resolves through the filesystem's own folding and the walk works; emitted paths carry the pattern's casing rather than the on-disk casing. Workarounds: write the prefix in the actual on-disk casing, OR use an explicit class (`[Ss]rc/...`), which keeps the prefix non-literal and forces a root walk.
 
+The same filesystem folding cuts the OTHER way under `caseInsensitive: false` on a case-insensitive filesystem: a seed spelled `src` resolves to an on-disk `SRC`, so a literal-prefixed pattern emits paths (in the pattern's spelling) that the matcher itself would reject against the on-disk spelling — the option is effectively voided for the seeded prefix — and case-variant brace prefixes (`{src,SRC,Src}/*`) emit ONE file once per resolving spelling. This is inherent to spelling-based seeds on a folding filesystem (the same trade fast-glob makes); dedup by inode is not a fix, because different spellings legitimately select different pattern branches. Callers needing exact-case walking on such filesystems should use a class-headed prefix to force a root walk.
+
 ---
 
 ## 6. Static-prefix Seeding
 
-The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, and see `engine/ops.js::computeStaticPrefixes` in the JS reference): the deepest segment-bounded literal prefix per branch of the pattern's top-level brace. Examples:
+The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, and see `computeStaticPrefixes` in `packages/globstar/src/engine/ops/prefixes.js`): the deepest segment-bounded literal prefix per branch of the pattern's top-level brace. Examples:
 
 | Pattern           | Static prefixes                         |
 | ----------------- | --------------------------------------- |
@@ -205,18 +215,24 @@ The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, 
 | `**/*.ts`         | `[""]` (empty — walk from `cwd` itself) |
 | `{src,test}/*.rs` | `["src", "test"]`                       |
 
-The walker uses these to skip directories that no branch of the pattern can possibly match. For each prefix the walker:
+The walker uses these to skip directories that no branch of the pattern can possibly match. Seeding MUST be observationally equivalent to a root walk — a seed may only skip work, never change results. For each prefix the walker:
 
-1. Computes its absolute form: `joinAbs(cwd, prefix)`.
-2. Calls `fs.statSync` on that path.
-   - If the stat fails (entry missing), the prefix is silently skipped — this is NOT an error. `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch.
-   - If the stat succeeds, classify by file-type.
+1. **Guards.** Skip the prefix outright when:
+   - any of its segments is `..` or `.` (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields neither, and a joined `..` would escape `cwd`;
+   - the ignore set matches the prefix itself or ANY `/`-bounded ancestor of it (§7.1 step 3 prunes an ignored directory's whole subtree, so a root walk would never reach this seed);
+   - `followSymlinks: false` and any component of the joined path is a symlink (a root walk drops symlinks entirely, §10).
+2. Computes its absolute form: `joinAbs(cwd, prefix)` and calls `fs.statSync` on it.
+   - Stat fails with ENOENT/ENOTDIR: probe `lstatSync`. If THAT succeeds, the entry exists as a broken symlink — treat it as a non-directory entry (step 4), exactly as the walk loop would (§10). If it also fails, the prefix is silently skipped — this is NOT an error: `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch.
+   - Stat fails otherwise (EACCES, …): surface it the way the walk loop would — a root walk hitting this subtree fails loudly (§9.3), so seeding MUST NOT hide it.
+   - Stat succeeds: classify by file-type.
 3. If the stat reports a directory:
    - Push it onto the seed-frame stack with `relative = prefix`.
    - The walker may also call `matcher.match_dir(prefix)` and short- circuit pruning if the result is `Pruned`.
-4. If the stat reports a file:
+4. If the entry is a non-directory (regular file, or a broken symlink from step 2):
    - If `matcher.match(prefix)` is true, push the file's path into the output array directly (the literal prefix IS a complete match).
    - Otherwise discard it.
+
+Seed frames and seed file emissions each preserve the (deduplicated, sorted) prefix order; file-prefix emissions drain before directory walking begins. Order beyond that is unspecified (§7.5).
 
 The empty prefix (an empty `Uint8Array`, produced by patterns that begin with `**/` or contain no literal head) seeds a single frame rooted at `cwd` itself. cwd was already validated in §5, so no re-stat is needed.
 
@@ -278,7 +294,7 @@ function joinAbs(parent, child) {
 }
 ```
 
-This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous `joinAbs` result. None of the inputs ever contain those tokens. Measured: `path.join` is ~100 µs slower per walk on the vite-vanilla fixture than `joinAbs`.
+This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous `joinAbs` result — and, for seed frames, a §4.3-normalized static prefix. §4.3's normalization (leading-`/` strip, `//` collapse, `.`-segment removal) plus §6's `..`/`.` seed guard are what make this premise hold for the seed join; without them, pattern spellings leaked into output paths. Measured: `path.join` is ~100 µs slower per walk on the vite-vanilla fixture than `joinAbs`.
 
 ### 7.5 Result-order guarantees
 
@@ -352,7 +368,11 @@ This is the walker's most visible divergence from `tinyglobby` and `fast-glob`, 
 
 ### 9.4 Stat failures during seeding
 
-Seed-prefix `fs.statSync` failures (§6 step 2) are NOT errors — they SHOULD be silently skipped. This case is "this branch of the brace did not match anything that exists on disk", which is a legitimate "nothing to walk on this branch" outcome rather than something the user typo'd.
+Seed-prefix `fs.statSync` failures during §6 step 2 are classified, not blanket-swallowed — the rule is root-walk equivalence:
+
+- **ENOENT / ENOTDIR with a failing `lstat` too** — silently skipped. This is "this branch of the brace did not match anything that exists on disk", a legitimate "nothing to walk on this branch" outcome rather than something the user typo'd.
+- **ENOENT with a succeeding `lstat`** — a broken symlink. The entry EXISTS; §10 makes the walk loop treat it as a non-directory and emit it when matched, so the seed does the same.
+- **Anything else (EACCES, …)** — surfaced as `WalkError("Io")`. A root walk reaching this subtree fails loudly (§9.3); a seed must not turn that into a silent empty result.
 
 ---
 

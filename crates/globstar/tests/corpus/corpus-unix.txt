@@ -31,3 +31,8 @@ a*b	a\\b	match
 # corpus-windows.txt.
 [\\\\]	\\	match
 [\\\\a]	\\	match
+
+## escaped-backslash.literal
+# On Unix `\` is an ordinary filename byte; the escape matches it.
+a\\\\b	a\\b	match
+a\\\\b	a/b	no-match

@@ -109,24 +109,56 @@ function prepare(patterns, optsInput) {
   const positives = [];
   const negatives = [];
   for (let i = 0; i < list.length; i++) {
-    const s = String(list[i]);
-    // Strip leading `!`s and route by parity (matches the matcher's
-    // parser, which collapses N negations into N % 2). To match a
-    // filename literally starting with `!`, escape: `\!foo` / `[!]foo`.
+    const raw = list[i];
+    if (typeof raw !== "string") {
+      throw new TypeError(`pattern must be a string, got ${raw === null ? "null" : typeof raw}`);
+    }
+    // Normalize before the `!`-parity split (§4.3 before §4.2, so `/!x`
+    // ≡ `!x`), then re-normalize the body (`!/x` exposes a fresh `/`).
+    // To match a literal leading `!`, escape it: `\!foo`.
+    const n1 = normalizePattern(raw);
+    if (n1 === "" && raw !== "") continue; // `.`, `//` — selects nothing
     let bangs = 0;
-    while (bangs < s.length && s.charCodeAt(bangs) === 0x21 /* ! */) bangs++;
-    (bangs & 1 ? negatives : positives).push(bangs === 0 ? s : s.slice(bangs));
+    while (bangs < n1.length && n1.charCodeAt(bangs) === 0x21 /* ! */) bangs++;
+    const tail = bangs === 0 ? n1 : n1.slice(bangs);
+    const body = bangs === 0 ? tail : normalizePattern(tail);
+    if (body === "" && tail !== "") continue; // `!.` — ignores nothing
+    (bangs & 1 ? negatives : positives).push(body);
   }
 
-  // Compile the ignore set before the no-positives early return, so an
-  // invalid ignore pattern fails loudly either way (mirrors Rust).
-  const ignore = compilePositive([...opts.ignore, ...negatives], matcherOpts);
+  // Positives first (error-precedence parity with Rust); ignore still
+  // compiles before the no-positives early return.
   const matcher = compilePositive(positives, matcherOpts);
-  if (matcher === null) return null;
+  const ignoreInput = typeof opts.ignore === "string" ? [opts.ignore] : opts.ignore;
+  if (!Array.isArray(ignoreInput)) {
+    throw new TypeError(
+      `ignore must be a string or an array of strings, got ${
+        opts.ignore === null ? "null" : typeof opts.ignore
+      }`,
+    );
+  }
+  const ignorePatterns = [];
+  for (const raw of ignoreInput) {
+    if (typeof raw !== "string") {
+      throw new TypeError(
+        `ignore pattern must be a string, got ${raw === null ? "null" : typeof raw}`,
+      );
+    }
+    // §3.2: ignore entries are never `!`-split, only normalized.
+    const n = normalizePattern(raw);
+    if (n === "" && raw !== "") continue;
+    ignorePatterns.push(n);
+  }
+  for (const n of negatives) ignorePatterns.push(n);
+  const ignore = compilePositive(ignorePatterns, matcherOpts);
 
-  // Lock cwd to an absolute path so `process.chdir` after construction
-  // doesn't redirect the walk. Validate up front: a bad cwd should
-  // fail loudly here, not produce a confusing empty result.
+  // Lock cwd to an absolute path and validate BEFORE the empty-positives
+  // early return: bad-cwd loudness must not depend on pattern content.
+  if (typeof opts.cwd !== "string") {
+    throw new TypeError(
+      `cwd must be a string, got ${opts.cwd === null ? "null" : typeof opts.cwd}`,
+    );
+  }
   const cwd = path.resolve(opts.cwd);
   let cwdStat;
   try {
@@ -140,6 +172,7 @@ function prepare(patterns, optsInput) {
       cause: new Error("cwd is not a directory"),
     });
   }
+  if (matcher === null) return null;
 
   const ctx = {
     matcher,
@@ -167,10 +200,13 @@ function initFromPrefixes(ctx) {
 
     const prefixStr = bytesToString(prefixBytes);
 
-    // A `..` segment escapes cwd when joined (the OS resolves it) and
-    // cannot match any real walked path — readdir never yields `..` —
-    // so skip it, keeping the walk inside cwd.
-    if (prefixStr.split("/").includes("..")) continue;
+    // `..` escapes cwd when joined and readdir yields neither `..` nor
+    // `.`. Split on every platform separator so a Windows `..\secret`
+    // can't slip past.
+    const segs = WINDOWS ? prefixStr.split(/[/\\]/) : prefixStr.split("/");
+    if (segs.some((seg) => seg === ".." || seg === ".")) continue;
+
+    if (ctx.ignore !== null && seedIgnored(ctx.ignore, prefixStr)) continue;
 
     const joined = joinAbs(ctx.cwd, prefixStr);
 
@@ -183,6 +219,18 @@ function initFromPrefixes(ctx) {
     try {
       stat = fs.statSync(joined);
     } catch {
+      // Still lstat-able ⇒ the entry exists (broken/looping symlink):
+      // the walk emits those as non-directories (§10), so the seed
+      // must too.
+      try {
+        fs.lstatSync(joined);
+      } catch (lcause) {
+        const code = lcause?.code;
+        if (code === "ENOENT" || code === "ENOTDIR") continue; // §9.4
+        // EACCES etc.: a root walk fails loudly here (§9.3).
+        throw new WalkError("Io", { path: joined, cause: lcause });
+      }
+      if (ctx.matcher.match(prefixStr)) ctx.seedResults.push(joined);
       continue;
     }
 
@@ -197,13 +245,25 @@ function initFromPrefixes(ctx) {
   }
 }
 
+// An ignored directory prunes its subtree (§7.1 step 3), so a seed is
+// dead if `ignore` matches it or any `/`-bounded ancestor.
+function seedIgnored(ignore, prefixStr) {
+  for (let i = 0; i < prefixStr.length; i++) {
+    const c = prefixStr.charCodeAt(i);
+    if ((c === 0x2f || (WINDOWS && c === 0x5c)) && ignore.match(prefixStr.slice(0, i))) {
+      return true;
+    }
+  }
+  return ignore.match(prefixStr);
+}
+
 // Does any component of `cwd + "/" + prefixStr` (from cwd down) resolve
 // to a symlink? Used under `followSymlinks: false` to keep static-prefix
 // seeding observationally equivalent to a root walk, which drops
 // symlinks entirely (§10).
 function seedCrossesSymlink(cwd, prefixStr) {
   let cur = cwd;
-  for (const seg of prefixStr.split("/")) {
+  for (const seg of WINDOWS ? prefixStr.split(/[/\\]/) : prefixStr.split("/")) {
     if (seg === "") continue;
     cur = joinAbs(cur, seg);
     try {
@@ -285,15 +345,30 @@ function processDirents(ctx, dirents, frame, results, descend) {
   }
 }
 
+const WINDOWS = process.platform === "win32";
+
+// WALKER_SPEC §4.3: spell patterns the way walked paths are spelled —
+// strip leading `/`s, collapse `//`, drop `.` segments. `/` in a
+// pattern is always structural (`\/` is a parse error), so textual
+// splitting is safe. Returns "" when nothing remains (`.`, `./`).
+function normalizePattern(s) {
+  let i = 0;
+  while (i < s.length && s.charCodeAt(i) === 0x2f) i++;
+  if (i > 0) s = s.slice(i);
+  if (!s.includes("/")) return s === "." ? "" : s;
+  const trailingSlash = s.charCodeAt(s.length - 1) === 0x2f;
+  const segs = s.split("/").filter((seg) => seg !== "" && seg !== ".");
+  return segs.length === 0 ? "" : segs.join("/") + (trailingSlash ? "/" : "");
+}
+
 function compilePositive(patterns, opts) {
-  // Strip leading `/` so static prefixes always come out relative to cwd.
-  const stripped = patterns.map((p) => p.replace(/^\/+/, ""));
-  if (stripped.length === 0) return null;
+  // Patterns arrive already normalized (leading `/` stripped etc.).
+  if (patterns.length === 0) return null;
   try {
-    return compileMatcher(stripped, opts);
+    return compileMatcher(patterns, opts);
   } catch (e) {
     throw new WalkError("InvalidPattern", {
-      pattern: stripped.join(","),
+      pattern: patterns.join(","),
       reason: e instanceof GlobError ? e.message : String(e),
     });
   }

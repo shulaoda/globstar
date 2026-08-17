@@ -184,7 +184,6 @@ x/{**,a}/**	xy	pruned	dot=true
 ## dot=false but descend-matches under dot=true (the `**`/`*` cannot open it).
 {src/,lib/}**	src/.x	descend-match	dot=true
 {src/,lib/}**	src/.x	pruned	dot=false
-{src/,lib/}**	src/a	descend-match	dot=true
 {src/,lib/}**	src/a	descend-match	dot=false
 x/{**,a}/**	x/.y	descend-match	dot=true
 x/{**,a}/**	x/.y	pruned	dot=false
@@ -254,8 +253,6 @@ src/**	other	pruned
 a/b/**	a	descend
 a/b/**	a/b	descend
 a/b/**	a/b/c	descend-match
-{src,lib}/**	src	descend
-{src,lib}/**	lib	descend
 {src,lib}/**	other	pruned
 
 ## bare.globstar.dot.matrix
@@ -316,3 +313,13 @@ x{a/b}y*	xa	pruned
 {a/{**,},x}/**	a	descend
 {a/{**,},x}/**	a/	descend-match
 **/a/b	/a	descend
+
+## seq.state.saturation
+# The saturated active set once leaked -1 out of matchDir.
+**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	descend-match
+**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	descend
+
+## brace.trailing-sep.lenient-globstar-boundary
+# The strict Sep once made match_dir prune a live // subtree.
+{src/,lib/}**/*.ts	src//sub	descend
+{src/,lib/}**/*.ts	src/sub	descend

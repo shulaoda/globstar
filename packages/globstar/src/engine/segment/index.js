@@ -6,7 +6,10 @@ import { compileSeqs, opsHaveNonAscii } from "./compile.js";
 import { seqMatches, nfaRun, endsWithSepAware } from "./exec.js";
 
 export const MAX_FORKS = 64;
-export const MAX_SEQ_STATES = 32;
+// 31, not Rust's 64: the active set is an int32 bitset and nfaRun/nfaStep
+// signal a bail in-band with -1 — bit 31 must stay unallocated or a
+// saturated set (0xFFFFFFFF) would read as a bail.
+export const MAX_SEQ_STATES = 31;
 
 export const EL_LIT = 0;
 export const EL_WILD = 1;

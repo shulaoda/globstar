@@ -64,7 +64,14 @@ impl LiteralMatcher {
         while n < literal.len() && n < other.len() {
             let lb = literal[n];
             let ob = other[n];
-            if (lb == b'/' && std::path::is_separator(ob as char)) || self.eq_byte(lb, ob) {
+            // Separators only match the structural `/`; a literal `\`
+            // byte (Windows separator) never does (§2.2).
+            let ok = if lb == b'/' {
+                std::path::is_separator(ob as char)
+            } else {
+                !std::path::is_separator(ob as char) && self.eq_byte(lb, ob)
+            };
+            if ok {
                 n += 1;
             } else {
                 break;

@@ -9,7 +9,17 @@ const DEFAULTS = {
 };
 
 export function normalizeOptions(input) {
-  return input == null ? { ...DEFAULTS } : { ...DEFAULTS, ...input };
+  // Only an absent or `undefined` value means "default" — `null` and
+  // wrong types fall through to the walker's type checks.
+  const o = input ?? {};
+  const opt = (key) => (o[key] === undefined ? DEFAULTS[key] : o[key]);
+  return {
+    cwd: opt("cwd"),
+    dot: opt("dot"),
+    caseInsensitive: opt("caseInsensitive"),
+    followSymlinks: opt("followSymlinks"),
+    ignore: opt("ignore"),
+  };
 }
 
 // Project user-facing options into the bag the matcher consumes.

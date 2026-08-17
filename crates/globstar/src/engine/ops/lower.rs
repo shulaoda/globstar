@@ -107,11 +107,29 @@ fn trails_globstar(node: &Node) -> bool {
 }
 
 fn apply_leading_seps_at_start(ops: &mut Vec<Op>) {
+    apply_leading_seps(ops, false);
+}
+
+/// `tail_is_oss`: the enclosing program continues with an
+/// `OptSegmentsSlash` (union factoring lifts shared trailing `**/`
+/// behind the alternation), so an empty branch's fork starts with
+/// `**/` and needs the §8.5 `LeadingSeps`.
+fn apply_leading_seps(ops: &mut Vec<Op>, tail_is_oss: bool) {
+    let next_is_oss = match ops.get(1) {
+        Some(op) => matches!(op, Op::OptSegmentsSlash),
+        None => tail_is_oss,
+    };
     match ops.first_mut() {
         Some(Op::OptSegmentsSlash) => ops.insert(0, Op::LeadingSeps),
         Some(Op::Alternation(branches)) => {
             for branch in branches {
-                apply_leading_seps_at_start(branch);
+                if branch.is_empty() {
+                    if next_is_oss {
+                        branch.push(Op::LeadingSeps);
+                    }
+                } else {
+                    apply_leading_seps(branch, next_is_oss);
+                }
             }
         }
         _ => {}
@@ -172,6 +190,16 @@ fn distribute_seps(node: Node) -> Node {
     }
 }
 
+fn upgrade_trailing_seps(branches: &mut [Vec<Op>]) {
+    for branch in branches {
+        match branch.last_mut() {
+            Some(op) if matches!(op, Op::Sep) => *op = Op::SepRun,
+            Some(Op::Alternation(inner)) => upgrade_trailing_seps(inner),
+            _ => {}
+        }
+    }
+}
+
 fn fold_globstars_inplace(ops: &mut Vec<Op>) {
     let mut write = 0usize;
     let mut read = 0usize;
@@ -191,8 +219,15 @@ fn fold_globstars_inplace(ops: &mut Vec<Op>) {
     ops.truncate(write);
 
     for i in 0..ops.len().saturating_sub(1) {
-        if matches!(ops[i], Op::Sep) && matches!(ops[i + 1], Op::OptSegmentsSlash) {
-            ops[i] = Op::SepRun;
+        if !matches!(ops[i + 1], Op::OptSegmentsSlash) {
+            continue;
+        }
+        match &mut ops[i] {
+            op @ Op::Sep => *op = Op::SepRun,
+            // A branch-trailing `/` before `**/` is `**`-adjacent too:
+            // `{src/,lib/}**/x` ≡ `src/**/x` ∪ `lib/**/x` (§7.0 + §12.3).
+            Op::Alternation(branches) => upgrade_trailing_seps(branches),
+            _ => {}
         }
     }
 

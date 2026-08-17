@@ -8,21 +8,32 @@ import { factorBranches } from "./factor.js";
 import { GlobError } from "./error.js";
 import { DirMatch } from "./dir-match.js";
 
-const DEFAULT_OPTIONS = { dot: true, caseInsensitive: false };
-
 export function globstar(patterns, options) {
   return compileMatcher(patterns, options).match;
 }
 
 export function compileMatcher(patterns, options) {
-  const opts = options == null ? DEFAULT_OPTIONS : { ...DEFAULT_OPTIONS, ...options };
+  // Only an absent or `undefined` value means "default".
+  const o = options ?? {};
+  const opts = {
+    dot: o.dot === undefined ? true : o.dot,
+    caseInsensitive: o.caseInsensitive === undefined ? false : o.caseInsensitive,
+    // Internal test hook; own-property read defeats prototype pollution.
+    __engine: Object.hasOwn(o, "__engine") ? o.__engine : undefined,
+  };
   const list = Array.isArray(patterns) ? patterns : [patterns];
   if (list.length === 0) throw new GlobError("EmptyPatternSet");
 
   const positiveAsts = [];
   const negativeAsts = [];
   for (let i = 0; i < list.length; i++) {
-    const ast = parse(String(list[i]));
+    const pattern = list[i];
+    if (typeof pattern !== "string") {
+      throw new TypeError(
+        `pattern must be a string, got ${pattern === null ? "null" : typeof pattern}`,
+      );
+    }
+    const ast = parse(pattern);
     if (ast.isNegated) negativeAsts.push(ast);
     else positiveAsts.push(ast);
   }
@@ -48,10 +59,17 @@ function buildEngine(asts, opts) {
   return SegmentMatcher.build(program, dot) ?? PikeVm.build(program, dot);
 }
 
+function requireStringInput(input) {
+  if (typeof input !== "string") {
+    throw new TypeError(`path must be a string, got ${input === null ? "null" : typeof input}`);
+  }
+}
+
 function makeMatcher(positiveEngine, negativeEngines) {
   const hasNegatives = negativeEngines.length > 0;
 
   const match = (input) => {
+    requireStringInput(input);
     if (positiveEngine !== null && positiveEngine.isMatch(input)) return true;
     for (let i = 0; i < negativeEngines.length; i++) {
       if (!negativeEngines[i].isMatch(input)) return true;
@@ -60,6 +78,7 @@ function makeMatcher(positiveEngine, negativeEngines) {
   };
 
   const matchDir = (input) => {
+    requireStringInput(input);
     if (positiveEngine === null) return DirMatch.Descend;
     const dm = positiveEngine.matchDir(input);
     if (hasNegatives) return DirMatch.isMatch(dm) ? DirMatch.DescendAndMatch : DirMatch.Descend;

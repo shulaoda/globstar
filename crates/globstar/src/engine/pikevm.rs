@@ -221,7 +221,9 @@ fn bitmap_intersects(a: &[u64], b: &[u64]) -> bool {
 
 fn byte_step(t: &Trans, c: u8, sep: bool, dot_mask: bool) -> Option<StateId> {
     match t {
-        Trans::Byte { b, next: n } => (*b == c).then_some(*n),
+        // A literal byte never consumes a separator (§2.2; `Lit` never
+        // holds `/`, and a `\` from `\\` must not eat a Windows sep).
+        Trans::Byte { b, next: n } => (*b == c && !sep).then_some(*n),
         Trans::Class { class, next: n } => {
             (class.matches(c) && !(class.negated && dot_mask)).then_some(*n)
         }

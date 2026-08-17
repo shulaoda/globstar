@@ -123,3 +123,17 @@
 ["**{}","**{*}"]	a{b}	match
 ["**{}","**{*}"]	x	no-match
 ["{}**","{a}**"]	{}x	match
+
+## union.factored-suffix.leading-seps
+# Factoring a shared trailing **/ produces [Alternation([..,eps]), OSS]:
+# the eps branch fork starts with **/ and must keep the paragraph-8.5
+# LeadingSeps. Pinned 2026-08: the big row overflows MAX_FORKS and
+# routes to PikeVm, which needed the op (the segment engine derives the
+# leniency from boundary state and was already right — the small row).
+["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]	/	match
+["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]		match
+["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]	a/	match
+["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]	a	no-match
+["**/x","{a/,b/}**/x"]	//x	match
+["**/x","{a/,b/}**/x"]	/x	match
+["**/x","{a/,b/}**/x"]	x	match

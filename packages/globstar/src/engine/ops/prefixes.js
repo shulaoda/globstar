@@ -1,4 +1,5 @@
 import { OP_ALTERNATION, OP_LIT, OP_SEP, OP_SEP_RUN, OP_SLASH_ANYTHING } from "./ir.js";
+import { latin1 } from "../../utf8.js";
 
 export function computeStaticPrefixes(ops) {
   return dedupePrefixes(extractPrefixesPerBranch(ops));
@@ -41,7 +42,9 @@ function extractLeadingPrefix(ops) {
   }
   let length = fullyLiteral ? acc.length : lastBoundary;
   while (length > 0 && acc[length - 1] === 0x2f) length--;
-  return String.fromCharCode(...acc.slice(0, length));
+  acc.length = length;
+  // latin1 chunks fromCharCode; a spread would overflow on ~64k bytes.
+  return latin1(Uint8Array.from(acc));
 }
 
 function dedupePrefixes(prefixes) {

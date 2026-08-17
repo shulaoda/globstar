@@ -12,8 +12,9 @@
 //   node fuzz.mjs                         # 50k mixed cases, seed 1
 //   node fuzz.mjs --seed 99 --count 200000
 //   node fuzz.mjs --mode m                # only is_match (incl. negation)
-//   node fuzz.mjs --mode d                # only match_dir (4-valued)
+//   node fuzz.mjs --mode d                # only match_dir (4-valued, incl. negation)
 //   node fuzz.mjs --mode u                # only multi-pattern union
+//   node fuzz.mjs --mode s                # only static_prefixes
 //   node fuzz.mjs --seeds 1-20 --count 50000   # sweep seeds (nightly)
 //
 // Wire format and escaping mirror tools/difftest/src/main.rs exactly.
@@ -33,7 +34,7 @@ function argVal(name, def) {
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : def;
 }
 const COUNT = Number(argVal("--count", "50000"));
-const MODE = argVal("--mode", "all"); // all | m | d | u
+const MODE = argVal("--mode", "all"); // all | m | d | u | s
 const MAX_SAMPLES = Number(argVal("--max-samples", "30"));
 // `--seed N` for one run, or `--seeds A-B` to sweep a range.
 const SEEDS = (() => {
@@ -214,6 +215,10 @@ function jsResult(c) {
     if (c.cmd === "d") {
       return DIR_TOKEN[compileMatcher(c.pat, opts).matchDir(c.dir)];
     }
+    if (c.cmd === "s") {
+      const px = compileMatcher(c.patterns, opts).staticPrefixes().map(escapeBytes).sort();
+      return "px:" + px.join(",");
+    }
     // union
     return compileMatcher(c.patterns, opts).match(c.path) ? "match" : "no-match";
   } catch (e) {
@@ -225,6 +230,7 @@ function wireLine(c) {
   const f = `${c.dot ? 1 : 0}${c.ci ? 1 : 0}`;
   if (c.cmd === "m") return `m\t${f}\t${patternWire(c.pat)}\t${pathWire(c.path)}`;
   if (c.cmd === "d") return `d\t${f}\t${patternWire(c.pat)}\t${pathWire(c.dir)}`;
+  if (c.cmd === "s") return `s\t${f}\t${c.patterns.map(patternWire).join("\t")}`;
   // union: u <flags> <path> <pat...>
   return `u\t${f}\t${pathWire(c.path)}\t${c.patterns.map(patternWire).join("\t")}`;
 }
@@ -255,14 +261,21 @@ function makeGen(seed) {
   };
 
   return () => {
-    const cmd = MODE === "all" ? pick(["m", "m", "m", "d", "u"]) : MODE;
+    const cmd = MODE === "all" ? pick(["m", "m", "m", "d", "u", "s"]) : MODE;
     const dot = chance(0.5);
     const ci = chance(0.5);
     if (cmd === "m") return { cmd, dot, ci, pat: genPattern(10), path: genPath(8) };
-    if (cmd === "d") return { cmd, dot, ci, pat: stripBang(genPattern(10)), dir: genPath(8) };
-    // union: 2..10 positive patterns (Glob::union rejects negation; the JS
-    // union path factors positives). Large counts exercise crossing-fork and
-    // fallback budgets on both runtimes.
+    if (cmd === "d") return { cmd, dot, ci, pat: genPattern(10), dir: genPath(8) };
+    if (cmd === "s") {
+      // Single patterns keep negation; unions strip it (Rust rejects it).
+      const k = chance(0.5) ? 1 : randint(2, 5);
+      const patterns =
+        k === 1 ? [genPattern(10)] : Array.from({ length: k }, () => stripBang(genPattern(6)));
+      return { cmd, dot, ci, patterns };
+    }
+    // union: 2..10 patterns stripped of `!` — negated members are the one
+    // documented API divergence (Rust rejects NegatedInUnion, JS accepts;
+    // GLOB_SPEC §10), so raw equality can't compare them.
     const k = randint(2, 10);
     const patterns = [];
     for (let i = 0; i < k; i++) patterns.push(stripBang(genPattern(6)));
@@ -312,9 +325,7 @@ function runSeed(seed) {
 }
 
 // ── main ─────────────────────────────────────────────────────────────
-console.log(
-  `[fuzz] mode=${MODE} engine=globstar count=${COUNT} seeds=[${SEEDS[0]}..${SEEDS[SEEDS.length - 1]}]`,
-);
+console.log(`[fuzz] mode=${MODE} count=${COUNT} seeds=[${SEEDS[0]}..${SEEDS[SEEDS.length - 1]}]`);
 const t0 = Date.now();
 let totalDiff = 0;
 let totalN = 0;

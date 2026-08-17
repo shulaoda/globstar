@@ -1,6 +1,6 @@
 # GLOB_SPEC — Authoritative Syntax and Semantics
 
-> This document is the **source of truth** for the glob dialect implemented by the `globstar` Rust crate (`impl/crates/globstar`) and the `@globstar/core` JS package (`impl/packages/globstar`). Any discrepancy between code, tests, documentation, and this spec is resolved by changing the code. Changes to the spec itself follow the discussion + revision procedure recorded in `decisions/`. **Version:** v0.2.0 (draft) **Status:** active — not yet released, still mutable. **Baseline:** `picomatch` + `fast-glob` mainline behavior, with the rigor of `doublestar`. We do NOT aim for bit-exact compatibility with any single tool. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
+> This document is the **source of truth** for the glob dialect implemented by the `globstar` Rust crate (`crates/globstar`) and the `@globstar/core` JS package (`packages/globstar`). Any discrepancy between code, tests, documentation, and this spec is resolved by changing the code. Changes to the spec itself follow the discussion + revision procedure recorded in `decisions/`. **Version:** v0.2.0 (draft) **Status:** active — not yet released, still mutable. **Baseline:** `picomatch` + `fast-glob` mainline behavior, with the rigor of `doublestar`. We do NOT aim for bit-exact compatibility with any single tool. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
 
 ## Table of Contents
 
@@ -60,12 +60,12 @@ This spec does NOT target bit-exact behavioral parity with any single tool. The 
 
 ### 2.1 Character set
 
-Patterns are byte sequences. UTF-8 well-formedness is NOT required.
+Matching is defined over byte sequences; the API surfaces are typed per runtime:
 
-- Implementations MUST accept arbitrary `&[u8]` (Rust) / `Uint8Array` (JS) / byte-encodable string input.
-- Implementations MAY provide a `&str` / JS-string convenience entry that skips one UTF-8 round-trip on the hot path.
+- **Patterns** are Unicode strings (`&str` in Rust, JS strings), interpreted as their UTF-8 bytes. Arbitrary non-UTF-8 pattern bytes are NOT accepted — a deliberate narrowing from earlier drafts (no real pattern needs them, and `&str` keeps the API misuse-proof).
+- **Paths** are arbitrary bytes in Rust (`is_match(&[u8])` — non-UTF-8 filenames match byte-for-byte) and strings in JS (encoded to UTF-8 bytes internally; JS runtimes cannot observe raw non-UTF-8 filenames through `fs` strings anyway). Non-string JS inputs throw a `TypeError`.
 - Bytes within the ASCII range MAY carry meta-character meaning. Bytes outside the ASCII range are ALWAYS treated as literal bytes.
-- Unicode codepoint boundaries do NOT influence matching — comparisons are byte-for-byte.
+- Unicode codepoint boundaries do NOT influence matching — comparisons are byte-for-byte (a lone surrogate in a JS string encodes as U+FFFD, deterministically).
 
 ### 2.2 Path separator in patterns
 
@@ -92,7 +92,7 @@ Cross-platform consequences are detailed in §12.3.
 
 The byte `\` is ALWAYS the escape character inside a pattern. The byte that follows it is interpreted as:
 
-- meta-character (`* ? [ ] { } ! ( ) \ |`) → produces that literal byte;
+- meta-character (`* ? [ ] { } ! ( ) \ |`) → produces that literal byte. Note `\\` yields a literal `\` byte, which — like a class member (§6.2) — never matches a path separator: on Windows, where `\` ∈ `Seps`, an escaped backslash is a **platform-dependent silent miss**;
 - any other byte → produces that literal byte (lenient policy: `\a` ≡ `a`);
 - `/` → **parse error** (`EscapedSeparator`): a `/` can never appear inside a file name on any platform, so an escaped separator has no possible match;
 - end of pattern → **parse error** (`TrailingBackslash`).
@@ -315,6 +315,13 @@ Two exceptions, without which the equation would over-apply:
    branch contributes the empty string to the union; the `Empty`
    error (§10) applies only to the user-supplied pattern itself.
 
+The equation operates on **token sequences, not raw bytes**: a branch
+is spliced into the surrounding pattern as a unit, and tokens never
+fuse across the splice point. `*{,a}*` is `L(* ⧺ ε ⧺ *) ∪ L(* ⧺ a ⧺ *)`
+— the two `*` tokens in the empty-branch expansion stay two stars
+(which collapse to one, §10 lenient table) and do NOT merge into a
+`**` the author never wrote.
+
 Implementation note: the equation defines the **semantics**; §7.2's
 no-pre-expansion rule still governs the implementation, which must
 merely be equivalent. One corner is resolved textually rather than by
@@ -454,7 +461,7 @@ Walkers query `match_dir(d, P)` against directory paths that filesystems typical
 
 ```
 match_dir("a",   "a/**") → Descend            // descendants like "a/x" may match; "a" itself does not
-match_dir("a/",  "a/**") → Match              // "a/" matches itself; nothing deeper to consider
+match_dir("a/",  "a/**") → DescendAndMatch    // "a/" matches, and "a//x" ∈ L too (lenient ** boundary)
 match_dir("a/b", "a/**") → DescendAndMatch    // matches now; "a/b/x" would also match
 ```
 
@@ -593,7 +600,7 @@ The leading `!` is a **whole-pattern** operation that flips the body's match res
 
 ### 9.4 Literal leading `!`
 
-To match a filename whose first byte is `!`, escape it: `\!foo` matches the literal `!foo`. (Or use a class: `[!]foo` ≡ `[\!]foo` matches the literal `!foo` as well.)
+To match a filename whose first byte is `!`, escape it: `\!foo` matches the literal `!foo`. (Or use a class: `[\!]foo` matches the literal `!foo` as well. Note `[!]foo` does NOT work — per the §6.5 first-`]` rule the `]` becomes a literal member and the class is unterminated.)
 
 ### 9.5 Counting the leading `!`
 
@@ -635,7 +642,7 @@ The parser MUST return an error for the following inputs:
 
 > Note: stray `]`, `}`, `)`, `(` are NOT errors — see §9.1, they degrade to literal bytes under the context-meta rule. `(` and `)` have no opener role in this dialect, so there is no "unclosed paren" concept.
 
-> Implementation note: the JS runtime additionally rejects patterns whose NFA exceeds 65536 states (`TooManyStates`) — its packed state representation caps ids at 16 bits. Only near-64-KiB patterns can reach this. The Rust runtime has no such cap.
+> Implementation note: the JS runtime additionally rejects patterns whose NFA exceeds 65536 states (`TooManyStates`) — its packed state representation caps ids at 16 bits. Reachable from ~32 KiB of pattern (under `dot=false` a `*` compiles to 3 states, ≈2 states per byte, so `"*a"` repeated 16384 times crosses the cap). The Rust runtime has no such cap (it trades that for an unbounded Θ(states²) closure table — ~1.2 GB at 98k states).
 
 The parser SHOULD be lenient (produce a sensible default rather than an error) for these:
 
@@ -868,13 +875,22 @@ Then
 
 ```
 match_dir(P, d) :=
-  let s = if d ends with '/' then d else d ++ "/"   // canonicalize
-  match (s ∈ L(P), s ∈ L_prefix(P)):
+  match (d ∈ L(P), d ++ "/" ∈ L_prefix(P)):
     (true,  true)  → DescendAndMatch
     (true,  false) → Match
     (false, true)  → Descend
     (false, false) → Pruned
 ```
+
+The exact-match side tests the **raw** `d` (so `match_dir("src", "src")`
+is `Match`, per the §13.3 table); the descend side asks whether some
+member of `L(P)` extends `d ++ "/"`. `d` is NOT canonicalized: a caller
+passing a trailing-slash dir asks about that exact byte string
+(`match_dir("a/", "a/**")` → `DescendAndMatch` because `a/` ∈ L and
+`a//x` ∈ L; `match_dir("a/", "a/b")` → `Pruned` because nothing in
+`{"a/b"}` starts with `a//`). Walkers obtain directory paths from
+`readdir` without trailing separators, so the canonical query form is
+slashless.
 
 ### 13.3 Examples
 
@@ -897,7 +913,7 @@ match_dir(P, d) :=
 
 Whole-pattern negation `!P` would naively yield `match_dir(!P, d) = invert(match_dir(P, d))`. In practice this gives almost no pruning information: a negated pattern normally means "all paths NOT matching X", and a consumer (typically a filesystem walker) must enumerate the whole tree to find them.
 
-**Specified behavior:** `match_dir(!P, d)` SHOULD conservatively return `Descend`, except when the entire subtree is provably matching (a rare corner case). The matcher's multi-pattern factory (§14.1) implements exactly this — see the `matchDir` body in `matcher/glob.js` for the JS reference.
+**Specified behavior:** `match_dir(!P, d)` SHOULD conservatively return `Descend`, except when the entire subtree is provably matching (a rare corner case). The matcher's multi-pattern factory (§14.1) implements exactly this — see the `matchDir` body in `packages/globstar/src/glob.js` for the JS reference.
 
 ### 13.5 Implementation hints
 
@@ -914,11 +930,14 @@ Whole-pattern negation `!P` would naively yield `match_dir(!P, d) = invert(match
 
 ### 14.1 Definition
 
-A multi-pattern matcher combines N globs with boolean OR. In Rust this is `GlobSet`; in JS it is `globstar(patterns: string[])`.
+A multi-pattern matcher combines N globs with boolean OR. In Rust this is `Glob::union` / `Glob::union_with` (the union compiles into ONE `Glob` — there is no separate set type); in JS it is `globstar(patterns)` / `compileMatcher(patterns)`.
 
 ```rust
-// Rust
-pub struct GlobSet { globs: Vec<Glob> }
+// Rust — one factored Glob, not a set type
+impl Glob {
+    pub fn union<I, S>(patterns: I) -> Result<Glob, GlobError>;
+    pub fn union_with<I, S>(patterns: I, opts: CompileOptions) -> Result<Glob, GlobError>;
+}
 ```
 
 ```ts
@@ -929,7 +948,7 @@ function globstar(
 ): (input) => boolean;
 ```
 
-For a path, `globset.matches(path)` returns the set of glob indices that match. A non-empty set means "at least one glob matched".
+The union answers the boolean questions only (`is_match`, `match_dir`, `static_prefixes`); per-member match indices are not part of the API. Rust's `union` rejects `!`-negated members (`NegatedInUnion`, §10); JS accepts them (each contributes its complement language to the OR).
 
 ### 14.2 Relationship to a single glob
 
@@ -953,7 +972,7 @@ Headline: **if any glob says `Descend`, the combined result MUST be `Descend`**.
 
 ### 14.4 Literal acceleration
 
-Implementations MAY build a literal-prefix accelerator (e.g. an Aho-Corasick automaton over per-glob suffix or substring facts). The accelerator filters candidate glob ids before running the precise matcher on each candidate. See `theory/06-aho-corasick.md` and `theory/07-literal-acceleration.md` (Rust crate) for the construction.
+Implementations MAY build a literal-prefix accelerator (e.g. an Aho-Corasick automaton over per-glob suffix or substring facts). The accelerator filters candidate glob ids before running the precise matcher on each candidate. See `theory/05-literal-prefilter.md` and `theory/06-walker-and-pruning.md` for the prefilter facts this dialect actually builds on (a per-glob-id accelerator remains a MAY, unimplemented).
 
 ---
 

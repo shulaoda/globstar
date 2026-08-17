@@ -43,12 +43,14 @@ fix:
 # Rust tests (single-pattern + multi-pattern + err corpus + walker
 # integration + bounded-exhaustive matchDir properties) + JS goldens: the
 # compiler-stages TSV fixture, the segment↔pikevm string-mode differential
-# (fixed-seed, deterministic), and the JS matchDir exhaustive twin.
+# (fixed-seed, deterministic), the JS matchDir exhaustive twin, and the
+# JS walker integration suite (temp-tree fixtures, twin of walk.rs).
 test:
     cargo test --workspace
     node packages/globstar/tests/compiler-stages.mjs
     node packages/globstar/tests/string-mode.mjs
     node packages/globstar/tests/dir-exhaustive.mjs
+    node packages/globstar-walk/tests/walk.mjs
 
 # Wipe build artifacts (Rust target + JS workspace node_modules + bench output).
 clean:
