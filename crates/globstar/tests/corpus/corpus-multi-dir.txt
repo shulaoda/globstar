@@ -1,7 +1,8 @@
 # ============================================================================
 # corpus-multi-dir.txt — multi-pattern (OR union) match_dir golden corpus
 # Format: PATTERNS_JSON<TAB>DIR_PATH<TAB>EXPECTED[<TAB>FLAGS]
-# EXPECTED: pruned | descend | match | descend-match (see corpus-dir.txt)
+# EXPECTED: pruned | descend | match | descend-match | descend-all |
+#           descend-all-match (see corpus-dir.txt)
 # FLAGS defaults: dot=false (walker convention), case_insensitive=false
 #
 # Positive-only, like corpus-multi.txt: Rust's `Glob::union` rejects
@@ -64,3 +65,25 @@
 ["a/**","b/**","c/**"]	b	descend
 ["a/**","b/**","c/**"]	d	pruned
 ["a/**","b/**","c/**"]	c/x	descend-match
+
+## union.all-below.one.member.covers
+["**/node_modules/**","/p/*.log"]	/p/node_modules	descend-all	dot=true
+["**/node_modules/**","/p/*.log"]	/p/node_modules/pkg	descend-all-match	dot=true
+["**/node_modules/**","/p/*.log"]	/p/src	descend	dot=true
+["**/node_modules/**","/p/*.log"]	/p/foo.log	descend-match	dot=true
+["**/node_modules/**","/p/*.log"]	/p/node_modules	descend
+["a/**","b/**","c/**"]	b	descend-all	dot=true
+["a/**","b/**","c/**"]	c/x	descend-all-match	dot=true
+
+## union.all-below.members.cover.together
+# `*` takes the children, `*/**` everything deeper.
+["/p/dist/*","/p/dist/*/**"]	/p/dist	descend-all	dot=true
+["/p/dist/*","/p/dist/*/**"]	/p/dist/a	descend-all-match	dot=true
+# One byte, or two and more.
+["/p/dist/**/?","/p/dist/**/??*"]	/p/dist	descend-all	dot=true
+# Children only: /p/dist/a/b escapes.
+["/p/dist/*","/p/dist/*.js"]	/p/dist	descend	dot=true
+
+## union.all-below.empty.dir.is.cwd
+["src/**","**"]		descend-all-match	dot=true
+["src/**","tests/**"]		descend	dot=true

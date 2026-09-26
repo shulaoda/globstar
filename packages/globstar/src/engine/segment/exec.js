@@ -9,6 +9,7 @@ import {
   NO,
   YES,
   BAIL,
+  MAX_SEQ_STATES,
 } from "./index.js";
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
 
@@ -188,6 +189,63 @@ function nfaStep(seq, active, str, s0, e0, dot, ci, bail) {
     }
   }
   return next;
+}
+
+// `nfaStep` over a non-empty segment that only wildcards consume: every
+// literal and class rejects it (`dot=true` only).
+function nfaStepWild(seq, active) {
+  let next = 0;
+  const elems = seq.elems;
+  const eps = seq.eps;
+  let bits = active & ~(1 << (seq.numStates - 1));
+  while (bits !== 0) {
+    const s = ctz32(bits);
+    bits &= bits - 1;
+    const i = seq.elemOf[s];
+    const e = elems[i];
+    switch (e.kind) {
+      case EL_WILD: {
+        if (e.wild.anySeg) next |= eps[s + 1];
+        break;
+      }
+      case EL_G0: {
+        next |= eps[s];
+        break;
+      }
+      case EL_G0_STRICT:
+      case EL_G1: {
+        next |= eps[seq.stateOf[i] + 1];
+        break;
+      }
+    }
+  }
+  return next;
+}
+
+// Does every path below the directory match? `active` holds each
+// sequence's state set after the directory's segments.
+//
+// Feeds wildcard-only segments until the state sets settle, and requires
+// an accept after each one. A real segment fires every transition a
+// wildcard-only one does, so `true` holds for all real paths; `false` may
+// only mean "not provable".
+export function coversBelow(seqs, active) {
+  // Tokens only move right or sit on a globstar, so the sets settle
+  // within MAX_SEQ_STATES steps.
+  for (let step = 0; step <= MAX_SEQ_STATES; step++) {
+    let accept = false;
+    let settled = true;
+    for (let i = 0; i < seqs.length; i++) {
+      const seq = seqs[i];
+      const next = nfaStepWild(seq, active[i]);
+      if ((next & (1 << (seq.numStates - 1))) !== 0) accept = true;
+      if (next !== active[i]) settled = false;
+      active[i] = next;
+    }
+    if (!accept) return false;
+    if (settled) return true;
+  }
+  return false;
 }
 
 function elemConsumes(e, str, s, t, ci, bail) {

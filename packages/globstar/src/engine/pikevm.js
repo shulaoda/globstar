@@ -58,6 +58,9 @@ function reachFromClosures(closures, infoOff, acceptOff, nWords) {
   return reach;
 }
 
+// Cap on the segment-start state sets `_coversBelow` explores.
+const MAX_COVER_SETS = 16;
+
 function staticClosuresN(tags, nexts, splitsB, n, nWords, out) {
   const seen = new Uint8Array(n);
   const stack = [];
@@ -96,6 +99,13 @@ function staticClosuresN(tags, nexts, splitsB, n, nWords, out) {
       }
     }
   }
+}
+
+function sameBits(a, b) {
+  for (let w = 0; w < a.length; w++) {
+    if (a[w] !== b[w]) return false;
+  }
+  return true;
 }
 
 export class PikeVm {
@@ -189,6 +199,7 @@ export class PikeVm {
 
     this._scratch = new Uint32Array(nWords * 2);
     this._reachToAccept = null;
+    this.dot = nfa.dot;
   }
 
   static build(program, dot) {
@@ -220,10 +231,92 @@ export class PikeVm {
 
   matchDir(input) {
     const dirPath = toBytes(input);
-    if (dirPath.length === 0) return DirMatch.fromExactPrefix(this.isMatch(""), true);
-    this._run(dirPath);
-    const exact = this._isAccept(this._scratch);
-    return DirMatch.fromExactPrefix(exact, this._hasPrefixDescent());
+    const nWords = this.nWords;
+    const scratch = this._scratch;
+    // Either way the second slot ends up as the state set a child
+    // segment of the directory starts from.
+    let exact;
+    let prefix;
+    if (dirPath.length === 0) {
+      // The empty dir is the walk root: nothing consumed yet.
+      exact = this.isMatch("");
+      prefix = true;
+      for (let w = 0; w < nWords; w++) scratch[nWords + w] = this.closures[this.initOff + w];
+    } else {
+      this._run(dirPath);
+      exact = this._isAccept(scratch);
+      prefix = this._hasPrefixDescent();
+    }
+    // `dot=false` never covers a subtree: no wildcard matches the
+    // dot-led names below. Most directories fail the first step, so take
+    // it here before `_coversBelow` allocates.
+    let all = false;
+    if (prefix && this.dot) {
+      this._stepWild(scratch, nWords, scratch, false);
+      all = this._isAccept(scratch) && this._coversBelow(scratch.slice(nWords));
+    }
+    return DirMatch.fromExactPrefixAll(exact, prefix, all);
+  }
+
+  // One step over a byte only wildcards consume: a separator when `sep`,
+  // else a byte every literal and class rejects (`dot=true` only, so
+  // there are no guards to expand). Reads `from` at `fromOff`.
+  _stepWild(from, fromOff, to, sep) {
+    const closures = this.closures;
+    const infoOff = this.infoOff;
+    const nWords = this.nWords;
+    for (let w = 0; w < nWords; w++) to[w] = 0;
+    for (let w = 0; w < nWords; w++) {
+      let word = from[fromOff + w];
+      while (word !== 0) {
+        const off = ctz32(word);
+        const s = (w << 5) + off;
+        word &= word - 1;
+        const word2 = closures[infoOff + s];
+        const tag = word2 & 0xf;
+        if (tag === T_ANY_BYTE || tag === (sep ? T_SEP : T_ANY_NON_SEP)) {
+          const base = (word2 >>> 16) * nWords;
+          for (let j = 0; j < nWords; j++) to[j] |= closures[base + j];
+        }
+      }
+    }
+  }
+
+  // Does every path below the directory match? `start` is the state set
+  // a child segment of the directory starts from.
+  //
+  // Walks every state set a wildcard-only path can reach: from each
+  // segment-start set, byte by byte until the set settles, requiring an
+  // accept after every byte and queueing the set behind every separator.
+  // A real byte fires every transition a wildcard-only one does, so
+  // `true` holds for all real paths; `false` may only mean "not provable".
+  _coversBelow(start) {
+    const nWords = this.nWords;
+    const numStates = this.closures.length - this.infoOff;
+    // Segment-start sets: the queue and the visited list in one.
+    const starts = [start];
+    let cur = new Uint32Array(nWords);
+    let next = new Uint32Array(nWords);
+    for (let i = 0; i < starts.length; i++) {
+      if (i === MAX_COVER_SETS) return false;
+      this._stepWild(starts[i], 0, cur, false);
+      let settled = false;
+      // Every in-segment loop is a one-byte self-loop, so the set
+      // settles within `numStates` steps.
+      for (let step = 0; step <= numStates; step++) {
+        if (!this._isAccept(cur)) return false;
+        this._stepWild(cur, 0, next, true);
+        if (!starts.some((seen) => sameBits(seen, next))) starts.push(Uint32Array.from(next));
+        this._stepWild(cur, 0, next, false);
+        settled = sameBits(next, cur);
+        if (settled) break;
+        const t = cur;
+        cur = next;
+        next = t;
+      }
+      if (!settled) return false;
+    }
+    return true;
   }
 
   _hasPrefixDescent() {

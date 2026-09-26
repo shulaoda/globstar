@@ -234,6 +234,8 @@ fn compile_wild(ops: &[Op], dot: bool, ci: bool) -> Option<Wild> {
     }
     let has_wilds = has_star || anychars > 0;
     let dot_protect = !dot && prefix.is_empty() && has_wilds;
+    // `*` or `?*` with nothing literal around it, up to the suffix.
+    let any_head = prefix.is_empty() && has_star && anychars <= 1;
 
     if idx == ops.len() {
         return Some(Wild {
@@ -244,9 +246,11 @@ fn compile_wild(ops: &[Op], dot: bool, ci: bool) -> Option<Wild> {
             min_len: prefix.len() as u32 + anychars,
             variable: has_star,
             dot_protect,
+            any_seg: any_head,
         });
     }
     if let Some(suffixes) = suffix_product(&ops[idx..]) {
+        let any_seg = any_head && suffixes.iter().any(|s| s.is_empty());
         if suffixes.len() == 1 {
             let suffix = suffixes.into_iter().next().unwrap();
             return Some(Wild {
@@ -257,6 +261,7 @@ fn compile_wild(ops: &[Op], dot: bool, ci: bool) -> Option<Wild> {
                 },
                 variable: has_star,
                 dot_protect,
+                any_seg,
             });
         }
         return Some(Wild {
@@ -271,15 +276,18 @@ fn compile_wild(ops: &[Op], dot: bool, ci: bool) -> Option<Wild> {
             min_len: prefix.len() as u32 + anychars,
             variable: has_star,
             dot_protect,
+            any_seg,
         });
     }
     let nfa = SegNfa::compile(ops, dot, ci)?;
     let dot_protect = !dot && nfa.wild_led;
+    let any_seg = nfa.any_seg;
     Some(Wild {
         kind: WildKind::Generic(nfa),
         min_len: 0,
         variable: true,
         dot_protect,
+        any_seg,
     })
 }
 

@@ -3,7 +3,7 @@ import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSeqs, opsHaveNonAscii } from "./compile.js";
-import { seqMatches, nfaRun, endsWithSepAware } from "./exec.js";
+import { seqMatches, nfaRun, coversBelow, endsWithSepAware } from "./exec.js";
 
 export const MAX_FORKS = 64;
 // 31, not Rust's 64: the active set is an int32 bitset and nfaRun/nfaStep
@@ -24,6 +24,11 @@ export const WK_GENERIC = 2;
 export const NO = 0;
 export const YES = 1;
 export const BAIL = 2;
+
+// Per-sequence state sets for `matchDir`, shared by every matcher: the
+// call is synchronous, and a per-matcher array would cost each one a
+// typed-array header.
+const ACTIVE = new Int32Array(MAX_FORKS);
 
 export class SegmentMatcher {
   constructor(seqs, program, byteOnly, dot) {
@@ -57,7 +62,13 @@ export class SegmentMatcher {
   }
 
   matchDir(input) {
-    if (input.length === 0) return DirMatch.fromExactPrefix(this.isMatch(input), true);
+    if (input.length === 0) {
+      // The empty dir is the walk root: nothing consumed yet.
+      const seqs = this.seqs;
+      for (let i = 0; i < seqs.length; i++) ACTIVE[i] = seqs[i].eps[0];
+      const all = this.dot && coversBelow(seqs, ACTIVE);
+      return DirMatch.fromExactPrefixAll(this.isMatch(input), true, all);
+    }
     if (!this.byteOnly) {
       const r = this._matchDir(input, true);
       if (r !== -1) return r;
@@ -101,12 +112,17 @@ export class SegmentMatcher {
     let prefix = false;
     const seqs = this.seqs;
     for (let i = 0; i < seqs.length; i++) {
-      const active = nfaRun(seqs[i], str, this.dot, this.ci, bail);
-      if (active === -1) return -1;
-      if ((active & (1 << (seqs[i].numStates - 1))) !== 0) exact = true;
-      if ((active & seqs[i].reach1) !== 0) prefix = true;
-      if (exact && prefix) break;
+      const a = nfaRun(seqs[i], str, this.dot, this.ci, bail);
+      if (a === -1) return -1;
+      ACTIVE[i] = a;
+      if ((a & (1 << (seqs[i].numStates - 1))) !== 0) exact = true;
+      if ((a & seqs[i].reach1) !== 0) prefix = true;
+      // Only the all-below bit needs every sequence's state set.
+      if (exact && prefix && !this.dot) break;
     }
-    return DirMatch.fromExactPrefix(exact, prefix);
+    // `dot=false` never covers a subtree: no wildcard matches the
+    // dot-led names below.
+    const all = this.dot && prefix && coversBelow(seqs, ACTIVE);
+    return DirMatch.fromExactPrefixAll(exact, prefix, all);
   }
 }

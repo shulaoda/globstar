@@ -5,6 +5,8 @@ use crate::engine::thompson::{StateId, Thompson, Trans};
 
 const RUN_SLOTS: usize = 2;
 const STACK_WORDS: usize = 4;
+/// Cap on the segment-start state sets `covers_below` explores.
+const MAX_COVER_SETS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct PikeVm {
@@ -115,37 +117,126 @@ impl PikeVm {
     }
 
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        if dir_path.is_empty() {
-            return DirMatch::from_exact_prefix(self.is_match(&[]), true);
-        }
         with_scratch(self.n_words, |buf| {
             let nw = self.n_words;
-            buf[..nw].copy_from_slice(&self.static_closures[self.init_off..self.init_off + nw]);
-            self.run(dir_path, buf, nw);
+            let init = &self.static_closures[self.init_off..self.init_off + nw];
+            // Either way the second slot ends up as the state set a
+            // child segment of the directory starts from.
+            let (exact, prefix) = if dir_path.is_empty() {
+                // The empty dir is the walk root: nothing consumed yet.
+                buf[nw..].copy_from_slice(init);
+                (self.is_match(&[]), true)
+            } else {
+                buf[..nw].copy_from_slice(init);
+                self.run(dir_path, buf, nw);
 
-            let (active, after_sep) = buf.split_at_mut(nw);
-            let exact = bitmap_intersects(active, &self.accept_bits);
+                let (active, after_sep) = buf.split_at_mut(nw);
+                let exact = bitmap_intersects(active, &self.accept_bits);
 
-            self.expand_guards(active);
+                self.expand_guards(active);
 
-            after_sep.fill(0);
-            let states = &self.states;
-            let closures = &self.static_closures;
-            for (w_idx, &active_word) in active.iter().enumerate() {
-                let mut word = active_word;
-                while word != 0 {
-                    let s = w_idx * 64 + word.trailing_zeros() as usize;
-                    word &= word - 1;
-                    if let Some(n) = byte_step(&states[s], b'/', true, false) {
-                        let base = (n as usize) * nw;
-                        for j in 0..nw {
-                            after_sep[j] |= closures[base + j];
+                after_sep.fill(0);
+                let states = &self.states;
+                let closures = &self.static_closures;
+                for (w_idx, &active_word) in active.iter().enumerate() {
+                    let mut word = active_word;
+                    while word != 0 {
+                        let s = w_idx * 64 + word.trailing_zeros() as usize;
+                        word &= word - 1;
+                        if let Some(n) = byte_step(&states[s], b'/', true, false) {
+                            let base = (n as usize) * nw;
+                            for j in 0..nw {
+                                after_sep[j] |= closures[base + j];
+                            }
                         }
                     }
                 }
-            }
-            DirMatch::from_exact_prefix(exact, bitmap_intersects(after_sep, &self.descend_bits))
+                (exact, bitmap_intersects(after_sep, &self.descend_bits))
+            };
+
+            let (scratch, after_sep) = buf.split_at_mut(nw);
+            // `dot=false` never covers a subtree: no wildcard matches
+            // the dot-led names below. Most directories fail the first
+            // step, so take it here before `covers_below` allocates.
+            let all = prefix && !self.dot_protect && {
+                self.step_wild(after_sep, scratch, false);
+                bitmap_intersects(scratch, &self.accept_bits) && self.covers_below(after_sep)
+            };
+            DirMatch::from_exact_prefix_all(exact, prefix, all)
         })
+    }
+
+    /// One step over a byte only wildcards consume: a separator when
+    /// `sep`, else a byte every literal and class rejects (`dot=true`
+    /// only, so there are no guards to expand).
+    fn step_wild(&self, from: &[u64], to: &mut [u64], sep: bool) {
+        let nw = self.n_words;
+        to.fill(0);
+        for (w_idx, &from_word) in from.iter().enumerate() {
+            let mut word = from_word;
+            while word != 0 {
+                let s = w_idx * 64 + word.trailing_zeros() as usize;
+                word &= word - 1;
+                let next = match &self.states[s] {
+                    Trans::AnyByte { next } => *next,
+                    Trans::AnyNonSep { next } if !sep => *next,
+                    Trans::Sep { next } if sep => *next,
+                    _ => continue,
+                };
+                let base = (next as usize) * nw;
+                for (t, c) in to.iter_mut().zip(&self.static_closures[base..base + nw]) {
+                    *t |= c;
+                }
+            }
+        }
+    }
+
+    /// Does every path below the directory match? `start` is the state
+    /// set a child segment of the directory starts from.
+    ///
+    /// Walks every state set a wildcard-only path can reach: from each
+    /// segment-start set, byte by byte until the set settles, requiring
+    /// an accept after every byte and queueing the set behind every
+    /// separator. A real byte fires every transition a wildcard-only
+    /// one does, so `true` holds for all real paths; `false` may only
+    /// mean "not provable".
+    fn covers_below(&self, start: &[u64]) -> bool {
+        let nw = self.n_words;
+        // Segment-start sets, `nw` words each: the queue and the
+        // visited list in one.
+        let mut starts = start.to_vec();
+        let mut cur = vec![0u64; nw];
+        let mut next = vec![0u64; nw];
+        let mut i = 0;
+        while i < starts.len() {
+            if i == MAX_COVER_SETS * nw {
+                return false;
+            }
+            self.step_wild(&starts[i..i + nw], &mut cur, false);
+            let mut settled = false;
+            // Every in-segment loop is a one-byte self-loop, so the set
+            // settles within `states.len()` steps.
+            for _ in 0..=self.states.len() {
+                if !bitmap_intersects(&cur, &self.accept_bits) {
+                    return false;
+                }
+                self.step_wild(&cur, &mut next, true);
+                if !starts.chunks_exact(nw).any(|seen| seen == &next[..]) {
+                    starts.extend_from_slice(&next);
+                }
+                self.step_wild(&cur, &mut next, false);
+                settled = next == cur;
+                if settled {
+                    break;
+                }
+                std::mem::swap(&mut cur, &mut next);
+            }
+            if !settled {
+                return false;
+            }
+            i += nw;
+        }
+        true
     }
 
     fn run(&self, path: &[u8], buf: &mut [u64], nw: usize) {

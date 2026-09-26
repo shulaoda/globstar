@@ -9,7 +9,11 @@
 //   2. any matching universe path strictly below the dir forces descent
 //      (a pruning walker must never lose a match);
 //   3. Pruned implies no universe descendant matches;
-//   4. the two engines agree on every match and every matchDir.
+//   4. the two engines agree on every match and every matchDir;
+//   5. the all-below flag is set exactly when every path up to three
+//      levels below the dir matches — a directory is skipped whole only
+//      when nothing below it escapes. Three levels is past the deepest
+//      pattern, so a path that deep matches only through a `**`.
 //
 // Deterministic: no randomness — the whole bounded space is covered.
 //
@@ -57,6 +61,12 @@ function enumerate(segs, depth) {
 const patterns = [...enumerate(SEGMENTS, 1), ...enumerate(SEGMENTS, 2), ...enumerate(CORE, 3)];
 const universe = [...enumerate(PSEG, 1), ...enumerate(PSEG, 2), ...enumerate(PSEG, 3)];
 
+// Every relative path of 1..=3 PSEG segments, shallowest first.
+const suffixes = [...enumerate(PSEG, 1), ...enumerate(PSEG, 2), ...enumerate(PSEG, 3)];
+
+// Does every `dir + "/" + suffix` match?
+const allBelow = (matcher, dir) => suffixes.every((s) => matcher.match(`${dir}/${s}`));
+
 const isBelow = (child, dir) =>
   child.length > dir.length && child[dir.length] === "/" && child.startsWith(dir);
 
@@ -93,6 +103,12 @@ function check(pats, paths, dot, ci) {
       if (dm === DirMatch.Pruned) {
         assert.ok(!anyBelow, `pruned but a descendant matches: ${ctx}`);
       }
+
+      assert.equal(
+        DirMatch.matchesAllBelow(dm),
+        allBelow(def, dir),
+        `all-below flag != every descendant matches: ${ctx} dm=${dm}`,
+      );
       cases++;
     }
   }
@@ -134,6 +150,12 @@ function checkUnion(sets, paths, dot, ci) {
       if (dm === DirMatch.Pruned) {
         assert.ok(!anyBelow, `union pruned but a descendant matches: ${ctx}`);
       }
+
+      assert.equal(
+        DirMatch.matchesAllBelow(dm),
+        allBelow(def, dir),
+        `union all-below flag != every descendant matches: ${ctx} dm=${dm}`,
+      );
       cases++;
     }
   }
@@ -159,5 +181,20 @@ const ciPatterns = [...enumerate(CI_SEGMENTS, 1), ...enumerate(CI_SEGMENTS, 2)];
 const ciUniverse = [...enumerate(CI_PSEG, 1), ...enumerate(CI_PSEG, 2)];
 total += check(ciPatterns, ciUniverse, true, false);
 total += check(ciPatterns, ciUniverse, true, true);
+
+// Property 4 holds on the enumerated space, not everywhere. The all-below
+// flag is a guarantee from either engine, but the Pike VM proves more: it
+// counts the bytes of a name, so branches that split the names by length
+// cover together, while the segment engine needs one element that takes
+// every name. Pinned so that a change on either side is noticed.
+{
+  const set = ["?/**/?", "**/??*"];
+  const dir = "c/x.js";
+  const def = compileMatcher(set);
+  const pike = compileMatcher(set, { __engine: "pikevm" });
+  assert.ok(allBelow(def, dir));
+  assert.equal(def.matchDir(dir), DirMatch.DescendAndMatch);
+  assert.equal(pike.matchDir(dir), DirMatch.DescendAllAndMatch);
+}
 
 console.log(`✓ matchDir properties hold on ${total} exhaustive pattern×dir cases`);

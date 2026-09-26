@@ -36,7 +36,8 @@ PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
 - **PATH** (column 2): the path being matched.
 - **EXPECTED** (column 3): expected result.
   - `corpus.txt` / `corpus-*.txt`: `match` | `no-match`
-  - `corpus-dir.txt`: `pruned` | `descend` | `match` | `descend-match`
+  - `corpus-dir.txt`: `pruned` | `descend` | `match` | `descend-match` |
+    `descend-all` | `descend-all-match`
   - `corpus-err.txt`: an `ErrorKind` name (e.g. `UnterminatedClass`)
 - **FLAGS** (column 4, optional): `k=v[,k=v]`, e.g. `dot=true`.
 

@@ -1,4 +1,4 @@
-use super::{Elem, ElemSeq, SegmentMatcher, Wild, WildKind};
+use super::{Elem, ElemSeq, MAX_SEQ_STATES, SegmentMatcher, Wild, WildKind};
 
 #[derive(Clone, Copy)]
 struct SegIter<'a> {
@@ -150,7 +150,7 @@ impl SegmentMatcher {
         true
     }
 
-    fn nfa_run(&self, seq: &ElemSeq, path: &[u8]) -> u64 {
+    pub(super) fn nfa_run(&self, seq: &ElemSeq, path: &[u8]) -> u64 {
         let mut active = seq.eps[0];
         for (s, t) in SegIter::new(path) {
             if active == 0 {
@@ -202,11 +202,55 @@ impl SegmentMatcher {
         next
     }
 
-    pub(super) fn seq_match_dir(&self, seq: &ElemSeq, dir: &[u8]) -> (bool, bool) {
-        let active = self.nfa_run(seq, dir);
-        let exact = active & (1u64 << (seq.num_states - 1)) != 0;
-        let prefix = active & seq.reach1 != 0;
-        (exact, prefix)
+    /// `nfa_step` over a non-empty segment that only wildcards consume:
+    /// every literal and class rejects it (`dot=true` only).
+    fn nfa_step_wild(&self, seq: &ElemSeq, active: u64) -> u64 {
+        let mut next: u64 = 0;
+        let mut bits = active & !(1u64 << (seq.num_states - 1));
+        while bits != 0 {
+            let s = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let i = seq.elem_of[s] as usize;
+            match &seq.elems[i] {
+                Elem::Lit(_) => {}
+                Elem::Wild(w) => {
+                    if w.any_seg {
+                        next |= seq.eps[s + 1];
+                    }
+                }
+                Elem::G0 => next |= seq.eps[s],
+                Elem::G0Strict | Elem::G1 => next |= seq.eps[seq.state_of[i] as usize + 1],
+            }
+        }
+        next
+    }
+
+    /// Does every path below the directory match? `active` holds each
+    /// sequence's state set after the directory's segments.
+    ///
+    /// Feeds wildcard-only segments until the state sets settle, and
+    /// requires an accept after each one. A real segment fires every
+    /// transition a wildcard-only one does, so `true` holds for all
+    /// real paths; `false` may only mean "not provable".
+    pub(super) fn covers_below(&self, active: &mut [u64]) -> bool {
+        // Tokens only move right or sit on a globstar, so the sets
+        // settle within `MAX_SEQ_STATES` steps.
+        for _ in 0..=MAX_SEQ_STATES {
+            let (mut accept, mut settled) = (false, true);
+            for (a, seq) in active.iter_mut().zip(self.seqs.iter()) {
+                let next = self.nfa_step_wild(seq, *a);
+                accept |= next & (1u64 << (seq.num_states - 1)) != 0;
+                settled &= next == *a;
+                *a = next;
+            }
+            if !accept {
+                return false;
+            }
+            if settled {
+                return true;
+            }
+        }
+        false
     }
 
     #[inline(always)]

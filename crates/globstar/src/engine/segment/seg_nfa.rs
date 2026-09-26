@@ -30,6 +30,10 @@ pub(super) struct SegNfa {
     /// No entry-closure state can consume a leading `.` as a literal
     /// or positive class ⇒ the matcher is fully dot-protected.
     pub(super) wild_led: bool,
+
+    /// Does the NFA accept every non-empty segment through its `Any`
+    /// states alone? (`match_dir` all-below.)
+    pub(super) any_seg: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +102,7 @@ impl SegNfa {
         let wild_led = !can_lit_dot;
 
         let satisfiable = compute_satisfiable(&states, &closures, init, accept_mask);
+        let any_seg = compute_any_seg(&states, &closures, init, accept_mask);
 
         Some(Box::new(Self {
             states,
@@ -107,6 +112,7 @@ impl SegNfa {
             accept_mask,
             satisfiable,
             wild_led,
+            any_seg,
         }))
     }
 
@@ -203,6 +209,33 @@ fn compute_satisfiable(states: &[SegState], closures: &[u64], init: u64, accept_
         }
     }
     reach & accept_mask != 0
+}
+
+/// Step the entry set through `Any` states only, one byte at a time,
+/// until it settles; every length from 1 up must accept.
+fn compute_any_seg(states: &[SegState], closures: &[u64], init: u64, accept_mask: u64) -> bool {
+    let mut active = init;
+    // Every loop is a star's one-byte self-loop, so the set settles
+    // within `MAX_SEG_NFA_STATES` steps.
+    for _ in 0..=MAX_SEG_NFA_STATES {
+        let mut next: u64 = 0;
+        let mut bits = active;
+        while bits != 0 {
+            let s = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            if let SegState::Any(nx) = &states[s] {
+                next |= closures[*nx as usize];
+            }
+        }
+        if next & accept_mask == 0 {
+            return false;
+        }
+        if next == active {
+            return true;
+        }
+        active = next;
+    }
+    false
 }
 
 struct SegBuilder {

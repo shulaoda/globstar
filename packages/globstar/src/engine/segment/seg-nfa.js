@@ -57,6 +57,9 @@ export class SegNfa {
     this.needsAsciiSeg = needsAsciiSeg;
 
     this.satisfiable = computeSatisfiable(this);
+    // Does the NFA accept every non-empty segment through its S_ANY
+    // states alone? (`matchDir` all-below.)
+    this.anySeg = computeAnySeg(this);
   }
 
   static compile(ops, dot, ci) {
@@ -174,6 +177,28 @@ function computeSatisfiable(nfa) {
     }
   }
   return (reach & nfa.acceptMask) !== 0;
+}
+
+// Step the entry set through S_ANY states only, one byte at a time, until
+// it settles; every length from 1 up must accept.
+function computeAnySeg(nfa) {
+  const kinds = nfa.kinds;
+  let active = nfa.init;
+  // Every loop is a star's one-byte self-loop, so the set settles within
+  // MAX_SEG_NFA_STATES steps.
+  for (let step = 0; step <= MAX_SEG_NFA_STATES; step++) {
+    let next = 0;
+    let bits = active;
+    while (bits !== 0) {
+      const s = ctz32(bits);
+      bits &= bits - 1;
+      if (kinds[s] === S_ANY) next |= nfa.closures[nfa.nexts[s]];
+    }
+    if ((next & nfa.acceptMask) === 0) return false;
+    if (next === active) return true;
+    active = next;
+  }
+  return false;
 }
 
 class SegBuilder {

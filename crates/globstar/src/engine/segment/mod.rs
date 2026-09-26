@@ -46,6 +46,9 @@ struct Wild {
     /// Reject dot-led segments (wildcard-led matcher on a
     /// `dot=false` compile).
     dot_protect: bool,
+    /// Its wildcards alone match every non-empty segment (`*`, `?*`,
+    /// `{a,*}`); drives `match_dir`'s all-below bit.
+    any_seg: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -148,18 +151,27 @@ impl SegmentMatcher {
     }
 
     pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        if dir_path.is_empty() {
-            return DirMatch::from_exact_prefix(self.is_match(dir_path), true);
-        }
-        let (mut exact, mut prefix) = (false, false);
-        for seq in self.seqs.iter() {
-            let (e, p) = self.seq_match_dir(seq, dir_path);
-            exact |= e;
-            prefix |= p;
-            if exact && prefix {
+        // The empty dir is the walk root: nothing consumed yet.
+        let root = dir_path.is_empty();
+        let mut active = [0u64; MAX_FORKS];
+        let active = &mut active[..self.seqs.len()];
+        let (mut exact, mut prefix) = (root && self.is_match(dir_path), root);
+        for (a, seq) in active.iter_mut().zip(self.seqs.iter()) {
+            if root {
+                *a = seq.eps[0];
+                continue;
+            }
+            *a = self.nfa_run(seq, dir_path);
+            exact |= *a & (1u64 << (seq.num_states - 1)) != 0;
+            prefix |= *a & seq.reach1 != 0;
+            // Only the all-below bit needs every sequence's state set.
+            if exact && prefix && !self.dot {
                 break;
             }
         }
-        DirMatch::from_exact_prefix(exact, prefix)
+        // `dot=false` never covers a subtree: no wildcard matches the
+        // dot-led names below.
+        let all = self.dot && prefix && self.covers_below(active);
+        DirMatch::from_exact_prefix_all(exact, prefix, all)
     }
 }

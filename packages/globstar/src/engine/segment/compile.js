@@ -289,6 +289,9 @@ function makeWild(kind, fields) {
     dotProtect: fields.dotProtect ?? false,
     anychars: fields.anychars ?? 0,
     nfa: fields.nfa ?? null,
+    // Its wildcards alone match every non-empty segment (`*`, `?*`,
+    // `{a,*}`); drives `matchDir`'s all-below bit.
+    anySeg: fields.anySeg ?? false,
   };
 }
 
@@ -310,6 +313,8 @@ function compileWild(ops, dot, ci) {
   }
   const hasWilds = hasStar || anychars > 0;
   const dotProtect = !dot && prefix.length === 0 && hasWilds;
+  // `*` or `?*` with nothing literal around it, up to the suffix.
+  const anyHead = prefix.length === 0 && hasStar && anychars <= 1;
 
   if (idx === ops.length) {
     return makeWild(WK_AFFIX, {
@@ -318,10 +323,12 @@ function compileWild(ops, dot, ci) {
       variable: hasStar,
       dotProtect,
       anychars,
+      anySeg: anyHead,
     });
   }
   const suffixes = suffixProduct(ops, idx);
   if (suffixes !== null) {
+    const anySeg = anyHead && suffixes.some((s) => s.length === 0);
     if (suffixes.length === 1) {
       return makeWild(WK_AFFIX, {
         prefixStr: latin1(prefix),
@@ -330,6 +337,7 @@ function compileWild(ops, dot, ci) {
         variable: hasStar,
         dotProtect,
         anychars,
+        anySeg,
       });
     }
     return makeWild(WK_AFFIX_SET, {
@@ -339,6 +347,7 @@ function compileWild(ops, dot, ci) {
       variable: hasStar,
       dotProtect,
       anychars,
+      anySeg,
     });
   }
   const nfa = SegNfa.compile(ops, dot, ci);
@@ -346,6 +355,7 @@ function compileWild(ops, dot, ci) {
   return makeWild(WK_GENERIC, {
     dotProtect: !dot && nfa.wildLed,
     nfa,
+    anySeg: nfa.anySeg,
   });
 }
 

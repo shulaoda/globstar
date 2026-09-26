@@ -1,11 +1,16 @@
 # ============================================================================
 # corpus-dir.txt — match_dir golden test corpus
 # Format: PATTERN<TAB>DIR_PATH<TAB>EXPECTED[<TAB>FLAGS]
-# EXPECTED: pruned | descend | match | descend-match
-#   pruned        = no descendant can match; the walker skips the whole subtree
-#   descend       = descendants may match; keep walking down
-#   match         = the directory itself matches; no descendant matches
-#   descend-match = the directory matches AND descendants may match too
+# EXPECTED: pruned | descend | match | descend-match | descend-all |
+#           descend-all-match
+#   pruned            = no descendant can match; the walker skips the whole subtree
+#   descend           = descendants may match; keep walking down
+#   match             = the directory itself matches; no descendant matches
+#   descend-match     = the directory matches AND descendants may match too
+#   descend-all       = the directory doesn't match, EVERY descendant does
+#   descend-all-match = the directory matches AND every descendant does
+# The two `-all` results need dot=true: under dot=false no wildcard matches
+# the dot-led names below, so a subtree is never fully covered.
 # See tests/README.md for format details
 # ============================================================================
 
@@ -141,24 +146,24 @@ a{**,x}b	q	pruned
 # ============================================================================
 
 ## M1.segment-engine-preserves-the-mandatory-separator (§8.3, dir view)
-# x/{**,a}/** : x descends (x itself no match), deeper matches, wrong root prunes.
-x/{**,a}/**	x	descend	dot=true
-x/{**,a}/**	x/y	descend-match	dot=true
-x/{**,a}/**	x/a	descend-match	dot=true
+# x/{**,a}/** : x itself no match but all below does, deeper matches, wrong root prunes.
+x/{**,a}/**	x	descend-all	dot=true
+x/{**,a}/**	x/y	descend-all-match	dot=true
+x/{**,a}/**	x/a	descend-all-match	dot=true
 x/{**,a}/**	y	pruned	dot=true
 x/{**,a}/**	xy	pruned	dot=true
-# {a/**,b}/** — BOTH branches descend, deeper matches, non-a/b prunes.
-{a/**,b}/**	a	descend	dot=true
-{a/**,b}/**	a/x	descend-match	dot=true
-{a/**,b}/**	b	descend	dot=true
-{a/**,b}/**	b/x	descend-match	dot=true
+# {a/**,b}/** — BOTH branches cover their subtree, deeper matches, non-a/b prunes.
+{a/**,b}/**	a	descend-all	dot=true
+{a/**,b}/**	a/x	descend-all-match	dot=true
+{a/**,b}/**	b	descend-all	dot=true
+{a/**,b}/**	b/x	descend-all-match	dot=true
 {a/**,b}/**	c	pruned	dot=true
 {a/**,b}/**	ab	pruned	dot=true
 
 ## M5.globstar-boundary-chained-outward-across-brace (§7.0 + §8.1, dir view)
-{src/,lib/}**	src	descend	dot=true
-{src/,lib/}**	src/a	descend-match	dot=true
-{src/,lib/}**	lib	descend	dot=true
+{src/,lib/}**	src	descend-all	dot=true
+{src/,lib/}**	src/a	descend-all-match	dot=true
+{src/,lib/}**	lib	descend-all	dot=true
 {src/,lib/}**	srcx	pruned	dot=true
 {src/,lib/}**	docs	pruned	dot=true
 
@@ -181,15 +186,16 @@ x/{**,a}/**	xy	pruned	dot=true
 !a	b	descend	dot=true
 
 ## dot matrix — a dotfile directory at a segment start prunes under
-## dot=false but descend-matches under dot=true (the `**`/`*` cannot open it).
-{src/,lib/}**	src/.x	descend-match	dot=true
+## dot=false but matches, subtree included, under dot=true (the `**`/`*`
+## cannot open it).
+{src/,lib/}**	src/.x	descend-all-match	dot=true
 {src/,lib/}**	src/.x	pruned	dot=false
 {src/,lib/}**	src/a	descend-match	dot=false
-x/{**,a}/**	x/.y	descend-match	dot=true
+x/{**,a}/**	x/.y	descend-all-match	dot=true
 x/{**,a}/**	x/.y	pruned	dot=false
-{a/**,b}/**	a/.x	descend-match	dot=true
+{a/**,b}/**	a/.x	descend-all-match	dot=true
 {a/**,b}/**	a/.x	pruned	dot=false
-{a/**,b}/**	b/.y	descend-match	dot=true
+{a/**,b}/**	b/.y	descend-all-match	dot=true
 {a/**,b}/**	b/.y	pruned	dot=false
 **/{**/a,b}	.a/b	descend-match	dot=true
 **/{**/a,b}	.a/b	pruned	dot=false
@@ -248,7 +254,7 @@ a/b/c/d	x	pruned
 src/**	src	descend
 src/**	src/a	descend-match
 src/**	src/.a	pruned
-src/**	src/.a	descend-match	dot=true
+src/**	src/.a	descend-all-match	dot=true
 src/**	other	pruned
 a/b/**	a	descend
 a/b/**	a/b	descend
@@ -259,9 +265,9 @@ a/b/**	a/b/c	descend-match
 **	a	descend-match
 **	a/b	descend-match
 **	.a	pruned
-**	.a	descend-match	dot=true
+**	.a	descend-all-match	dot=true
 **	a/.b	pruned
-**	a/.b	descend-match	dot=true
+**	a/.b	descend-all-match	dot=true
 
 ## explicit.dot.heads
 .a/*	.a	descend
@@ -323,3 +329,81 @@ x{a/b}y*	xa	pruned
 # The strict Sep once made match_dir prune a live // subtree.
 {src/,lib/}**/*.ts	src//sub	descend
 {src/,lib/}**/*.ts	src/sub	descend
+
+# ============================================================================
+# all-below — `descend-all` / `descend-all-match` (GLOB_SPEC §13.6).
+# "Every path below the dir matches": is_match(dir + "/" + s) for every `s`
+# of one or more non-empty segments. A consumer that excludes FILES by glob
+# may skip a whole directory only on these two results.
+# ============================================================================
+
+## all-below.rolldown.watch.exclude — the motivating table
+/p/*.log	/p/src	pruned	dot=true
+/p/dist	/p/dist	match	dot=true
+/p/src/**/*.js	/p/src	descend	dot=true
+**/*.log	/p/foo.log	descend-match	dot=true
+/p/dist/**	/p/dist	descend-all	dot=true
+**/node_modules/**	/p/node_modules	descend-all	dot=true
+**/node_modules/**	/p/node_modules/pkg	descend-all-match	dot=true
+**	/p/a	descend-all-match	dot=true
+
+## all-below.trailing.globstar
+/p/dist/**	/p/dist/a/b	descend-all-match	dot=true
+/p/dist/**	/p	descend	dot=true
+/p/dist/**	/p/src	pruned	dot=true
+**/node_modules/**	/p	descend	dot=true
+**/node_modules/**	/p/src	descend	dot=true
+/p/{dist,build}/**	/p/build	descend-all	dot=true
+**/{node_modules,.git}/**	/p/.git	descend-all	dot=true
+
+## all-below.globstar.then.any.segment
+# `**/*` and `**/?*` take every non-empty name, so they cover like `**`.
+/p/dist/**/*	/p/dist	descend-all	dot=true
+/p/dist/**/*	/p/dist/a	descend-all-match	dot=true
+/p/dist/**/?*	/p/dist	descend-all	dot=true
+**/*	/p/a	descend-all-match	dot=true
+# A brace with a bare `*` branch takes every name too.
+/p/dist/**/{a,*}	/p/dist	descend-all	dot=true
+/p/dist/**/{*.js,*}	/p/dist	descend-all	dot=true
+
+## all-below.not.covered
+# Some path below escapes the pattern: `descend`, never `descend-all`.
+# /p/dist/a — no `.js`
+/p/dist/**/*.js	/p/dist	descend	dot=true
+# /p/dist/a — `*/**` needs two segments
+/p/dist/*/**	/p/dist	descend	dot=true
+/p/dist/*/**	/p/dist/a	descend-all	dot=true
+# /p/dist/a/b — `*` is one segment
+/p/dist/*	/p/dist	descend	dot=true
+# /p/dist/ab — `?` is one byte
+/p/dist/**/?	/p/dist	descend	dot=true
+# /p/dist/.h — the class refuses the dot
+/p/dist/**/[!.]*	/p/dist	descend	dot=true
+# /p/foo.log/a — the dir matches, its files don't
+**/*.log	/p/foo.log	descend-match	dot=true
+
+## all-below.dot.false.never.covers
+# /p/dist/.cache escapes every wildcard under dot=false.
+/p/dist/**	/p/dist	descend
+/p/dist/**/*	/p/dist	descend
+**/node_modules/**	/p/node_modules	descend
+**	/p/a	descend-match
+
+## all-below.case.insensitive
+/P/Dist/**	/p/dist	descend-all	dot=true,case_insensitive=true
+/P/Dist/**	/p/dist	pruned	dot=true
+
+## all-below.empty.dir.is.the.walk.root
+# Children of the empty dir are `s`, not `/s`.
+**		descend-all-match	dot=true
+**/*		descend-all-match	dot=true
+*/**		descend	dot=true
+src/**		descend	dot=true
+
+## all-below.not.provable
+# Covered in fact, but only through classes: the simulation steps through
+# wildcards alone, so it answers the safe `descend`.
+/p/dist/**/{a*,[!a]*}	/p/dist	descend	dot=true
+
+## all-below.negated.pattern.stays.conservative
+!/p/src/**	/p/dist	descend	dot=true

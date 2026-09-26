@@ -10,7 +10,11 @@
 //! 2. if any universe path strictly below the dir matches, the result must
 //!    descend — a pruning walker must never lose a match;
 //! 3. `Pruned` implies no universe descendant matches;
-//! 4. the two engines agree on every `is_match` and every `match_dir`.
+//! 4. the two engines agree on every `is_match` and every `match_dir`;
+//! 5. the all-below flag is set exactly when every path up to three
+//!    levels below the dir matches — a directory is skipped whole only
+//!    when nothing below it escapes. Three levels is past the deepest
+//!    pattern, so a path that deep matches only through a `**`.
 //!
 //! Deterministic: no randomness — the whole space within the bounds is
 //! covered on every run. The JS twin
@@ -22,7 +26,7 @@ use globstar::engine::ops::lower;
 use globstar::engine::pikevm::PikeVm;
 use globstar::factor::factor_branches;
 use globstar::parser::parse;
-use globstar::{CompileOptions, Glob};
+use globstar::{CompileOptions, DirMatch, Glob};
 
 /// Full alphabet: literals, wildcards, classes, dot heads, braces, globstar.
 const SEGMENTS: &[&str] = &[
@@ -70,6 +74,22 @@ fn universe() -> Vec<String> {
     out
 }
 
+/// Every relative path of 1..=3 `PSEG` segments, shallowest first.
+fn suffixes() -> Vec<String> {
+    let mut out = Vec::new();
+    for d in 1..=3 {
+        out.extend(enumerate(PSEG, d));
+    }
+    out
+}
+
+/// Does every `dir + "/" + suffix` match?
+fn all_below(is_match: impl Fn(&[u8]) -> bool, dir: &str, suffixes: &[String]) -> bool {
+    suffixes
+        .iter()
+        .all(|s| is_match(format!("{dir}/{s}").as_bytes()))
+}
+
 /// `child` is strictly below `dir` (dir + `/` + more).
 fn is_below(child: &str, dir: &str) -> bool {
     child.len() > dir.len() && child.as_bytes()[dir.len()] == b'/' && child.starts_with(dir)
@@ -105,6 +125,7 @@ fn below_map(paths: &[String]) -> Vec<Vec<usize>> {
 
 fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
     let below = below_map(paths);
+    let suffixes = suffixes();
 
     for pattern in patterns {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
@@ -152,6 +173,13 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
                     "pruned but a descendant matches: pattern={pattern:?} dir={dir:?} dot={dot} ci={ci}"
                 );
             }
+
+            assert_eq!(
+                dm.matches_all_below(),
+                all_below(|p| default.is_match(p), dir, &suffixes),
+                "all-below flag != every descendant matches: pattern={pattern:?} dir={dir:?} \
+                 dot={dot} ci={ci} dm={dm:?}"
+            );
         }
     }
 }
@@ -161,6 +189,7 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
 /// ordered triple from a 4-pattern core.
 fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool) {
     let below = below_map(paths);
+    let suffixes = suffixes();
 
     for set in sets {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
@@ -206,6 +235,13 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
                     "union pruned but a descendant matches: patterns={set:?} dir={dir:?} dot={dot} ci={ci}"
                 );
             }
+
+            assert_eq!(
+                dm.matches_all_below(),
+                all_below(|p| default.is_match(p), dir, &suffixes),
+                "union all-below flag != every descendant matches: patterns={set:?} dir={dir:?} \
+                 dot={dot} ci={ci} dm={dm:?}"
+            );
         }
     }
 }
@@ -240,6 +276,25 @@ fn dir_exhaustive_unions() {
     let paths = universe();
     check_union(&sets, &paths, false, false);
     check_union(&sets, &paths, true, false);
+}
+
+/// Property 4 holds on the enumerated space, not everywhere. The
+/// all-below flag is a guarantee from either engine, but the Pike VM
+/// proves more: it counts the bytes of a name, so branches that split
+/// the names by length cover together, while the segment engine needs
+/// one element that takes every name. Pinned so that a change on either
+/// side is noticed.
+#[test]
+fn all_below_engines_differ_on_length_split_branches() {
+    let set = ["?/**/?", "**/??*"];
+    let dir = "c/x.js";
+    let default = Glob::union(set).expect("union");
+    let pike = build_pikevm_union(&set, true, false);
+
+    assert!(all_below(|p| default.is_match(p), dir, &suffixes()));
+    assert_eq!(default.engine_name(), "Segment");
+    assert_eq!(default.match_dir(dir.as_bytes()), DirMatch::DescendAndMatch);
+    assert_eq!(pike.match_dir(dir.as_bytes()), DirMatch::DescendAllAndMatch);
 }
 
 #[test]
