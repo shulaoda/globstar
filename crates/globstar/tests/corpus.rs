@@ -252,6 +252,8 @@ fn parse_dir_expected(s: &str) -> Option<DirMatch> {
         "descend" => Some(DirMatch::Descend),
         "match" => Some(DirMatch::Match),
         "descend-match" => Some(DirMatch::DescendAndMatch),
+        "descend-all" => Some(DirMatch::DescendAll),
+        "descend-all-match" => Some(DirMatch::DescendAllAndMatch),
         _ => None,
     }
 }

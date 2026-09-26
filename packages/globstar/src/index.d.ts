@@ -50,7 +50,7 @@ export function globstar(
  * whether to yield the dir, descend into it, or prune the subtree.
  * Mirrors the Rust crate's `DirMatch`.
  */
-export type DirMatchValue = 0 | 1 | 2 | 3;
+export type DirMatchValue = 0 | 1 | 2 | 3 | 4 | 5;
 
 /** Directory matches; yield it (no descendant can match further). */
 export declare const MATCH: 0;
@@ -60,20 +60,39 @@ export declare const PRUNED: 1;
 export declare const DESCEND: 2;
 /** Directory matches AND some descendant might too; yield and descend. */
 export declare const DESCEND_AND_MATCH: 3;
+/** Directory itself doesn't match, but EVERY path below it does. */
+export declare const DESCEND_ALL: 4;
+/** Directory matches AND every path below it does. */
+export declare const DESCEND_ALL_AND_MATCH: 5;
 
 export declare const DirMatch: {
   readonly Match: 0;
   readonly Pruned: 1;
   readonly Descend: 2;
   readonly DescendAndMatch: 3;
-  /** `Match` or `DescendAndMatch`. */
+  readonly DescendAll: 4;
+  readonly DescendAllAndMatch: 5;
+  /** `Match`, `DescendAndMatch` or `DescendAllAndMatch`. */
   isMatch(d: DirMatchValue): boolean;
-  /** `Descend` or `DescendAndMatch`. */
+  /** Anything but `Match` and `Pruned`. */
   shouldDescend(d: DirMatchValue): boolean;
   /** `Pruned` — the whole subtree can be skipped. */
   isPruned(d: DirMatchValue): boolean;
+  /**
+   * `DescendAll` or `DescendAllAndMatch` — every path below the
+   * directory matches: `match(dir + "/" + s)` holds for every `s` of one
+   * or more non-empty segments. `true` is a guarantee; `false` means
+   * "not all, or not provable". Always `false` under `dot: false`, where
+   * no wildcard matches the dot-led names below.
+   *
+   * A consumer that excludes files by glob may skip a whole directory
+   * only when this holds.
+   */
+  matchesAllBelow(d: DirMatchValue): boolean;
   /** Combine the exact-match and prefix-match axes into one value. */
   fromExactPrefix(exact: boolean, prefix: boolean): DirMatchValue;
+  /** `fromExactPrefix` plus the all-below axis, which implies `prefix`. */
+  fromExactPrefixAll(exact: boolean, prefix: boolean, all: boolean): DirMatchValue;
 };
 
 /** Compiled pattern set returned by {@link compileMatcher}. */

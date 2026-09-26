@@ -16,7 +16,7 @@
 //! | line                                  | op                | output tokens                                   |
 //! |---------------------------------------|-------------------|-------------------------------------------------|
 //! | `m <flags> <pattern> <path>`          | `Glob::is_match`  | `match` / `no-match` / `err:<Kind>`             |
-//! | `d <flags> <pattern> <dir>`           | `Glob::match_dir` | `pruned` / `descend` / `match` / `descend-match` / `err:<Kind>` |
+//! | `d <flags> <pattern> <dir>`           | `Glob::match_dir` | `pruned` / `descend` / `match` / `descend-match` / `descend-all` / `descend-all-match` / `err:<Kind>` |
 //! | `u <flags> <path> <pat1> [pat2 ...]`  | `Glob::union`     | `match` / `no-match` / `err:<Kind>`             |
 //! | `s <flags> <pat1> [pat2 ...]`         | `Glob::static_prefixes` (union when >1) | `px:<escaped,sorted>` / `err:<Kind>` |
 //!
@@ -176,6 +176,8 @@ fn dir_token(d: DirMatch) -> String {
         DirMatch::Descend => "descend",
         DirMatch::Match => "match",
         DirMatch::DescendAndMatch => "descend-match",
+        DirMatch::DescendAll => "descend-all",
+        DirMatch::DescendAllAndMatch => "descend-all-match",
     }
     .to_string()
 }

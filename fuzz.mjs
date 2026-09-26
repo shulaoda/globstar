@@ -12,7 +12,7 @@
 //   node fuzz.mjs                         # 50k mixed cases, seed 1
 //   node fuzz.mjs --seed 99 --count 200000
 //   node fuzz.mjs --mode m                # only is_match (incl. negation)
-//   node fuzz.mjs --mode d                # only match_dir (4-valued, incl. negation)
+//   node fuzz.mjs --mode d                # only match_dir (6-valued, incl. negation)
 //   node fuzz.mjs --mode u                # only multi-pattern union
 //   node fuzz.mjs --mode s                # only static_prefixes
 //   node fuzz.mjs --seeds 1-20 --count 50000   # sweep seeds (nightly)
@@ -203,8 +203,16 @@ const patternWire = (s) => escapeBytes(ENC.encode(s));
 const pathWire = patternWire;
 
 // ── JS reference results ─────────────────────────────────────────────
-// Indexed by JS `DirMatch` value (Match=0, Pruned=1, Descend=2, DescendAndMatch=3).
-const DIR_TOKEN = ["match", "pruned", "descend", "descend-match"];
+// Indexed by JS `DirMatch` value (Match=0, Pruned=1, Descend=2, DescendAndMatch=3,
+// DescendAll=4, DescendAllAndMatch=5).
+const DIR_TOKEN = [
+  "match",
+  "pruned",
+  "descend",
+  "descend-match",
+  "descend-all",
+  "descend-all-match",
+];
 
 function jsResult(c) {
   const opts = { dot: c.dot, caseInsensitive: c.ci };
