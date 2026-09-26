@@ -323,3 +323,9 @@ Only the native folds (`SepRun`/`LeadingSeps`/`OSS`/
    against an unsigned `Uint32Array` read — an infinite loop
    whenever bit 31 participated (≥ 32-state NFA + `dot=false`).
    Fixed with `>>> 0` in `pikevm.js`.
+8. **All-below (2026-09-28)** — `match_dir` gained a third bit,
+   "every path below d matches", for consumers that exclude files
+   by glob. It is NOT a per-state mask like `reach1`: coverage can
+   be a joint property of several states (`a/*` with `a/*/**`), so
+   the engines simulate wildcard-only paths from the whole state
+   set instead (theory §06 §2.6). Set under `dot=true` only.

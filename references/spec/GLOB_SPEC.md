@@ -33,7 +33,7 @@ This specification defines the glob pattern language and matcher semantics, cove
 
 - **Standard glob constructs** — `*`, `**`, `?`, character classes `[...]`, brace expansion `{...}`, escape `\`, leading-`!` negation.
 - **Match semantics** — what `is_match(pattern, path)` returns for every pair of inputs.
-- **Directory matching** — a first-class `match_dir` API that returns `Pruned` / `Descend` / `Match` / `DescendAndMatch`. Filesystem walkers consume this; the matcher just defines what each result means.
+- **Directory matching** — a first-class `match_dir` API that returns `Pruned` / `Descend` / `Match` / `DescendAndMatch` / `DescendAll` / `DescendAllAndMatch`. Filesystem walkers and watchers consume this; the matcher just defines what each result means.
 - **Multi-pattern matchers** — boolean OR over a set of patterns (the `globstar(patterns)` factory in JS, `Glob::union` / `GlobSet` equivalents in Rust).
 
 Filesystem traversal — pattern preprocessing for the walker, cwd validation, the auto-split of `!`-prefixed patterns into the ignore set, traversal order, and walker-level error handling — is the subject of a separate spec, [WALKER_SPEC.md](./WALKER_SPEC.md).
@@ -465,6 +465,8 @@ match_dir("a/",  "a/**") → DescendAndMatch    // "a/" matches, and "a//x" ∈ 
 match_dir("a/b", "a/**") → DescendAndMatch    // matches now; "a/b/x" would also match
 ```
 
+These are the `dot=false` results. Under `dot=true` every path below `a` matches, so the three become `DescendAll`, `DescendAllAndMatch`, `DescendAllAndMatch` (§13.6).
+
 Implementations MAY realize this by feeding the directory path as a prefix through the matcher's NFA / DFA and classifying the resulting state set ("at an accept" vs "still has live transitions").
 
 ### 8.5 Leading `**/` ("at any depth")
@@ -856,12 +858,16 @@ For a pattern P and a directory path `d`, `match_dir(P, d)` returns exactly one 
 
 ```rust
 enum DirMatch {
-    Pruned,           // No string in L(P) is prefixed by d → entire subtree is hopeless
-    Descend,          // d is a strict prefix of some string in L(P)
-    Match,            // d ∈ L(P), but no descendant of d is in L(P)
-    DescendAndMatch,  // d ∈ L(P), AND some descendants of d are also in L(P) (typically via `**`)
+    Pruned,              // No string in L(P) is prefixed by d → entire subtree is hopeless
+    Descend,             // d is a strict prefix of some string in L(P)
+    Match,               // d ∈ L(P), but no descendant of d is in L(P)
+    DescendAndMatch,     // d ∈ L(P), AND some descendants of d are also in L(P) (typically via `**`)
+    DescendAll,          // d ∉ L(P), but EVERY path below d is in L(P)
+    DescendAllAndMatch,  // d ∈ L(P), AND every path below d is in L(P)
 }
 ```
+
+The result answers three questions about `d`: does it match, may something below it match, and does everything below it match (§13.6). The third implies the second.
 
 ### 13.2 Semantics
 
@@ -875,12 +881,16 @@ Then
 
 ```
 match_dir(P, d) :=
-  match (d ∈ L(P), d ++ "/" ∈ L_prefix(P)):
-    (true,  true)  → DescendAndMatch
-    (true,  false) → Match
-    (false, true)  → Descend
-    (false, false) → Pruned
+  match (d ∈ L(P), d ++ "/" ∈ L_prefix(P), all_below(P, d)):
+    (true,  _,     true)  → DescendAllAndMatch
+    (false, _,     true)  → DescendAll
+    (true,  true,  false) → DescendAndMatch
+    (true,  false, false) → Match
+    (false, true,  false) → Descend
+    (false, false, false) → Pruned
 ```
+
+`all_below` is defined in §13.6.
 
 The exact-match side tests the **raw** `d` (so `match_dir("src", "src")`
 is `Match`, per the §13.3 table); the descend side asks whether some
@@ -909,11 +919,15 @@ slashless.
 | `{src,lib}/**`      | `docs`                           | Pruned          |                                    |
 | `**/*.ts`           | `any/dir`                        | Descend         | `**` allows any depth              |
 
+The table shows the `dot=false` results. Under `dot=true` the rows whose pattern ends in `/**` and whose directory is at or below that `/**` report the covering results instead: `src/components/**` gives `DescendAll` on `src/components` and `DescendAllAndMatch` on `src/components/a`, and `{src,lib}/**` gives `DescendAll` on `src` (§13.6).
+
 ### 13.4 Leading `!` and `match_dir`
 
 Whole-pattern negation `!P` would naively yield `match_dir(!P, d) = invert(match_dir(P, d))`. In practice this gives almost no pruning information: a negated pattern normally means "all paths NOT matching X", and a consumer (typically a filesystem walker) must enumerate the whole tree to find them.
 
 **Specified behavior:** `match_dir(!P, d)` SHOULD conservatively return `Descend`, except when the entire subtree is provably matching (a rare corner case). The matcher's multi-pattern factory (§14.1) implements exactly this — see the `matchDir` body in `packages/globstar/src/glob.js` for the JS reference.
+
+A lone negated pattern never reports a covering result (§13.6): the reference implementations return `Descend` for every `d`.
 
 ### 13.5 Implementation hints
 
@@ -923,6 +937,60 @@ Whole-pattern negation `!P` would naively yield `match_dir(!P, d) = invert(match
    - non-empty and no accept → `Descend`.
 2. Derivative DFA: run transitions to the end of `d`, classify the destination state.
 3. Backtracking matcher: needs special treatment — run once to the end, then check whether any "partial match continuation" state exists.
+
+### 13.6 All-below: `DescendAll` and `DescendAllAndMatch`
+
+A pattern that excludes FILES says nothing about a directory by matching it: `**/*.log` matches a directory named `foo.log` and not the `foo.log/a.js` inside. A consumer that wants to skip a whole directory — a watcher applying an exclude list — needs to know that nothing below the directory escapes the pattern.
+
+**Definition.** For a directory `d`,
+
+```
+all_below(P, d) := ∀ s ∈ R.  d ++ "/" ++ s ∈ L(P)
+R               := seg ( "/" seg )*        ; one or more segments
+seg             := one or more non-separator bytes
+```
+
+Whether `d` itself matches plays no part. For the empty `d` — the walk root — the paths below are the `s` themselves, with no leading `/`.
+
+**Guarantee.** The flag is one-sided, the mirror image of the descend flag:
+
+| Flag | `true` means | `false` means |
+| --- | --- | --- |
+| descend (`should_descend`) | something below MAY match | nothing below matches — a guarantee |
+| all-below (`matches_all_below`) | everything below matches — a guarantee | not everything, or not provable |
+
+A consumer that skips a directory only on `matches_all_below` never hides a path the pattern does not match.
+
+**Rule.** The reference implementations decide the flag by continuing from the state `d` leaves the matcher in, and feeding it every wildcard-only path: a path whose bytes are consumed by `?`, `*` and `**` alone. Literals and classes — negated classes too — take none of them. The flag is set when every such path in `R` is accepted. A real byte is accepted wherever a wildcard-only byte is, which gives the guarantee.
+
+Consequences:
+
+- Under `dot=false` the flag is never set. `**` does not match `d/.cache`, so no subtree is covered.
+- A pure literal pattern never sets it, and neither does a negated pattern (§13.4).
+- A union sets it when its members cover the subtree together, not only when one member does.
+
+**Examples** (`dot=true`):
+
+| Pattern | Dir | Result | A path below that escapes |
+| --- | --- | --- | --- |
+| `/p/dist/**` | `/p/dist` | DescendAll | — |
+| `**/node_modules/**` | `/p/node_modules` | DescendAll | — |
+| `**/node_modules/**` | `/p/node_modules/pkg` | DescendAllAndMatch | — |
+| `**` | `/p/a` | DescendAllAndMatch | — |
+| `/p/dist/**/*` | `/p/dist` | DescendAll | — |
+| `/p/dist/**/{a,*}` | `/p/dist` | DescendAll | — |
+| `{/p/dist/*,/p/dist/*/**}` | `/p/dist` | DescendAll | — |
+| `/p/dist/**/*.js` | `/p/dist` | Descend | `/p/dist/a` |
+| `/p/dist/*/**` | `/p/dist` | Descend | `/p/dist/a` |
+| `/p/dist/*` | `/p/dist` | Descend | `/p/dist/a/b` |
+| `/p/dist/**/?` | `/p/dist` | Descend | `/p/dist/ab` |
+| `**/*.log` | `/p/foo.log` | DescendAndMatch | `/p/foo.log/a` |
+| `/p/dist/**` (`dot=false`) | `/p/dist` | Descend | `/p/dist/.cache` |
+
+**Not provable.** Two shapes cover a subtree without the rule seeing it, and answer the safe `Descend`:
+
+- Coverage through classes: `/p/dist/**/{a*,[!a]*}` takes every name, as one starting with `a` or one that does not.
+- Coverage by name length across separator-crossing branches: `?/**/?` with `**/??*` takes every name below `c/x.js`, as a one-byte name or a longer one. The Pike VM counts bytes and proves this one; the segment engine needs a single element that takes every name and does not. The engines agree on every other result.
 
 ---
 
@@ -965,10 +1033,13 @@ GlobSet::match_dir(d) :=
   let results   = [ g.match_dir(d) for g in globs ]
   let any_match = results.any(contains Match)
   let any_desc  = results.any(contains Descend)
-  combine(any_match, any_desc)
+  let all_below = all_below(union of globs, d)
+  combine(any_match, any_desc, all_below)
 ```
 
 Headline: **if any glob says `Descend`, the combined result MUST be `Descend`**. Pruning is only safe when EVERY glob says `Pruned`.
+
+`all_below` is a property of the union (§13.6): one covering member is enough, and members that each cover a part — `a/*` the children, `a/*/**` everything deeper — cover together.
 
 ### 14.4 Literal acceleration
 
@@ -1088,6 +1159,18 @@ src/**/*.ts    dir="node_modules"      ⇒ Pruned
 **/*.ts        dir="anything"          ⇒ Descend
 ```
 
+All-below (`dot=true`, §13.6):
+
+```
+/p/dist/**          dir="/p/dist"              ⇒ DescendAll
+**/node_modules/**  dir="/p/node_modules"      ⇒ DescendAll
+**/node_modules/**  dir="/p/node_modules/pkg"  ⇒ DescendAllAndMatch
+/p/dist/**/*        dir="/p/dist"              ⇒ DescendAll
+/p/dist/**/*.js     dir="/p/dist"              ⇒ Descend
+**/*.log            dir="/p/foo.log"           ⇒ DescendAndMatch
+/p/dist/**          dir="/p/dist"              ⇒ Descend   (dot=false)
+```
+
 ### 15.10 Error cases
 
 ```
@@ -1165,6 +1248,10 @@ The POSIX first-`]` rule (consistent with bash / fnmatch / fast-glob / picomatch
   `a/{**/x,y}` gains `/**/`-boundary leniency. Aligns with bash /
   minimatch; deliberate divergence from picomatch recorded in §16.
   Corpus group `brace.globstar-expansion` pins the behavior.
+- **v0.2.2** (2026-09-28): all-below directory results.
+  - §13.1 / §13.2: `DirMatch` gains `DescendAll` and `DescendAllAndMatch`; `match_dir` answers "does everything below `d` match".
+  - §13.6: definition, the one-sided guarantee, the wildcard-only rule, and the shapes it cannot prove. Never set under `dot=false`.
+  - Corpus group `all-below` pins the behavior.
 - Awaiting owner approval before freezing as v1.0.
 
 ---
@@ -1176,7 +1263,8 @@ The POSIX first-`]` rule (consistent with bash / fnmatch / fast-glob / picomatch
 - **Segment.** A `/`-delimited piece of the path.
 - **`Seps`.** The implementation-defined set of separator bytes (§12.3). `/` ∈ `Seps` is a spec mandate; the reference implementation defines `Seps := { b : std::path::is_separator(b as char) }`.
 - **Dot-protected.** A position whose first byte is `.` and whose preceding byte is a separator (or is the start of the path). Default `*`/`?` cannot consume a `.` at such positions.
-- **`Match` / `Pruned` / `Descend` / `DescendAndMatch`.** The four results of `match_dir` (§13).
+- **`Match` / `Pruned` / `Descend` / `DescendAndMatch` / `DescendAll` / `DescendAllAndMatch`.** The six results of `match_dir` (§13).
+- **All-below.** Every path below a directory matches the pattern (§13.6). The two `DescendAll…` results carry it.
 - **GlobSet (Rust) / multi-pattern matcher (JS).** The boolean-OR combination of N globs. `matches` returns the set of matching glob ids.
 - **Literal facts.** The set of guaranteed literal byte facts extracted from a pattern (prefix, suffix, contains, exact). Used by the prefilter.
 - **Static prefixes.** The set of byte strings that every matching path of a pattern MUST be prefixed by. Used by walker traversal to jump to the deepest known directory before walking.

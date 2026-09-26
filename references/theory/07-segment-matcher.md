@@ -43,7 +43,8 @@ Let m = element count, n = segment count.
   zero") are precomputed; `match_dir`'s prefix bit is `active ∩
 reach1`, where `reach1[s]` ⇔ some ≥ 1-segment continuation from s
   reaches accept (suffix satisfiability, precomputed). O(n · active),
-  active ≤ 3 in practice.
+  active ≤ 3 in practice. `match_dir`'s all-below bit steps the same
+  NFA over wildcard-only segments until the sets settle (§06 §2.6).
 
 In-segment `Wild` matchers are classified at compile time:
 `Affix` (prefix/suffix literals + `*`/`?` runs → length bounds + two

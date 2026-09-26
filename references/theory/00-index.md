@@ -9,7 +9,7 @@ These notes record the formal foundations of the engine modules under `crates/gl
 3. [07-segment-matcher.md](07-segment-matcher.md) — the primary segment-structured matcher (SSM): patterns as linear element sequences, anchored single-globstar matching, the element-position NFA behind `match_dir`, and the JS string/byte dual-mode execution.
 4. [04-pike-vm.md](04-pike-vm.md) — total NFA simulation used when the segment engine cannot represent a pattern within its budgets.
 5. [05-literal-prefilter.md](05-literal-prefilter.md) — the suffix-anchored literal prefilter used to short-circuit the matcher; its correctness invariant.
-6. [06-walker-and-pruning.md](06-walker-and-pruning.md) — static-prefix extraction and the four-valued `match_dir` predicate, which together drive directory-level pruning.
+6. [06-walker-and-pruning.md](06-walker-and-pruning.md) — static-prefix extraction and the six-valued `match_dir` predicate, which together drive directory-level pruning.
 
 ## Engine map
 

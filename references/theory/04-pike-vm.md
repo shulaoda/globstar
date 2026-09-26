@@ -72,6 +72,8 @@ return DirMatch::from_exact_prefix(exact, prefix)
 
 Before the hypothetical separator step, any live `DotGuard` is expanded to a fixpoint: `/` is never a segment-leading dot, so those guards necessarily pass.
 
+The all-below flag continues from `after_sep`, stepping over wildcard-only bytes (§06 §2.6). The first step reuses the run buffer, so a directory that fails it — nearly all do — costs no allocation; only a directory that passes pays for the visited list.
+
 ## 6. Complexity
 
 For input length `n`, NFA state count `m`, active state count `a`, and bitmap word count `w = ceil(m / word_bits)`:

@@ -3,7 +3,7 @@
 The matcher exposes two outputs that drive directory-level pruning:
 
 - `static_prefixes(P)`, the deepest segment-bounded literal prefix per top-level brace branch of `P`;
-- `match_dir(P, d)`, a four-valued predicate over directory paths classifying whether the pattern can match `d` itself, descendants of `d`, both, or neither.
+- `match_dir(P, d)`, a six-valued predicate over directory paths classifying whether the pattern can match `d` itself, descendants of `d`, both, or neither — and whether it matches every descendant.
 
 Implementation:
 
@@ -22,7 +22,8 @@ This note formalizes both and documents how the walker (`references/spec/WALKER_
                                           └──► match_dir(d)
                                                     │
                                                     ▼
-                                    DirMatch ∈ {Pruned, Descend, Match, DescendAndMatch}
+                                    DirMatch ∈ {Pruned, Descend, Match, DescendAndMatch,
+                                                DescendAll, DescendAllAndMatch}
 
 Walker startup:
    for each prefix p in matcher.static_prefixes():
@@ -99,6 +100,8 @@ pub enum DirMatch {
     Descend,
     Match,
     DescendAndMatch,
+    DescendAll,
+    DescendAllAndMatch,
 }
 ```
 
@@ -107,19 +110,22 @@ Given `P` and a directory path `d`, the walker uses
 ```
 exact_match(P, d) := d ∈ L(P)
 prefix_match(P, d) := ∃ w ∈ Σ+. d ++ "/" ++ w ∈ L(P)
-match_dir(P, d) := combine(exact_match(P, d), prefix_match(P, d))
+all_below(P, d)    := ∀ s ∈ R.  d ++ "/" ++ s ∈ L(P)      (R: one or more non-empty segments)
+match_dir(P, d) := combine(exact_match(P, d), prefix_match(P, d), all_below(P, d))
 ```
 
 with
 
 ```
-combine(true,  true)  = DescendAndMatch
-combine(true,  false) = Match
-combine(false, true)  = Descend
-combine(false, false) = Pruned
+combine(true,  _,     true)  = DescendAllAndMatch
+combine(false, _,     true)  = DescendAll
+combine(true,  true,  false) = DescendAndMatch
+combine(true,  false, false) = Match
+combine(false, true,  false) = Descend
+combine(false, false, false) = Pruned
 ```
 
-`Pruned` is the only verdict that licenses the walker to skip `readdir(d)`.
+`Pruned` is the only verdict that licenses the walker to skip `readdir(d)`. The two `DescendAll…` verdicts license the opposite kind of consumer — one that EXCLUDES files by glob, such as a watcher — to skip `d` whole (§2.6).
 
 ### 2.2 Segment realization
 
@@ -148,6 +154,8 @@ verdict ← combine(exact, prefix)
 
 `reach_to_accept` is the bit vector described in §04 §5.
 
+Both realizations then decide `all_below` from the same state set (§2.6).
+
 ### 2.4 The suffix prefilter is not used
 
 Unlike `is_match`, `match_dir` does not consult `LiteralFacts::accept` (§05). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. Both exact engines run unfiltered for `match_dir`.
@@ -163,6 +171,47 @@ match_dir(P with negations, d) ∈ {Descend, DescendAndMatch}
 i.e. pruning is suppressed. A negated branch matches paths _not_ in some sublanguage, and the walker has not yet seen the deeper paths; it cannot rule out their membership in the complement. The implementation still preserves the positive `Match` flag where possible: if the positive engine reports `Match`, the verdict is `DescendAndMatch`; otherwise it is `Descend`. Pruning is restored only when no negative branch exists.
 
 This is the formal counterpart of `references/spec/GLOB_SPEC.md` §13.4. The walker (§ `references/spec/WALKER_SPEC.md` §4) splits `!`-prefixed input patterns into its own ignore set, so the matcher receives only positive patterns at the walker layer; the conservative case applies only to direct standalone callers.
+
+### 2.6 All-below
+
+`prefix_match` over-approximates: `Descend` means a descendant MAY match. `all_below` under-approximates: it is set only when every descendant provably matches. Both err on the consumer's safe side.
+
+The engines decide it by simulation. A _wildcard-only_ byte is one that `?`, `*` and `**` consume and that every literal and class rejects; a wildcard-only path is built from such bytes and separators. Starting from the state set that `d` left behind, the engine feeds every wildcard-only path in `R` and requires an accept after each segment.
+
+Segment realization — a wildcard-only segment of any length, stepped until the sets settle:
+
+```
+S ← state sets after the segments of d, one per fork
+repeat:
+    S ← step every fork over a wildcard-only segment
+        (globstars absorb it; a Wild consumes it iff its wildcards
+         alone match every non-empty segment; a Lit never does)
+    if no fork accepts: return false
+    if S did not change: return true
+```
+
+Tokens only move right along a sequence or sit on a globstar, so the loop ends within the number of states. The per-`Wild` bit is precomputed: `*` and `?*` have it, `*.js` and `?` do not, and a `Generic` in-segment NFA gets it from the same simulation run over its `Any` states.
+
+Pike VM realization — the same walk byte by byte, over two symbols (a wildcard-only byte, a separator):
+
+```
+starts ← { S₁ }                      S₁ from §2.3
+for each S in starts:
+    T ← step(S, wild byte)
+    repeat:
+        if T ∩ accepts_at_eof = ∅: return false
+        add step(T, sep) to starts
+        T' ← step(T, wild byte)
+        if T' = T: break
+        T ← T'
+return true
+```
+
+`starts` is capped; hitting the cap answers `false`.
+
+Under `dot=false` both return `false` without simulating: `**` does not match a dot-led name, so some `d/.x` always escapes.
+
+The two differ in one corner. The Pike VM counts the bytes of a segment, so forks that split the names by length — `?/**/?` with `**/??*` — cover together. The segment realization asks each `Wild` to take every length on its own and answers `false` there. Forks that merge into one segment (`**/?` with `**/??*` factors to `**/?{,?*}`) are one `Wild` and are proven by both.
 
 ## 3. Walker integration
 
@@ -184,6 +233,16 @@ match_dir(P, d) = Pruned   ⇒   ∀ w. d' ++ w ∉ L(P)
 _Proof sketch._ `Pruned` is returned only when `exact = false ∧ prefix = false`. `exact = false` excludes `d` itself. `prefix = false` means no active segment/NFA position can consume a separator and a non-empty descendant path to acceptance. Together, neither `d` nor any descendant is accepted. ∎
 
 This is the soundness property the walker requires: it may safely prune any subtree whose root receives `Pruned`.
+
+**Proposition 6 (no false cover).** For every `P`, `d`, and `s ∈ R`:
+
+```
+match_dir(P, d) ∈ {DescendAll, DescendAllAndMatch}   ⇒   d ++ "/" ++ s ∈ L(P)
+```
+
+_Proof sketch._ Take any real `s` and the wildcard-only path `s'` of the same shape — the same number of segments, the same lengths. Every transition a wildcard-only byte fires, a real non-separator byte fires too (`dot=true`, so no wildcard is dot-protected), and separators fire the same transitions in both. By induction the state set after `s` contains the one after `s'`. The simulation visited `s'` — it covers every shape — and found an accept there. ∎
+
+This is the soundness property an excluding consumer requires: it may skip any directory that receives a `DescendAll…` verdict, and no path it hides escapes the pattern.
 
 ## 5. Worked example
 
