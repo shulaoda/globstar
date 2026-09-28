@@ -49,7 +49,6 @@
 some/**/{*.js,*.html}	some/bar/jquery.min.js	match
 some/**/{*.js,*.html}	some/bar/baz/jquery.min.js	match
 some/**	some/bar/baz/jquery.min.js	match
-\\\\/$^+.()=!|,.*	\\/$^+.()=!|,.*	match
 /foo/*	/foo/bar.txt	match
 /foo/**	/foo/baz.txt	match
 /foo/**	/foo/bar/baz.txt	match

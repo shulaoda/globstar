@@ -119,7 +119,7 @@
 [\}]	}	match
 [\(]	(	match
 [\)]	)	match
-[\\\\]	\\	match
+# `[\\]` against a `\` path is per platform: corpus-unix.txt / corpus-windows.txt.
 [\\\\]	a	no-match
 
 ## class.escape_extends_closer

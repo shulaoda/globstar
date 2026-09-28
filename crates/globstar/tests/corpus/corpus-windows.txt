@@ -14,10 +14,12 @@ a/b	a\\b	match
 src/main.rs	src\\main.rs	match
 
 ## path.separator.backslash.consecutive
-# Duplicate-separator collapsing works across `\` and mixed `/\`.
-a/b	a\\\\b	match
-a/b	a/\\b	match
-a/b	a\\/b	match
+# A pattern `/` is a strict `Sep`: it takes exactly ONE separator byte
+# (§12.3), whichever of `/` and `\` it is. A run of two does not match,
+# the same as `a/b` against `a//b` in corpus.txt.
+a/b	a\\\\b	no-match
+a/b	a/\\b	no-match
+a/b	a\\/b	no-match
 
 ## path.separator.backslash.no_cross
 # Wildcards still refuse to cross `\` on Windows (it's a separator).
@@ -45,3 +47,6 @@ foo*bar	foo\\bar	no-match
 # literal content, so an escaped backslash cannot match on Windows.
 a\\\\b	a\\b	no-match
 a\\\\b	a/b	no-match
+# fast-glob's metachar row, leading with an escaped backslash — see
+# corpus-unix.txt for the matching side.
+\\\\/$^+.()=!|,.*	\\/$^+.()=!|,.*	no-match

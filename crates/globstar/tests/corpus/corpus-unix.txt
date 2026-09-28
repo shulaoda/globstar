@@ -36,3 +36,7 @@ a*b	a\\b	match
 # On Unix `\` is an ordinary filename byte; the escape matches it.
 a\\\\b	a\\b	match
 a\\\\b	a/b	no-match
+# fast-glob's metachar row, leading with an escaped backslash. It lives
+# here, not in corpus-fast-glob.txt, because the path's `\` is a
+# separator on Windows — see corpus-windows.txt.
+\\\\/$^+.()=!|,.*	\\/$^+.()=!|,.*	match
