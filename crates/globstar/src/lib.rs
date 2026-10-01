@@ -56,6 +56,7 @@ pub mod matcher;
 pub mod options;
 #[doc(hidden)]
 pub mod parser;
+mod resolve;
 
 pub use dir_match::DirMatch;
 pub use error::GlobError;
@@ -123,7 +124,8 @@ impl Glob {
     ///
     /// `!`-negated members are rejected with
     /// [`GlobError::NegatedInUnion`]; an empty iterator with
-    /// [`GlobError::EmptyPatternSet`].
+    /// [`GlobError::EmptyPatternSet`]. The members share one expansion
+    /// budget ([`GlobError::BraceExpansionTooLarge`]).
     pub fn union<I, S>(patterns: I) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -140,9 +142,10 @@ impl Glob {
     {
         let mut first: Option<Ast> = None;
         let mut branches: Vec<Node> = Vec::new();
+        let mut budget = error::MAX_EXPANSION;
         for (i, pattern) in patterns.into_iter().enumerate() {
             let pattern = pattern.as_ref();
-            let parsed = parser::parse(pattern.as_bytes())?;
+            let parsed = parser::parse_within(pattern.as_bytes(), &mut budget)?;
             if parsed.is_negated() {
                 return Err(GlobError::NegatedInUnion {
                     index: i,

@@ -5,7 +5,7 @@ import { SegmentMatcher } from "./engine/segment/index.js";
 import { PikeVm } from "./engine/pikevm.js";
 import { nodeToLiteralBytes } from "./ast.js";
 import { factorBranches } from "./factor.js";
-import { GlobError } from "./error.js";
+import { GlobError, MAX_EXPANSION } from "./error.js";
 import { DirMatch } from "./dir-match.js";
 
 export function globstar(patterns, options) {
@@ -26,6 +26,7 @@ export function compileMatcher(patterns, options) {
 
   const positiveAsts = [];
   const negativeAsts = [];
+  const budget = { left: MAX_EXPANSION };
   for (let i = 0; i < list.length; i++) {
     const pattern = list[i];
     if (typeof pattern !== "string") {
@@ -33,7 +34,7 @@ export function compileMatcher(patterns, options) {
         `pattern must be a string, got ${pattern === null ? "null" : typeof pattern}`,
       );
     }
-    const ast = parse(pattern);
+    const ast = parse(pattern, budget);
     if (ast.isNegated) negativeAsts.push(ast);
     else positiveAsts.push(ast);
   }

@@ -35,7 +35,11 @@ function extractLeadingPrefix(ops) {
       acc.push(0x2f);
       lastBoundary = acc.length;
     } else {
-      if (op.kind === OP_SLASH_ANYTHING) lastBoundary = acc.length;
+      // Every branch of an alternation opening a new segment leaves what
+      // came before whole, like a trailing `/**`.
+      if (op.kind === OP_SLASH_ANYTHING || (op.kind === OP_ALTERNATION && opensSegment(op))) {
+        lastBoundary = acc.length;
+      }
       fullyLiteral = false;
       break;
     }
@@ -45,6 +49,10 @@ function extractLeadingPrefix(ops) {
   acc.length = length;
   // latin1 chunks fromCharCode; a spread would overflow on ~64k bytes.
   return latin1(Uint8Array.from(acc));
+}
+
+function opensSegment(alt) {
+  return alt.branches.every((b) => b[0]?.kind === OP_SEP || b[0]?.kind === OP_SEP_RUN);
 }
 
 function dedupePrefixes(prefixes) {

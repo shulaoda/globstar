@@ -48,6 +48,18 @@ fn empty_throws() {
 }
 
 #[test]
+fn members_share_one_expansion_budget() {
+    // Each member is fine alone; ten of them would copy ten budgets' worth.
+    let member = "{,/}".repeat(10) + "**/f";
+    assert!(Glob::new(&member).is_ok());
+    let result = Glob::union(std::iter::repeat_n(member, 10));
+    assert!(matches!(
+        result,
+        Err(GlobError::BraceExpansionTooLarge { .. })
+    ));
+}
+
+#[test]
 fn single_pattern_degenerates() {
     let u = Glob::union(["foo.txt"]).unwrap();
     assert!(u.is_match(b"foo.txt"));

@@ -2,6 +2,10 @@ use core::fmt;
 
 pub const MAX_PATTERN_LEN: usize = 64 * 1024;
 pub const MAX_BRACE_NESTING: usize = 32;
+/// What distributing braces around `**` may copy (§7.7), per pattern or
+/// per union: one per token, a literal or a class by its length, and one
+/// per brace branch.
+pub const MAX_EXPANSION: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GlobError {
@@ -18,8 +22,12 @@ pub enum GlobError {
     /// Escaped path separator (`\/`). A `/` can never appear inside a file
     /// name on any platform, so the escape has no possible match.
     EscapedSeparator { at: usize },
-    /// Brace nesting exceeds [`MAX_BRACE_NESTING`].
+    /// Brace nesting exceeds [`MAX_BRACE_NESTING`], in the pattern or once
+    /// braces are distributed around `**`.
     BraceNestingTooDeep { max: usize },
+    /// Distributing braces around `**` would copy more than
+    /// [`MAX_EXPANSION`].
+    BraceExpansionTooLarge { max: usize },
     /// Character class range with right endpoint smaller than left.
     InvalidRange { at: usize, low: u8, high: u8 },
     /// `Glob::union` was called with an empty iterator.
@@ -44,6 +52,9 @@ impl fmt::Display for GlobError {
                 write!(f, "escaped separator `\\/` at byte {at}")
             }
             Self::BraceNestingTooDeep { max } => write!(f, "brace nesting exceeds limit {max}"),
+            Self::BraceExpansionTooLarge { max } => {
+                write!(f, "brace expansion around `**` exceeds limit {max}")
+            }
             Self::InvalidRange { at, low, high } => write!(
                 f,
                 "invalid character class range {low}..{high} at byte {at}"

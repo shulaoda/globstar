@@ -1,7 +1,6 @@
 import {
-  N_SEPARATOR,
-  N_BRACE,
   N_CONCAT,
+  N_LITERAL,
   lit,
   sep,
   anyChar,
@@ -12,9 +11,9 @@ import {
   concat,
   classItemByte,
   classItemRange,
-  nodeToLiteralBytes,
 } from "./ast.js";
-import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING } from "./error.js";
+import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } from "./error.js";
+import { resolveGlobstars } from "./resolve.js";
 import { toBytes } from "./utf8.js";
 
 const BACKSLASH = 0x5c;
@@ -30,34 +29,9 @@ const BANG = 0x21;
 const CARET = 0x5e;
 const DASH = 0x2d;
 
-const CTX_TOP = Object.freeze({ brace: false, prevBoundary: true, nextBoundary: true });
-
-function boundaryBefore(nodes, ctx) {
-  if (nodes.length === 0) return ctx.prevBoundary;
-  const last = nodes[nodes.length - 1];
-  if (last.tag === N_SEPARATOR) return true;
-  if (last.tag === N_BRACE) return nodeTrailsBoundary(last);
-  return false;
-}
-
-function nodeTrailsBoundary(node) {
-  if (node.tag === N_SEPARATOR) return true;
-  if (node.tag === N_CONCAT) {
-    return node.children.length > 0 && nodeTrailsBoundary(node.children[node.children.length - 1]);
-  }
-  if (node.tag === N_BRACE) {
-    return node.branches.length > 0 && node.branches.every(nodeTrailsBoundary);
-  }
-  return false;
-}
-
-function boundaryAfter(next, ctx) {
-  if (next === undefined || next === SLASH) return true;
-  if (next === COMMA || next === RBRACE) return ctx.brace && ctx.nextBoundary;
-  return false;
-}
-
-export function parse(input) {
+// `budget` is the expansion budget (§7.7): the patterns of one matcher share
+// it, so together they may copy `MAX_EXPANSION`, not each.
+export function parse(input, budget = { left: MAX_EXPANSION }) {
   const bytes = toBytes(input);
   if (bytes.length === 0) throw new GlobError("Empty");
   if (bytes.length > MAX_PATTERN_LEN) {
@@ -72,14 +46,14 @@ export function parse(input) {
     state.pos++;
   }
 
-  const body = parseSequence(state, CTX_TOP);
+  const body = parseSequence(state, false);
   return {
-    body,
+    body: resolveGlobstars(body, budget),
     isNegated: (negationCount & 1) === 1,
   };
 }
 
-function parseSequence(state, ctx) {
+function parseSequence(state, inBrace) {
   const { input } = state;
   const nodes = [];
   const litBuf = [];
@@ -91,7 +65,6 @@ function parseSequence(state, ctx) {
     }
   }
 
-  const inBrace = ctx.brace;
   while (state.pos < input.length) {
     const b = input[state.pos];
 
@@ -118,21 +91,25 @@ function parseSequence(state, ctx) {
         nodes.push(anyChar());
         state.pos++;
         break;
-      case STAR:
+      case STAR: {
         flushLit();
-        parseStar(state, nodes, ctx);
+        let run = 0;
+        while (input[state.pos] === STAR) {
+          run++;
+          state.pos++;
+        }
+        // A run of two is a `**`: a globstar or a star, which
+        // `resolveGlobstars` decides. Any other run is a star.
+        nodes.push(run === 2 ? globstar() : star());
         break;
+      }
       case LBRACK:
         flushLit();
         nodes.push(parseClass(state));
         break;
-      case LBRACE: {
-        const [single, nextAfterBrace] = scanBrace(state, ctx);
-        const prevBoundary = single ? false : litBuf.length === 0 && boundaryBefore(nodes, ctx);
-        const nextBoundary = single ? false : nextAfterBrace;
-        parseBraceInto(state, nodes, litBuf, flushLit, prevBoundary, nextBoundary);
+      case LBRACE:
+        parseBraceInto(state, nodes, litBuf, flushLit);
         break;
-      }
       default:
         litBuf.push(b);
         state.pos++;
@@ -143,31 +120,6 @@ function parseSequence(state, ctx) {
 
   if (nodes.length === 1) return nodes[0];
   return concat(nodes);
-}
-
-function parseStar(state, nodes, ctx) {
-  const { input } = state;
-  if (
-    input[state.pos + 1] === STAR &&
-    boundaryBefore(nodes, ctx) &&
-    boundaryAfter(input[state.pos + 2], ctx)
-  ) {
-    nodes.push(globstar());
-    state.pos += 2;
-    while (
-      state.pos + 3 <= input.length &&
-      input[state.pos] === SLASH &&
-      input[state.pos + 1] === STAR &&
-      input[state.pos + 2] === STAR &&
-      (state.pos + 3 === input.length || input[state.pos + 3] === SLASH)
-    ) {
-      state.pos += 3;
-    }
-    return;
-  }
-
-  nodes.push(star());
-  state.pos++;
 }
 
 function parseClass(state) {
@@ -224,17 +176,18 @@ function parseClassByte(state, classStart) {
   return resolved;
 }
 
-function parseBraceInto(state, nodes, litBuf, flushLit, prevBoundary, nextBoundary) {
-  const branches = parseBrace(state, prevBoundary, nextBoundary);
+function parseBraceInto(state, nodes, litBuf, flushLit) {
+  const branches = parseBrace(state);
   if (branches.length === 1) {
     litBuf.push(LBRACE);
     const single = branches[0];
-    const litBytes = nodeToLiteralBytes(single);
-    if (litBytes !== null && !litBytes.includes(SLASH)) {
-      for (let i = 0; i < litBytes.length; i++) litBuf.push(litBytes[i]);
-    } else {
-      flushLit();
-      nodes.push(single);
+    for (const node of single.tag === N_CONCAT ? single.children : [single]) {
+      if (node.tag === N_LITERAL) {
+        for (let i = 0; i < node.bytes.length; i++) litBuf.push(node.bytes[i]);
+      } else {
+        flushLit();
+        nodes.push(node);
+      }
     }
     litBuf.push(RBRACE);
   } else {
@@ -243,42 +196,7 @@ function parseBraceInto(state, nodes, litBuf, flushLit, prevBoundary, nextBounda
   }
 }
 
-function scanBrace(state, ctx) {
-  const { input } = state;
-  let i = state.pos + 1;
-  let depth = 0;
-  let single = true;
-  while (i < input.length) {
-    const b = input[i];
-    if (b === BACKSLASH) {
-      i = Math.min(i + 2, input.length);
-    } else if (b === LBRACK) {
-      i++;
-      if (input[i] === BANG || input[i] === CARET) i++;
-      if (input[i] === RBRACK) i++;
-      while (i < input.length && input[i] !== RBRACK && input[i] !== SLASH) {
-        if (input[i] === BACKSLASH) i++;
-        i++;
-      }
-      i = Math.min(i + 1, input.length);
-    } else if (b === LBRACE) {
-      depth++;
-      i++;
-    } else if (b === COMMA && depth === 0) {
-      single = false;
-      i++;
-    } else if (b === RBRACE) {
-      if (depth === 0) return [single, boundaryAfter(input[i + 1], ctx)];
-      depth--;
-      i++;
-    } else {
-      i++;
-    }
-  }
-  return [single, true];
-}
-
-function parseBrace(state, prevBoundary, nextBoundary) {
+function parseBrace(state) {
   const { input } = state;
   const startPos = state.pos;
   state.pos++;
@@ -286,10 +204,9 @@ function parseBrace(state, prevBoundary, nextBoundary) {
   if (state.brace_depth > MAX_BRACE_NESTING) {
     throw new GlobError("BraceNestingTooDeep", { max: MAX_BRACE_NESTING });
   }
-  const ctx = { brace: true, prevBoundary, nextBoundary };
   const branches = [];
   while (true) {
-    branches.push(parseSequence(state, ctx));
+    branches.push(parseSequence(state, true));
     const next = input[state.pos];
     if (next === COMMA) {
       state.pos++;

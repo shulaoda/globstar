@@ -1662,3 +1662,58 @@ a{/**/,x}b	a/y/b	match
 a{/**/,x}b	axb	match
 {a,**}/{**,b}	a/b	match
 {a,**}/{**,b}	x/y	match
+## A `**` touching a brace is judged per expansion, the brace-free
+## neighbor of each branch deciding: `**{/a,b}` ≡ `**/a ∪ **b` (the
+## second a plain star), `{a,}**` ≡ `a** ∪ **`. Spliced stars never fuse
+## into a new `**` (`a/*{*,x}/b` ≡ `a/*/b ∪ a/*x/b`).
+**{/a,/b}	a	match
+**{/a,/b}	x/y/b	match
+**{/a,b}	x/y/a	match
+**{/a,b}	xb	match
+**{/a,b}	x/b	no-match
+**{/a,/b}	.x/a	no-match	dot=false
+src/**{/*.ts,/*.tsx}	src/a.ts	match
+src/**{/*.ts,/*.tsx}	src/x/y/a.tsx	match
+x/**{,}	x/a/b	match
+{/,}**	a/b	match
+x/{a/,}**	x/y/z	match
+{a/,b}**	a/x/y	match
+{a/,b}**	bx	match
+{a/,b}**	b/x	no-match
+{a,}**	x/y	match
+{a,}**	ax	match
+{a,**}{/b,c}	x/y/b	match
+{a,**}{/b,c}	xc	match
+{a,**}{/b,c}	x/c	no-match
+{,/}{,**}	a/	match
+x{/,/}{**,a}/y	x//y	match
+{a,/**}/{,**/}	a//	match
+{src/,lib/}{**,gen}/*.ts	src//a.ts	match
+a/*{*,x}/b	a/yz/b	match
+a/*{*,x}/b	a/y/z/b	no-match
+## Only the branches a `**` can meet are taken apart: branches that all
+## hand it a `/` share that `/` (`{**,dist}{/a,/b}` ≡ `{**,dist}/{a,b}`),
+## and a `**` beside a plain token is a star whatever the brace holds.
+{**,dist}{/a,/b}	x/y/a	match
+{**,dist}{/a,/b}	dist/b	match
+{**,dist}{/a,/b}	a	match
+{**,dist}{/a,/b}	dista	no-match
+{**,x,y}{/,z}	a/b/	match
+{**,x,y}{/,z}	a/z	no-match
+x**{/,a}	xy/	match
+x**{/,a}	x/y/	no-match
+a{,b}**	ab/c	no-match
+{a/,b}**x	a/y/x	no-match
+**{,/a}{,/b}	x/y/a/b	match
+**{,/a}{,/b}	b	match
+{x/**,}{/a,/b}	/b	match
+{{**{,},},}	/	match
+{,/}{,/}**	//a/b	match
+{a/**,b/**}{/,x}	a/y/z/	match
+{a/**,b/**}{/,x}	b/yx	match
+{a/**,b/**}{/,x}	a/y/zx	no-match
+{pkg/**,lib/**}{/*.ts,.d.ts}	pkg/x/y/a.ts	match
+{pkg/**,lib/**}{/*.ts,.d.ts}	lib/a.d.ts	match
+{a/,}{**/x,**/y,z}	a/p/q/y	match
+{a/,}{**/x,**/y,z}	az	no-match
+{,}{,}**	a/b	match

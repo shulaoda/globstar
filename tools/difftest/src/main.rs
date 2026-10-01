@@ -194,6 +194,7 @@ fn err_token(e: &GlobError) -> String {
         TrailingBackslash => "TrailingBackslash",
         EscapedSeparator { .. } => "EscapedSeparator",
         BraceNestingTooDeep { .. } => "BraceNestingTooDeep",
+        BraceExpansionTooLarge { .. } => "BraceExpansionTooLarge",
         InvalidRange { .. } => "InvalidRange",
         EmptyPatternSet => "EmptyPatternSet",
         NegatedInUnion { .. } => "NegatedInUnion",

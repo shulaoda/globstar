@@ -77,18 +77,16 @@ fn globstar_in_path() {
 
 #[test]
 fn degenerate_globstar() {
-    // `a**b` is not a real globstar; the second `*` should degrade.
+    // `a**b` is not a real globstar; the `**` degrades to one star.
     let a = p("a**b");
-    match a.body {
-        Node::Concat(xs) => {
-            assert_eq!(xs[0], Node::Literal(b"a".to_vec()));
-            // Both `*`s become Star (collapse to single * semantically later).
-            assert_eq!(xs[1], Node::Star);
-            assert_eq!(xs[2], Node::Star);
-            assert_eq!(xs[3], Node::Literal(b"b".to_vec()));
-        }
-        _ => panic!("expected Concat"),
-    }
+    assert_eq!(
+        a.body,
+        Node::Concat(vec![
+            Node::Literal(b"a".to_vec()),
+            Node::Star,
+            Node::Literal(b"b".to_vec()),
+        ])
+    );
 }
 
 #[test]
@@ -176,6 +174,21 @@ fn brace_single_is_literal() {
     // exactly as if the braces had been escaped.
     let a = p("{a}");
     assert_eq!(a.body, Node::Literal(b"{a}".to_vec()));
+}
+
+#[test]
+fn brace_single_is_spliced() {
+    // The literal braces of `{a/b}` join the branch's own tokens: one flat
+    // sequence, no nested concatenation.
+    let a = p("{a/b}");
+    assert_eq!(
+        a.body,
+        Node::Concat(vec![
+            Node::Literal(b"{a".to_vec()),
+            Node::Separator,
+            Node::Literal(b"b}".to_vec()),
+        ])
+    );
 }
 
 #[test]

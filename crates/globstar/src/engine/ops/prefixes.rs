@@ -22,6 +22,16 @@ fn extract_prefix(ops: &[Op]) -> Box<[u8]> {
                 fully_literal = false;
                 break;
             }
+            // Every branch opens a new segment, so what came before is whole.
+            Op::Alternation(branches)
+                if branches
+                    .iter()
+                    .all(|b| matches!(b.first(), Some(Op::Sep | Op::SepRun))) =>
+            {
+                last_boundary = acc.len();
+                fully_literal = false;
+                break;
+            }
             _ => {
                 fully_literal = false;
                 break;

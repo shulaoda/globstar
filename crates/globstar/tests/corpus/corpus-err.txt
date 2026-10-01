@@ -68,6 +68,12 @@ foo{a,b	UnterminatedBrace
 # Brace nesting > 32 levels
 {{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	BraceNestingTooDeep
 
+## brace.expansion.too.large
+# Distributing braces around `**` would copy more than 4096 (§7.7).
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	BraceExpansionTooLarge
+# ...or would nest braces deeper than 32 levels (§7.6).
+**{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}	BraceNestingTooDeep
+
 ## too.long
 # pattern > 64KB (cannot represent inline; test harness generates)
 

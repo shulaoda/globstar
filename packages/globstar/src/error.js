@@ -1,5 +1,8 @@
 export const MAX_PATTERN_LEN = 64 * 1024;
 export const MAX_BRACE_NESTING = 32;
+// What distributing braces around `**` may copy (§7.7), per matcher: one
+// per token, a literal or a class by its length, and one per brace branch.
+export const MAX_EXPANSION = 4096;
 
 export class GlobError extends Error {
   constructor(kind, info) {
@@ -28,6 +31,8 @@ function formatMessage(kind, info) {
       return `pattern compiles to ${info.n} NFA states, above the JS engine cap ${info.max}`;
     case "BraceNestingTooDeep":
       return `brace nesting exceeds limit ${info.max}`;
+    case "BraceExpansionTooLarge":
+      return `brace expansion around \`**\` exceeds limit ${info.max}`;
     case "InvalidRange":
       return `invalid character class range ${info.low}..${info.high} at byte ${info.at}`;
     case "EmptyPatternSet":

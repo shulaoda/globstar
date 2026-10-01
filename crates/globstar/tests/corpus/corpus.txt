@@ -565,6 +565,10 @@ x=y	x=y	match
 {**/a}	{x/a}	match
 {**/a}	{/a}	match
 {**/a}	{x/y/a}	no-match
+# A `**` with `/` on both sides is still a globstar.
+{a/**/b}	{a/x/y/b}	match
+{a/**/b}	{a/b}	match
+{a/**/b}	{a/x/c}	no-match
 # dot: the `*` after a literal `{` is NOT a segment start, so a leading `.`
 # is consumed under BOTH settings — contrast with {a/**} below, where the
 # `*` follows a real `/` and IS protected under dot=false.

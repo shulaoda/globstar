@@ -136,6 +136,11 @@ x*/	x	descend
 ## brace.globstar-expansion dir rows (dot=false walker default)
 {**,x}/b	q	descend
 a{**,x}b	q	pruned
+src/**{/*.ts,/*.tsx}	src/x/y	descend
+**{/a,b}	x	descend
+{a/,b}**	a	descend
+{a,}**	x	descend-match
+x{/,/}{**,a}/y	x/	descend
 
 # ============================================================================
 # regression.audit-2026-08 — match_dir coverage for the audit fixes.
