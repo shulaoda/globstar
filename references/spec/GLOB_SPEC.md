@@ -300,11 +300,13 @@ L( pre{A,B,…}post ) = L( preApost ) ∪ L( preBpost ) ∪ …
 ```
 
 Each expansion is interpreted as a standalone pattern under every rule
-of this specification — in particular, **`**`segment ownership (§8.1)
-is judged on the expanded form**: a brace neither grants`**` powers
-it lacks outside (`a{**,x}b`≡`a{\*,x}b`∪`axb`— the`**`degrades
-because its expanded neighbors are`a`/`b`) nor takes away powers it
-has (`{**,x}/b`≡`\*\*/b`∪`x/b`, which matches `b`).
+of this specification — in particular, **`**` segment ownership (§8.1)
+is judged on the expanded form**: a brace neither grants `**` powers
+it lacks outside (`a{**,x}b` ≡ `a*b` ∪ `axb` — the `**` degrades
+because its expanded neighbors are `a` / `b`) nor takes away powers it
+has (`{**,x}/b` ≡ `**/b` ∪ `x/b`, which matches `b`). The same goes
+for the lenient `/**/` separators (§12.3) and the leading `**/` (§8.5):
+`x{/,y}{**,a}/z` contains `x/**/z`, which matches `x//z`.
 
 Two exceptions, without which the equation would over-apply:
 
@@ -324,11 +326,18 @@ fuse across the splice point. `*{,a}*` is `L(* ⧺ ε ⧺ *) ∪ L(* ⧺ a ⧺ *
 
 Implementation note: the equation defines the **semantics**; §7.2's
 no-pre-expansion rule still governs the implementation, which must
-merely be equivalent. One corner is resolved textually rather than by
-full expansion: a single separator flanked by TWO globstar-edged
-braces (`{a,**}/{**,b}`) is owned by the left brace's branch tails;
-implementations MAY deviate from the pure equation on that shape as
-long as both reference runtimes agree.
+merely be equivalent. The reference implementations expand only where
+a `**` faces a brace edge that can be a separator, or empty: the brace
+is distributed over the `**` (`**{/a,b}` → `{**/a,**b}`,
+`{a/,b}**` → `{a/**,b**}`), and two braces meeting at a `**` edge —
+directly, or across the one `/` both would claim (`{a,**}/{**,b}`) —
+merge into one. Only the branches the other side can affect are taken
+apart; the rest stay one brace. Branches with a `/` on the side that
+faces the `**` share that one `/`, so nothing is copied for them
+(`**{/a,/b}` → `**/{a,b}`).
+Afterwards no `**` faces such an edge, so the tokens beside a `**`
+tell what it meets in every expansion. This local expansion is capped
+(§7.6, §7.7).
 
 ### 7.1 Basic forms
 
@@ -356,7 +365,7 @@ Braces are embedded into the matcher (NFA / backtracker / brace-aware DFA); they
 
 Note the asymmetry with character classes: a single-member `[a]` IS still a class (§6). Bracket expressions — inherited from POSIX / regex — never had a minimum-member rule, whereas brace expansion — inherited from csh / bash — was defined to require alternatives. The two constructs come from different lineages, and this dialect keeps each one's inherited behavior rather than forcing symmetry.
 
-**Interaction with `**` (§8.1).** Because the braces become literal, a `**` inside a single-branch brace is flanked by the literal `{` / `}` — not segment boundaries — so it degrades to `*`: `{**}` ≡ `{*}` (matches `{a}`, not `{a/b}`); `{a/**}` ≡ `{a/*}`. This is consistent with the "`**` must own a segment" rule and matches minimatch; it is a **deliberate divergence from picomatch / fast-glob**, which keep the globstar inside literal braces (see §16).
+**Interaction with `**` (§8.1).** Because the braces become literal, a `**` right after the `{` or right before the `}` is flanked by a literal byte — not a segment boundary — so it degrades to `*`: `{**}` ≡ `{*}` (matches `{a}`, not `{a/b}`); `{a/**}` ≡ `{a/*}`. A `**` with `/` on both sides is still a globstar: `{a/**/b}` is `{a` / `**` / `b}`. This is consistent with the "`**` must own a segment" rule and matches minimatch; it is a **deliberate divergence from picomatch / fast-glob**, which keep the globstar inside literal braces (see §16).
 
 **Interaction with `/` (§2.4).** A separator is always structural — it can be neither escaped (§2.4) nor turned into literal content. Collapsing a single-branch brace therefore literalizes only the `{` / `}` and the branch's non-separator bytes; any `/` inside stays a real segment boundary. `x{a/b}y` is exactly equivalent to `x\{a/b\}y`: the two-segment pattern `x{a` / `b}y`.
 
@@ -368,9 +377,13 @@ Note the asymmetry with character classes: a single-member `[a]` IS still a clas
 
 Braces MAY be nested up to 32 levels deep. Exceeding this limit is a parse error (`BraceNestingTooDeep`, see §10).
 
+The limit also holds for the local expansion around `**` (§7.0), which can nest braces that the pattern writes side by side: `**` followed by `{,/a}` 33 times fails the same way.
+
 ### 7.7 Cartesian-product cap
 
 Branch counts and Cartesian-product breadth are NOT bounded by the parser because we do not pre-expand. The matcher handles them through standard NFA / backtracking, with cost asymptotically equivalent to the naive brace.
+
+The one exception is the local expansion around `**` (§7.0). Every copy it makes is counted: one per token, a literal or a class by its length, and one per brace branch. When the count would pass 4096, compilation fails with `BraceExpansionTooLarge` (§10). This bounds how much larger than the pattern the expanded form can get. The count runs over the whole pattern, and over all the patterns of one union together. Two kinds of pattern reach the cap. A chain of `**`-edged braces does, because each link copies what the chain built so far: `{**,a}{/,b}` repeated five times, or `{**,a}/` repeated ten times. So does a `**`-edged brace beside a long list of mixed branches, which is copied once (`{**,dist}{/a,/b,…,.map}` with a list heavier than 4096). A list whose branches all start with `/` is not copied at all (`{**,dist}{/a,/b,…}`, `**{/a,/b,…}`).
 
 ### 7.8 Braces and `**`
 
@@ -411,16 +424,22 @@ Examples:
 - `a/**b` — `**` becomes `*`; equivalent to `a/*b`.
 - `a**/b` — `**` becomes `*`; equivalent to `a*/b`.
 
-At a brace-branch edge, the boundary test uses the **expanded form**
-(§7.0): the effective neighbor of a branch-leading `**` is whatever
-precedes the `{`, and of a branch-trailing `**` whatever follows the
-matching `}` (chained through nested braces).
+Next to a brace, the boundary test uses the **expanded form** (§7.0),
+one expansion at a time. For a `**` beside a brace, the neighbor is the
+first or last token of each branch; for an empty branch, whatever lies
+beyond the brace. For a `**` at the start of a branch, the neighbor is
+whatever precedes the `{`; at the end of a branch, whatever follows the
+matching `}` (chained through nested braces). So the same `**` can be a
+globstar in some expansions and a star in others.
 
-- `a{**,x}b` — neighbors `a`/`b` → degrades: ≡ `a{*,x}b`.
+- `a{**,x}b` — neighbors `a`/`b` → degrades: ≡ `a*b ∪ axb`.
 - `{**,x}/b` — pattern start / `/` → real globstar: ≡ `**/b ∪ x/b`.
 - `{a/**,x}c` — trailing neighbor `c` → degrades: ≡ `a/*c ∪ xc`.
 - `a/{**/x,y}` — real globstar with the same lenient `/**/` boundary
   as `a/**/x` (matches `a//x`).
+- `**{/a,b}` — ≡ `**/a ∪ *b`.
+- `{a/,b}**` — ≡ `a/** ∪ b*`.
+- `{a,}**` — ≡ `a* ∪ **`: the empty branch leaves the `**` alone.
 
 ### 8.2 Match semantics
 
@@ -630,17 +649,18 @@ The leading `!` is always honored. There is no toggle that disables it, because 
 
 The parser MUST return an error for the following inputs:
 
-| Error                 | Example                    | Reason                                   |
-| --------------------- | -------------------------- | ---------------------------------------- |
-| `Empty`               | `""`                       | no defined semantics                     |
-| `TooLong`             | `len > 64 KiB`             | DoS guard                                |
-| `UnterminatedClass`   | `[abc`                     | opener requires its closer               |
-| `UnterminatedBrace`   | `{a,b`                     | opener requires its closer               |
-| `TrailingBackslash`   | `foo\`                     | typo                                     |
-| `EscapedSeparator`    | `a\/b`                     | `/` can never appear inside a file name  |
-| `BraceNestingTooDeep` | `{{{{...}}}}` (>32 levels) | DoS guard                                |
-| `InvalidRange`        | `[z-a]`                    | upper < lower                            |
-| `EmptyPatternSet`     | `globstar([])`             | the multi-pattern factory needs ≥1 input |
+| Error                    | Example                    | Reason                                                 |
+| ------------------------ | -------------------------- | ------------------------------------------------------ |
+| `Empty`                  | `""`                       | no defined semantics                                   |
+| `TooLong`                | `len > 64 KiB`             | DoS guard                                              |
+| `UnterminatedClass`      | `[abc`                     | opener requires its closer                             |
+| `UnterminatedBrace`      | `{a,b`                     | opener requires its closer                             |
+| `TrailingBackslash`      | `foo\`                     | typo                                                   |
+| `EscapedSeparator`       | `a\/b`                     | `/` can never appear inside a file name                |
+| `BraceNestingTooDeep`    | `{{{{...}}}}` (>32 levels) | DoS guard; also after the expansion around `**` (§7.6) |
+| `BraceExpansionTooLarge` | `{**,a}{/,b}` × 5          | DoS guard for the expansion around `**` (§7.7)         |
+| `InvalidRange`           | `[z-a]`                    | upper < lower                                          |
+| `EmptyPatternSet`        | `globstar([])`             | the multi-pattern factory needs ≥1 input               |
 
 > Note: stray `]`, `}`, `)`, `(` are NOT errors — see §9.1, they degrade to literal bytes under the context-meta rule. `(` and `)` have no opener role in this dialect, so there is no "unclosed paren" concept.
 
@@ -670,6 +690,7 @@ pub enum GlobError {
     TrailingBackslash,
     EscapedSeparator { at: usize },
     BraceNestingTooDeep { max: usize },
+    BraceExpansionTooLarge { max: usize },
     InvalidRange { at: usize, low: u8, high: u8 },
     EmptyPatternSet,
     NegatedInUnion, // Rust `union` only; JS accepts negated members
@@ -687,6 +708,7 @@ class GlobError extends Error {
     | "TrailingBackslash"
     | "EscapedSeparator"
     | "BraceNestingTooDeep"
+    | "BraceExpansionTooLarge"
     | "InvalidRange"
     | "EmptyPatternSet"
     | "TooManyStates"; // JS only: packed-NFA state cap (see §10 note)
@@ -1252,6 +1274,9 @@ The POSIX first-`]` rule (consistent with bash / fnmatch / fast-glob / picomatch
   - §13.1 / §13.2: `DirMatch` gains `DescendAll` and `DescendAllAndMatch`; `match_dir` answers "does everything below `d` match".
   - §13.6: definition, the one-sided guarantee, the wildcard-only rule, and the shapes it cannot prove. Never set under `dot=false`.
   - Corpus group `all-below` pins the behavior.
+- **v0.2.3** (2026-09-30): the expansion equation holds on every shape.
+  - §7.0 / §8.1: a `**` beside a brace is judged per expansion (`**{/a,b}` ≡ `**/a ∪ *b`, `{a,}**` ≡ `a* ∪ **`), and so are the lenient `/**/` separators across braces. The "MAY deviate" corner `{a,**}/{**,b}` is gone.
+  - §7.6 / §7.7 / §10: the local expansion around `**` is bounded. `BraceExpansionTooLarge` caps what it copies; `BraceNestingTooDeep` also applies to its result.
 - Awaiting owner approval before freezing as v1.0.
 
 ---
