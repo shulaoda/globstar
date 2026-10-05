@@ -54,6 +54,15 @@ fn lower_into(
                     }
                 }
                 lower_into(child, out, case_insensitive, needs_distribution);
+                // Two braces around one `/`, both with a `**` at that edge:
+                // `distribute_seps` gave the `/` to the first, so a `**/`
+                // opening a branch of the second keeps its lenient boundary
+                // (§12.3) by taking any further separators itself.
+                if i > 0 && matches!(children[i - 1], Node::Brace(_)) {
+                    if let Some(Op::Alternation(branches)) = out.last_mut() {
+                        take_leading_seps(branches);
+                    }
+                }
             }
         }
         Node::Brace(branches) => {
@@ -187,6 +196,16 @@ fn distribute_seps(node: Node) -> Node {
         }
         Node::Brace(branches) => Node::Brace(branches.into_iter().map(distribute_seps).collect()),
         other => other,
+    }
+}
+
+fn take_leading_seps(branches: &mut [Vec<Op>]) {
+    for branch in branches {
+        match branch.first_mut() {
+            Some(Op::OptSegmentsSlash) => branch.insert(0, Op::LeadingSeps),
+            Some(Op::Alternation(inner)) => take_leading_seps(inner),
+            _ => {}
+        }
     }
 }
 

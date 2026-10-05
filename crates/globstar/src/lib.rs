@@ -45,6 +45,7 @@
 pub mod ast;
 #[doc(hidden)]
 pub mod dir_match;
+mod distribute;
 #[doc(hidden)]
 pub mod engine;
 pub mod error;

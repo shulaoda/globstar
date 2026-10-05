@@ -24,7 +24,8 @@ pub enum Op {
     SlashAnything,
     /// `.*`, used for a bare `**`.
     GlobstarAny,
-    /// Zero or more leading platform separators for pattern-head `**/`.
+    /// Zero or more platform separators: for pattern-head `**/`, and for a
+    /// `**/` that opens a brace branch after a brace that took the `/`.
     LeadingSeps,
     /// Brace alternation. Branches remain nested rather than cartesian-expanded.
     Alternation(Vec<Vec<Op>>),

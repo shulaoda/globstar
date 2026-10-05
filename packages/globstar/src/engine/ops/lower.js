@@ -81,6 +81,13 @@ function lowerInto(node, out, caseInsensitive, flag) {
           }
         }
         lowerInto(child, out, caseInsensitive, flag);
+        // Two braces around one `/`, both with a `**` at that edge:
+        // `distributeSeps` gave the `/` to the first, so a `**/` opening a
+        // branch of the second keeps its lenient boundary (§12.3) by taking
+        // any further separators itself.
+        if (i > 0 && children[i - 1].tag === N_BRACE && child.tag === N_BRACE) {
+          takeLeadingSeps(out[out.length - 1].branches);
+        }
       }
       return;
     }
@@ -108,6 +115,14 @@ function pushOp(out, op) {
     out[out.length - 1] = { kind: OP_LIT, bytes: merged };
   } else {
     out.push(op);
+  }
+}
+
+function takeLeadingSeps(branches) {
+  for (const branch of branches) {
+    const first = branch[0];
+    if (first?.kind === OP_OPT_SEGMENTS_SLASH) branch.unshift(LEADING_SEPS_OP);
+    else if (first?.kind === OP_ALTERNATION) takeLeadingSeps(first.branches);
   }
 }
 

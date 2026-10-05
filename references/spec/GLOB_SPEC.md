@@ -329,15 +329,18 @@ no-pre-expansion rule still governs the implementation, which must
 merely be equivalent. The reference implementations expand only where
 a `**` faces a brace edge that can be a separator, or empty: the brace
 is distributed over the `**` (`**{/a,b}` → `{**/a,**b}`,
-`{a/,b}**` → `{a/**,b**}`), and two braces meeting at a `**` edge —
-directly, or across the one `/` both would claim (`{a,**}/{**,b}`) —
-merge into one. Only the branches the other side can affect are taken
-apart; the rest stay one brace. Branches with a `/` on the side that
-faces the `**` share that one `/`, so nothing is copied for them
-(`**{/a,/b}` → `**/{a,b}`).
-Afterwards no `**` faces such an edge, so the tokens beside a `**`
-tell what it meets in every expansion. This local expansion is capped
-(§7.6, §7.7).
+`{a/,b}**` → `{a/**,b**}`), and two braces meeting at a `**` edge
+(`{**,a}{/,b}`) merge into one. Only the branches the other side can
+affect are taken apart; the rest stay one brace. Branches with a `/`
+on the side that faces the `**` share that one `/`, so nothing is
+copied for them (`**{/a,/b}` → `**/{a,b}`). Afterwards no `**` faces
+such an edge, so the tokens beside a `**` tell what it meets in every
+expansion. Every other pattern is decided in one pass. This local
+expansion is capped (§7.6, §7.7). Two braces around one `/` with a
+`**` at both edges (`{a,/**}/{**/x,b}`) need no expansion: lowering
+folds the `/` into the first brace, and a `**/` opening a branch of
+the second keeps its lenient boundary by accepting extra separators
+itself.
 
 ### 7.1 Basic forms
 
