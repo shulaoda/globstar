@@ -12,3 +12,8 @@ a**b	C(L(a),T,L(b))	L(a),T,L(b)
 **{/a,/b}	C(G,S,B(L(a)|L(b)))	H,O,B([L(a)]|[L(b)])
 {**,dist}{/a,/b}	C(B(G|L(dist)),S,B(L(a)|L(b)))	B([H,O]|[L(dist),S]),B([L(a)]|[L(b)])
 {a/b}	C(L({a),S,L(b}))	L({a),S,L(b})
+**/{a,b}	C(G,S,B(L(a)|L(b)))	H,O,B([L(a)]|[L(b)])
+{a,b}/**	C(B(L(a)|L(b)),S,G)	B([L(a)]|[L(b)]),A
+{a/**,b}/x	C(B(C(L(a),S,G)|L(b)),S,L(x))	B([L(a),R,O]|[L(b),S]),L(x)
+{a,/**}/{**/x,b}	C(B(L(a)|C(S,G)),S,B(C(G,S,L(x))|L(b)))	B([L(a),S]|[R,O]),B([H,O,L(x)]|[L(b)])
+a/**/**/b	C(L(a),S,G,S,L(b))	L(a),R,O,L(b)

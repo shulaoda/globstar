@@ -616,6 +616,29 @@ x=y	x=y	match
 {a/,b/}**	a/.x	match	dot=true
 {a/,b/}**	a/.x	no-match	dot=false
 
+## M5b.globstar-boundary-looks-past-the-braces-that-hold-it (§7.0 + §8.1)
+# A `**` that opens a branch looks past the `{` to what precedes the brace;
+# one that closes a branch looks past the `}` to what follows it. Nested
+# braces are looked past too. No expansion is needed for these.
+{**/x,y}	a/b/x	match
+{**/x,y}	x	match
+{**/x,y}	y	match
+{**/x,y}	a/y	no-match
+{a/**,b}/x	a/p/q/x	match
+{a/**,b}/x	a/x	match
+{a/**,b}/x	b/x	match
+{a/**,b}/x	a/p/qx	no-match
+{{**,a},b}/x	p/q/x	match
+{{**,a},b}/x	x	match
+{{**,a},b}/x	b/x	match
+{{**,a},b}/x	a/p	no-match
+{a,**/}x	x	match
+{a,**/}x	p/q/x	match
+{a,**/}x	ax	match
+{a,**/}x	px	no-match
+{**/x,y}	.a/x	match	dot=true
+{**/x,y}	.a/x	no-match	dot=false
+
 ## M2.leading-globstar-keeps-its-slash-across-a-brace (§8.5)
 # **/{**/a,b} is **/a union **/b : the leading **/ still matches X at depth 0.
 **/{**/a,b}	b	match
@@ -728,3 +751,11 @@ a/{{**/c,x}d,y}	a/b/cd	match
 {a/,b/}**/c	ac	no-match
 {{a/,b/},c/}**/x	a//x	match
 {{a/,b/},c/}**/x	c//x	match
+# Two braces around one `/`, each with a `**` at that edge: the `/` stays
+# lenient for every pair of branches (§7.0 + §12.3).
+{a,/**}/{**/x,b}	a//x	match
+{a,/**}/{**/x,b}	a/x	match
+{a,/**}/{**/x,b}	a/b	match
+{a,/**}/{**/x,b}	a//b	no-match
+{a,/**}/{**/x,b}	/p/q/x	match
+{a,/**}/{**/x,b}	/p/b	match

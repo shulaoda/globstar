@@ -1717,3 +1717,18 @@ a{,b}**	ab/c	no-match
 {a/,}{**/x,**/y,z}	a/p/q/y	match
 {a/,}{**/x,**/y,z}	az	no-match
 {,}{,}**	a/b	match
+## The `/` a `**` needs may stand outside the brace; then nothing is
+## expanded: `**/{a,b}`, `{a,b}/**`, `{src,lib}/{**,gen}/*.ts`.
+**/{a,b}	a	match
+**/{a,b}	x/y/b	match
+**/{a,b}	x/ab	no-match
+**/{a,b}	.x/a	no-match	dot=false
+src/**/{*.ts,*.tsx}	src/a.ts	match
+src/**/{*.ts,*.tsx}	src/x/y/a.tsx	match
+{a,b}/**	a/x/y	match
+{a,b}/**	b/	match
+{a,b}/**	bx	no-match
+{src,lib}/{**,gen}/*.ts	src/a.ts	match
+{src,lib}/{**,gen}/*.ts	src//a.ts	match
+{src,lib}/{**,gen}/*.ts	lib/gen/a.ts	match
+{src,lib}/{**,gen}/*.ts	lib/x/gen/a.ts	match

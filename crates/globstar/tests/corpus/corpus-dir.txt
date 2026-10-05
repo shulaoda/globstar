@@ -141,6 +141,9 @@ src/**{/*.ts,/*.tsx}	src/x/y	descend
 {a/,b}**	a	descend
 {a,}**	x	descend-match
 x{/,/}{**,a}/y	x/	descend
+{a/**,b}/x	a/p	descend
+{a/**,b}/x	b	descend
+{a/**,b}/x	c	pruned
 
 # ============================================================================
 # regression.audit-2026-08 — match_dir coverage for the audit fixes.
@@ -334,6 +337,7 @@ x{a/b}y*	xa	pruned
 # The strict Sep once made match_dir prune a live // subtree.
 {src/,lib/}**/*.ts	src//sub	descend
 {src/,lib/}**/*.ts	src/sub	descend
+{a,/**}/{**/x,b}	a//p	descend
 
 # ============================================================================
 # all-below — `descend-all` / `descend-all-match` (GLOB_SPEC §13.6).
