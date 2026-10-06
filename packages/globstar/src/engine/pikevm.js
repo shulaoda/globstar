@@ -18,44 +18,31 @@ import { computeStaticPrefixes } from "./ops/index.js";
 import { latin1Bytes, utf8Latin1 } from "../utf8.js";
 import { GlobError } from "../error.js";
 
-function reachFromClosures(closures, infoOff, acceptOff, nWords) {
+// States that accept as they are, or can still reach an accept: a fixpoint
+// seeded with the accept bits, like Rust's `descend_bits`. Successors are
+// allocated after their predecessors, so the reverse sweep settles fast.
+function descendBitsOf(closures, infoOff, acceptOff, nWords) {
   const n = closures.length - infoOff;
-  const reach = new Uint8Array(n);
+  const bits = closures.slice(acceptOff, acceptOff + nWords);
   let changed = true;
   while (changed) {
     changed = false;
     for (let s = n - 1; s >= 0; s--) {
-      if (reach[s]) continue;
+      if (bits[s >>> 5] & (1 << (s & 31))) continue;
       const word2 = closures[infoOff + s];
       const tag = word2 & 0xf;
       if (tag === T_NULL || tag === T_MATCH) continue;
       const base = (word2 >>> 16) * nWords;
-      let hit = false;
-      for (let w = 0; w < nWords && !hit; w++) {
-        const cls = closures[base + w];
-        if (cls === 0) continue;
-        if (cls & closures[acceptOff + w]) {
-          hit = true;
+      for (let w = 0; w < nWords; w++) {
+        if (closures[base + w] & bits[w]) {
+          bits[s >>> 5] |= 1 << (s & 31);
+          changed = true;
           break;
         }
-        let word = cls;
-        while (word !== 0) {
-          const off = ctz32(word);
-          const s2 = (w << 5) + off;
-          word &= word - 1;
-          if (reach[s2]) {
-            hit = true;
-            break;
-          }
-        }
-      }
-      if (hit) {
-        reach[s] = 1;
-        changed = true;
       }
     }
   }
-  return reach;
+  return bits;
 }
 
 // Cap on the segment-start state sets `_coversBelow` explores.
@@ -198,7 +185,7 @@ export class PikeVm {
     }
 
     this._scratch = new Uint32Array(nWords * 2);
-    this._reachToAccept = null;
+    this._descendBits = null; // built on the first matchDir
     this.dot = nfa.dot;
   }
 
@@ -245,14 +232,24 @@ export class PikeVm {
     } else {
       this._run(dirPath);
       exact = this._isAccept(scratch);
-      prefix = this._hasPrefixDescent();
+      // A real `/` after the directory: only Sep and AnyByte fire.
+      this._expandGuards(scratch);
+      this._stepWild(scratch, 0, scratch, nWords, true);
+      const descend = (this._descendBits ??= descendBitsOf(
+        this.closures,
+        this.infoOff,
+        this.acceptOff,
+        nWords,
+      ));
+      prefix = false;
+      for (let w = 0; w < nWords; w++) if (scratch[nWords + w] & descend[w]) prefix = true;
     }
     // `dot=false` never covers a subtree: no wildcard matches the
     // dot-led names below. Most directories fail the first step, so take
     // it here before `_coversBelow` allocates.
     let all = false;
     if (prefix && this.dot) {
-      this._stepWild(scratch, nWords, scratch, false);
+      this._stepWild(scratch, nWords, scratch, 0, false);
       all = this._isAccept(scratch) && this._coversBelow(scratch.slice(nWords));
     }
     return DirMatch.fromExactPrefixAll(exact, prefix, all);
@@ -260,12 +257,14 @@ export class PikeVm {
 
   // One step over a byte only wildcards consume: a separator when `sep`,
   // else a byte every literal and class rejects (`dot=true` only, so
-  // there are no guards to expand). Reads `from` at `fromOff`.
-  _stepWild(from, fromOff, to, sep) {
+  // there are no guards to expand). A separator step is exact for a real
+  // `/`: literals and classes never take one. Reads `from` at `fromOff`,
+  // writes `to` at `toOff`.
+  _stepWild(from, fromOff, to, toOff, sep) {
     const closures = this.closures;
     const infoOff = this.infoOff;
     const nWords = this.nWords;
-    for (let w = 0; w < nWords; w++) to[w] = 0;
+    for (let w = 0; w < nWords; w++) to[toOff + w] = 0;
     for (let w = 0; w < nWords; w++) {
       let word = from[fromOff + w];
       while (word !== 0) {
@@ -276,7 +275,7 @@ export class PikeVm {
         const tag = word2 & 0xf;
         if (tag === T_ANY_BYTE || tag === (sep ? T_SEP : T_ANY_NON_SEP)) {
           const base = (word2 >>> 16) * nWords;
-          for (let j = 0; j < nWords; j++) to[j] |= closures[base + j];
+          for (let j = 0; j < nWords; j++) to[toOff + j] |= closures[base + j];
         }
       }
     }
@@ -299,15 +298,15 @@ export class PikeVm {
     let next = new Uint32Array(nWords);
     for (let i = 0; i < starts.length; i++) {
       if (i === MAX_COVER_SETS) return false;
-      this._stepWild(starts[i], 0, cur, false);
+      this._stepWild(starts[i], 0, cur, 0, false);
       let settled = false;
       // Every in-segment loop is a one-byte self-loop, so the set
       // settles within `numStates` steps.
       for (let step = 0; step <= numStates; step++) {
         if (!this._isAccept(cur)) return false;
-        this._stepWild(cur, 0, next, true);
+        this._stepWild(cur, 0, next, 0, true);
         if (!starts.some((seen) => sameBits(seen, next))) starts.push(Uint32Array.from(next));
-        this._stepWild(cur, 0, next, false);
+        this._stepWild(cur, 0, next, 0, false);
         settled = sameBits(next, cur);
         if (settled) break;
         const t = cur;
@@ -319,58 +318,17 @@ export class PikeVm {
     return true;
   }
 
-  _hasPrefixDescent() {
-    const closures = this.closures;
-    const infoOff = this.infoOff;
-    const nWords = this.nWords;
-    const scratch = this._scratch;
-    const nxtBase = nWords;
-
+  // Adds what each live dot guard lets through.
+  _expandGuards(bits) {
     const guardExps = this.guardExps;
-    if (guardExps !== null) {
-      const stride = 1 + nWords;
-      for (let r = 0; r < guardExps.length; r += stride) {
-        const g = guardExps[r];
-        if (scratch[g >>> 5] & (1 << (g & 31))) {
-          for (let j = 0; j < nWords; j++) scratch[j] |= guardExps[r + 1 + j];
-        }
+    if (guardExps === null) return;
+    const stride = 1 + this.nWords;
+    for (let r = 0; r < guardExps.length; r += stride) {
+      const g = guardExps[r];
+      if (bits[g >>> 5] & (1 << (g & 31))) {
+        for (let j = 1; j < stride; j++) bits[j - 1] |= guardExps[r + j];
       }
     }
-
-    for (let w = 0; w < nWords; w++) scratch[nxtBase + w] = 0;
-    for (let w = 0; w < nWords; w++) {
-      let word = scratch[w];
-      while (word !== 0) {
-        const off = ctz32(word);
-        const s = (w << 5) + off;
-        word &= word - 1;
-        const word2 = closures[infoOff + s];
-        const tag = word2 & 0xf;
-        if (tag === T_SEP || tag === T_ANY_BYTE) {
-          const base = (word2 >>> 16) * nWords;
-          for (let j = 0; j < nWords; j++) scratch[nxtBase + j] |= closures[base + j];
-        }
-      }
-    }
-    const acceptOff = this.acceptOff;
-    for (let w = 0; w < nWords; w++) {
-      if (scratch[nxtBase + w] & closures[acceptOff + w]) return true;
-    }
-    let reach = this._reachToAccept;
-    if (reach === null) {
-      reach = reachFromClosures(closures, infoOff, acceptOff, nWords);
-      this._reachToAccept = reach;
-    }
-    for (let w = 0; w < nWords; w++) {
-      let word = scratch[nxtBase + w];
-      while (word !== 0) {
-        const off = ctz32(word);
-        const s = (w << 5) + off;
-        word &= word - 1;
-        if (reach[s]) return true;
-      }
-    }
-    return false;
   }
 
   _run(path) {
@@ -379,8 +337,6 @@ export class PikeVm {
     const clsRefs = this.clsRefs;
     const nWords = this.nWords;
     const scratch = this._scratch;
-    const guardExps = this.guardExps;
-    const stride = 1 + nWords;
     const nxtBase = nWords;
     const initOff = this.initOff;
     for (let w = 0; w < nWords; w++) scratch[w] = closures[initOff + w];
@@ -392,14 +348,7 @@ export class PikeVm {
       const sep = isPathSep(c);
       const dotMaskFlag = atSegStart && c === 0x2e ? 0x10 : 0;
 
-      if (guardExps !== null && dotMaskFlag === 0) {
-        for (let r = 0; r < guardExps.length; r += stride) {
-          const g = guardExps[r];
-          if (scratch[g >>> 5] & (1 << (g & 31))) {
-            for (let j = 0; j < nWords; j++) scratch[j] |= guardExps[r + 1 + j];
-          }
-        }
-      }
+      if (dotMaskFlag === 0) this._expandGuards(scratch);
 
       for (let w = 0; w < nWords; w++) scratch[nxtBase + w] = 0;
 
