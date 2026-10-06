@@ -21,7 +21,9 @@ export function compileMatcher(patterns, options) {
     // Internal test hook; own-property read defeats prototype pollution.
     __engine: Object.hasOwn(o, "__engine") ? o.__engine : undefined,
   };
-  const list = Array.isArray(patterns) ? patterns : [patterns];
+  // The same pattern twice adds nothing to the union; factored into
+  // `p{,}` it would only send the matcher to a slower engine.
+  const list = Array.isArray(patterns) ? [...new Set(patterns)] : [patterns];
   if (list.length === 0) throw new GlobError("EmptyPatternSet");
 
   const positiveAsts = [];

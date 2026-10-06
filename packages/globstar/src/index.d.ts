@@ -15,7 +15,8 @@ export interface GlobstarOptions {
  * Compile one or more glob patterns into a path predicate (no
  * filesystem access — pure string matching).
  *
- * Multi-pattern combines via OR; each pattern's own `!`-prefix
+ * Multi-pattern combines via OR (a pattern given twice counts once);
+ * each pattern's own `!`-prefix
  * negation applies independently — a negated member contributes its
  * COMPLEMENT to the union, it does not subtract from the other
  * members. `["src/**", "!*.test.ts"]` therefore matches (almost)

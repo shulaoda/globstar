@@ -64,6 +64,8 @@ pub use error::GlobError;
 pub use matcher::Matcher;
 pub use options::CompileOptions;
 
+use std::collections::HashSet;
+
 use ast::{Ast, Node};
 use engine::literal::LiteralMatcher;
 use engine::ops::lower;
@@ -125,8 +127,9 @@ impl Glob {
     ///
     /// `!`-negated members are rejected with
     /// [`GlobError::NegatedInUnion`]; an empty iterator with
-    /// [`GlobError::EmptyPatternSet`]. The members share one expansion
-    /// budget ([`GlobError::BraceExpansionTooLarge`]).
+    /// [`GlobError::EmptyPatternSet`]. A pattern given twice counts
+    /// once. The members share one expansion budget
+    /// ([`GlobError::BraceExpansionTooLarge`]).
     pub fn union<I, S>(patterns: I) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -141,38 +144,38 @@ impl Glob {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let mut first: Option<Ast> = None;
-        let mut branches: Vec<Node> = Vec::new();
+        // The same pattern twice adds nothing to the union; factored into
+        // `p{,}` it would only send the matcher to a slower engine.
+        let patterns: Vec<S> = patterns.into_iter().collect();
+        let mut seen = HashSet::with_capacity(patterns.len());
+        let mut bodies: Vec<Node> = Vec::with_capacity(patterns.len());
         let mut budget = error::MAX_EXPANSION;
-        for (i, pattern) in patterns.into_iter().enumerate() {
+        for (index, pattern) in patterns.iter().enumerate() {
             let pattern = pattern.as_ref();
+            if !seen.insert(pattern) {
+                continue;
+            }
             let parsed = parser::parse_within(pattern.as_bytes(), &mut budget)?;
             if parsed.is_negated() {
                 return Err(GlobError::NegatedInUnion {
-                    index: i,
+                    index,
                     pattern: pattern.to_string(),
                 });
             }
-            if first.is_none() && branches.is_empty() {
-                first = Some(parsed);
-            } else {
-                if let Some(ast) = first.take() {
-                    branches.push(ast.body);
-                }
-                branches.push(parsed.body);
-            }
+            bodies.push(parsed.body);
         }
-        match first {
-            Some(ast) => Self::from_ast(ast, opts),
-            None if branches.is_empty() => Err(GlobError::EmptyPatternSet),
-            None => Self::from_ast(
-                Ast {
-                    negation_count: 0,
-                    body: factor_branches(branches),
-                },
-                opts,
-            ),
-        }
+        let body = match bodies.len() {
+            0 => return Err(GlobError::EmptyPatternSet),
+            1 => bodies.pop().unwrap(),
+            _ => factor_branches(bodies),
+        };
+        Self::from_ast(
+            Ast {
+                negation_count: 0,
+                body,
+            },
+            opts,
+        )
     }
 
     fn from_ast(ast: Ast, opts: CompileOptions) -> Result<Self, GlobError> {

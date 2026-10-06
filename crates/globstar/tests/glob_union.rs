@@ -52,10 +52,31 @@ fn members_share_one_expansion_budget() {
     // Each member is fine alone; ten of them would copy ten budgets' worth.
     let member = "{,/}".repeat(10) + "**/f";
     assert!(Glob::new(&member).is_ok());
-    let result = Glob::union(std::iter::repeat_n(member, 10));
+    let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
+    let result = Glob::union(&members);
     assert!(matches!(
         result,
         Err(GlobError::BraceExpansionTooLarge { .. })
+    ));
+}
+
+#[test]
+fn duplicate_members_count_once() {
+    // `p{,}` would leave the segment engine, and a duplicated literal
+    // would lose the Literal engine and most of its static prefix.
+    let single = Glob::new("**/node_modules/**").unwrap();
+    let twice = Glob::union(["**/node_modules/**", "**/node_modules/**"]).unwrap();
+    assert_eq!(twice.engine_name(), single.engine_name());
+    let twice = Glob::union(["src/main.rs", "src/main.rs"]).unwrap();
+    assert_eq!(twice.engine_name(), "Literal");
+    assert_eq!(
+        twice.static_prefixes(),
+        Glob::new("src/main.rs").unwrap().static_prefixes()
+    );
+    // The index in NegatedInUnion still counts every member given.
+    assert!(matches!(
+        Glob::union(["a", "a", "!b"]),
+        Err(GlobError::NegatedInUnion { index: 2, .. })
     ));
 }
 
