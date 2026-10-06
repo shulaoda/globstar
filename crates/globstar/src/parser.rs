@@ -172,7 +172,7 @@ impl<'a> Parser<'a> {
             Some(_) => Some(false),
         };
         match (before, after) {
-            (Some(false), Some(_)) | (Some(_), Some(false)) => Node::Star,
+            (Some(false), _) | (_, Some(false)) => Node::Star,
             (Some(true), Some(true)) if !matches!(nodes, [.., Node::Globstar, Node::Separator]) => {
                 Node::Globstar
             }

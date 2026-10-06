@@ -2,18 +2,18 @@
 //
 // A pattern means the union of its brace expansions, and in each one a `**`
 // is a globstar only with a separator, or the edge of the pattern, on both
-// sides; otherwise it is a star. The parser leaves every `**` as it is
-// written. Here `decide` turns each one into a globstar or a star by the
-// tokens beside it. A `**` beside a brace meets a different token in every
-// branch, so such braces are first taken apart by `distribute`; `mayTouch`
-// tells when that can be the case, so every other pattern takes one pass.
+// sides; otherwise it is a star. The parser decides a `**` beside plain
+// tokens as it reads, and leaves one beside a brace, or at the edge of a
+// branch, to this pass, which runs only then. Such a `**` meets a different
+// token in every branch, so the braces are first taken apart by
+// `distribute`; `mayTouch` tells when that can be the case. Then `decide`
+// turns every `**` into a globstar or a star by the tokens beside it.
 
 import { N_SEPARATOR, N_BRACE, N_CONCAT, N_GLOBSTAR, star } from "./ast.js";
 import { distribute } from "./distribute.js";
 
 // `budget.left` is what distribution may still copy (§7.7).
 export function resolveGlobstars(body, budget) {
-  if (!hasGlobstar(body)) return body;
   if (mayTouch(body)) body = distribute(body, budget);
   return decide(body, true, true);
 }
