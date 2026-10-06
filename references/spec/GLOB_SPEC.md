@@ -326,21 +326,21 @@ fuse across the splice point. `*{,a}*` is `L(* ⧺ ε ⧺ *) ∪ L(* ⧺ a ⧺ *
 
 Implementation note: the equation defines the **semantics**; §7.2's
 no-pre-expansion rule still governs the implementation, which must
-merely be equivalent. The reference implementations expand only where
-a `**` faces a brace edge that can be a separator, or empty: the brace
-is distributed over the `**` (`**{/a,b}` → `{**/a,**b}`,
-`{a/,b}**` → `{a/**,b**}`), and two braces meeting at a `**` edge
-(`{**,a}{/,b}`) merge into one. Only the branches the other side can
-affect are taken apart; the rest stay one brace. Branches with a `/`
-on the side that faces the `**` share that one `/`, so nothing is
-copied for them (`**{/a,/b}` → `**/{a,b}`). Afterwards no `**` faces
-such an edge, so the tokens beside a `**` tell what it meets in every
-expansion. Every other pattern is decided in one pass. This local
-expansion is capped (§7.6, §7.7). Two braces around one `/` with a
-`**` at both edges (`{a,/**}/{**/x,b}`) need no expansion: lowering
-folds the `/` into the first brace, and a `**/` opening a branch of
-the second keeps its lenient boundary by accepting extra separators
-itself.
+merely be equivalent. The reference implementations decide a `**`
+beside plain tokens as they parse, at no extra cost. Only a `**`
+beside a brace, or at the edge of a branch, needs more: where it faces
+a brace edge that can be a separator, or empty, the brace is
+distributed over it (`**{/a,b}` → `{**/a,**b}`, `{a/,b}**` →
+`{a/**,b**}`), and two braces meeting at a `**` edge (`{**,a}{/,b}`)
+merge into one. Only the branches the other side can affect are taken
+apart; the rest stay one brace. Branches with a `/` on the side that
+faces the `**` share that one `/`, so nothing is copied for them
+(`**{/a,/b}` → `**/{a,b}`). Afterwards the tokens beside every `**`
+tell what it meets in every expansion. This local expansion is capped
+(§7.6, §7.7). Two braces around one `/` with a `**` at both edges
+(`{a,/**}/{**/x,b}`) need no expansion: lowering folds the `/` into
+the first brace, and a `**/` opening a branch of the second keeps its
+lenient boundary by accepting extra separators itself.
 
 ### 7.1 Basic forms
 
@@ -386,7 +386,7 @@ The limit also holds for the local expansion around `**` (§7.0), which can nest
 
 Branch counts and Cartesian-product breadth are NOT bounded by the parser because we do not pre-expand. The matcher handles them through standard NFA / backtracking, with cost asymptotically equivalent to the naive brace.
 
-The one exception is the local expansion around `**` (§7.0). Every copy it makes is counted: one per token, a literal or a class by its length, and one per brace branch. When the count would pass 4096, compilation fails with `BraceExpansionTooLarge` (§10). This bounds how much larger than the pattern the expanded form can get. The count runs over the whole pattern, and over all the patterns of one union together. Two kinds of pattern reach the cap. A chain of `**`-edged braces does, because each link copies what the chain built so far: `{**,a}{/,b}` repeated five times, or `{**,a}/` repeated ten times. So does a `**`-edged brace beside a long list of mixed branches, which is copied once (`{**,dist}{/a,/b,…,.map}` with a list heavier than 4096). A list whose branches all start with `/` is not copied at all (`{**,dist}{/a,/b,…}`, `**{/a,/b,…}`).
+The one exception is the local expansion around `**` (§7.0). Every copy it makes is counted: one per token, a literal or a class by its length, and one per brace branch. When the count would pass 4096, compilation fails with `BraceExpansionTooLarge` (§10). This bounds how much larger than the pattern the expanded form can get. The count runs over the whole pattern, and over all the patterns of one union together. Two kinds of pattern reach the cap. A chain of braces that each put a `**` beside the next does, because each link copies what the chain built so far: `{**,a}{/,b}` repeated five times. So does a `**`-edged brace beside a long list of mixed branches, which is copied once (`{**,dist}{/a,/b,…,.map}` with a list heavier than 4096). A list whose branches all start with `/` is not copied at all (`{**,dist}{/a,/b,…}`, `**{/a,/b,…}`), and neither is a brace that only shares a `/` with the next (`{**,a}/` repeated any number of times).
 
 ### 7.8 Braces and `**`
 
@@ -510,12 +510,12 @@ where `SEP` is one separator and `seg` is a non-empty non-separator byte run. Th
 
 Comparison of the four `**`-related forms:
 
-| Pattern | Semantics | `path = "/"` | `path = "/a"` | `path = "a/b"` |
-| ------------ | ------------------------------------------ | -------------------------------- | ------------- | -------------- | --- |
-| `**` (alone) | `.*` | ✅ | ✅ | ✅ |
-| `**/` | `(SEP                                      | seg/)\*`, must end at a boundary | ✅ | ❌ | ❌ |
-| `**/X` | X at any depth | — | — | ✅ (X = `b`) |
-| `/**/X` | X at any depth, **absolute path required** | — | — | — |
+| Pattern      | Semantics                                           | `path = "/"` | `path = "/a"` | `path = "a/b"` |
+| ------------ | --------------------------------------------------- | ------------ | ------------- | -------------- |
+| `**` (alone) | `.*`                                                | ✅           | ✅            | ✅             |
+| `**/`        | `(SEP \| seg/)*`, must end at a boundary            | ✅           | ❌            | ❌             |
+| `**/X`       | X at any depth                                      | —            | —             | ✅ (X = `b`)   |
+| `/**/X`      | X at any depth, **absolute path required**          | —            | —             | —              |
 
 **User mental model:** `**/*.rs` means "every `.rs` file" — relative, absolute, or UNC. To restrict to absolute paths only, write `/**/*.rs` explicitly.
 
@@ -839,8 +839,8 @@ Matches are ALWAYS whole-path: the entire path bytes MUST be consumed by P. Ther
 
 Lenient ("1+ separator runs") consumption appears in exactly two places:
 
-- **`**` boundaries** (`/**/`): in the globstar fold, the `/`adjacent to`**`is upgraded from`Sep`to`SepRun`(1+). So`a/\*\*/b`does match`a//b`. This matches picomatch / globset / wax.
-- **Pattern-leading `**/`**: the lowering pass prepends a `LeadingSeps`op (0+) so`\*\*/foo`matches both relative paths and`/foo`, `//server/share/foo`, ... (§8.5).
+- **`**` boundaries** (`/**/`): in the globstar fold, the `/` adjacent to `**` is upgraded from `Sep` to `SepRun` (1+). So `a/**/b` does match `a//b`. This matches picomatch / globset / wax. When that `/` belongs to a brace which also holds the `**` of another branch (`{a,/**}/{**/x,b}`), the fold cannot upgrade it; the `**/` branch of the second brace accepts the extra separators itself (`LeadingSeps`, 0+), so `a//x` still matches.
+- **Pattern-leading `**/`**: the lowering pass prepends a `LeadingSeps` op (0+) so `**/foo` matches both relative paths and `/foo`, `//server/share/foo`, ... (§8.5).
 
 **Cross-platform consequences.** Different implementations, or the same implementation on different platforms, MAY return different match results for the same (pattern, path) pair. This is the price of accepting native paths and is an acknowledged trade-off. Callers that require strict portability SHOULD normalize paths to `/`-only form before passing them in.
 
