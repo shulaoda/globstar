@@ -1,7 +1,11 @@
 import { isPathSep } from "./bytes.js";
 
+// Node tags. The parser never produces a concatenation of one node, nor one
+// inside another (the empty one is an empty brace branch); it emits a
+// globstar only where the `**` owns a whole segment in every brace expansion
+// (§8.1), and a brace always has two or more branches (§7.4).
 export const N_CONCAT = 0;
-export const N_LITERAL = 1;
+export const N_LITERAL = 1; // bytes without metacharacters; consecutive literals are merged
 export const N_SEPARATOR = 2;
 export const N_ANYCHAR = 3;
 export const N_STAR = 4;

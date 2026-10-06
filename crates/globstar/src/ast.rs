@@ -12,7 +12,9 @@ impl Ast {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
-    /// Concatenation of zero or more nodes.
+    /// Concatenation of zero or more nodes. The parser never produces one
+    /// of a single node, nor one inside another; the empty one is an empty
+    /// brace branch.
     Concat(Vec<Node>),
     /// Literal bytes — no metacharacters; consecutive literals are merged.
     Literal(Vec<u8>),
@@ -22,11 +24,13 @@ pub enum Node {
     AnyChar,
     /// `*` — zero or more non-separator bytes.
     Star,
-    /// `**` — zero or more bytes across separators; must own a whole segment.
+    /// `**` — zero or more bytes across separators. The parser emits it
+    /// only where it owns a whole segment (§8.1), in every brace expansion;
+    /// a `**` that does not is a [`Node::Star`].
     Globstar,
     /// `[...]` character class.
     Class(CharClass),
-    /// `{a,b,c}` brace alternation.
+    /// `{a,b,c}` brace alternation: always two or more branches (§7.4).
     Brace(Vec<Node>),
 }
 

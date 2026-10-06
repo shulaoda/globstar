@@ -8,6 +8,7 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
 
 /// [`parse`] drawing on a shared expansion `budget` (§7.7): the patterns of
 /// one union may copy [`MAX_EXPANSION`] between them, not each.
+#[inline]
 pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, GlobError> {
     if input.is_empty() {
         return Err(GlobError::Empty);
@@ -23,6 +24,7 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
         input,
         pos: 0,
         brace_depth: 0,
+        pending: false,
     };
 
     let mut negation_count = 0u32;
@@ -31,10 +33,13 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
         p.pos += 1;
     }
 
-    let body = p.parse_sequence(false)?;
+    let mut body = p.parse_sequence(false)?;
+    if p.pending {
+        body = resolve_globstars(body, budget)?;
+    }
     Ok(Ast {
         negation_count,
-        body: resolve_globstars(body, budget)?,
+        body,
     })
 }
 
@@ -42,6 +47,8 @@ struct Parser<'a> {
     input: &'a [u8],
     pos: usize,
     brace_depth: usize,
+    /// A `**` was left to `resolve_globstars` (see [`Parser::double_star`]).
+    pending: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -97,9 +104,12 @@ impl<'a> Parser<'a> {
                         .take_while(|&&b| b == b'*')
                         .count();
                     self.pos += run;
-                    // A run of two is a `**`: a globstar or a star, which
-                    // `resolve_globstars` decides. Any other run is a star.
-                    nodes.push(if run == 2 { Node::Globstar } else { Node::Star });
+                    // A run of exactly two is a `**`; any other run is a star.
+                    nodes.push(if run == 2 {
+                        self.double_star(&nodes, in_brace)
+                    } else {
+                        Node::Star
+                    });
                 }
                 b'[' => {
                     flush_literal(&mut lit_buf, &mut nodes);
@@ -142,6 +152,35 @@ impl<'a> Parser<'a> {
             Ok([single]) => single,
             Err(nodes) => Node::Concat(nodes),
         })
+    }
+
+    /// A `**` is a globstar with a separator, or the end of the pattern, on
+    /// both sides, and a star beside any other token (§8.1). Beside a brace,
+    /// or at the edge of a branch, what it meets depends on the branch, so
+    /// such a `**` is left to `resolve_globstars`; so is one after `**/`,
+    /// which `resolve_globstars` folds into it (§8.6).
+    fn double_star(&mut self, nodes: &[Node], in_brace: bool) -> Node {
+        let before = match nodes.last() {
+            None if !in_brace => Some(true),
+            None | Some(Node::Brace(_)) => None,
+            Some(node) => Some(matches!(node, Node::Separator)),
+        };
+        let after = match self.peek() {
+            None | Some(b'/') => Some(true),
+            Some(b'{') => None,
+            Some(b',' | b'}') if in_brace => None,
+            Some(_) => Some(false),
+        };
+        match (before, after) {
+            (Some(false), Some(_)) | (Some(_), Some(false)) => Node::Star,
+            (Some(true), Some(true)) if !matches!(nodes, [.., Node::Globstar, Node::Separator]) => {
+                Node::Globstar
+            }
+            _ => {
+                self.pending = true;
+                Node::Globstar
+            }
+        }
     }
 
     fn parse_class(&mut self) -> Result<CharClass, GlobError> {

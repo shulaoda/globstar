@@ -1,6 +1,9 @@
 import {
   N_CONCAT,
   N_LITERAL,
+  N_SEPARATOR,
+  N_GLOBSTAR,
+  N_BRACE,
   lit,
   sep,
   anyChar,
@@ -38,7 +41,8 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
   }
 
-  const state = { input: bytes, pos: 0, brace_depth: 0 };
+  // `pending`: a `**` was left to `resolveGlobstars` (see `doubleStar`).
+  const state = { input: bytes, pos: 0, brace_depth: 0, pending: false };
 
   let negationCount = 0;
   while (state.pos < bytes.length && bytes[state.pos] === BANG) {
@@ -46,11 +50,9 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
     state.pos++;
   }
 
-  const body = parseSequence(state, false);
-  return {
-    body: resolveGlobstars(body, budget),
-    isNegated: (negationCount & 1) === 1,
-  };
+  let body = parseSequence(state, false);
+  if (state.pending) body = resolveGlobstars(body, budget);
+  return { body, isNegated: (negationCount & 1) === 1 };
 }
 
 function parseSequence(state, inBrace) {
@@ -98,9 +100,8 @@ function parseSequence(state, inBrace) {
           run++;
           state.pos++;
         }
-        // A run of two is a `**`: a globstar or a star, which
-        // `resolveGlobstars` decides. Any other run is a star.
-        nodes.push(run === 2 ? globstar() : star());
+        // A run of exactly two is a `**`; any other run is a star.
+        nodes.push(run === 2 ? doubleStar(state, nodes, inBrace) : star());
         break;
       }
       case LBRACK:
@@ -120,6 +121,29 @@ function parseSequence(state, inBrace) {
 
   if (nodes.length === 1) return nodes[0];
   return concat(nodes);
+}
+
+// A `**` is a globstar with a separator, or the end of the pattern, on both
+// sides, and a star beside any other token (§8.1). Beside a brace, or at the
+// edge of a branch, what it meets depends on the branch, so such a `**` is
+// left to `resolveGlobstars`; so is one after `**/`, which `resolveGlobstars`
+// folds into it (§8.6).
+function doubleStar(state, nodes, inBrace) {
+  const last = nodes.length > 0 ? nodes[nodes.length - 1] : undefined;
+  let before;
+  if (last === undefined) before = inBrace ? undefined : true;
+  else if (last.tag === N_BRACE) before = undefined;
+  else before = last.tag === N_SEPARATOR;
+  const next = state.input[state.pos];
+  let after;
+  if (next === undefined || next === SLASH) after = true;
+  else if (next === LBRACE || (inBrace && (next === COMMA || next === RBRACE))) after = undefined;
+  else after = false;
+  if (before === false || after === false) return star();
+  const folds =
+    nodes.length >= 2 && last.tag === N_SEPARATOR && nodes[nodes.length - 2].tag === N_GLOBSTAR;
+  if (before === undefined || after === undefined || folds) state.pending = true;
+  return globstar();
 }
 
 function parseClass(state) {

@@ -2,12 +2,13 @@
 //!
 //! A pattern means the union of its brace expansions, and in each one a
 //! `**` is a globstar only with a separator, or the edge of the pattern, on
-//! both sides; otherwise it is a star. The parser leaves every `**` as it
-//! is written. Here [`decide`] turns each one into a globstar or a star by
-//! the tokens beside it. A `**` beside a brace meets a different token in
-//! every branch, so such braces are first taken apart by
+//! both sides; otherwise it is a star. The parser decides a `**` beside
+//! plain tokens as it reads, and leaves one beside a brace, or at the edge
+//! of a branch, to this pass, which runs only then. Such a `**` meets a
+//! different token in every branch, so the braces are first taken apart by
 //! [`distribute`](crate::distribute::distribute); [`may_touch`] tells when
-//! that can be the case, so every other pattern takes one pass.
+//! that can be the case. Then [`decide`] turns every `**` into a globstar
+//! or a star by the tokens beside it.
 
 use crate::ast::Node;
 use crate::distribute::distribute;
@@ -15,12 +16,10 @@ use crate::error::GlobError;
 
 /// `budget` is what distribution may still copy (§7.7).
 pub(crate) fn resolve_globstars(mut body: Node, budget: &mut usize) -> Result<Node, GlobError> {
-    if body.has_globstar() {
-        if may_touch(&body) {
-            body = distribute(body, budget)?;
-        }
-        decide(&mut body, true, true);
+    if may_touch(&body) {
+        body = distribute(body, budget)?;
     }
+    decide(&mut body, true, true);
     Ok(body)
 }
 
