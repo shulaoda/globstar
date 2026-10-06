@@ -20,7 +20,7 @@ function formatMessage(kind, info) {
     case "TooLong":
       return `pattern too long: ${info.len} > ${info.max}`;
     case "UnterminatedClass":
-      return `unterminated character class at byte ${info.at}`;
+      return `unterminated character class at byte ${info.at}: no \`]\` before a \`/\` or the end of the pattern`;
     case "UnterminatedBrace":
       return `unterminated brace expansion at byte ${info.at}`;
     case "TrailingBackslash":
@@ -34,10 +34,19 @@ function formatMessage(kind, info) {
     case "BraceExpansionTooLarge":
       return `brace expansion around \`**\` exceeds limit ${info.max}`;
     case "InvalidRange":
-      return `invalid character class range ${info.low}..${info.high} at byte ${info.at}`;
+      return `invalid character class range \`${show(info.low)}-${show(info.high)}\` at byte ${info.at}: the end is below the start`;
     case "EmptyPatternSet":
       return "globstar requires at least one pattern";
     default:
       return `unknown glob error: ${kind}`;
   }
+}
+
+// A byte as the user wrote it, or as `\xHH` when it is not a printable ASCII
+// character (a class range is byte-based, so this may be one byte of a
+// multi-byte character).
+function show(byte) {
+  return byte > 0x20 && byte < 0x7f
+    ? String.fromCharCode(byte)
+    : `\\x${byte.toString(16).padStart(2, "0")}`;
 }

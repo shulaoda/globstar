@@ -41,9 +41,11 @@ impl fmt::Display for GlobError {
         match self {
             Self::Empty => write!(f, "empty pattern"),
             Self::TooLong { len, max } => write!(f, "pattern too long: {len} > {max}"),
-            Self::UnterminatedClass { at } => {
-                write!(f, "unterminated character class at byte {at}")
-            }
+            Self::UnterminatedClass { at } => write!(
+                f,
+                "unterminated character class at byte {at}: no `]` before a `/` or the end of \
+                 the pattern"
+            ),
             Self::UnterminatedBrace { at } => {
                 write!(f, "unterminated brace expansion at byte {at}")
             }
@@ -57,16 +59,29 @@ impl fmt::Display for GlobError {
             }
             Self::InvalidRange { at, low, high } => write!(
                 f,
-                "invalid character class range {low}..{high} at byte {at}"
+                "invalid character class range `{}-{}` at byte {at}: the end is below the start",
+                show(*low),
+                show(*high)
             ),
             Self::EmptyPatternSet => write!(f, "Glob::union requires at least one pattern"),
             Self::NegatedInUnion { index, pattern } => write!(
                 f,
-                "negated pattern {pattern:?} at index {index} is not allowed in Glob::union; \
-                 use Glob::union(includes) and Glob::union(excludes) separately"
+                "negated pattern {pattern:?} at index {index} is not allowed in Glob::union: \
+                 drop the `!` and keep the excludes in a union of their own"
             ),
         }
     }
 }
 
 impl std::error::Error for GlobError {}
+
+/// A byte as the user wrote it, or as `\xHH` when it is not a printable
+/// ASCII character (a class range is byte-based, so this may be one byte
+/// of a multi-byte character).
+fn show(byte: u8) -> String {
+    if byte.is_ascii_graphic() {
+        (byte as char).to_string()
+    } else {
+        format!("\\x{byte:02x}")
+    }
+}
