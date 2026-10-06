@@ -3,7 +3,8 @@ import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSeqs, opsHaveNonAscii } from "./compile.js";
-import { seqMatches, nfaRun, coversBelow, endsWithSepAware } from "./exec.js";
+import { endsWithSepAware } from "../facts.js";
+import { seqMatches, nfaRun, coversBelow } from "./exec.js";
 
 export const MAX_FORKS = 64;
 // 31, not Rust's 64: the active set is an int32 bitset and nfaRun/nfaStep

@@ -15,7 +15,7 @@ import { isPathSep, ctz32 } from "../bytes.js";
 import { classMatches } from "../ast.js";
 import { DirMatch } from "../dir-match.js";
 import { computeStaticPrefixes } from "./ops/index.js";
-import { toBytes, latin1Bytes } from "../utf8.js";
+import { latin1Bytes, utf8Latin1 } from "../utf8.js";
 import { GlobError } from "../error.js";
 
 function reachFromClosures(closures, infoOff, acceptOff, nWords) {
@@ -223,14 +223,14 @@ export class PikeVm {
   }
 
   isMatch(input) {
-    const path = toBytes(input);
+    const path = utf8Latin1(input);
     if (!this.facts.accept(path)) return false;
     this._run(path);
     return this._isAccept(this._scratch);
   }
 
   matchDir(input) {
-    const dirPath = toBytes(input);
+    const dirPath = utf8Latin1(input);
     const nWords = this.nWords;
     const scratch = this._scratch;
     // Either way the second slot ends up as the state set a child
@@ -388,7 +388,7 @@ export class PikeVm {
     let atSegStart = true;
 
     for (let p = 0; p < path.length; p++) {
-      const c = path[p];
+      const c = path.charCodeAt(p);
       const sep = isPathSep(c);
       const dotMaskFlag = atSegStart && c === 0x2e ? 0x10 : 0;
 

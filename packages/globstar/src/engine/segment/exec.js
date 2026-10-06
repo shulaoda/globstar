@@ -312,21 +312,3 @@ function wildConsumes(w, str, s, t, ci, bail) {
     }
   }
 }
-
-export function endsWithSepAware(str, suffix, ci) {
-  let si = suffix.length;
-  let pi = str.length;
-  while (si > 0) {
-    if (pi === 0) return false;
-    si--;
-    pi--;
-    const sb = suffix.charCodeAt(si);
-    const pb = str.charCodeAt(pi);
-    if (sb === 0x2f) {
-      if (!isPathSep(pb)) return false;
-    } else if (ci ? !eqByteCi(sb, pb) : sb !== pb) {
-      return false;
-    }
-  }
-  return true;
-}

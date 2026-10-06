@@ -9,40 +9,41 @@ export class LiteralFacts {
   }
 
   static extract(ops, caseInsensitive) {
-    // Latin-1 strings: string mode aliases them directly, and byte mode
-    // reads the bytes back through charCodeAt.
+    // One char per byte, like the path strings they are compared with.
     const suffix = String.fromCharCode(...suffixArray(ops, ops.length));
     const suffixSet = suffix.length === 0 ? extractSuffixSet(ops) : [];
     return new LiteralFacts(suffix, suffixSet, caseInsensitive);
   }
 
-  accept(path) {
-    if (this.suffix.length > 0) return this.endsWith(path, this.suffix);
+  // `str` holds one char per path byte (see `utf8Latin1`).
+  accept(str) {
+    const ci = this.caseInsensitive;
+    if (this.suffix.length > 0) return endsWithSepAware(str, this.suffix, ci);
     if (this.suffixSet.length === 0) return true;
     for (let i = 0; i < this.suffixSet.length; i++) {
-      if (this.endsWith(path, this.suffixSet[i])) return true;
+      if (endsWithSepAware(str, this.suffixSet[i], ci)) return true;
     }
     return false;
   }
+}
 
-  endsWith(path, suffix) {
-    const ci = this.caseInsensitive;
-    let si = suffix.length;
-    let pi = path.length;
-    while (si > 0) {
-      if (pi === 0) return false;
-      si--;
-      pi--;
-      const sb = suffix.charCodeAt(si);
-      const pb = path[pi];
-      if (sb === 0x2f) {
-        if (!isPathSep(pb)) return false;
-      } else if (ci ? !eqByteCi(sb, pb) : sb !== pb) {
-        return false;
-      }
+// Does `str` end with `suffix`? A pattern `/` takes any separator byte.
+export function endsWithSepAware(str, suffix, ci) {
+  let si = suffix.length;
+  let pi = str.length;
+  while (si > 0) {
+    if (pi === 0) return false;
+    si--;
+    pi--;
+    const sb = suffix.charCodeAt(si);
+    const pb = str.charCodeAt(pi);
+    if (sb === 0x2f) {
+      if (!isPathSep(pb)) return false;
+    } else if (ci ? !eqByteCi(sb, pb) : sb !== pb) {
+      return false;
     }
-    return true;
   }
+  return true;
 }
 
 function suffixArray(ops, end) {
