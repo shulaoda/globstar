@@ -151,13 +151,8 @@ fn load_single_corpus() -> Vec<SingleRow> {
     let mut rows = Vec::new();
     for &file in SINGLE_FILES {
         let path = corpus_path(file);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("skip {}: {}", path.display(), e);
-                continue;
-            }
-        };
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
         for (idx, line) in text.lines().enumerate() {
             let line_no = idx + 1;
             if line.is_empty() || line.starts_with('#') {

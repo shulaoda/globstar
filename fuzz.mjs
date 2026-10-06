@@ -140,8 +140,8 @@ const PAT_TOKENS = [
   "foo",
   "node_modules",
 ];
-// Paths are arbitrary BYTES. `\xHH` tokens inject raw / invalid-UTF-8
-// bytes; whole-char tokens inject Latin-1 and explicit UTF-8 sequences.
+// Paths are JS strings, so they reach both runtimes as valid UTF-8: the
+// `\xHH` tokens are Latin-1 characters, the others multi-byte ones.
 const PATH_TOKENS = [
   "a",
   "b",
@@ -353,9 +353,11 @@ if (totalDiff > 0) {
     const desc =
       c.cmd === "u"
         ? `patterns=${JSON.stringify(c.patterns)} path=${JSON.stringify(c.path)}`
-        : c.cmd === "d"
-          ? `pattern=${JSON.stringify(c.pat)} dir=${JSON.stringify(c.dir)}`
-          : `pattern=${JSON.stringify(c.pat)} path=${JSON.stringify(c.path)}`;
+        : c.cmd === "s"
+          ? `patterns=${JSON.stringify(c.patterns)}`
+          : c.cmd === "d"
+            ? `pattern=${JSON.stringify(c.pat)} dir=${JSON.stringify(c.dir)}`
+            : `pattern=${JSON.stringify(c.pat)} path=${JSON.stringify(c.path)}`;
     console.log(`  [${c.cmd}] ${desc} dot=${c.dot} ci=${c.ci}  js=${js}  rust=${rust}`);
   }
   console.log(`\n✗ ${totalDiff}/${totalN} JS↔Rust divergences in ${dt}s`);

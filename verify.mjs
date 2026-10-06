@@ -22,7 +22,7 @@
 //   node verify.mjs --skip-js    # Rust only
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -131,10 +131,8 @@ async function runJsVerify() {
   const { GlobError } = await import("./packages/globstar/src/error.js");
 
   // ── single-pattern corpus
-  const filenames = new Set(readdirSync(CORPUS_DIR));
   function* singleRows() {
     for (const f of SINGLE_FILES) {
-      if (!filenames.has(f)) continue;
       const text = readFileSync(join(CORPUS_DIR, f), "utf8");
       let lineNo = 0;
       for (const raw of text.split("\n")) {
@@ -511,7 +509,9 @@ for (const side of sides) {
     );
     totalFail += r.fail;
   }
-  if (side.rows.length === 0) {
+  // A side that died, or printed no summary, is a failure however the
+  // rows above look.
+  if (side.spawnStatus !== 0 || side.rows.length === 0) {
     console.log(
       `${pad(side.runtime, 8)} ${pad("(missing)", 12)} (process exit ${side.spawnStatus})`,
     );

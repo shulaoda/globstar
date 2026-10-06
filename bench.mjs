@@ -28,8 +28,8 @@ const SKIP_JS = args.has("--skip-js");
 // the per-call basis JS mitata reports natively.
 const PATHS_PER_BATCH = 11;
 
-// Single-pattern row labels (must match both engines.rs and
-// `_engines_compare.js`).
+// Single-pattern row labels (must match both matcher_single.rs and
+// packages/bench/benches/matcher_single.js).
 const SINGLE_PATTERNS = [
   "literal",
   "simple-wildcard",
@@ -40,8 +40,8 @@ const SINGLE_PATTERNS = [
   "brace-anychar",
 ];
 
-// Multi-pattern row labels (must match both multi.rs and
-// `_engines_compare_multi.js`).
+// Multi-pattern row labels (must match both matcher_multi.rs and
+// packages/bench/benches/matcher_multi.js).
 const MULTI_SETS = [
   "solo-globstar",
   "brace-equiv-4",
@@ -62,6 +62,8 @@ const WALKER_LABELS = [
 
 // ── helpers ──────────────────────────────────────────────────────
 
+let failed = false;
+
 function step(name, cmd, argv) {
   process.stderr.write(`\n[bench] ${name} → ${cmd} ${argv.join(" ")}\n`);
   const t0 = Date.now();
@@ -71,6 +73,7 @@ function step(name, cmd, argv) {
   });
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   if (res.status !== 0) {
+    failed = true;
     process.stderr.write(`[bench]   FAILED in ${dt}s (exit ${res.status})\n`);
     process.stderr.write((res.stderr || "").slice(0, 2000));
   } else {
@@ -193,7 +196,6 @@ const js = {};
 
 if (!SKIP_RUST) {
   step("rust build (release)", "cargo", ["build", "--release", "--workspace"]);
-  step("rust build memory tools", "cargo", ["build", "--release", "-p", "memory-check"]);
   rust.matcherSingle = parseCriterion(
     step("rust matcher single", "cargo", ["bench", "--bench", "matcher_single", "--", "--quick"]),
   );
@@ -564,5 +566,14 @@ ${combinedTable("Tree × patterns", WALKER_LABELS, [rustWalker, jsWalker])}
 `);
 
 const report = sections.join("\n");
-writeFileSync(resolve(ROOT, "BENCHMARKS.md"), report);
-process.stderr.write(`\n[bench] wrote ${resolve(ROOT, "BENCHMARKS.md")}\n`);
+if (failed) {
+  process.stderr.write("\n[bench] a step failed; BENCHMARKS.md not written\n");
+  process.exit(1);
+}
+if (SKIP_RUST || SKIP_JS) {
+  // Half a run is for reading, not for the committed report.
+  process.stdout.write(report);
+} else {
+  writeFileSync(resolve(ROOT, "BENCHMARKS.md"), report);
+  process.stderr.write(`\n[bench] wrote ${resolve(ROOT, "BENCHMARKS.md")}\n`);
+}
