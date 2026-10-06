@@ -201,6 +201,37 @@ await check("bad cwd validated before empty-positives return", async () => {
   );
 });
 
+// ── InvalidPattern names the member that fails ──────────────────────────
+await check("invalid member of a pattern list is named", async () => {
+  const root = tmpTree("list-bad", ["src/a.ts"]);
+  // The bad member is named, not the whole list: a comma-joined list
+  // could read as one valid pattern (`a/{b,c/**}`).
+  assert.throws(
+    () => globSync(["src/**/*.{ts,tsx}", "lib/[abc"], { cwd: root }),
+    (e) =>
+      e instanceof WalkError &&
+      e.kind === "InvalidPattern" &&
+      e.pattern === "lib/[abc" &&
+      e.reason.includes("unterminated character class at byte 4") &&
+      e.cause?.kind === "UnterminatedClass",
+  );
+  assert.throws(
+    () => globSync(["*.rs"], { cwd: root, ignore: ["a/{b", "c/**"] }),
+    (e) => e instanceof WalkError && e.pattern === "a/{b",
+  );
+  // Every member compiles alone; together they pass the expansion budget
+  // (GLOB_SPEC §7.7). Then the error lists them all.
+  const member = "{,/}".repeat(10) + "**/f";
+  const members = Array.from({ length: 10 }, (_, i) => `${member}${i}`);
+  assert.throws(
+    () => globSync(members, { cwd: root }),
+    (e) =>
+      e instanceof WalkError &&
+      e.pattern === "[" + members.map((m) => JSON.stringify(m)).join(", ") + "]" &&
+      e.cause?.kind === "BraceExpansionTooLarge",
+  );
+});
+
 // ── WalkError JSON shape ────────────────────────────────────────────────
 await check("WalkError.toJSON is readable", async () => {
   const missing = path.join(os.tmpdir(), "glob-walk-js-definitely-missing");

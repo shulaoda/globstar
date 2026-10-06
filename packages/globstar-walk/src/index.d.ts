@@ -72,8 +72,10 @@ export function globSync(patterns: string | readonly string[], options?: GlobOpt
  * `.kind`:
  *
  * - `"InvalidPattern"` — a pattern failed to compile. `.pattern` is
- *   the offending pattern (or comma-joined list), `.reason` is the
- *   parser's message.
+ *   the offending pattern, `.reason` is the parser's message and
+ *   `.cause` the `GlobError` itself. When the members of a list each
+ *   compile alone but not together (they share one expansion budget),
+ *   `.pattern` is the whole list, formatted like `["a", "b"]`.
  * - `"Io"` — a `readdir` / `stat` failed during traversal (missing
  *   `cwd`, EACCES, ENOENT on a vanished dir, …). `.path` is the
  *   directory we tried to read, `.cause` is the underlying Node error.
@@ -101,7 +103,7 @@ export class WalkError extends Error {
   readonly pattern?: string;
   /** Compile reason (set when `kind === "InvalidPattern"`). */
   readonly reason?: string;
-  /** Underlying Node error (set when `kind === "Io"`). */
+  /** Underlying error: the Node error for `"Io"`, the `GlobError` for `"InvalidPattern"`. */
   readonly cause?: Error;
   constructor(kind: "InvalidPattern" | "Io", info?: Record<string, unknown>);
 }

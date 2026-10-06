@@ -505,6 +505,45 @@ fn walker_ignore_invalid_pattern_returns_err() {
 }
 
 #[test]
+fn walker_invalid_member_of_a_list_is_named() {
+    let t = TmpTree::new("list_bad");
+    // The bad member is named, not the whole list: a comma-joined list
+    // could read as one valid pattern (`a/{b,c/**}`).
+    let err = Walk::from_patterns(["src/**/*.{ts,tsx}", "lib/[abc"], t.root()).unwrap_err();
+    match &err {
+        WalkError::InvalidPattern { pattern, reason } => {
+            assert_eq!(pattern, "lib/[abc");
+            assert!(
+                reason.contains("unterminated character class at byte 4"),
+                "{reason}"
+            );
+        }
+        _ => panic!("expected InvalidPattern, got {err:?}"),
+    }
+    let err = Walk::new(
+        "*.rs",
+        WalkOptions {
+            ignore: vec!["a/{b".into(), "c/**".into()],
+            ..WalkOptions::new(t.root())
+        },
+    )
+    .unwrap_err();
+    match &err {
+        WalkError::InvalidPattern { pattern, .. } => assert_eq!(pattern, "a/{b"),
+        _ => panic!("expected InvalidPattern, got {err:?}"),
+    }
+    // Every member compiles alone; together they pass the expansion
+    // budget (GLOB_SPEC §7.7). Then the error lists them all.
+    let member = "{,/}".repeat(10) + "**/f";
+    let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
+    let err = Walk::from_patterns(&members, t.root()).unwrap_err();
+    match &err {
+        WalkError::InvalidPattern { pattern, .. } => assert_eq!(pattern, &format!("{members:?}")),
+        _ => panic!("expected InvalidPattern, got {err:?}"),
+    }
+}
+
+#[test]
 fn walker_rust_workspace_finds_source_files() {
     let t = TmpTree::new("rust_workspace");
     t.touch("Cargo.toml");

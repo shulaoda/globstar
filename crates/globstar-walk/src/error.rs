@@ -13,7 +13,10 @@ use std::path::PathBuf;
 pub enum WalkError {
     /// A glob pattern (main or ignore) failed to parse/compile.
     InvalidPattern {
-        /// The pattern text that failed.
+        /// The pattern text that failed. When the members of a pattern
+        /// list each compile alone but not together (they share one
+        /// expansion budget, GLOB_SPEC §7.7), this is the whole list,
+        /// formatted like `["a", "b"]`.
         pattern: String,
         /// Human-readable reason (from the underlying parser).
         reason: String,

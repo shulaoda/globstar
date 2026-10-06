@@ -128,7 +128,7 @@ function prepare(patterns, optsInput) {
 
   // Positives first (error-precedence parity with Rust); ignore still
   // compiles before the no-positives early return.
-  const matcher = compilePositive(positives, matcherOpts);
+  const matcher = compileUnion(positives, matcherOpts);
   const ignoreInput = typeof opts.ignore === "string" ? [opts.ignore] : opts.ignore;
   if (!Array.isArray(ignoreInput)) {
     throw new TypeError(
@@ -150,7 +150,7 @@ function prepare(patterns, optsInput) {
     ignorePatterns.push(n);
   }
   for (const n of negatives) ignorePatterns.push(n);
-  const ignore = compilePositive(ignorePatterns, matcherOpts);
+  const ignore = compileUnion(ignorePatterns, matcherOpts);
 
   // Lock cwd to an absolute path and validate BEFORE the empty-positives
   // early return: bad-cwd loudness must not depend on pattern content.
@@ -361,16 +361,30 @@ function normalizePattern(s) {
   return segs.length === 0 ? "" : segs.join("/") + (trailingSlash ? "/" : "");
 }
 
-function compilePositive(patterns, opts) {
-  // Patterns arrive already normalized (leading `/` stripped etc.).
+// Compiles `patterns` (already normalized: leading `/` stripped etc.)
+// into one matcher; `null` for an empty list. A failure names the member
+// that does not compile on its own. When every member compiles alone, the
+// union as a whole failed (its members share one expansion budget, GLOB_SPEC
+// §7.7) and the error lists them all.
+function compileUnion(patterns, opts) {
   if (patterns.length === 0) return null;
   try {
     return compileMatcher(patterns, opts);
   } catch (e) {
-    throw new WalkError("InvalidPattern", {
-      pattern: patterns.join(","),
-      reason: e instanceof GlobError ? e.message : String(e),
-    });
+    if (!(e instanceof GlobError)) throw e;
+    let pattern = "[" + patterns.map((p) => JSON.stringify(p)).join(", ") + "]";
+    let cause = e;
+    for (const p of patterns) {
+      try {
+        compileMatcher(p, opts);
+      } catch (member) {
+        if (!(member instanceof GlobError)) throw member;
+        pattern = p;
+        cause = member;
+        break;
+      }
+    }
+    throw new WalkError("InvalidPattern", { pattern, reason: cause.message, cause });
   }
 }
 

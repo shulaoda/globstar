@@ -201,7 +201,7 @@ impl Walk {
             }
         }
 
-        let matcher = compile_union(positives.iter().map(|s| s.as_str()), compile_opts)?;
+        let matcher = compile_union(&positives, compile_opts)?;
         // `opts.ignore` entries are normalized but never `!`-split
         // (§3.2); auto-split negatives append to them.
         let mut ignore_patterns: Vec<String> = Vec::new();
@@ -213,7 +213,7 @@ impl Walk {
             ignore_patterns.push(n);
         }
         ignore_patterns.extend(negatives);
-        let ignore = compile_union(ignore_patterns.iter().map(|s| s.as_str()), compile_opts)?;
+        let ignore = compile_union(&ignore_patterns, compile_opts)?;
         // Lock the base to an absolute path at construction. `path::absolute`
         // resolves against the current CWD without touching the filesystem and
         // without resolving symlinks — so later `set_current_dir` calls don't
@@ -649,42 +649,34 @@ fn seed_ignored(ignore: &Glob, prefix: &[u8]) -> bool {
 /// [`Glob`] via [`Glob::union_with`]. Returns `None` for an empty
 /// input list.
 ///
-/// A per-pattern compile failure becomes [`WalkError::InvalidPattern`]
-/// with the offending pattern attached.
+/// A compile failure becomes [`WalkError::InvalidPattern`] naming the
+/// member that does not compile on its own, with the parser's message
+/// for that member. When every member compiles alone, the union as a
+/// whole failed (its members share one expansion budget, GLOB_SPEC
+/// §7.7), and the error lists them all.
 ///
 /// Patterns arrive already normalized by [`normalize_pattern`] (leading
 /// `/` stripped, so `Glob::static_prefixes()` always returns relative
 /// bytes — prevents `Path::join`'s "absolute-replaces-base" behavior
 /// from escaping the sandbox).
 ///
-/// Single-pattern inputs bypass `Glob::union_with` (and its internal
-/// `Vec<String>` collect) and call `Glob::new_with` directly so the
-/// hot path of `Walk::new("**/*.ts")` allocates no scratch vector.
-fn compile_union<'a, I>(patterns: I, opts: CompileOptions) -> Result<Option<Glob>, WalkError>
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let mut iter = patterns.into_iter();
-    let first = match iter.next() {
-        Some(s) => s,
-        None => return Ok(None),
+/// Single-pattern inputs bypass `Glob::union_with` and call
+/// `Glob::new_with` directly, so `Walk::new("**/*.ts")` allocates no
+/// scratch vector.
+fn compile_union(patterns: &[String], opts: CompileOptions) -> Result<Option<Glob>, WalkError> {
+    let glob = match patterns {
+        [] => return Ok(None),
+        [single] => Glob::new_with(single, opts),
+        _ => Glob::union_with(patterns, opts),
     };
-    let invalid = |pattern: String, e: globstar::GlobError| WalkError::InvalidPattern {
-        pattern,
-        reason: e.to_string(),
-    };
-    let Some(second) = iter.next() else {
-        return Glob::new_with(first, opts)
-            .map(Some)
-            .map_err(|e| invalid(first.to_string(), e));
-    };
-    let mut all: Vec<String> = Vec::with_capacity(2);
-    all.push(first.to_string());
-    all.push(second.to_string());
-    for s in iter {
-        all.push(s.to_string());
-    }
-    Glob::union_with(&all, opts)
-        .map(Some)
-        .map_err(|e| invalid(all.join(","), e))
+    glob.map(Some).map_err(|e| {
+        let (pattern, e) = patterns
+            .iter()
+            .find_map(|p| Glob::new_with(p, opts).err().map(|e| (p.clone(), e)))
+            .unwrap_or_else(|| (format!("{patterns:?}"), e));
+        WalkError::InvalidPattern {
+            pattern,
+            reason: e.to_string(),
+        }
+    })
 }
