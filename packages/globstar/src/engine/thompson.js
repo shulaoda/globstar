@@ -200,30 +200,21 @@ class Builder {
 
   compileOss() {
     const entry = this.nextId();
-    const [segBody, segCont, segBodyLoop, sepStart, sepTail] = [
-      entry + 1,
-      entry + 2,
-      entry + 3,
-      entry + 4,
-      entry + 5,
-    ];
+    const [segBody, segCont, sepStart, sepTail] = [entry + 1, entry + 2, entry + 3, entry + 4];
     this.allocSplit(segBody, UNSET);
     this.allocAnyNonSep(segCont);
-    this.allocSplit(segBodyLoop, sepStart);
-    this.allocAnyNonSep(segCont);
+    this.allocSplit(segBody, sepStart);
     this.allocSep(sepTail);
     this.allocSplit(sepStart, entry);
     return [entry, [entry]];
   }
 
+  // `/` then anything: `/+.*` would be the same language.
   compileSlashAnything() {
-    const entry = this.nextId();
-    const [postSep, tail, tailLoop] = [entry + 1, entry + 2, entry + 3];
-    this.allocSep(postSep);
-    this.allocSplit(entry, tail);
-    this.allocSplit(tailLoop, UNSET);
-    this.allocAnyByte(tail);
-    return [entry, [tail]];
+    const entry = this.allocSep(UNSET);
+    const [tail, tails] = this.compileGlobstarAny();
+    this.patch(entry, tail);
+    return [entry, tails];
   }
 
   compileGlobstarAny() {

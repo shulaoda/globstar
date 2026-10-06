@@ -339,18 +339,17 @@ impl Builder {
 
     fn compile_oss(&mut self) -> (StateId, Vec<StateId>) {
         let entry = self.next_id();
-        let (seg_body, seg_cont, seg_body_loop, sep_start, sep_tail) =
-            (entry + 1, entry + 2, entry + 3, entry + 4, entry + 5);
+        let (seg_body, seg_cont, sep_start, sep_tail) =
+            (entry + 1, entry + 2, entry + 3, entry + 4);
         self.alloc(Trans::Split {
             a: seg_body,
             b: UNSET,
         });
         self.alloc(Trans::AnyNonSep { next: seg_cont });
         self.alloc(Trans::Split {
-            a: seg_body_loop,
+            a: seg_body,
             b: sep_start,
         });
-        self.alloc(Trans::AnyNonSep { next: seg_cont });
         self.alloc(Trans::Sep { next: sep_tail });
         self.alloc(Trans::Split {
             a: sep_start,
@@ -359,17 +358,12 @@ impl Builder {
         (entry, vec![entry])
     }
 
+    /// `/` then anything: `/+.*` would be the same language.
     fn compile_slash_anything(&mut self) -> (StateId, Vec<StateId>) {
-        let entry = self.next_id();
-        let (post_sep, tail, tail_loop) = (entry + 1, entry + 2, entry + 3);
-        self.alloc(Trans::Sep { next: post_sep });
-        self.alloc(Trans::Split { a: entry, b: tail });
-        self.alloc(Trans::Split {
-            a: tail_loop,
-            b: UNSET,
-        });
-        self.alloc(Trans::AnyByte { next: tail });
-        (entry, vec![tail])
+        let entry = self.alloc(Trans::Sep { next: UNSET });
+        let (tail, tails) = self.compile_globstar_any();
+        self.patch(entry, tail);
+        (entry, tails)
     }
 
     fn compile_globstar_any(&mut self) -> (StateId, Vec<StateId>) {

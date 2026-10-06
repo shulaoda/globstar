@@ -133,24 +133,9 @@ impl PikeVm {
                 let (active, after_sep) = buf.split_at_mut(nw);
                 let exact = bitmap_intersects(active, &self.accept_bits);
 
+                // A real `/` after the directory: only Sep and AnyByte fire.
                 self.expand_guards(active);
-
-                after_sep.fill(0);
-                let states = &self.states;
-                let closures = &self.static_closures;
-                for (w_idx, &active_word) in active.iter().enumerate() {
-                    let mut word = active_word;
-                    while word != 0 {
-                        let s = w_idx * 64 + word.trailing_zeros() as usize;
-                        word &= word - 1;
-                        if let Some(n) = byte_step(&states[s], b'/', true, false) {
-                            let base = (n as usize) * nw;
-                            for j in 0..nw {
-                                after_sep[j] |= closures[base + j];
-                            }
-                        }
-                    }
-                }
+                self.step_wild(active, after_sep, true);
                 (exact, bitmap_intersects(after_sep, &self.descend_bits))
             };
 
