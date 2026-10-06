@@ -62,12 +62,12 @@ impl<'a> Parser<'a> {
 
     fn parse_sequence(&mut self, in_brace: bool) -> Result<Node, GlobError> {
         let remaining = self.input.len() - self.pos;
-        let node_capacity = if in_brace {
-            (remaining / 2 + 1).min(8)
+        // Most brace branches are one literal, which needs no node list.
+        let mut nodes: Vec<Node> = if in_brace {
+            Vec::new()
         } else {
-            remaining / 2 + 1
+            Vec::with_capacity(remaining / 2 + 1)
         };
-        let mut nodes: Vec<Node> = Vec::with_capacity(node_capacity);
         let mut lit_buf: Vec<u8> = Vec::with_capacity(remaining.min(32));
 
         while self.pos < self.input.len() {
@@ -146,6 +146,9 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if nodes.is_empty() && !lit_buf.is_empty() {
+            return Ok(Node::Literal(lit_buf));
+        }
         flush_literal(&mut lit_buf, &mut nodes);
 
         Ok(match <[Node; 1]>::try_from(nodes) {

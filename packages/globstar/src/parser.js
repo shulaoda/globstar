@@ -62,7 +62,7 @@ function parseSequence(state, inBrace) {
 
   function flushLit() {
     if (litBuf.length > 0) {
-      nodes.push(lit(Uint8Array.from(litBuf)));
+      nodes.push(lit(new Uint8Array(litBuf)));
       litBuf.length = 0;
     }
   }
@@ -117,6 +117,8 @@ function parseSequence(state, inBrace) {
     }
   }
 
+  // Most brace branches are one literal, which needs no node list.
+  if (nodes.length === 0 && litBuf.length > 0) return lit(new Uint8Array(litBuf));
   flushLit();
 
   if (nodes.length === 1) return nodes[0];
