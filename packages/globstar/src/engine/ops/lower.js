@@ -32,16 +32,19 @@ import {
   STAR_OP,
 } from "./ir.js";
 
+// Nodes are shared, not copied, so a brace that needs the `/` beside it
+// (see `absorbSeps`) is cheapest to find while lowering; the rare second
+// pass costs nothing on every other pattern.
 export function lower(node, caseInsensitive) {
   const ops = [];
-  const flag = { needsDistribution: false };
+  const flag = { needsAbsorb: false };
   lowerInto(node, ops, caseInsensitive, flag);
-  if (flag.needsDistribution) {
+  if (flag.needsAbsorb) {
     ops.length = 0;
-    lowerInto(distributeSeps(node), ops, caseInsensitive, flag);
+    lowerInto(absorbSeps(node), ops, caseInsensitive, flag);
   }
   foldGlobstars(ops);
-  applyLeadingSepsAtStart(ops);
+  applyLeadingSeps(ops, false);
   const ci = !!caseInsensitive;
   return { ops, facts: LiteralFacts.extract(ops, ci), caseInsensitive: ci };
 }
@@ -77,12 +80,12 @@ function lowerInto(node, out, caseInsensitive, flag) {
             (prevSep && child.branches.some(leadsGlobstar)) ||
             (nextSep && child.branches.some(trailsGlobstar))
           ) {
-            flag.needsDistribution = true;
+            flag.needsAbsorb = true;
           }
         }
         lowerInto(child, out, caseInsensitive, flag);
         // Two braces around one `/`, both with a `**` at that edge:
-        // `distributeSeps` gave the `/` to the first, so a `**/` opening a
+        // `absorbSeps` gave the `/` to the first, so a `**/` opening a
         // branch of the second keeps its lenient boundary (§12.3) by taking
         // any further separators itself.
         if (i > 0 && children[i - 1].tag === N_BRACE && child.tag === N_BRACE) {
@@ -140,10 +143,6 @@ function trailsGlobstar(node) {
   return node.tag === N_BRACE && node.branches.some(trailsGlobstar);
 }
 
-function applyLeadingSepsAtStart(ops) {
-  applyLeadingSeps(ops, false);
-}
-
 // `tailIsOss`: the enclosing program continues with an OptSegmentsSlash
 // (union factoring lifts shared trailing `**/` behind the alternation),
 // so an empty branch's fork starts with `**/` and needs the §8.5
@@ -165,7 +164,10 @@ function applyLeadingSeps(ops, tailIsOss) {
   }
 }
 
-function distributeSeps(node) {
+// Gives a brace the `/` beside it when a branch has a `**` at that edge, so
+// the `**/` or `/**` fold happens inside the branch: `{a/**,b}/x` becomes
+// `{a/**/,b/}x`. A `/` already owned by a `**` token stays.
+function absorbSeps(node) {
   if (node.tag === N_CONCAT) {
     const out = [];
     const children = node.children;
@@ -173,7 +175,7 @@ function distributeSeps(node) {
     while (i < children.length) {
       const child = children[i];
       if (child.tag !== N_BRACE) {
-        out.push(distributeSeps(child));
+        out.push(absorbSeps(child));
         i++;
         continue;
       }
@@ -186,7 +188,7 @@ function distributeSeps(node) {
         children[i + 1].tag === N_SEPARATOR &&
         child.branches.some(trailsGlobstar);
       if (!absorbPrev && !absorbNext) {
-        out.push(distributeSeps(child));
+        out.push(absorbSeps(child));
         i++;
         continue;
       }
@@ -198,14 +200,14 @@ function distributeSeps(node) {
         if (branch.tag === N_CONCAT) for (const child of branch.children) sequence.push(child);
         else sequence.push(branch);
         if (absorbNext) sequence.push(sep());
-        return distributeSeps(concat(sequence));
+        return absorbSeps(concat(sequence));
       });
       out.push(brace(branches));
       i += absorbNext ? 2 : 1;
     }
     return concat(out);
   }
-  if (node.tag === N_BRACE) return brace(node.branches.map(distributeSeps));
+  if (node.tag === N_BRACE) return brace(node.branches.map(absorbSeps));
   return node;
 }
 

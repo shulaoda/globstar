@@ -97,7 +97,7 @@ fn is_below(child: &str, dir: &str) -> bool {
 
 fn build_pikevm(pattern: &str, dot: bool, ci: bool) -> PikeVm {
     let ast = parse(pattern.as_bytes()).expect("parse");
-    PikeVm::new(lower(&ast.body, ci), dot)
+    PikeVm::new(lower(ast.body, ci), dot)
 }
 
 fn build_pikevm_union(patterns: &[&str], dot: bool, ci: bool) -> PikeVm {
@@ -105,7 +105,7 @@ fn build_pikevm_union(patterns: &[&str], dot: bool, ci: bool) -> PikeVm {
         .iter()
         .map(|p| parse(p.as_bytes()).expect("parse").body)
         .collect();
-    PikeVm::new(lower(&factor_branches(bodies), ci), dot)
+    PikeVm::new(lower(factor_branches(bodies), ci), dot)
 }
 
 /// Precompute the strictly-below relation over the universe.

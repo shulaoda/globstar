@@ -146,7 +146,7 @@ fn parser_and_lowering_match_shared_golden_cases() {
         ast_dump(&parsed.body, &mut actual_ast);
         assert_eq!(actual_ast, expected_ast, "AST for {pattern:?}");
 
-        let program = lower(&parsed.body, false);
+        let program = lower(parsed.body, false);
         assert!(
             is_normalized(program.ops()),
             "ops not normalized for {pattern:?}"

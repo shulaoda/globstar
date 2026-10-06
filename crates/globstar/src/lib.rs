@@ -191,7 +191,7 @@ impl Glob {
                 } else {
                     Tier::SimpleWildcard
                 };
-                let program = lower(&ast.body, opts.case_insensitive);
+                let program = lower(ast.body, opts.case_insensitive);
                 let engine = match SegmentMatcher::build(program, opts.dot) {
                     Ok(segment) => Engine::Segment(segment),
                     Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),

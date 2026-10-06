@@ -98,7 +98,7 @@ fn main() {
             .map(|p| parser::parse(p.as_bytes()).expect("parse").body)
             .collect();
         let merged = factor_branches(bodies);
-        let program = lower(&merged, false);
+        let program = lower(merged, false);
         PikeVm::new(program, true)
     }
 

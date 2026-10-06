@@ -354,10 +354,11 @@ fn run_globstar_single(row: &SingleRow) -> Option<bool> {
 
 fn run_pikevm_single(row: &SingleRow) -> Option<bool> {
     let ast = parse(row.pattern.as_bytes()).ok()?;
-    let program = lower(&ast.body, row.case_insensitive);
+    let negated = ast.is_negated();
+    let program = lower(ast.body, row.case_insensitive);
     let pike = PikeVm::new(program, row.dot);
     let raw = pike.is_match(&row.path);
-    Some(if ast.is_negated() { !raw } else { raw })
+    Some(if negated { !raw } else { raw })
 }
 
 fn fail_msg_single(row: &SingleRow, engine: &str, got: bool) -> String {
@@ -395,7 +396,7 @@ fn parse_bodies(patterns: &[String]) -> Option<Vec<Node>> {
 fn run_pikevm_multi(row: &MultiRow) -> Option<bool> {
     let bodies = parse_bodies(&row.patterns)?;
     let merged = factor_branches(bodies);
-    let program = lower(&merged, row.case_insensitive);
+    let program = lower(merged, row.case_insensitive);
     let pike = PikeVm::new(program, row.dot);
     Some(pike.is_match(&row.path))
 }
@@ -425,7 +426,7 @@ fn run_pikevm_dir(row: &DirRow) -> Option<DirMatch> {
     if ast.is_negated() {
         return Some(DirMatch::Descend);
     }
-    let program = lower(&ast.body, row.case_insensitive);
+    let program = lower(ast.body, row.case_insensitive);
     let pike = PikeVm::new(program, row.dot);
     Some(pike.match_dir(&row.path))
 }
@@ -664,7 +665,7 @@ fn run_globstar_multi_dir(row: &MultiDirRow) -> Option<DirMatch> {
 fn run_pikevm_multi_dir(row: &MultiDirRow) -> Option<DirMatch> {
     let bodies = parse_bodies(&row.patterns)?;
     let merged = factor_branches(bodies);
-    let program = lower(&merged, row.case_insensitive);
+    let program = lower(merged, row.case_insensitive);
     Some(PikeVm::new(program, row.dot).match_dir(&row.path))
 }
 
