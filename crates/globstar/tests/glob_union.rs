@@ -61,6 +61,30 @@ fn members_share_one_expansion_budget() {
 }
 
 #[test]
+fn factoring_keeps_the_members_static_prefixes() {
+    let prefixes = |patterns: &[&str]| -> Vec<String> {
+        let mut out: Vec<String> = Glob::union(patterns)
+            .unwrap()
+            .static_prefixes()
+            .iter()
+            .map(|p| String::from_utf8(p.to_vec()).unwrap())
+            .collect();
+        out.sort();
+        out
+    };
+    // Lifting the shared `s` of `src`/`spec` would leave the walker with no
+    // directory to start from; the shared `mod` behind `src/` is harmless.
+    assert_eq!(prefixes(&["src/**/*.ts", "test/**/*.js"]), ["src", "test"]);
+    assert_eq!(prefixes(&["src/**", "spec/**"]), ["spec", "src"]);
+    assert_eq!(prefixes(&["dir1/*.ts", "dir2/*.ts"]), ["dir1", "dir2"]);
+    assert_eq!(prefixes(&["foo.ts", "foobar.ts"]), ["foo.ts", "foobar.ts"]);
+    assert_eq!(
+        prefixes(&["src/mod1/index.ts", "src/mod2/index.ts"]),
+        ["src"]
+    );
+}
+
+#[test]
 fn duplicate_members_count_once() {
     // `p{,}` would leave the segment engine, and a duplicated literal
     // would lose the Literal engine and most of its static prefix.

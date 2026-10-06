@@ -1,9 +1,15 @@
 import { N_CONCAT, N_GLOBSTAR, N_LITERAL, N_SEPARATOR, brace, concat, lit } from "./ast.js";
 
+// One body for the union of `branches`: what they all start or end with is
+// lifted out of the brace, whole tokens first, then the bytes shared by their
+// first or last literals. Bytes are lifted only behind a lifted token, so the
+// union still starts the way its members do and keeps their static prefixes:
+// `{src/**,spec/**}` stays, `s{rc,pec}/**` would not; `src/mod{1,2}/index.ts`
+// is fine.
 export function factorBranches(branches) {
   const seqs = branches.map((n) => (n.tag === N_CONCAT ? n.children.slice() : [n]));
   const prefix = liftPrefix(seqs);
-  const suffix = liftSuffix(seqs);
+  const suffix = liftSuffix(seqs, prefix.length > 0);
 
   const residual = seqs.map((s) =>
     s.length === 0 ? concat([]) : s.length === 1 ? s[0] : concat(s),
@@ -57,7 +63,9 @@ function liftPrefix(seqs) {
     for (const s of seqs) s.splice(0, size);
   }
 
-  if (!seqs.every((s) => s.length > 0 && s[0].tag === N_LITERAL)) return lifted;
+  if (lifted.length === 0 || !seqs.every((s) => s.length > 0 && s[0].tag === N_LITERAL)) {
+    return lifted;
+  }
   const lits = seqs.map((s) => s[0].bytes);
   const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
   let n = 0;
@@ -72,7 +80,7 @@ function liftPrefix(seqs) {
   return lifted;
 }
 
-function liftSuffix(seqs) {
+function liftSuffix(seqs, bytes) {
   const liftedReverse = [];
 
   while (true) {
@@ -90,7 +98,7 @@ function liftSuffix(seqs) {
     for (const s of seqs) s.length -= size;
   }
 
-  if (seqs.every((s) => s.length > 0 && s[s.length - 1].tag === N_LITERAL)) {
+  if (bytes && seqs.every((s) => s.length > 0 && s[s.length - 1].tag === N_LITERAL)) {
     const lits = seqs.map((s) => s[s.length - 1].bytes);
     const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
     let n = 0;

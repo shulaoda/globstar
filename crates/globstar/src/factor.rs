@@ -1,5 +1,11 @@
 use crate::ast::Node;
 
+/// One body for the union of `branches`: what they all start or end with
+/// is lifted out of the brace, whole tokens first, then the bytes shared by
+/// their first or last literals. Bytes are lifted only behind a lifted
+/// token, so the union still starts the way its members do and keeps
+/// their static prefixes: `{src/**,spec/**}` stays, `s{rc,pec}/**` would
+/// not; `src/mod{1,2}/index.ts` is fine.
 pub fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches
         .into_iter()
@@ -9,7 +15,7 @@ pub fn factor_branches(branches: Vec<Node>) -> Node {
         })
         .collect();
     let prefix = lift_prefix(&mut seqs);
-    let suffix = lift_suffix(&mut seqs);
+    let suffix = lift_suffix(&mut seqs, !prefix.is_empty());
 
     let mut branches: Vec<Node> = seqs
         .into_iter()
@@ -86,9 +92,10 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
         }
     }
 
-    if !seqs
-        .iter()
-        .all(|s| matches!(s.first(), Some(Node::Literal(_))))
+    if lifted.is_empty()
+        || !seqs
+            .iter()
+            .all(|s| matches!(s.first(), Some(Node::Literal(_))))
     {
         return lifted;
     }
@@ -122,7 +129,7 @@ fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
     lifted
 }
 
-fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
+fn lift_suffix(seqs: &mut [Vec<Node>], bytes: bool) -> Vec<Node> {
     let mut lifted_reverse = Vec::new();
 
     loop {
@@ -148,9 +155,10 @@ fn lift_suffix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
         }
     }
 
-    if seqs
-        .iter()
-        .all(|s| matches!(s.last(), Some(Node::Literal(_))))
+    if bytes
+        && seqs
+            .iter()
+            .all(|s| matches!(s.last(), Some(Node::Literal(_))))
     {
         let lits: Vec<&[u8]> = seqs
             .iter()
