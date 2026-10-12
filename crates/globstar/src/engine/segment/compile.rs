@@ -12,7 +12,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::engine::ops::Op;
 
-use super::bits::{Bits, Wide};
+use super::bits::Bits;
 use super::seg_nfa::SegNfa;
 use super::{
     AffixIndex, AnyNfa, ByteSketch, Bytes, Chain, Elem, LINEAR_SUFFIXES, LitSet, LitSets, MANY_G,
@@ -26,21 +26,13 @@ const START: u32 = u32::MAX;
 
 pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
     let g = Graph::build(ops, dot, ci);
-    let chains = g.chains();
-    let n_states: usize = g.elems.iter().map(Elem::states).sum::<usize>() + 1;
-    let nfa = if n_states <= 64 {
-        AnyNfa::Small(g.nfa::<u64>())
-    } else {
-        AnyNfa::Wide(Box::new(g.nfa::<Wide>()))
-    };
     let suffixes = facts::suffixes(ops);
-    let suffix_last = ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci);
     SegmentMatcher {
-        elems: g.elems.into_boxed_slice(),
-        nfa,
-        chains,
+        suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
         suffixes,
-        suffix_last,
+        chains: g.chains(),
+        nfa: g.nfa(),
+        elems: g.elems.into_boxed_slice(),
         prefixes: facts::static_prefixes(ops),
         case_insensitive: ci,
         dot,
@@ -58,9 +50,9 @@ struct Graph {
     preds: Vec<u32>,
     pred_at: Vec<u32>,
     /// Nodes the pattern may end after.
-    accept_preds: Vec<u32>,
-    /// Successor lists in CSR form, derived from `preds`. Non-linear
-    /// only.
+    ends: Vec<u32>,
+    /// Successor lists in CSR form, derived from `preds`, and the
+    /// start's successors. Non-linear only.
     offsets: Vec<u32>,
     targets: Vec<u32>,
     start: Vec<u32>,
@@ -76,7 +68,7 @@ impl Graph {
                 linear,
                 preds: Vec::new(),
                 pred_at: Vec::new(),
-                accept_preds: Vec::new(),
+                ends: Vec::new(),
                 offsets: Vec::new(),
                 targets: Vec::new(),
                 start: Vec::new(),
@@ -90,12 +82,11 @@ impl Graph {
             b.settle(&mut g);
             if g.state == Boundary::Open {
                 for &t in &g.tails {
-                    b.link(t, ACCEPT);
+                    b.end_after(t);
                 }
             } else {
-                let elem = b.close(&g.buf);
-                let id = b.emit(elem, &g.tails);
-                b.link(id, ACCEPT);
+                let id = b.emit(b.close(&g.buf), &g.tails);
+                b.end_after(id);
             }
         }
         let mut g = b.g;
@@ -118,7 +109,7 @@ impl Graph {
     fn build_successors(&mut self) {
         let n = self.elems.len();
         let mut offsets = vec![0u32; n + 1];
-        for &from in self.preds.iter().chain(&self.accept_preds) {
+        for &from in self.preds.iter().chain(&self.ends) {
             if from != START {
                 offsets[from as usize + 1] += 1;
             }
@@ -140,7 +131,7 @@ impl Graph {
                 *slot += 1;
             }
         }
-        for &from in &self.accept_preds {
+        for &from in &self.ends {
             if from != START {
                 let slot = &mut fill[from as usize];
                 targets[*slot as usize] = ACCEPT;
@@ -156,33 +147,13 @@ impl Graph {
         &self.targets[self.offsets[i] as usize..self.offsets[i + 1] as usize]
     }
 
-    fn each_succ(&self, i: usize, f: &mut dyn FnMut(u32)) {
-        if self.linear {
-            f(if i + 1 < self.elems.len() {
-                i as u32 + 1
-            } else {
-                ACCEPT
-            });
-        } else {
-            for &t in self.succ(i) {
-                f(t);
-            }
-        }
-    }
-
-    fn start(&self) -> &[u32] {
-        if self.linear { &[0] } else { &self.start }
-    }
-
-    /// Every path through the graph as a `Chain`, in pattern order,
-    /// or none when there are more than `MAX_CHAINS` or a chain with
+    /// Every path through the graph as a `Chain`, in pattern order;
+    /// none when there are more than `MAX_CHAINS` or a path with
     /// several globstars has more than 64 states (the NFA takes
     /// those).
     fn chains(&self) -> Box<[Chain]> {
-        let n = self.elems.len();
         if self.linear {
-            let chain = self.chain(Vec::new(), n, |i| i as u32, false);
-            return chain.map_or(Box::from(&[][..]), |c| Box::new([c]));
+            return self.chain(None, false).into_iter().collect();
         }
         let mut paths: Vec<Vec<u32>> = Vec::new();
         // Depth-first, first branch first.
@@ -192,7 +163,7 @@ impl Graph {
             if id == ACCEPT {
                 paths.push(path);
                 if paths.len() > MAX_CHAINS {
-                    return Box::from(&[][..]);
+                    return Box::default();
                 }
                 continue;
             }
@@ -207,78 +178,64 @@ impl Graph {
             }
         }
         let several = paths.len() > 1;
-        let mut chains = Vec::with_capacity(paths.len());
-        for nodes in paths {
-            let len = nodes.len();
-            match self.chain(nodes.clone(), len, |i| nodes[i], several) {
-                Some(c) => chains.push(c),
-                None => return Box::from(&[][..]),
-            }
-        }
-        chains.into_boxed_slice()
+        paths
+            .into_iter()
+            .map(|p| self.chain(Some(p), several))
+            .collect::<Option<_>>()
+            .unwrap_or_default()
     }
 
-    /// `stored` is what the chain keeps (empty for the linear
-    /// identity); `at(i)` names the path's `i`th node.
-    fn chain(
-        &self,
-        stored: Vec<u32>,
-        len: usize,
-        at: impl Fn(usize) -> u32,
-        several: bool,
-    ) -> Option<Chain> {
-        let elem = |i: usize| &self.elems[at(i) as usize];
-        let mut globstars = (0..len).filter(|&i| elem(i).is_globstar());
+    /// The chain of a path (`None`: the lone path of a brace-free
+    /// pattern, whose nodes are `0..elems.len()`); `None` when its
+    /// several-globstar NFA would not fit a `u64`.
+    fn chain(&self, path: Option<Vec<u32>>, several: bool) -> Option<Chain> {
+        let n = path.as_ref().map_or(self.elems.len(), Vec::len);
+        let elem = |i: usize| &self.elems[path.as_ref().map_or(i, |p| p[i] as usize)];
+        let mut globstars = (0..n).filter(|&i| elem(i).is_globstar());
         let globstar = match (globstars.next(), globstars.next()) {
             (None, _) => NO_G,
             (Some(g), None) => g as u32,
             (Some(_), Some(_)) => MANY_G,
         };
 
-        let nfa = if globstar == MANY_G && !self.linear {
-            let states: usize = (0..len).map(|i| elem(i).states()).sum();
-            if states + 1 > 64 {
-                return None;
+        // Several globstars: the NFA over this path alone, unless the
+        // path is the whole graph (then the matcher's own serves).
+        let nfa = match &path {
+            Some(p) if globstar == MANY_G => {
+                if n_states((0..n).map(elem)) > 64 {
+                    return None;
+                }
+                Some(Box::new(nfa_over::<u64>(self, Some(p))))
             }
-            Some(Box::new(nfa_over::<u64>(
-                &self.elems,
-                self.ci,
-                len,
-                &at,
-                |i, f| f(if i + 1 < len { i as u32 + 1 } else { ACCEPT }),
-                &[0],
-                false,
-            )))
-        } else {
-            None
+            _ => None,
         };
 
-        let mut joined_head = Bytes::empty();
-        if globstar != NO_G && globstar != MANY_G && globstar > 0 {
-            let head = 0..globstar as usize;
-            if head.clone().all(|i| matches!(elem(i), Elem::Lit(_))) {
-                let mut acc = Vec::new();
-                for i in head {
-                    if let Elem::Lit(lit) = elem(i) {
-                        acc.extend_from_slice(lit);
-                        acc.push(b'/');
-                    }
+        let joined_head = match globstar {
+            NO_G | MANY_G | 0 => Bytes::default(),
+            g => {
+                let head = (0..g as usize).map(elem);
+                if head.clone().all(|e| matches!(e, Elem::Lit(_))) {
+                    head.flat_map(|e| e.as_lit().iter().chain(b"/"))
+                        .copied()
+                        .collect()
+                } else {
+                    Bytes::default()
                 }
-                joined_head = Bytes::new(&acc);
             }
-        }
+        };
 
-        let quick_suffix = match elem(len - 1) {
+        // Only consulted when there are several chains.
+        let quick_suffix = match elem(n - 1) {
             Elem::Lit(lit) if several => lit.clone(),
             Elem::Wild(Wild {
                 kind: WildKind::Affix { suffix, .. },
                 ..
             }) if several => suffix.clone(),
-            _ => Bytes::empty(),
+            _ => Bytes::default(),
         };
 
         Some(Chain {
-            nodes: stored.into_boxed_slice(),
+            nodes: path.map_or_else(Default::default, Vec::into_boxed_slice),
             globstar,
             nfa,
             joined_head,
@@ -286,18 +243,19 @@ impl Graph {
         })
     }
 
-    /// The NFA over the whole graph: positions are node ids.
-    fn nfa<B: Bits>(&self) -> Nfa<B> {
-        nfa_over(
-            &self.elems,
-            self.ci,
-            self.elems.len(),
-            &|i| i as u32,
-            |i, f| self.each_succ(i, f),
-            self.start(),
-            !self.linear,
-        )
+    /// The NFA over the whole graph: a `u64` active set when it fits.
+    fn nfa(&self) -> AnyNfa {
+        if n_states(self.elems.iter()) <= 64 {
+            AnyNfa::Small(nfa_over(self, None))
+        } else {
+            AnyNfa::Wide(Box::new(nfa_over(self, None)))
+        }
     }
+}
+
+/// NFA states over `elems`, the accept state included.
+fn n_states<'a>(elems: impl Iterator<Item = &'a Elem>) -> usize {
+    elems.map(Elem::states).sum::<usize>() + 1
 }
 
 /// Elements a brace-free pattern needs (one per boundary op plus the
@@ -323,23 +281,27 @@ fn survey(ops: &[Op]) -> (usize, bool) {
     (boundaries, linear)
 }
 
-/// Visits each successor of a position (`ACCEPT` included).
-type Successors<'a> = &'a mut dyn FnMut(&mut dyn FnMut(u32));
+/// The NFA over the positions of a path (`None`: the graph itself).
+/// States are numbered by position, the accept state last. On the
+/// graph of a brace pattern, literal siblings (same predecessor) are
+/// gathered into `LitSet`s.
+fn nfa_over<B: Bits>(g: &Graph, path: Option<&[u32]>) -> Nfa<B> {
+    let n = path.map_or(g.elems.len(), <[u32]>::len);
+    let node_at = |i: usize| path.map_or(i as u32, |p| p[i]);
+    let elem = |i: usize| &g.elems[node_at(i) as usize];
+    // Positions of a path follow one another; only the graph of a
+    // brace pattern has stored edges.
+    let chained = path.is_some() || g.linear;
+    let succs = |i: usize| {
+        let (next, stored): (Option<u32>, &[u32]) = if chained {
+            (Some(if i + 1 < n { i as u32 + 1 } else { ACCEPT }), &[])
+        } else {
+            (None, g.succ(i))
+        };
+        next.into_iter().chain(stored.iter().copied())
+    };
+    let start: &[u32] = if chained { &[0] } else { &g.start };
 
-/// Lay out the NFA over `n` positions, `node_at(i)` naming the
-/// element at position `i`. States are numbered by position; the
-/// accept state comes last. With `sets`, literal siblings (same
-/// predecessor) are gathered into `LitSet`s.
-fn nfa_over<B: Bits>(
-    elems: &[Elem],
-    ci: bool,
-    n: usize,
-    node_at: &dyn Fn(usize) -> u32,
-    each_succ: impl Fn(usize, &mut dyn FnMut(u32)),
-    start: &[u32],
-    sets: bool,
-) -> Nfa<B> {
-    let elem = |i: usize| &elems[node_at(i) as usize];
     // Entry state per position; on the stack for the common sizes.
     let mut stack = [0u32; 64];
     let mut heap = Vec::new();
@@ -366,35 +328,35 @@ fn nfa_over<B: Bits>(
         .collect();
     let mut reach1 = B::zero(words);
 
-    // The closure a position's successors give, from the last
-    // position back: successors always lie ahead, so each is complete
-    // when needed, and a nullable successor contributes its own
-    // successors — its `after` minus its own states.
-    let closure_of = |targets: Successors, states: &[State<B>]| {
+    // The closure some targets give, from the last position back:
+    // successors always lie ahead, so each is complete when needed,
+    // and a nullable successor contributes its own successors — its
+    // `after` minus its own states.
+    let closure_of = |targets: &mut dyn Iterator<Item = u32>, states: &[State<B>]| {
         let mut c = B::zero(words);
-        targets(&mut |t| {
+        for t in targets {
             if t == ACCEPT {
                 c.set(accept);
-            } else {
-                let t = t as usize;
-                let e = entries[t] as usize;
-                let te = elem(t);
-                if te.nullable() {
-                    c.or_with(&states[e].after);
-                    if te.states() == 2 {
-                        c.unset(e + 1);
-                    }
-                }
-                c.set(e);
+                continue;
             }
-        });
+            let t = t as usize;
+            let e = entries[t] as usize;
+            let te = elem(t);
+            if te.nullable() {
+                c.or_with(&states[e].after);
+                if te.states() == 2 {
+                    c.unset(e + 1);
+                }
+            }
+            c.set(e);
+        }
         c
     };
     for i in (0..n).rev() {
         let e = entries[i] as usize;
         let el = elem(i);
         states[e].node = node_at(i);
-        let c = closure_of(&mut |f| each_succ(i, f), &states);
+        let mut c = closure_of(&mut succs(i), &states);
         // A state reaches accept through ≥ 1 segment iff its element
         // can consume one and what follows reaches accept.
         if el.satisfiable() && (c.test(accept) || c.intersects(&reach1)) {
@@ -406,66 +368,48 @@ fn nfa_over<B: Bits>(
         match el {
             Elem::Lit(_) | Elem::Wild(_) => states[e].after = c,
             Elem::G0 => {
-                let mut c = c;
                 c.set(e);
                 states[e].after = c;
             }
             Elem::G0Strict | Elem::G1 => {
                 states[e + 1].node = node_at(i);
-                let mut c = c;
                 c.set(e + 1);
                 states[e].after = c.clone();
                 states[e + 1].after = c;
             }
         }
     }
-    let init = closure_of(
-        &mut |f| {
-            for &s in start {
-                f(s);
-            }
-        },
-        &states,
-    );
+    let init = closure_of(&mut start.iter().copied(), &states);
 
     // Literal siblings: the `Lit` successors of one position (or of
     // the start) when there are at least two.
     let mut lit_sets: Vec<LitSet<B>> = Vec::new();
-    let mut lit_set_states = B::zero(words);
-    if sets {
-        let lit_of = |s: u32| match &elems[states[s as usize].node as usize] {
-            Elem::Lit(lit) => &lit[..],
-            _ => unreachable!(),
-        };
-        let mut lit_set = |targets: Successors| {
-            let mut sorted: Vec<u32> = Vec::new();
-            targets(&mut |t| {
-                if t != ACCEPT && matches!(elem(t as usize), Elem::Lit(_)) {
-                    sorted.push(entries[t as usize]);
-                }
-            });
+    let mut grouped = B::zero(words);
+    if !chained {
+        let lit_of = |s: u32| g.elems[states[s as usize].node as usize].as_lit();
+        let mut lit_set = |targets: &mut dyn Iterator<Item = u32>| {
+            let mut sorted: Vec<u32> = targets
+                .filter(|&t| t != ACCEPT && matches!(elem(t as usize), Elem::Lit(_)))
+                .map(|t| entries[t as usize])
+                .collect();
             if sorted.len() < 2 {
                 return;
             }
-            sorted.sort_unstable_by(|&a, &b| lit_cmp(lit_of(a), lit_of(b), ci).then(a.cmp(&b)));
+            sorted.sort_unstable_by(|&a, &b| lit_cmp(lit_of(a), lit_of(b), g.ci).then(a.cmp(&b)));
             sorted.dedup();
-            let mut set_states = B::zero(words);
+            let mut set = B::zero(words);
             for &s in &sorted {
-                set_states.set(s as usize);
+                set.set(s as usize);
             }
-            lit_set_states.or_with(&set_states);
+            grouped.or_with(&set);
             lit_sets.push(LitSet {
-                states: set_states,
+                states: set,
                 sorted: sorted.into_boxed_slice(),
             });
         };
-        lit_set(&mut |f| {
-            for &s in start {
-                f(s);
-            }
-        });
+        lit_set(&mut start.iter().copied());
         for i in 0..n {
-            lit_set(&mut |f| each_succ(i, f));
+            lit_set(&mut succs(i));
         }
     }
 
@@ -476,7 +420,7 @@ fn nfa_over<B: Bits>(
         lit_sets: (!lit_sets.is_empty()).then(|| {
             Box::new(LitSets {
                 sets: lit_sets.into_boxed_slice(),
-                states: lit_set_states,
+                states: grouped,
             })
         }),
     }
@@ -531,6 +475,7 @@ enum Boundary {
 /// Paths under construction that agree on everything still to come:
 /// the nodes awaiting a successor (`START` for the graph start), the
 /// boundary just crossed and the in-segment ops read since.
+#[derive(Clone)]
 struct Group<'a> {
     tails: Vec<u32>,
     state: Boundary,
@@ -542,22 +487,13 @@ struct Group<'a> {
     pending_oss: u32,
 }
 
-impl<'a> Group<'a> {
+impl Group<'_> {
     fn first() -> Self {
         Self {
             tails: vec![START],
             state: Boundary::Start,
             buf: Vec::new(),
             pending_oss: 0,
-        }
-    }
-
-    fn fork(&self) -> Self {
-        Self {
-            tails: self.tails.clone(),
-            state: self.state,
-            buf: self.buf.clone(),
-            pending_oss: self.pending_oss,
         }
     }
 
@@ -635,10 +571,9 @@ impl Builder {
     }
 
     /// Record that the pattern may end after `from`.
-    fn link(&mut self, from: u32, to: u32) {
-        debug_assert_eq!(to, ACCEPT);
+    fn end_after(&mut self, from: u32) {
         if !self.g.linear {
-            self.g.accept_preds.push(from);
+            self.g.ends.push(from);
         }
     }
 
@@ -661,7 +596,7 @@ impl Builder {
                 Op::Alternation(branches) if crosses(op) => {
                     let mut out: Vec<Group<'a>> = Vec::new();
                     for branch in branches {
-                        let copies = groups.iter().map(Group::fork).collect();
+                        let copies = groups.to_vec();
                         for g in self.walk(branch, copies) {
                             merge(&mut out, g);
                         }
@@ -682,7 +617,8 @@ impl Builder {
                 }
                 Op::OptSegmentsSlash => {
                     for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {
-                        self.flush_text(g);
+                        // The parser never glues a `**` to text.
+                        debug_assert!(g.buf.is_empty());
                         g.pending_oss += 1;
                     }
                 }
@@ -715,18 +651,6 @@ impl Builder {
             }
         }
         groups
-    }
-
-    /// A `**` glued to text never survives the parser; close the text
-    /// first should it ever happen.
-    fn flush_text(&mut self, g: &mut Group<'_>) {
-        debug_assert!(g.buf.is_empty());
-        if !g.buf.is_empty() {
-            let elem = self.close(&g.buf);
-            g.buf.clear();
-            let id = self.emit(elem, &g.tails);
-            g.rebase(id, Boundary::Strict);
-        }
     }
 
     /// Emit a group's pending `**/` elements: the first by the boundary
@@ -762,7 +686,8 @@ impl Builder {
     /// the group crossed; they continue as one open group.
     fn globstar_all<'a>(&mut self, groups: &mut Vec<Group<'a>>, kind: impl Fn(Boundary) -> Elem) {
         self.join_all(groups, Boundary::Open, |b, g| {
-            b.flush_text(g);
+            // The parser never glues a `**` to text.
+            debug_assert!(g.buf.is_empty());
             b.emit(kind(g.state), &g.tails)
         });
     }
@@ -796,20 +721,11 @@ impl Builder {
     }
 
     fn close(&self, buf: &[&Op]) -> Elem {
-        match buf {
-            [] => Elem::Lit(Bytes::empty()),
-            [Op::Lit(bytes)] => Elem::Lit(Bytes::new(bytes)),
-            _ if buf.iter().all(|op| matches!(op, Op::Lit(_))) => {
-                // Literal runs glued across a brace edge.
-                let mut acc = Vec::new();
-                for op in buf {
-                    if let Op::Lit(bytes) = op {
-                        acc.extend_from_slice(bytes);
-                    }
-                }
-                Elem::Lit(Bytes::new(&acc))
-            }
-            _ => Elem::Wild(compile_wild(buf, self.dot, self.g.ci)),
+        if buf.iter().all(|op| matches!(op, Op::Lit(_))) {
+            // Empty, one literal, or literals glued across a brace edge.
+            Elem::Lit(concat_lits(buf))
+        } else {
+            Elem::Wild(compile_wild(buf, self.dot, self.g.ci))
         }
     }
 }
@@ -841,23 +757,29 @@ fn crosses(op: &Op) -> bool {
     }
 }
 
-fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
-    // Leading literal run.
-    let mut idx = 0;
-    let prefix = match ops {
-        [Op::Lit(bytes), ..] if !matches!(ops.get(1), Some(Op::Lit(_))) => {
-            idx = 1;
-            Bytes::new(bytes)
+/// The bytes of a run of `Lit` ops, allocated once.
+fn concat_lits(ops: &[&Op]) -> Bytes {
+    fn lit(op: &Op) -> &[u8] {
+        match op {
+            Op::Lit(bytes) => bytes,
+            _ => unreachable!("not a literal"),
         }
+    }
+    match ops {
+        [one] => Bytes::from(lit(one)),
         _ => {
-            let mut acc = Vec::new();
-            while let Some(Op::Lit(bytes)) = ops.get(idx) {
-                acc.extend_from_slice(bytes);
-                idx += 1;
+            let mut acc = Vec::with_capacity(ops.iter().map(|op| lit(op).len()).sum());
+            for op in ops {
+                acc.extend_from_slice(lit(op));
             }
-            Bytes::new(&acc)
+            acc.into_boxed_slice()
         }
-    };
+    }
+}
+
+fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
+    let mut idx = ops.iter().take_while(|op| matches!(op, Op::Lit(_))).count();
+    let prefix = concat_lits(&ops[..idx]);
     let mut anychars = 0u32;
     let mut has_star = false;
     while idx < ops.len() {
@@ -878,7 +800,7 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
             min_len: prefix.len() as u32 + anychars,
             kind: WildKind::Affix {
                 prefix,
-                suffix: Bytes::empty(),
+                suffix: Bytes::default(),
             },
             variable: has_star,
             dot_protect,
@@ -888,7 +810,7 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
     if let Some(suffixes) = suffix_product(&ops[idx..]) {
         let any_seg = any_head && suffixes.iter().any(|s| s.is_empty());
         if suffixes.len() == 1 {
-            let suffix = Bytes::new(&suffixes[0]);
+            let suffix = Bytes::from(&suffixes[0][..]);
             return Wild {
                 min_len: (prefix.len() + suffix.len()) as u32 + anychars,
                 kind: WildKind::Affix { prefix, suffix },
@@ -969,7 +891,7 @@ fn affix_set(prefix: Bytes, mut suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
     if suffixes.len() <= LINEAR_SUFFIXES {
         return WildKind::AffixSet {
             prefix,
-            suffixes: suffixes.iter().map(|s| Bytes::new(s)).collect(),
+            suffixes: suffixes.iter().map(|s| Bytes::from(&s[..])).collect(),
             last,
         };
     }
@@ -993,7 +915,7 @@ fn affix_set(prefix: Bytes, mut suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
     }
     WildKind::AffixIndex(Box::new(AffixIndex {
         prefix,
-        suffixes: suffixes.iter().map(|s| Bytes::new(s)).collect(),
+        suffixes: suffixes.into_iter().map(Vec::into_boxed_slice).collect(),
         last,
         runs: runs.into_boxed_slice(),
     }))

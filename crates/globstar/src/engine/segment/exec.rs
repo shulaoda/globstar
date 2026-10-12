@@ -2,7 +2,9 @@ use crate::dir_match::DirMatch;
 
 use super::bits::Bits;
 use super::compile::lit_cmp;
-use super::{AnyNfa, Chain, Elem, MANY_G, NO_G, Nfa, SegmentMatcher, Wild, WildKind};
+use super::{
+    AnyNfa, ByteSketch, Chain, Elem, LitSet, MANY_G, NO_G, Nfa, SegmentMatcher, Wild, WildKind,
+};
 
 #[derive(Clone, Copy)]
 struct SegIter<'a> {
@@ -78,28 +80,28 @@ impl SegmentMatcher {
         }
     }
 
-    /// Separator-aware, case-folding suffix test, last byte first:
-    /// that is where extensions differ.
+    /// A pattern byte against a path byte: `/` stands for any
+    /// separator, letters fold when case-insensitive.
+    #[inline(always)]
+    fn pat_byte_eq(&self, pat: u8, b: u8) -> bool {
+        if pat == b'/' {
+            std::path::is_separator(b as char)
+        } else if self.case_insensitive {
+            pat.eq_ignore_ascii_case(&b)
+        } else {
+            pat == b
+        }
+    }
+
+    /// Suffix test, last byte first: that is where extensions differ.
     #[inline(always)]
     fn ends_with(&self, path: &[u8], suffix: &[u8]) -> bool {
-        if path.len() < suffix.len() {
-            return false;
-        }
-        let tail = &path[path.len() - suffix.len()..];
-        for i in (0..suffix.len()).rev() {
-            let (sb, pb) = (suffix[i], tail[i]);
-            let ok = if sb == b'/' {
-                std::path::is_separator(pb as char)
-            } else if self.case_insensitive {
-                sb.eq_ignore_ascii_case(&pb)
-            } else {
-                sb == pb
-            };
-            if !ok {
-                return false;
-            }
-        }
-        true
+        path.len() >= suffix.len()
+            && suffix
+                .iter()
+                .zip(&path[path.len() - suffix.len()..])
+                .rev()
+                .all(|(&s, &p)| self.pat_byte_eq(s, p))
     }
 
     #[inline(always)]
@@ -173,21 +175,10 @@ impl SegmentMatcher {
 
         let mid_start = if !chain.joined_head.is_empty() {
             let head = &chain.joined_head;
-            if path.len() < head.len() {
+            if path.len() < head.len()
+                || !head.iter().zip(path).all(|(&h, &p)| self.pat_byte_eq(h, p))
+            {
                 return false;
-            }
-            for (i, &hb) in head.iter().enumerate() {
-                let pb = path[i];
-                let ok = if hb == b'/' {
-                    std::path::is_separator(pb as char)
-                } else if self.case_insensitive {
-                    hb.eq_ignore_ascii_case(&pb)
-                } else {
-                    hb == pb
-                };
-                if !ok {
-                    return false;
-                }
             }
             head.len()
         } else {
@@ -254,14 +245,7 @@ impl SegmentMatcher {
 
     #[inline]
     fn lit_eq(&self, lit: &[u8], seg: &[u8]) -> bool {
-        if !self.case_insensitive {
-            return lit == seg;
-        }
-        lit.len() == seg.len()
-            && lit
-                .iter()
-                .zip(seg)
-                .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
+        lit.len() == seg.len() && self.affix_eq(lit, seg)
     }
 
     #[inline]
@@ -275,9 +259,18 @@ impl SegmentMatcher {
             .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
     }
 
+    /// The common part of a suffix set: the last-byte sketch, then
+    /// the prefix.
+    #[inline(always)]
+    fn set_head(&self, prefix: &[u8], last: ByteSketch, seg: &[u8]) -> bool {
+        last.may_end(seg)
+            && seg.len() >= prefix.len()
+            && self.affix_eq(prefix, &seg[..prefix.len()])
+    }
+
     #[inline(always)]
     fn wild_consumes(&self, w: &Wild, seg: &[u8]) -> bool {
-        if w.dot_protect && !seg.is_empty() && seg[0] == b'.' {
+        if w.dot_protect && seg.first() == Some(&b'.') {
             return false;
         }
         let len = seg.len();
@@ -295,25 +288,16 @@ impl SegmentMatcher {
                 suffixes,
                 last,
             } => {
-                if !last.may_end(seg)
-                    || len < prefix.len()
-                    || !self.affix_eq(prefix, &seg[..prefix.len()])
-                {
-                    return false;
-                }
-                suffixes.iter().any(|suf| {
-                    let need = w.min_len as usize + suf.len();
-                    len >= need
-                        && (w.variable || len == need)
-                        && self.affix_eq(suf, &seg[len - suf.len()..])
-                })
+                self.set_head(prefix, *last, seg)
+                    && suffixes.iter().any(|suf| {
+                        let need = w.min_len as usize + suf.len();
+                        len >= need
+                            && (w.variable || len == need)
+                            && self.affix_eq(suf, &seg[len - suf.len()..])
+                    })
             }
             WildKind::AffixIndex(index) => {
-                let prefix = &index.prefix;
-                if !index.last.may_end(seg)
-                    || len < prefix.len()
-                    || !self.affix_eq(prefix, &seg[..prefix.len()])
-                {
+                if !self.set_head(&index.prefix, index.last, seg) {
                     return false;
                 }
                 let Some(room) = len.checked_sub(w.min_len as usize) else {
@@ -394,42 +378,19 @@ impl<B: Bits> Nfa<B> {
     fn step(&self, m: &SegmentMatcher, active: &B, seg: &[u8], next: &mut B) {
         next.clear();
         let accept = self.accept();
-        let seg_dot_led = !seg.is_empty() && seg[0] == b'.';
-        let absorb_ok = m.dot || !seg_dot_led;
+        let absorb_ok = m.dot || seg.first() != Some(&b'.');
         // Literal siblings: one search per set instead of one compare
-        // per state.
-        let mut plain = active.clone();
-        if let Some(lit_sets) = &self.lit_sets {
-            plain.remove(&lit_sets.states);
+        // per state; their states are skipped below.
+        let grouped = self.lit_sets.as_deref().map(|lit_sets| {
             for set in lit_sets.sets.iter() {
-                if !active.intersects(&set.states) {
-                    continue;
-                }
-                let lit_of = |s: u32| match &m.elems[self.states[s as usize].node as usize] {
-                    Elem::Lit(lit) => &lit[..],
-                    _ => unreachable!(),
-                };
-                let ci = m.case_insensitive;
-                let found = set
-                    .sorted
-                    .binary_search_by(|&s| lit_cmp(lit_of(s), seg, ci));
-                let Ok(mut k) = found else { continue };
-                // Equal literals sit together; fire each active one.
-                while k > 0 && lit_cmp(lit_of(set.sorted[k - 1]), seg, ci).is_eq() {
-                    k -= 1;
-                }
-                for &s in &set.sorted[k..] {
-                    if !lit_cmp(lit_of(s), seg, ci).is_eq() {
-                        break;
-                    }
-                    if active.test(s as usize) {
-                        next.or_with(&self.states[s as usize].after);
-                    }
+                if active.intersects(&set.states) {
+                    self.fire_lit_set(m, set, active, seg, next);
                 }
             }
-        }
-        plain.for_each(|s| {
-            if s == accept {
+            &lit_sets.states
+        });
+        active.for_each(|s| {
+            if s == accept || grouped.is_some_and(|g| g.test(s)) {
                 return;
             }
             let state = &self.states[s];
@@ -449,6 +410,33 @@ impl<B: Bits> Nfa<B> {
                 next.or_with(&state.after);
             }
         });
+    }
+
+    /// Fire the set's active states whose literal is `seg`: equal
+    /// literals sit together in `sorted`, one binary search away.
+    fn fire_lit_set(
+        &self,
+        m: &SegmentMatcher,
+        set: &LitSet<B>,
+        active: &B,
+        seg: &[u8],
+        next: &mut B,
+    ) {
+        let equal = |s: u32| {
+            let lit = m.elems[self.states[s as usize].node as usize].as_lit();
+            lit_cmp(lit, seg, m.case_insensitive)
+        };
+        let Ok(mut k) = set.sorted.binary_search_by(|&s| equal(s)) else {
+            return;
+        };
+        while k > 0 && equal(set.sorted[k - 1]).is_eq() {
+            k -= 1;
+        }
+        for &s in set.sorted[k..].iter().take_while(|&&s| equal(s).is_eq()) {
+            if active.test(s as usize) {
+                next.or_with(&self.states[s as usize].after);
+            }
+        }
     }
 
     /// `step` over a non-empty segment that only wildcards consume:

@@ -18,7 +18,7 @@ pub(super) fn suffixes(ops: &[Op]) -> Box<[Bytes]> {
     let mut acc = Vec::new();
     push_suffix(ops, &mut acc);
     if !acc.is_empty() {
-        return Box::new([Bytes::new(&acc)]);
+        return Box::new([acc.into_boxed_slice()]);
     }
     suffix_set(ops)
 }
@@ -41,7 +41,7 @@ fn push_suffix(ops: &[Op], acc: &mut Vec<u8>) {
 fn suffix_set(ops: &[Op]) -> Box<[Bytes]> {
     let branches = match ops.last() {
         Some(Op::Alternation(branches)) if branches.len() <= MAX_SUFFIX_SET => branches,
-        _ => return Box::from(&[][..]),
+        _ => return Box::default(),
     };
     let mut common = Vec::new();
     push_suffix(&ops[..ops.len() - 1], &mut common);
@@ -56,9 +56,9 @@ fn suffix_set(ops: &[Op]) -> Box<[Bytes]> {
         }
         push_suffix(branch, &mut acc);
         if acc.is_empty() {
-            return Box::from(&[][..]);
+            return Box::default();
         }
-        set.push(Bytes::new(&acc));
+        set.push(Bytes::from(&acc[..]));
     }
     set.into_boxed_slice()
 }
@@ -124,7 +124,7 @@ fn prefixes_per_branch(ops: &[Op], acc: &mut Vec<u8>, out: &mut Vec<Bytes>) {
     while acc.last() == Some(&b'/') {
         acc.pop();
     }
-    out.push(Bytes::new(acc));
+    out.push(Bytes::from(&acc[..]));
 }
 
 /// Drop prefixes a shorter one already covers; an empty one covers all.
@@ -143,7 +143,7 @@ fn dedupe(mut prefixes: Vec<Bytes>) -> Vec<Bytes> {
             accepted.insert(p.to_vec());
         }
     }
-    let mut result: Vec<Bytes> = accepted.into_iter().map(|p| Bytes::new(&p)).collect();
+    let mut result: Vec<Bytes> = accepted.into_iter().map(Vec::into_boxed_slice).collect();
     result.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a[..].cmp(&b[..])));
     result
 }

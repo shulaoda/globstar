@@ -13,8 +13,6 @@ pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     fn is_zero(&self) -> bool;
     fn clear(&mut self);
     fn or_with(&mut self, other: &Self);
-    /// Clear every bit set in `other`.
-    fn remove(&mut self, other: &Self);
     fn intersects(&self, other: &Self) -> bool;
     /// Visit every set bit, ascending.
     fn for_each(&self, f: impl FnMut(usize));
@@ -52,10 +50,6 @@ impl Bits for u64 {
     #[inline(always)]
     fn or_with(&mut self, other: &Self) {
         *self |= *other;
-    }
-    #[inline(always)]
-    fn remove(&mut self, other: &Self) {
-        *self &= !*other;
     }
     #[inline(always)]
     fn intersects(&self, other: &Self) -> bool {
@@ -103,11 +97,6 @@ impl Bits for Wide {
     fn or_with(&mut self, other: &Self) {
         for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
             *a |= *b;
-        }
-    }
-    fn remove(&mut self, other: &Self) {
-        for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
-            *a &= !*b;
         }
     }
     fn intersects(&self, other: &Self) -> bool {

@@ -4,11 +4,6 @@
 //! at most one globstar is matched by anchored compares; everything
 //! else runs an NFA whose active set grows with the pattern, so no
 //! pattern is out of reach.
-//!
-//! Every byte string a matcher keeps — literals, affixes, suffixes,
-//! static prefixes — is a `Bytes`: inline when short, which is nearly
-//! always, so a matcher is a handful of allocations however many
-//! segments it has, and a compare reads the element itself.
 
 mod bits;
 mod compile;
@@ -30,34 +25,9 @@ const MAX_CHAINS: usize = 64;
 /// larger one is sorted and binary-searched per suffix length.
 const LINEAR_SUFFIXES: usize = 8;
 
-/// A byte string the matcher keeps.
-#[derive(Clone, PartialEq, Eq)]
-struct Bytes(Box<[u8]>);
-
-impl Bytes {
-    fn new(bytes: &[u8]) -> Self {
-        Bytes(Box::from(bytes))
-    }
-
-    fn empty() -> Self {
-        Bytes(Box::from(&[][..]))
-    }
-}
-
-impl std::ops::Deref for Bytes {
-    type Target = [u8];
-
-    #[inline(always)]
-    fn deref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl std::fmt::Debug for Bytes {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.0, f)
-    }
-}
+/// A byte string the matcher keeps: literals, affixes, suffixes,
+/// static prefixes.
+type Bytes = Box<[u8]>;
 
 /// A 64-slot sketch of a set of bytes (`b % 64`): a byte not in the
 /// sketch is not in the set, so a set scan can be skipped.
@@ -116,6 +86,13 @@ impl Elem {
     #[inline]
     fn is_globstar(&self) -> bool {
         matches!(self, Elem::G0 | Elem::G0Strict | Elem::G1)
+    }
+
+    fn as_lit(&self) -> &[u8] {
+        match self {
+            Elem::Lit(lit) => lit,
+            _ => unreachable!("not a literal"),
+        }
     }
 
     /// Absorbs zero segments too.

@@ -57,16 +57,10 @@ const EMPTY_BYTES = new Uint8Array(0);
 export function compileSegment(ops, dot, ci) {
   const graph = buildGraph(ops, dot, ci);
   const chainList = chains(graph);
-  const elems = graph.elems;
   let nStates = 1;
-  for (const e of elems) nStates += elemStates(e);
-  const succs = graph.linear ? null : graph.succs;
-  const start = graph.linear ? [0] : graph.start;
-  const nfa =
-    nStates <= 31
-      ? nfaSmall(elems, null, elems.length, succs, start)
-      : nfaWide(elems, null, elems.length, succs, start);
-  return { elems, chains: chainList, nfa };
+  for (const e of graph.elems) nStates += elemStates(e);
+  const nfa = nStates <= 31 ? nfaSmall(graph, null) : nfaWide(graph, null);
+  return { elems: graph.elems, chains: chainList, nfa };
 }
 
 function makeElem(kind, litBytes, wild) {
@@ -288,11 +282,7 @@ class Builder {
           }
           break;
         case OP_OPT_SEGMENTS_SLASH:
-          for (const g of groups) {
-            if (g.state === B_OPEN) continue;
-            this.flushText(g);
-            g.pendingOss += 1;
-          }
+          for (const g of groups) if (g.state !== B_OPEN) g.pendingOss += 1;
           break;
         case OP_SLASH_ANYTHING:
           this.closeAll(groups, B_STRICT);
@@ -313,15 +303,6 @@ class Builder {
       }
     }
     return groups;
-  }
-
-  // A `**` glued to text never survives the parser; close the text
-  // first should it ever happen.
-  flushText(g) {
-    if (g.buf.length === 0) return;
-    const id = this.emit(this.close(g.buf), g.tails);
-    g.buf = [];
-    rebase(g, id, B_STRICT);
   }
 
   // Emit a group's pending `**/` elements: the first by the boundary
@@ -348,12 +329,10 @@ class Builder {
   }
 
   // One globstar node per group, its kind chosen by the boundary the
-  // group crossed; they continue as one open group.
+  // group crossed; they continue as one open group. (The parser never
+  // glues a `**` to text, so there is no segment to close.)
   globstarAll(groups, kindOf) {
-    this.joinAll(groups, B_OPEN, (g) => {
-      this.flushText(g);
-      return this.emit(makeElem(kindOf(g.state), null, null), g.tails);
-    });
+    this.joinAll(groups, B_OPEN, (g) => this.emit(makeElem(kindOf(g.state), null, null), g.tails));
   }
 
   // Emit one node per group through `node`, then continue as one group
@@ -390,11 +369,8 @@ class Builder {
 // when there are more than MAX_CHAINS or a chain with several
 // globstars has more than 31 states (the NFA takes those).
 function chains(graph) {
-  const n = graph.elems.length;
   if (graph.linear) {
-    const nodes = [];
-    for (let i = 0; i < n; i++) nodes.push(i);
-    const chain = makeChain(graph, null, nodes, false);
+    const chain = makeChain(graph, null, false);
     return chain === null ? [] : [chain];
   }
   const paths = [];
@@ -416,20 +392,22 @@ function chains(graph) {
   const several = paths.length > 1;
   const out = [];
   for (const nodes of paths) {
-    const chain = makeChain(graph, nodes, nodes, several);
+    const chain = makeChain(graph, nodes, several);
     if (chain === null) return [];
     out.push(chain);
   }
   return out;
 }
 
-// `stored` is what the chain keeps (null for the linear identity),
-// `nodes` the path itself.
-function makeChain(graph, stored, nodes, several) {
+// The chain of a path (`null`: the lone path of a brace-free pattern,
+// whose nodes are `0..elems.length`), or `null` when its
+// several-globstar NFA would not fit an int32.
+function makeChain(graph, nodes, several) {
   const elems = graph.elems;
-  const elem = (i) => elems[nodes[i]];
+  const n = nodes === null ? elems.length : nodes.length;
+  const elem = (i) => elems[nodes === null ? i : nodes[i]];
   let globstar = NO_G;
-  for (let i = 0; i < nodes.length; i++) {
+  for (let i = 0; i < n; i++) {
     if (!isGlobstar(elem(i))) continue;
     if (globstar !== NO_G) {
       globstar = MANY_G;
@@ -438,14 +416,14 @@ function makeChain(graph, stored, nodes, several) {
     globstar = i;
   }
 
-  // With several globstars: the NFA over this chain alone, unless the
-  // chain is the whole graph (then the matcher's own serves).
+  // Several globstars: the NFA over this path alone, unless the path
+  // is the whole graph (then the matcher's own serves).
   let nfa = null;
-  if (globstar === MANY_G && !graph.linear) {
+  if (globstar === MANY_G && nodes !== null) {
     let nStates = 1;
-    for (let i = 0; i < nodes.length; i++) nStates += elemStates(elem(i));
+    for (let i = 0; i < n; i++) nStates += elemStates(elem(i));
     if (nStates > 31) return null;
-    nfa = nfaSmall(elems, nodes, nodes.length, null, [0]);
+    nfa = nfaSmall(graph, nodes);
   }
 
   let joinedHeadStr = null;
@@ -463,7 +441,7 @@ function makeChain(graph, stored, nodes, several) {
 
   // Only consulted when there are several chains.
   let quickSuffixStr = "";
-  const last = elem(nodes.length - 1);
+  const last = elem(n - 1);
   if (several) {
     if (last.kind === EL_LIT) quickSuffixStr = last.litStr;
     else if (last.kind === EL_WILD && last.wild.kind === WK_AFFIX) {
@@ -471,23 +449,34 @@ function makeChain(graph, stored, nodes, several) {
     }
   }
 
-  return { nodes: stored, globstar, nfa, joinedHeadStr, quickSuffixStr };
+  return { nodes, globstar, nfa, joinedHeadStr, quickSuffixStr };
 }
 
 // ── the NFA ─────────────────────────────────────────────────────────
 
-// Lay out the NFA over `n` positions: position `i` holds element
-// `elems[nodes[i]]` (`nodes === null`: the element `i` itself) and its
-// successors are `succs[i]` (`succs === null`: the next position, or
-// ACCEPT at the end). States are numbered by position; the accept
-// state comes last.
-//
+// The NFA over the positions of a path (`nodes === null`: the graph
+// itself). Positions of a path follow one another; only the graph of
+// a brace pattern has stored edges. States are numbered by position;
+// the accept state comes last.
+function layout(graph, nodes) {
+  const elems = graph.elems;
+  const n = nodes === null ? elems.length : nodes.length;
+  const chained = nodes !== null || graph.linear;
+  return {
+    elems,
+    n,
+    nodeAt: (i) => (nodes === null ? i : nodes[i]),
+    succs: chained ? null : graph.succs,
+    start: chained ? [0] : graph.start,
+  };
+}
+
 // Int32 active set: at most 31 states (bit 31 is the string-mode bail
 // sentinel). The table holds per state the closure entered after
 // consuming a segment there (a globstar's includes itself) at `2s` and
 // the state's node at `2s + 1`.
-function nfaSmall(elems, nodes, n, succs, start) {
-  const nodeAt = (i) => (nodes === null ? i : nodes[i]);
+function nfaSmall(graph, nodes) {
+  const { elems, n, nodeAt, succs, start } = layout(graph, nodes);
   const entries = [];
   let nStates = 0;
   for (let i = 0; i < n; i++) {
@@ -539,8 +528,8 @@ function nfaSmall(elems, nodes, n, succs, start) {
 }
 
 // The same over Int32Array words: more than 31 states.
-function nfaWide(elems, nodes, n, succs, start) {
-  const nodeAt = (i) => (nodes === null ? i : nodes[i]);
+function nfaWide(graph, nodes) {
+  const { elems, n, nodeAt, succs, start } = layout(graph, nodes);
   const entries = [];
   let nStates = 0;
   for (let i = 0; i < n; i++) {

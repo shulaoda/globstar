@@ -44,38 +44,68 @@ impl SegNfa {
         }
         let states = b.states.into_boxed_slice();
         let n = states.len();
-        let (kind, facts) = if n <= 64 {
-            // Compile-time scratch on the stack for the common case.
-            let mut scratch = Scratch {
-                memo: [None; 64],
-                blocked: [None; 64],
-                fire: [None; 64],
-            };
-            let (nfa, facts) = SegNfaImpl::new(
-                states,
-                entry,
-                dot,
-                &mut scratch.memo[..n],
-                &mut scratch.blocked[..n],
-                &mut scratch.fire[..n],
-            );
-            (Kind::Small(nfa), facts)
+        // The closure memo lives on the stack for the common sizes.
+        if n <= 64 {
+            Self::build(states, entry, dot, &mut [None; 64][..n], Kind::Small)
         } else {
-            let (nfa, facts) = SegNfaImpl::new(
-                states,
-                entry,
-                dot,
-                &mut vec![None; n],
-                &mut vec![None; n],
-                &mut vec![None; n],
-            );
-            (Kind::Wide(nfa), facts)
+            Self::build(states, entry, dot, &mut vec![None; n], Kind::Wide)
+        }
+    }
+
+    /// `memo` is compile-time scratch of `states.len()` slots.
+    fn build<B: Bits>(
+        states: Box<[SegState]>,
+        entry: u32,
+        dot: bool,
+        memo: &mut [Option<B>],
+        kind: fn(SegNfaImpl<B>) -> Kind,
+    ) -> Self {
+        let n = states.len();
+        let words = B::words(n);
+        let accept = n - 1;
+
+        // Memoized guard-passing closures: the ε-graph (Split/Jump/
+        // Guard edges) is acyclic — every pattern loop passes through
+        // a consumer — so each state's closure folds from its
+        // children exactly once.
+        for s in 0..n {
+            memo_closure(&states, memo, s, false, words);
+        }
+        let closures: Box<[B]> = memo.iter_mut().map(|c| c.take().unwrap()).collect();
+        let init = closures[entry as usize].clone();
+        // Under `dot` a leading `.` needs no protection, so the blocked
+        // closure is just `init` (DotGuards behave like Jumps). The
+        // memo is empty again and serves the blocked walk.
+        let init_dot_blocked = if dot {
+            init.clone()
+        } else {
+            memo_closure(&states, memo, entry as usize, true, words)
         };
+
+        // Can any state of the protected entry set consume a leading
+        // `.`? If not, a dot-led segment can never match under
+        // dot=false and the whole matcher is protected.
+        let mut can_lit_dot = false;
+        init_dot_blocked.for_each(|s| match &states[s] {
+            SegState::Byte(x, _) => can_lit_dot |= *x == b'.',
+            SegState::Class(cls, _) => can_lit_dot |= cls.matches(b'.'),
+            _ => {}
+        });
+
+        let satisfiable = satisfiable(&states, &closures, &init, accept, words);
+        let any_seg = any_seg(&states, &closures, &init, accept, words);
         SegNfa {
-            kind,
-            satisfiable: facts.0,
-            wild_led: facts.1,
-            any_seg: facts.2,
+            kind: kind(SegNfaImpl {
+                states,
+                init,
+                init_dot_blocked,
+                closures,
+                accept,
+                words,
+            }),
+            satisfiable,
+            wild_led: !can_lit_dot,
+            any_seg,
         }
     }
 
@@ -86,12 +116,6 @@ impl SegNfa {
             Kind::Wide(n) => n.matches(seg),
         }
     }
-}
-
-struct Scratch {
-    memo: [Option<u64>; 64],
-    blocked: [Option<u64>; 64],
-    fire: [Option<u32>; 64],
 }
 
 #[derive(Debug, Clone)]
@@ -126,68 +150,11 @@ enum SegState {
 }
 
 impl<B: Bits> SegNfaImpl<B> {
-    /// `memo`, `blocked` and `fire` are compile-time scratch of
-    /// `states.len()` slots each. Returns the automaton and its
-    /// (satisfiable, wild_led, any_seg) facts.
-    fn new(
-        states: Box<[SegState]>,
-        entry: u32,
-        dot: bool,
-        memo: &mut [Option<B>],
-        blocked: &mut [Option<B>],
-        fire: &mut [Option<u32>],
-    ) -> (Self, (bool, bool, bool)) {
-        let n = states.len();
-        let words = B::words(n);
-
-        // Memoized guard-passing closures: the ε-graph (Split/Jump/
-        // Guard edges) is acyclic — every pattern loop passes through
-        // a consumer — so each state's closure folds from its
-        // children exactly once.
-        for s in 0..n {
-            memo_closure(&states, memo, s, false, words);
-        }
-        let closures: Box<[B]> = memo.iter_mut().map(|c| c.take().unwrap()).collect();
-        let init = closures[entry as usize].clone();
-        // Under `dot` a leading `.` needs no protection, so the blocked
-        // closure is just `init` (DotGuards behave like Jumps).
-        let init_dot_blocked = if dot {
-            init.clone()
-        } else {
-            memo_closure(&states, blocked, entry as usize, true, words)
-        };
-        let accept = n - 1;
-
-        // wild_led: can any state of the protected entry set consume a
-        // leading `.`? If not, a dot-led segment can never match under
-        // dot=false and the whole matcher is protected.
-        let mut can_lit_dot = false;
-        init_dot_blocked.for_each(|s| match &states[s] {
-            SegState::Byte(x, _) => can_lit_dot |= *x == b'.',
-            SegState::Class(cls, _) => can_lit_dot |= cls.matches(b'.'),
-            _ => {}
-        });
-        let wild_led = !can_lit_dot;
-
-        let satisfiable = compute_satisfiable(&states, &closures, &init, accept, words, fire);
-        let any_seg = compute_any_seg(&states, &closures, &init, accept, words);
-
-        let nfa = Self {
-            states,
-            init,
-            init_dot_blocked,
-            closures,
-            accept,
-            words,
-        };
-        (nfa, (satisfiable, wild_led, any_seg))
-    }
-
     #[inline]
     fn matches(&self, seg: &[u8]) -> bool {
         // Under dot=true the blocked closure equals `init`, so the compile
         // already collapsed the dot decision into which set this picks.
-        let protected_start = !seg.is_empty() && seg[0] == b'.';
+        let protected_start = seg.first() == Some(&b'.');
         let mut active = if protected_start {
             self.init_dot_blocked.clone()
         } else {
@@ -250,49 +217,54 @@ fn memo_closure<B: Bits>(
     out
 }
 
-fn compute_satisfiable<B: Bits>(
+/// Can the entry set reach accept? States some byte fires are
+/// followed through their successor closures until nothing new
+/// appears.
+fn satisfiable<B: Bits>(
     states: &[SegState],
     closures: &[B],
     init: &B,
     accept: usize,
     words: usize,
-    fire_next: &mut [Option<u32>],
 ) -> bool {
-    // Per-state "some byte fires this consumer", computed once.
-    for (slot, st) in fire_next.iter_mut().zip(states) {
-        *slot = match st {
-            SegState::Byte(_, n) | SegState::Any(n) => Some(*n),
-            SegState::Class(cls, n) => (0u16..=255).any(|b| cls.matches(b as u8)).then_some(*n),
-            _ => None,
+    let mut fires = B::zero(words);
+    for (s, st) in states.iter().enumerate() {
+        let some_byte = match st {
+            SegState::Byte(..) | SegState::Any(_) => true,
+            SegState::Class(cls, _) => (0u16..=255).any(|b| cls.matches(b as u8)),
+            _ => false,
         };
+        if some_byte {
+            fires.set(s);
+        }
     }
+    let next_of = |s: usize| match &states[s] {
+        SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Any(n) => *n as usize,
+        _ => unreachable!(),
+    };
     let mut reach = init.clone();
     let mut work: Vec<usize> = Vec::new();
     init.for_each(|s| {
-        if fire_next[s].is_some() {
+        if fires.test(s) {
             work.push(s);
         }
     });
-    let mut grown = B::zero(words);
     while let Some(s) = work.pop() {
-        let nx = fire_next[s].unwrap() as usize;
-        closures[nx].for_each(|t| {
+        closures[next_of(s)].for_each(|t| {
             if !reach.test(t) {
-                grown.set(t);
-                if fire_next[t].is_some() {
+                reach.set(t);
+                if fires.test(t) {
                     work.push(t);
                 }
             }
         });
-        reach.or_with(&grown);
-        grown.clear();
     }
     reach.test(accept)
 }
 
 /// Step the entry set through `Any` states only, one byte at a time,
 /// until it settles; every length from 1 up must accept.
-fn compute_any_seg<B: Bits>(
+fn any_seg<B: Bits>(
     states: &[SegState],
     closures: &[B],
     init: &B,
