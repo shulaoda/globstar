@@ -50,6 +50,7 @@ test:
     node packages/globstar/tests/compiler-stages.mjs
     node packages/globstar/tests/string-mode.mjs
     node packages/globstar/tests/dir-exhaustive.mjs
+    node packages/globstar/tests/dir-match.mjs
     node packages/globstar-walk/tests/walk.mjs
 
 # Wipe build artifacts (Rust target + JS workspace node_modules + bench output).
