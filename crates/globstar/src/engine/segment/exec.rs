@@ -1,8 +1,13 @@
+use std::cmp::Ordering;
+
 use crate::dir_match::DirMatch;
 
 use super::bits::Bits;
 use super::compile::lit_cmp;
-use super::{ByteSketch, Chain, Elem, LitSet, MANY_G, NO_G, Nfa, SegmentMatcher, Wild, WildKind};
+use super::{
+    AffixIndex, ByteSketch, Chain, Elem, LitSet, MANY_G, NO_G, Nfa, SegmentMatcher, SuffixRun,
+    Wild, WildKind,
+};
 
 /// Index just past the segment that starts at `pos`.
 #[inline(always)]
@@ -441,30 +446,48 @@ impl SegmentMatcher {
                     .iter()
                     .take_while(|run| run.len as usize <= room)
                     .filter(|run| w.variable || run.len as usize == room)
-                    .any(|run| {
-                        let tail = &seg[len - run.len as usize..];
-                        let set = &index.suffixes[run.start as usize..run.end as usize];
-                        if self.case_insensitive {
-                            set.binary_search_by(|s| cmp_folded(s, tail)).is_ok()
-                        } else {
-                            set.binary_search_by(|s| s[..].cmp(tail)).is_ok()
-                        }
-                    })
+                    .any(|run| self.run_has(index, run, &seg[len - run.len as usize..]))
             }
             WildKind::Generic(nfa) => nfa.matches(seg),
         }
     }
 }
 
+impl SegmentMatcher {
+    /// Binary search of a run's suffixes for `tail`, in the branch-free
+    /// shape `slice::binary_search_by` uses.
+    fn run_has(&self, index: &AffixIndex, run: &SuffixRun, tail: &[u8]) -> bool {
+        let len = run.len as usize;
+        let order = |k: usize| {
+            let s = &index.suffixes[run.start as usize + k * len..][..len];
+            if self.case_insensitive {
+                cmp_folded(s, tail)
+            } else {
+                s.cmp(tail)
+            }
+        };
+        let (mut base, mut size) = (0usize, run.count as usize);
+        while size > 1 {
+            let half = size / 2;
+            let mid = base + half;
+            if order(mid) != Ordering::Greater {
+                base = mid;
+            }
+            size -= half;
+        }
+        order(base) == Ordering::Equal
+    }
+}
+
 /// Order of a lowercased suffix against a segment tail of the same
 /// length, folding the tail's ASCII case.
-fn cmp_folded(suffix: &[u8], tail: &[u8]) -> std::cmp::Ordering {
+fn cmp_folded(suffix: &[u8], tail: &[u8]) -> Ordering {
     suffix
         .iter()
         .zip(tail)
         .map(|(&a, &b)| a.cmp(&b.to_ascii_lowercase()))
         .find(|o| o.is_ne())
-        .unwrap_or(std::cmp::Ordering::Equal)
+        .unwrap_or(Ordering::Equal)
 }
 
 impl<B: Bits> Nfa<B> {

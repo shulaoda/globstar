@@ -930,20 +930,22 @@ fn affix_set(prefix: Bytes, mut suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
     }
     suffixes.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
     suffixes.dedup();
+    let mut bytes = Vec::with_capacity(suffixes.iter().map(Vec::len).sum());
     let mut runs: Vec<SuffixRun> = Vec::new();
-    for (i, s) in suffixes.iter().enumerate() {
+    for s in &suffixes {
         match runs.last_mut() {
-            Some(run) if run.len as usize == s.len() => run.end = i as u32 + 1,
+            Some(run) if run.len as usize == s.len() => run.count += 1,
             _ => runs.push(SuffixRun {
                 len: s.len() as u32,
-                start: i as u32,
-                end: i as u32 + 1,
+                start: bytes.len() as u32,
+                count: 1,
             }),
         }
+        bytes.extend_from_slice(s);
     }
     WildKind::AffixIndex(Box::new(AffixIndex {
         prefix,
-        suffixes: suffixes.into_iter().map(Vec::into_boxed_slice).collect(),
+        suffixes: bytes.into_boxed_slice(),
         last,
         runs: runs.into_boxed_slice(),
     }))

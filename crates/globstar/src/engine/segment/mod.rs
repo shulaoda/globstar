@@ -171,22 +171,23 @@ enum WildKind {
 }
 
 /// A large suffix set: sorted by (length, bytes), ASCII-lowercased
-/// when case-insensitive, with one `SuffixRun` per length for a
-/// binary search.
+/// when case-insensitive, laid end to end in one allocation, with one
+/// `SuffixRun` per length for a binary search by index arithmetic.
 #[derive(Debug, Clone)]
 struct AffixIndex {
     prefix: Bytes,
-    suffixes: Box<[Bytes]>,
+    suffixes: Bytes,
     last: ByteSketch,
     /// One run per distinct suffix length, ascending.
     runs: Box<[SuffixRun]>,
 }
 
+/// `count` suffixes of `len` bytes each, from byte `start` on.
 #[derive(Debug, Clone, Copy)]
 struct SuffixRun {
     len: u32,
     start: u32,
-    end: u32,
+    count: u32,
 }
 
 /// `Chain::globstar` when the chain has none / several.
