@@ -2,7 +2,6 @@ import { parse } from "./parser.js";
 import { lower } from "./engine/ops/index.js";
 import { LiteralMatcher } from "./engine/literal.js";
 import { SegmentMatcher } from "./engine/segment/index.js";
-import { PikeVm } from "./engine/pikevm.js";
 import { nodeToLiteralBytes } from "./ast.js";
 import { factorBranches } from "./factor.js";
 import { GlobError, MAX_EXPANSION } from "./error.js";
@@ -18,7 +17,8 @@ export function compileMatcher(patterns, options) {
   const opts = {
     dot: o.dot === undefined ? true : o.dot,
     caseInsensitive: o.caseInsensitive === undefined ? false : o.caseInsensitive,
-    // Internal test hook; own-property read defeats prototype pollution.
+    // Internal test hook (`"nfa"`: no anchored chains; `"bytes"`: no
+    // string mode); own-property read defeats prototype pollution.
     __engine: Object.hasOwn(o, "__engine") ? o.__engine : undefined,
   };
   // The same pattern twice adds nothing to the union; factored into
@@ -50,16 +50,16 @@ export function compileMatcher(patterns, options) {
 function buildEngine(asts, opts) {
   const ci = !!opts.caseInsensitive;
   const dot = !!opts.dot;
-  const forcePikevm = opts.__engine === "pikevm";
-  if (!forcePikevm && asts.length === 1) {
+  if (asts.length === 1) {
     const literalBytes = nodeToLiteralBytes(asts[0].body);
     if (literalBytes !== null) return new LiteralMatcher(literalBytes, ci);
   }
   const factored = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
   const program = lower(factored, ci);
-
-  if (forcePikevm) return PikeVm.build(program, dot);
-  return SegmentMatcher.build(program, dot) ?? PikeVm.build(program, dot);
+  return SegmentMatcher.build(program, dot, {
+    forceNfa: opts.__engine === "nfa",
+    byteOnly: opts.__engine === "bytes",
+  });
 }
 
 function requireStringInput(input) {

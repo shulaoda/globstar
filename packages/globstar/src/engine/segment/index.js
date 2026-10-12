@@ -1,16 +1,24 @@
+// The segment engine. JS twin of `crates/globstar/src/engine/segment/
+// mod.rs`: a pattern becomes a graph of per-segment elements and a path
+// is matched segment by segment — anchored compares for a path through
+// the graph with at most one globstar, an NFA over the graph for
+// everything else.
+
 import { computeStaticPrefixes } from "../ops/index.js";
 import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
-import { compileSeqs, opsHaveNonAscii } from "./compile.js";
+import { compileSegment, opsHaveNonAscii } from "./compile.js";
 import { endsWithSepAware } from "../facts.js";
-import { seqMatches, nfaRun, coversBelow } from "./exec.js";
+import { chainMatches, nfaRun, nfaRunWide, coversBelow, coversBelowWide, affixEq } from "./exec.js";
+import { bitTest, bitsIntersect } from "./bits.js";
 
-export const MAX_FORKS = 64;
-// 31, not Rust's 64: the active set is an int32 bitset and nfaRun/nfaStep
-// signal a bail in-band with -1 — bit 31 must stay unallocated or a
-// saturated set (0xFFFFFFFF) would read as a bail.
-export const MAX_SEQ_STATES = 31;
+// Paths through the graph `isMatch` still tries one by one; past that
+// it runs the NFA over the whole graph, as `matchDir` always does.
+export const MAX_CHAINS = 64;
+// An affix set up to this size is scanned in pattern order; a larger
+// one is sorted and binary-searched per suffix length.
+export const LINEAR_SUFFIXES = 8;
 
 export const EL_LIT = 0;
 export const EL_WILD = 1;
@@ -21,19 +29,21 @@ export const EL_G1 = 4;
 export const WK_AFFIX = 0;
 export const WK_AFFIX_SET = 1;
 export const WK_GENERIC = 2;
+export const WK_AFFIX_INDEX = 3;
+
+// `chain.globstar` when the chain has none / several.
+export const NO_G = -1;
+export const MANY_G = -2;
 
 export const NO = 0;
 export const YES = 1;
 export const BAIL = 2;
 
-// Per-sequence state sets for `matchDir`, shared by every matcher: the
-// call is synchronous, and a per-matcher array would cost each one a
-// typed-array header.
-const ACTIVE = new Int32Array(MAX_FORKS);
-
 export class SegmentMatcher {
-  constructor(seqs, program, byteOnly, dot) {
-    this.seqs = seqs;
+  constructor(compiled, program, byteOnly, dot) {
+    this.nodes = compiled.elems;
+    this.graph = compiled.nfa;
+    this.chains = compiled.chains;
     this.ci = !!program.caseInsensitive;
     this.dot = dot;
     this.byteOnly = byteOnly;
@@ -44,10 +54,13 @@ export class SegmentMatcher {
     this.factsSuffixSetStr = f.suffixSet.length > 0 ? f.suffixSet : null;
   }
 
-  static build(program, dot) {
-    const seqs = compileSeqs(program.ops, dot, !!program.caseInsensitive);
-    if (seqs === null) return null;
-    return new SegmentMatcher(seqs, program, opsHaveNonAscii(program.ops), dot);
+  // `opts.forceNfa` bypasses the chains, `opts.byteOnly` the string
+  // mode: test hooks that cross-check the code paths.
+  static build(program, dot, opts = {}) {
+    const compiled = compileSegment(program.ops, dot, !!program.caseInsensitive);
+    if (opts.forceNfa) compiled.chains = [];
+    const byteOnly = !!opts.byteOnly || opsHaveNonAscii(program.ops);
+    return new SegmentMatcher(compiled, program, byteOnly, dot);
   }
 
   staticPrefixes() {
@@ -65,9 +78,9 @@ export class SegmentMatcher {
   matchDir(input) {
     if (input.length === 0) {
       // The empty dir is the walk root: nothing consumed yet.
-      const seqs = this.seqs;
-      for (let i = 0; i < seqs.length; i++) ACTIVE[i] = seqs[i].eps[0];
-      const all = this.dot && coversBelow(seqs, ACTIVE);
+      const g = this.graph;
+      const all =
+        this.dot && (g.wide ? coversBelowWide(this, g.init.slice()) : coversBelow(this, g.init));
       return DirMatch.fromExactPrefixAll(this.isMatch(input), true, all);
     }
     if (!this.byteOnly) {
@@ -79,17 +92,31 @@ export class SegmentMatcher {
 
   _isMatch(str, bail) {
     if (!this._factsAccept(str)) return NO;
-    const seqs = this.seqs;
-    const quick = seqs.length > 1 && !this.ci;
+    const chainList = this.chains;
+    if (chainList.length === 0) return this._nfaMatch(str, bail);
+    if (chainList.length === 1) return chainMatches(this, chainList[0], str, bail);
+    const quick = !this.ci;
     let bailed = false;
-    for (let i = 0; i < seqs.length; i++) {
-      const seq = seqs[i];
-      if (quick && seq.quickSuffixStr.length > 0 && !str.endsWith(seq.quickSuffixStr)) continue;
-      const r = seqMatches(seq, str, this.dot, this.ci, bail);
+    for (let i = 0; i < chainList.length; i++) {
+      const chain = chainList[i];
+      if (quick && chain.quickSuffixStr.length > 0 && !str.endsWith(chain.quickSuffixStr)) continue;
+      const r = chainMatches(this, chain, str, bail);
       if (r === YES) return YES;
       if (r === BAIL) bailed = true;
     }
     return bailed ? BAIL : NO;
+  }
+
+  _nfaMatch(str, bail) {
+    const g = this.graph;
+    if (g.wide) {
+      const active = nfaRunWide(this, str, bail);
+      if (active === null) return BAIL;
+      return bitTest(active, g.accept) ? YES : NO;
+    }
+    const active = nfaRun(this, g, str, bail);
+    if (active === -1) return BAIL;
+    return (active & (1 << g.accept)) !== 0 ? YES : NO;
   }
 
   _factsAccept(str) {
@@ -109,21 +136,27 @@ export class SegmentMatcher {
   }
 
   _matchDir(str, bail) {
-    let exact = false;
-    let prefix = false;
-    const seqs = this.seqs;
-    for (let i = 0; i < seqs.length; i++) {
-      const a = nfaRun(seqs[i], str, this.dot, this.ci, bail);
-      if (a === -1) return -1;
-      ACTIVE[i] = a;
-      if ((a & (1 << (seqs[i].numStates - 1))) !== 0) exact = true;
-      if ((a & seqs[i].reach1) !== 0) prefix = true;
-      // Only the all-below bit needs every sequence's state set.
-      if (exact && prefix && !this.dot) break;
+    const g = this.graph;
+    let exact;
+    let prefix;
+    let all;
+    if (g.wide) {
+      const active = nfaRunWide(this, str, bail);
+      if (active === null) return -1;
+      exact = bitTest(active, g.accept);
+      prefix = bitsIntersect(active, g.reach1);
+      // `dot=false` never covers a subtree: no wildcard matches the
+      // dot-led names below.
+      all = this.dot && prefix && coversBelowWide(this, active);
+    } else {
+      const active = nfaRun(this, g, str, bail);
+      if (active === -1) return -1;
+      exact = (active & (1 << g.accept)) !== 0;
+      prefix = (active & g.reach1) !== 0;
+      all = this.dot && prefix && coversBelow(this, active);
     }
-    // `dot=false` never covers a subtree: no wildcard matches the
-    // dot-led names below.
-    const all = this.dot && prefix && coversBelow(seqs, ACTIVE);
     return DirMatch.fromExactPrefixAll(exact, prefix, all);
   }
 }
+
+export { affixEq };

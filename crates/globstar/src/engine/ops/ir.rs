@@ -1,7 +1,6 @@
 use crate::ast::CharClass;
-use crate::engine::facts::LiteralFacts;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     /// Match a literal byte sequence verbatim.
     Lit(Vec<u8>),
@@ -34,7 +33,6 @@ pub enum Op {
 #[derive(Debug, Clone)]
 pub struct OpProgram {
     pub(crate) ops: Vec<Op>,
-    pub(crate) facts: LiteralFacts,
     pub(crate) case_insensitive: bool,
 }
 
@@ -44,10 +42,8 @@ impl OpProgram {
     }
 
     pub(super) fn from_normalized(ops: Vec<Op>, case_insensitive: bool) -> Self {
-        let facts = LiteralFacts::extract(&ops, case_insensitive);
         Self {
             ops,
-            facts,
             case_insensitive,
         }
     }

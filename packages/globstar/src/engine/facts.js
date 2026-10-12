@@ -62,10 +62,14 @@ function suffixArray(ops, end) {
   return acc;
 }
 
+// Largest suffix set worth scanning before the engine runs; a bigger
+// alternation gets no prefilter (the engine indexes it).
+const MAX_SUFFIX_SET = 16;
+
 function extractSuffixSet(ops) {
   if (ops.length === 0) return [];
   const last = ops[ops.length - 1];
-  if (last.kind !== OP_ALTERNATION) return [];
+  if (last.kind !== OP_ALTERNATION || last.branches.length > MAX_SUFFIX_SET) return [];
 
   const commonTail = suffixArray(ops, ops.length - 1);
 

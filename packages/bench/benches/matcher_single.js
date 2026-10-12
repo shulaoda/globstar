@@ -40,8 +40,6 @@ const N = PATHS.length;
 
 const LIBS = [
   ["globstar", (p) => compileMatcher(p).match, (m, s) => m(s)],
-  // Forced fallback engine, so thompson/pikevm changes show up in the bench.
-  ["globstar_pikevm", (p) => compileMatcher(p, { __engine: "pikevm" }).match, (m, s) => m(s)],
   ["picomatch", (p) => pico(p), (m, s) => m(s)],
   ["minimatch", (p) => new Minimatch(p), (m, s) => m.match(s)],
   ["micromatch", (p) => micro.matcher(p), (m, s) => m(s)],

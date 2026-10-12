@@ -1,5 +1,5 @@
-//! Cross-runtime memory comparison: measures the production matcher and
-//! forced PikeVM on the same 7 patterns the JS
+//! Cross-runtime memory comparison: measures the production matcher
+//! on the same 7 patterns the JS
 //! `matcher_single.js` Phase-3 table uses, so the rows line up
 //! one-for-one with the JS column.
 //!
@@ -12,9 +12,7 @@ use std::mem::size_of_val;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use globset::GlobBuilder;
-use globstar::engine::ops::lower;
-use globstar::engine::pikevm::PikeVm;
-use globstar::{parser, CompileOptions, Glob};
+use globstar::{CompileOptions, Glob};
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
@@ -33,12 +31,6 @@ unsafe impl GlobalAlloc for Counter {
 
 #[global_allocator]
 static A: Counter = Counter;
-
-fn build_pikevm(pattern: &str) -> PikeVm {
-    let ast = parser::parse(pattern.as_bytes()).expect("parse");
-    let program = lower(ast.body, false);
-    PikeVm::new(program, true)
-}
 
 /// Public-API build of the existing crate. `dot=true` mirrors the
 /// JS default.
@@ -90,22 +82,15 @@ fn main() {
     }
 
     println!(
-        "{:<20}   {:>10}   {:>10}   {:>10}   {:>10}",
-        "Pattern (total B/matcher)", "globstar", "PikeVM", "globset", "wax"
+        "{:<20}   {:>10}   {:>10}   {:>10}",
+        "Pattern (total B/matcher)", "globstar", "globset", "wax"
     );
-    println!(
-        "{:-<20}   {:->10}   {:->10}   {:->10}   {:->10}",
-        "", "", "", "", ""
-    );
+    println!("{:-<20}   {:->10}   {:->10}   {:->10}", "", "", "", "");
 
     let trials = 9;
     for &(label, pattern) in patterns {
         let public_total = median_total(trials, || {
             let (_v, inline, heap) = measure(|| build_public(pattern));
-            inline + heap
-        });
-        let pike_total = median_total(trials, || {
-            let (_v, inline, heap) = measure(|| build_pikevm(pattern));
             inline + heap
         });
         let gs_total = median_total(trials, || {
@@ -118,8 +103,8 @@ fn main() {
         });
 
         println!(
-            "{:<20}   {:>10}   {:>10}   {:>10}   {:>10}",
-            label, public_total, pike_total, gs_total, wax_total
+            "{:<20}   {:>10}   {:>10}   {:>10}",
+            label, public_total, gs_total, wax_total
         );
     }
 }

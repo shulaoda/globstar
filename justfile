@@ -42,7 +42,7 @@ fix:
 
 # Rust tests (single-pattern + multi-pattern + err corpus + walker
 # integration + bounded-exhaustive matchDir properties) + JS goldens: the
-# compiler-stages TSV fixture, the segment↔pikevm string-mode differential
+# compiler-stages TSV fixture, the string-mode↔byte-mode differential
 # (fixed-seed, deterministic), the JS matchDir exhaustive twin, and the
 # JS walker integration suite (temp-tree fixtures, twin of walk.rs).
 test:

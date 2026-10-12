@@ -8,8 +8,7 @@ The matcher exposes two outputs that drive directory-level pruning:
 Implementation:
 
 - `engine/ops/prefixes.rs::compute_static_prefixes` — the prefix extraction pass.
-- `engine/segment/::SegmentMatcher::match_dir` — primary realization.
-- `engine/pikevm.rs::PikeVm::match_dir` — Pike VM realization.
+- `engine/segment/::SegmentMatcher::match_dir` — the realization.
 - `dir_match.rs` — the `DirMatch` algebraic datatype.
 
 This note formalizes both and documents how the walker (`references/spec/WALKER_SPEC.md`) consumes them.
@@ -140,25 +139,9 @@ verdict ← combine(exact, prefix)
 
 This is the production path. It answers the directory query without rebuilding a byte-level automaton or allocating per call.
 
-### 2.3 Pike VM realization
-
-Same predicate, lifted to the simulator's active set:
-
-```
-S₀ ← run d through PikeVm to a final active set
-S₁ ← ε-closure({ q' : q ∈ S₀, (q, sep, q') ∈ δ_N })
-exact   ← S₀ ∩ accepts_at_eof ≠ ∅
-prefix  ← (S₁ ∩ accepts_at_eof ≠ ∅) ∨ (S₁ ∩ reach_to_accept ≠ ∅)
-verdict ← combine(exact, prefix)
-```
-
-`reach_to_accept` is the bit vector described in §04 §5.
-
-Both realizations then decide `all_below` from the same state set (§2.6).
-
 ### 2.4 The suffix prefilter is not used
 
-Unlike `is_match`, `match_dir` does not consult `LiteralFacts::accept` (§05). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. Both exact engines run unfiltered for `match_dir`.
+Unlike `is_match`, `match_dir` does not consult `LiteralFacts::accept` (§05). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. The engine runs unfiltered for `match_dir`.
 
 ### 2.5 Negated patterns
 
@@ -176,42 +159,25 @@ This is the formal counterpart of `references/spec/GLOB_SPEC.md` §13.4. The wal
 
 `prefix_match` over-approximates: `Descend` means a descendant MAY match. `all_below` under-approximates: it is set only when every descendant provably matches. Both err on the consumer's safe side.
 
-The engines decide it by simulation. A _wildcard-only_ byte is one that `?`, `*` and `**` consume and that every literal and class rejects; a wildcard-only path is built from such bytes and separators. Starting from the state set that `d` left behind, the engine feeds every wildcard-only path in `R` and requires an accept after each segment.
+The engine decides it by simulation. A _wildcard-only_ byte is one that `?`, `*` and `**` consume and that every literal and class rejects; a wildcard-only path is built from such bytes and separators. Starting from the state set that `d` left behind, the engine feeds every wildcard-only path in `R` and requires an accept after each segment.
 
-Segment realization — a wildcard-only segment of any length, stepped until the sets settle:
+A wildcard-only segment of any length, stepped until the set settles:
 
 ```
-S ← state sets after the segments of d, one per fork
+S ← the state set after the segments of d
 repeat:
-    S ← step every fork over a wildcard-only segment
+    S ← step S over a wildcard-only segment
         (globstars absorb it; a Wild consumes it iff its wildcards
          alone match every non-empty segment; a Lit never does)
-    if no fork accepts: return false
+    if S has no accept: return false
     if S did not change: return true
 ```
 
 Tokens only move right along a sequence or sit on a globstar, so the loop ends within the number of states. The per-`Wild` bit is precomputed: `*` and `?*` have it, `*.js` and `?` do not, and a `Generic` in-segment NFA gets it from the same simulation run over its `Any` states.
 
-Pike VM realization — the same walk byte by byte, over two symbols (a wildcard-only byte, a separator):
+Under `dot=false` it returns `false` without simulating: `**` does not match a dot-led name, so some `d/.x` always escapes.
 
-```
-starts ← { S₁ }                      S₁ from §2.3
-for each S in starts:
-    T ← step(S, wild byte)
-    repeat:
-        if T ∩ accepts_at_eof = ∅: return false
-        add step(T, sep) to starts
-        T' ← step(T, wild byte)
-        if T' = T: break
-        T ← T'
-return true
-```
-
-`starts` is capped; hitting the cap answers `false`.
-
-Under `dot=false` both return `false` without simulating: `**` does not match a dot-led name, so some `d/.x` always escapes.
-
-The two differ in one corner. The Pike VM counts the bytes of a segment, so forks that split the names by length — `?/**/?` with `**/??*` — cover together. The segment realization asks each `Wild` to take every length on its own and answers `false` there. Forks that merge into one segment (`**/?` with `**/??*` factors to `**/?{,?*}`) are one `Wild` and are proven by both.
+One corner is not provable: branches that split the names by length — `?/**/?` with `**/??*` — cover together, but the rule asks each `Wild` to take every length on its own and answers `false` there. Branches that merge into one segment (`**/?` with `**/??*` factors to `**/?{,?*}`) are one `Wild` and are proven.
 
 ## 3. Walker integration
 
@@ -364,8 +330,7 @@ If `**/*.test.ts` were instead routed through `match_dir`, the walker could prun
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `compute_static_prefixes`                                                           | `engine/ops/prefixes.rs`                                                 |
 | `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                  |
-| `PikeVm::match_dir` / `has_prefix_descent`                                          | `engine/pikevm.rs`                                                       |
-| `compute_reach_to_accept`                                                           | `engine/thompson.rs`                                                     |
+| `Graph::match_dir`, `Graph::covers_below`                                           | `engine/segment/exec.rs`                                                 |
 | `DirMatch`, `DirMatch::is_match`, `DirMatch::should_descend`, `DirMatch::is_pruned` | `dir_match.rs`                                                           |
 | Walker glue (JS)                                                                    | `packages/globstar-walk/src/walk.js::initFromPrefixes`, `processDirents` |
 

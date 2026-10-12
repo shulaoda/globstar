@@ -784,7 +784,7 @@ Callers needing Unicode case folding MUST normalize both pattern and path before
 
 - Class items are expanded at lower time: `[A-Z]` gets a `[a-z]` Range added (the parser already validated it as a legal range).
 - `Op::Lit` bytes stay as-is, but the comparator becomes `eq_ignore_ascii_case` (single-byte fold, ~1 ns).
-- A case-insensitive literal byte compiles to a two-item Thompson-NFA class state `{byte, case-alt}` rather than a bare byte state.
+- A case-insensitive literal byte inside an in-segment NFA compiles to a two-item class state `{byte, case-alt}` rather than a bare byte state.
 - The `LiteralFacts` prefilter stores raw bytes and does the fold at comparison time; the `case_insensitive` flag is propagated.
 
 **Default:** `false` (strict byte-level match) at both the matcher and walker layers. Callers MUST opt in explicitly.
@@ -1015,7 +1015,7 @@ Consequences:
 **Not provable.** Two shapes cover a subtree without the rule seeing it, and answer the safe `Descend`:
 
 - Coverage through classes: `/p/dist/**/{a*,[!a]*}` takes every name, as one starting with `a` or one that does not.
-- Coverage by name length across separator-crossing branches: `?/**/?` with `**/??*` takes every name below `c/x.js`, as a one-byte name or a longer one. The Pike VM counts bytes and proves this one; the segment engine needs a single element that takes every name and does not. The engines agree on every other result.
+- Coverage by name length across separator-crossing branches: `?/**/?` with `**/??*` takes every name below `c/x.js`, as a one-byte name or a longer one. The rule asks a single element to take every name and does not see it.
 
 ---
 

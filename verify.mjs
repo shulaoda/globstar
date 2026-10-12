@@ -3,15 +3,16 @@
 //
 // Five corpora share the same harness:
 //
-//   single — SINGLE_FILES list below              single-pattern × 2 engines
-//   multi  — `tests/corpus/corpus-multi.txt`      N-pattern OR × 2 engines
-//   dir    — `tests/corpus/corpus-dir.txt`        match_dir × 2 engines
+//   single — SINGLE_FILES list below              single-pattern × 2 lanes
+//   multi  — `tests/corpus/corpus-multi.txt`      N-pattern OR × 2 lanes
+//   dir    — `tests/corpus/corpus-dir.txt`        match_dir
 //   mdir   — `tests/corpus/corpus-multi-dir.txt`  N-pattern match_dir
 //   err    — `tests/corpus/corpus-err.txt`        parse-error variants
 //
-// Two engines per match-corpus row:
+// Two lanes per match row:
 //   - globstar     — public API (`globstar(...)`, `Glob::new` / `Glob::union`)
-//   - PikeVm       — forced
+//   - nfa          — the same matcher with the segment engine's anchored
+//                    chains bypassed, so its NFA is checked on every row
 //
 // Rust path runs `cargo test --test corpus -- --nocapture` and parses
 // the test's `corpus=… engine=… pass=N fail=N skip=N` output. JS path
@@ -182,16 +183,16 @@ async function runJsVerify() {
 
   const single = {
     globstar: makeStats(),
-    PikeVm: makeStats(),
+    nfa: makeStats(),
   };
   for (const row of singleRows()) {
     const g = runSinglePub(row);
     if (g === null) single.globstar.skip++;
     else record(single.globstar, g === row.expected, () => singleFail(row, "globstar", g));
 
-    const p = runSingleEngine(row, "pikevm");
-    if (p === null) single.PikeVm.skip++;
-    else record(single.PikeVm, p === row.expected, () => singleFail(row, "PikeVm", p));
+    const p = runSingleEngine(row, "nfa");
+    if (p === null) single.nfa.skip++;
+    else record(single.nfa, p === row.expected, () => singleFail(row, "nfa", p));
   }
 
   // ── multi-pattern corpus
@@ -254,16 +255,16 @@ async function runJsVerify() {
 
   const multi = {
     globstar: makeStats(),
-    PikeVm: makeStats(),
+    nfa: makeStats(),
   };
   for (const row of multiRows()) {
     const g = runMultiPub(row);
     if (g === null) multi.globstar.skip++;
     else record(multi.globstar, g === row.expected, () => multiFail(row, "globstar", g));
 
-    const p = runMultiEngine(row, "pikevm");
-    if (p === null) multi.PikeVm.skip++;
-    else record(multi.PikeVm, p === row.expected, () => multiFail(row, "PikeVm", p));
+    const p = runMultiEngine(row, "nfa");
+    if (p === null) multi.nfa.skip++;
+    else record(multi.nfa, p === row.expected, () => multiFail(row, "nfa", p));
   }
 
   // ── match_dir corpus — public SSM plus reference engines vs truth.
@@ -303,16 +304,14 @@ async function runJsVerify() {
     }
   }
 
-  function runDirEngine(row, engineName) {
-    // Both variants go through `compileMatcher`, whose `matchDir` inverts
-    // leading-`!` negation at the wrapper level (conservative Descend,
-    // §13.4) regardless of which engine `__engine` forces the body onto —
-    // so negated rows are exercised on BOTH engines and no row is skipped.
+  function runDirEngine(row) {
+    // `compileMatcher`'s `matchDir` inverts leading-`!` negation at the
+    // wrapper level (conservative Descend, §13.4), so negated rows are
+    // exercised too and no row is skipped.
     try {
       const dm = compileMatcher(row.pattern, {
         dot: row.dot,
         caseInsensitive: row.caseInsensitive,
-        __engine: engineName,
       }).matchDir(row.path);
       return DIR_TOKEN[dm];
     } catch {
@@ -324,16 +323,11 @@ async function runJsVerify() {
 
   const dir = {
     globstar: makeStats(),
-    PikeVm: makeStats(),
   };
   for (const row of dirRows()) {
-    const g = runDirEngine(row, undefined); // public default engine (Segment/PikeVm)
+    const g = runDirEngine(row);
     if (g === null) dir.globstar.skip++;
     else record(dir.globstar, g === row.expected, () => dirFail(row, "globstar", g));
-
-    const p = runDirEngine(row, "pikevm");
-    if (p === null) dir.PikeVm.skip++;
-    else record(dir.PikeVm, p === row.expected, () => dirFail(row, "PikeVm", p));
   }
 
   // ── multi-pattern match_dir corpus — union built the same way as the
@@ -372,12 +366,11 @@ async function runJsVerify() {
     }
   }
 
-  function runMultiDirEngine(row, engineName) {
+  function runMultiDirEngine(row) {
     try {
       const dm = compileMatcher(row.patterns, {
         dot: row.dot,
         caseInsensitive: row.caseInsensitive,
-        __engine: engineName,
       }).matchDir(row.path);
       return DIR_TOKEN[dm];
     } catch {
@@ -389,16 +382,11 @@ async function runJsVerify() {
 
   const multiDir = {
     globstar: makeStats(),
-    PikeVm: makeStats(),
   };
   for (const row of multiDirRows()) {
-    const g = runMultiDirEngine(row, undefined);
+    const g = runMultiDirEngine(row);
     if (g === null) multiDir.globstar.skip++;
     else record(multiDir.globstar, g === row.expected, () => multiDirFail(row, "globstar", g));
-
-    const p = runMultiDirEngine(row, "pikevm");
-    if (p === null) multiDir.PikeVm.skip++;
-    else record(multiDir.PikeVm, p === row.expected, () => multiDirFail(row, "PikeVm", p));
   }
 
   // ── parse-error corpus — public API only (engines never see malformed input)
@@ -433,13 +421,11 @@ async function runJsVerify() {
 
   return [
     { corpus: "single", engine: "globstar", ...single.globstar },
-    { corpus: "single", engine: "PikeVm", ...single.PikeVm },
+    { corpus: "single", engine: "nfa", ...single.nfa },
     { corpus: "multi", engine: "globstar", ...multi.globstar },
-    { corpus: "multi", engine: "PikeVm", ...multi.PikeVm },
+    { corpus: "multi", engine: "nfa", ...multi.nfa },
     { corpus: "dir", engine: "globstar", ...dir.globstar },
-    { corpus: "dir", engine: "PikeVm", ...dir.PikeVm },
     { corpus: "mdir", engine: "globstar", ...multiDir.globstar },
-    { corpus: "mdir", engine: "PikeVm", ...multiDir.PikeVm },
     { corpus: "err", engine: "globstar", ...errStats },
   ];
 }
@@ -488,10 +474,10 @@ console.log(
 console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 5 + 5));
 
 // Stable cross-runtime row order: single → multi → err, then
-// globstar → PikeVm. Rust prints in cargo-test name
+// globstar → nfa. Rust prints in cargo-test name
 // order (alphabetical), JS in author order — sort so both line up.
 const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, mdir: 3, err: 4 };
-const ENGINE_ORDER = { globstar: 0, PikeVm: 1 };
+const ENGINE_ORDER = { globstar: 0, nfa: 1 };
 const rowKey = (r) => [CORPUS_ORDER[r.corpus] ?? 99, ENGINE_ORDER[r.engine] ?? 99];
 for (const side of sides) {
   side.rows.sort((a, b) => {

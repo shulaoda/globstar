@@ -1,9 +1,11 @@
-// Segment engine ↔ PikeVM differential.
+// String mode ↔ byte mode differential.
 //
-// The segment engine matches JS strings directly (zero-copy); PikeVM is the
-// independent byte-machine reference. On the same pattern × path the two must
-// agree. This sweeps random patterns × paths, including multi-byte text,
-// `?`-vs-bytes traps, and dot/class/brace shapes, asserting they agree.
+// The segment engine matches JS strings directly (zero-copy) and bails to
+// the UTF-8 bytes only where a unit-counting construct meets non-ASCII
+// text; forced byte mode (`__engine: "bytes"`) is the reference. On the
+// same pattern × path the two must agree. This sweeps random patterns ×
+// paths, including multi-byte text, `?`-vs-bytes traps, and
+// dot/class/brace shapes, asserting they agree.
 //
 // Run: node packages/globstar/tests/string-mode.mjs [count]
 
@@ -102,7 +104,7 @@ for (let i = 0; i < COUNT; i++) {
   let seg, ref;
   try {
     seg = compileMatcher(pat, { dot, caseInsensitive: ci });
-    ref = compileMatcher(pat, { dot, caseInsensitive: ci, __engine: "pikevm" });
+    ref = compileMatcher(pat, { dot, caseInsensitive: ci, __engine: "bytes" });
   } catch {
     continue; // parse error — fine
   }
@@ -115,7 +117,7 @@ for (let i = 0; i < COUNT; i++) {
   if (viaSeg !== viaRef) {
     bad++;
     console.error(
-      `MATCH DIVERGENCE pat=${JSON.stringify(pat)} path=${JSON.stringify(path)} dot=${dot} ci=${ci} seg=${viaSeg} pike=${viaRef}`,
+      `MATCH DIVERGENCE pat=${JSON.stringify(pat)} path=${JSON.stringify(path)} dot=${dot} ci=${ci} str=${viaSeg} bytes=${viaRef}`,
     );
   }
 
@@ -124,7 +126,7 @@ for (let i = 0; i < COUNT; i++) {
   if (dirSeg !== dirRef) {
     bad++;
     console.error(
-      `DIR DIVERGENCE pat=${JSON.stringify(pat)} dir=${JSON.stringify(path)} dot=${dot} ci=${ci} seg=${dirSeg} pike=${dirRef}`,
+      `DIR DIVERGENCE pat=${JSON.stringify(pat)} dir=${JSON.stringify(path)} dot=${dot} ci=${ci} str=${dirSeg} bytes=${dirRef}`,
     );
   }
   if (bad > 20) break;
@@ -134,4 +136,4 @@ if (bad > 0) {
   console.error(`✗ ${bad} divergences over ${tried} cases`);
   process.exit(1);
 }
-console.log(`✓ segment ≡ pikevm on ${tried} cases (${compiled} compiled patterns)`);
+console.log(`✓ string mode ≡ byte mode on ${tried} cases (${compiled} compiled patterns)`);

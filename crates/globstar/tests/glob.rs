@@ -31,11 +31,38 @@ fn non_literal_patterns_use_segment_engine() {
 }
 
 #[test]
-fn segment_inexpressible_shape_uses_pikevm_fallback() {
-    // 65 top-level branches exceed the segment engine's MAX_FORKS cap.
-    let branches: Vec<String> = (0..65).map(|i| format!("a{i}")).collect();
-    let pattern = format!("{{{}}}", branches.join(","));
-    assert_eq!(Glob::new(&pattern).unwrap().engine_name(), "PikeVm");
+fn large_shapes_stay_on_segment_engine() {
+    // A wide name list, a deep path and a brace product all compile to
+    // the one segment engine; nothing falls back.
+    let names: Vec<String> = (0..500).map(|i| format!("a{i}")).collect();
+    let wide = format!("{{{}}}/**", names.join(","));
+    let deep = (0..120)
+        .map(|i| format!("d{i}"))
+        .collect::<Vec<_>>()
+        .join("/")
+        + "/*.ts";
+    let product = "{a,b}/".repeat(12) + "x";
+    for pattern in [wide.as_str(), deep.as_str(), product.as_str()] {
+        let g = Glob::new(pattern).unwrap();
+        assert_eq!(g.engine_name(), "Segment", "{pattern:.40}");
+    }
+    assert!(Glob::new(&wide).unwrap().is_match(b"a499/x/y"));
+    assert!(!Glob::new(&wide).unwrap().is_match(b"a500/x/y"));
+    assert!(
+        Glob::new(&deep)
+            .unwrap()
+            .is_match(deep.replace("*.ts", "x.ts").as_bytes())
+    );
+    assert!(
+        Glob::new(&product)
+            .unwrap()
+            .is_match(b"a/b/a/b/a/b/a/b/a/b/a/b/x")
+    );
+    assert!(
+        !Glob::new(&product)
+            .unwrap()
+            .is_match(b"a/b/a/b/a/b/a/b/a/b/a/c/x")
+    );
 }
 
 #[test]

@@ -1,21 +1,13 @@
-//! Multi-pattern bench with explicit union vs OR rows for PikeVM,
 //! mirroring JS's `matcher_multi.js`.
 //!
 //! Columns:
 //!   globstar       — `Glob::union` production SSM-first API
-//!   PikeVM union   — forced merged PikeVM (direct `PikeVm::new`)
-//!   PikeVM OR      — N independent `PikeVm::new` matchers OR'd
 //!   globset / wax / fast_glob / glob — third-party baselines
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;
 use globset::GlobBuilder;
 use globstar::Glob as GcGlob;
-use globstar::ast::Node;
-use globstar::engine::ops::lower;
-use globstar::engine::pikevm::PikeVm;
-use globstar::factor::factor_branches;
-use globstar::parser;
 use std::path::Path;
 use wax::Pattern as WaxPattern;
 
@@ -80,30 +72,6 @@ fn build_globstar(patterns: &[&str]) -> GcGlob {
     GcGlob::union(patterns.iter().copied()).unwrap()
 }
 
-/// Forced merged PikeVM — direct `PikeVm::new` on the factored
-/// program.
-fn build_pikevm_union(patterns: &[&str]) -> PikeVm {
-    let bodies: Vec<Node> = patterns
-        .iter()
-        .map(|p| parser::parse(p.as_bytes()).expect("parse").body)
-        .collect();
-    let merged = factor_branches(bodies);
-    let program = lower(merged, false);
-    PikeVm::new(program, true)
-}
-
-/// Per-pattern PikeVM — N independent matchers OR'd at match time.
-fn build_pikevm_or(patterns: &[&str]) -> Vec<PikeVm> {
-    patterns
-        .iter()
-        .map(|p| {
-            let ast = parser::parse(p.as_bytes()).expect("parse");
-            let program = lower(ast.body, false);
-            PikeVm::new(program, true)
-        })
-        .collect()
-}
-
 // ---------- third-party libs ----------
 
 fn build_globset(patterns: &[&str]) -> globset::GlobSet {
@@ -147,12 +115,6 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.bench_function("globstar", |b| {
         b.iter(|| black_box(build_globstar(black_box(patterns))));
     });
-    group.bench_function("PikeVM_union", |b| {
-        b.iter(|| black_box(build_pikevm_union(black_box(patterns))));
-    });
-    group.bench_function("PikeVM_OR", |b| {
-        b.iter(|| black_box(build_pikevm_or(black_box(patterns))));
-    });
     group.bench_function("globset", |b| {
         b.iter(|| black_box(build_globset(black_box(patterns))));
     });
@@ -170,8 +132,6 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
 // ---------- MATCH bench ----------
 fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let gs = build_globstar(patterns);
-    let pike_u = build_pikevm_union(patterns);
-    let pike_or = build_pikevm_or(patterns);
     let gset = build_globset(patterns);
     let wax_g = build_wax(patterns);
     let glob_g = if !has_brace(patterns) {
@@ -186,21 +146,6 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
         b.iter(|| {
             for p in PATHS {
                 black_box(gs.is_match(black_box(p.as_bytes())));
-            }
-        });
-    });
-    group.bench_function("PikeVM_union", |b| {
-        b.iter(|| {
-            for p in PATHS {
-                black_box(pike_u.is_match(black_box(p.as_bytes())));
-            }
-        });
-    });
-    group.bench_function("PikeVM_OR", |b| {
-        b.iter(|| {
-            for p in PATHS {
-                let any = pike_or.iter().any(|g| g.is_match(black_box(p.as_bytes())));
-                black_box(any);
             }
         });
     });
