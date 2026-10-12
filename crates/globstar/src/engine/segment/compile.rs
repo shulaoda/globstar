@@ -15,8 +15,9 @@ use crate::engine::ops::Op;
 use super::bits::{Bits, Wide};
 use super::seg_nfa::SegNfa;
 use super::{
-    AffixIndex, AnyNfa, ByteSketch, Bytes, Chain, Elem, LINEAR_SUFFIXES, LitSet, LitSets, MANY_G,
-    MAX_CHAINS, NO_G, Nfa, SegmentMatcher, State, SuffixRun, Wild, WildKind, facts,
+    Affix, AffixIndex, AffixSet, AnyNfa, ByteSketch, Bytes, Chain, Elem, LINEAR_SUFFIXES, LitSet,
+    LitSets, MANY_G, MAX_CHAINS, NO_G, Nfa, SegmentMatcher, State, SuffixRun, Wild, WildKind,
+    facts,
 };
 
 /// Successor marker for "the pattern ends here".
@@ -744,10 +745,7 @@ impl Builder {
             // the literal is a silent miss (§2.4), kept as a wildcard
             // that wants more bytes than any segment has.
             return Elem::Wild(Wild {
-                kind: WildKind::Affix {
-                    prefix: lit,
-                    suffix: Bytes::default(),
-                },
+                kind: WildKind::Affix(Affix::new(lit, Bytes::default())),
                 min_len: u32::MAX,
                 variable: false,
                 dot_protect: false,
@@ -826,10 +824,7 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
     if idx == ops.len() {
         return Wild {
             min_len: prefix.len() as u32 + anychars,
-            kind: WildKind::Affix {
-                prefix,
-                suffix: Bytes::default(),
-            },
+            kind: WildKind::Affix(Affix::new(prefix, Bytes::default())),
             variable: has_star,
             dot_protect,
             any_seg: any_head,
@@ -837,11 +832,10 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
     }
     if let Some(suffixes) = suffix_product(&ops[idx..]) {
         let any_seg = any_head && suffixes.iter().any(|s| s.is_empty());
-        if suffixes.len() == 1 {
-            let suffix = Bytes::from(&suffixes[0][..]);
+        if let [suffix] = &suffixes[..] {
             return Wild {
                 min_len: (prefix.len() + suffix.len()) as u32 + anychars,
-                kind: WildKind::Affix { prefix, suffix },
+                kind: WildKind::Affix(Affix::new(prefix, Bytes::from(&suffix[..]))),
                 variable: has_star,
                 dot_protect,
                 any_seg,
@@ -917,11 +911,11 @@ fn suffix_product(ops: &[&Op]) -> Option<Vec<Vec<u8>>> {
 fn affix_set(prefix: Bytes, mut suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
     let last = ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci);
     if suffixes.len() <= LINEAR_SUFFIXES {
-        return WildKind::AffixSet {
-            prefix,
-            suffixes: suffixes.iter().map(|s| Bytes::from(&s[..])).collect(),
+        let suffixes = suffixes.iter().map(|s| Bytes::from(&s[..]));
+        return WildKind::AffixSet(AffixSet {
+            parts: std::iter::once(prefix).chain(suffixes).collect(),
             last,
-        };
+        });
     }
     if ci {
         for s in &mut suffixes {

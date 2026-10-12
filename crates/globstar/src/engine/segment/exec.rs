@@ -111,9 +111,9 @@ impl SegmentMatcher {
         let suffix: &[u8] = match &self.elems[last] {
             Elem::Lit(lit) => lit,
             Elem::Wild(Wild {
-                kind: WildKind::Affix { suffix, .. },
+                kind: WildKind::Affix(affix),
                 ..
-            }) => suffix,
+            }) => affix.suffix(),
             _ => &[],
         };
         path.len() >= suffix.len() && self.affix_eq(suffix, &path[path.len() - suffix.len()..])
@@ -413,20 +413,20 @@ impl SegmentMatcher {
         }
         let len = seg.len();
         match &w.kind {
-            WildKind::Affix { prefix, suffix } => {
+            WildKind::Affix(affix) => {
                 let need = w.min_len as usize;
                 if len < need || (!w.variable && len != need) {
                     return false;
                 }
+                let (prefix, suffix) = affix.parts();
                 self.affix_eq(prefix, &seg[..prefix.len()])
                     && self.affix_eq(suffix, &seg[len - suffix.len()..])
             }
-            WildKind::AffixSet {
-                prefix,
-                suffixes,
-                last,
-            } => {
-                self.set_head(prefix, *last, seg)
+            WildKind::AffixSet(set) => {
+                let [prefix, suffixes @ ..] = &set.parts[..] else {
+                    unreachable!("an affix set has a prefix")
+                };
+                self.set_head(prefix, set.last, seg)
                     && suffixes.iter().any(|suf| {
                         let need = w.min_len as usize + suf.len();
                         len >= need

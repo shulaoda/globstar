@@ -150,24 +150,56 @@ struct Wild {
     any_seg: bool,
 }
 
+/// The rarer kinds are boxed so an `Elem` stays 40 bytes.
 #[derive(Debug, Clone)]
 enum WildKind {
     /// `lit (*|?)+ lit` and degenerate forms (`*`, `*lit`, `lit*`,
     /// `a?b`): compare the affixes, the length rules do the rest.
-    Affix { prefix: Bytes, suffix: Bytes },
+    Affix(Affix),
     /// `lit (*|?)+ {lit,…}` (`*.{ts,tsx}`): the prefix plus one
     /// suffix out of a set of at most `LINEAR_SUFFIXES`, scanned in
     /// pattern order.
-    AffixSet {
-        prefix: Bytes,
-        suffixes: Box<[Bytes]>,
-        last: ByteSketch,
-    },
+    AffixSet(AffixSet),
     /// `AffixSet` past `LINEAR_SUFFIXES` (a factored union of names).
-    /// Boxed so the common variants keep their size.
     AffixIndex(Box<AffixIndex>),
     /// Everything else: a mini Thompson NFA over the in-segment ops.
     Generic(Box<SegNfa>),
+}
+
+/// A prefix and a suffix in one string, `split` bytes of prefix.
+#[derive(Debug, Clone)]
+struct Affix {
+    bytes: Bytes,
+    split: u32,
+}
+
+impl Affix {
+    fn new(prefix: Bytes, suffix: Bytes) -> Self {
+        let split = prefix.len() as u32;
+        let bytes = match (prefix.is_empty(), suffix.is_empty()) {
+            (true, _) => suffix,
+            (_, true) => prefix,
+            _ => [&prefix[..], &suffix[..]].concat().into_boxed_slice(),
+        };
+        Affix { bytes, split }
+    }
+
+    #[inline(always)]
+    fn parts(&self) -> (&[u8], &[u8]) {
+        self.bytes.split_at(self.split as usize)
+    }
+
+    #[inline(always)]
+    fn suffix(&self) -> &[u8] {
+        self.parts().1
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AffixSet {
+    /// The prefix, then the suffixes.
+    parts: Box<[Bytes]>,
+    last: ByteSketch,
 }
 
 /// A large suffix set: sorted by (length, bytes), ASCII-lowercased
