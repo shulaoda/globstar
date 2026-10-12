@@ -20,20 +20,6 @@ import {
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
 import { bitTest, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
 
-// Does the path end like the chain's last element (a literal, or an
-// affix's suffix)? Rejects most members of a union before the chain
-// runs; a single chain has the prefilter for that. Case-insensitive
-// matchers skip it: `endsWith` is exact.
-export function endsLike(m, chain, str) {
-  if (m.ci) return true;
-  const ids = chain.nodes;
-  const last = ids === null ? m.nodes[m.nodes.length - 1] : m.nodes[ids[ids.length - 1]];
-  if (last.kind === EL_LIT) return str.endsWith(last.litStr);
-  if (last.kind === EL_WILD && last.wild.kind === WK_AFFIX)
-    return str.endsWith(last.wild.suffixStr);
-  return true;
-}
-
 export function chainMatches(m, chain, str, bail) {
   switch (chain.globstar) {
     case NO_G:

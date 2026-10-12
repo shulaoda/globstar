@@ -439,7 +439,14 @@ function makeChain(graph, nodes) {
     if (nStates > 31) return null;
     nfa = nfaSmall(graph, nodes);
   }
-  return { nodes, globstar, nfa };
+  // What a path must end with, read off the last element: a cheap
+  // reject for the members of a union.
+  const last = elem(n - 1);
+  let quickSuffixStr = "";
+  if (last.kind === EL_LIT) quickSuffixStr = last.litStr;
+  else if (last.kind === EL_WILD && last.wild.kind === WK_AFFIX)
+    quickSuffixStr = last.wild.suffixStr;
+  return { nodes, globstar, nfa, quickSuffixStr };
 }
 
 // ── the NFA ─────────────────────────────────────────────────────────
