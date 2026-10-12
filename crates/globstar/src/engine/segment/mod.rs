@@ -87,6 +87,7 @@ impl Elem {
         matches!(self, Elem::G0 | Elem::G0Strict | Elem::G1)
     }
 
+    #[inline]
     fn as_lit(&self) -> &[u8] {
         match self {
             Elem::Lit(lit) => lit,
@@ -101,6 +102,7 @@ impl Elem {
     }
 
     /// Takes every non-empty segment (`match_dir`'s all-below).
+    #[inline]
     fn any_seg(&self) -> bool {
         match self {
             Elem::Lit(_) => false,
@@ -121,6 +123,7 @@ impl Elem {
     }
 
     /// Can the element consume some segment?
+    #[inline]
     fn satisfiable(&self) -> bool {
         match self {
             Elem::Wild(Wild {
@@ -260,19 +263,19 @@ struct Nfa<B: Bits> {
 }
 
 #[derive(Debug, Clone)]
-struct LitSets<B: Bits> {
-    sets: Box<[LitSet<B>]>,
-    /// Union of the sets' states; left out of the per-state step.
-    states: B,
-}
-
-#[derive(Debug, Clone)]
 struct State<B: Bits> {
     /// The closure entered after consuming a segment here (a
     /// globstar's includes itself).
     after: B,
     /// The state's node (the accept slot is unused).
     node: u32,
+}
+
+#[derive(Debug, Clone)]
+struct LitSets<B: Bits> {
+    sets: Box<[LitSet<B>]>,
+    /// Union of the sets' states; left out of the per-state step.
+    states: B,
 }
 
 /// Literal nodes with the same predecessors: all active together, so

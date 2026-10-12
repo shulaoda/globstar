@@ -118,7 +118,7 @@ impl SegNfa {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct SegNfaImpl<B: Bits> {
+struct SegNfaImpl<B: Bits> {
     states: Box<[SegState]>,
     /// ε-closure of the entry with DotGuards passable (used for all
     /// non-dot-led segments, and for the EOF/empty-segment accept).

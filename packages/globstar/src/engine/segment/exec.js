@@ -23,28 +23,6 @@ import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { bitTest, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
 
-export function chainMatches(m, chain, str, bail) {
-  const ids = chain.nodes;
-  switch (chain.globstar) {
-    case NO_G:
-      return fixedRun(m, ids, 0, chainLen(m.nodes, ids), str, 0, bail);
-    case MANY_G: {
-      // The NFA over this chain alone, or the matcher's when the
-      // pattern is that one chain.
-      const g = chain.nfa;
-      if (g === null) return m._nfaMatch(str, bail);
-      const active = nfaRun(m, g, str, bail);
-      if (active === -1) return BAIL;
-      return (active & (1 << g.accept)) !== 0 ? YES : NO;
-    }
-    default: {
-      const midStart = head(m, ids, chain.globstar, str, bail);
-      if (midStart < 0) return fail(midStart);
-      return tailAndGlobstar(m, ids, chain.globstar, str, midStart, bail);
-    }
-  }
-}
-
 // A chain's element: `ids === null` is the identity (the lone path of
 // a brace-free pattern).
 const elemAt = (nodes, ids, i) => (ids === null ? nodes[i] : nodes[ids[i]]);
@@ -72,6 +50,29 @@ function lastSepBefore(str, end) {
 const MISS = -1;
 const BAILED = -2;
 const fail = (end) => (end === BAILED ? BAIL : NO);
+
+// Does the chain match the whole path?
+export function chainMatches(m, chain, str, bail) {
+  const ids = chain.nodes;
+  switch (chain.globstar) {
+    case NO_G:
+      return fixedRun(m, ids, 0, chainLen(m.nodes, ids), str, 0, bail);
+    case MANY_G: {
+      // The NFA over this chain alone, or the matcher's when the
+      // pattern is that one chain.
+      const g = chain.nfa;
+      if (g === null) return m._nfaMatch(str, bail);
+      const active = nfaRun(m, g, str, bail);
+      if (active === -1) return BAIL;
+      return (active & (1 << g.accept)) !== 0 ? YES : NO;
+    }
+    default: {
+      const midStart = head(m, ids, chain.globstar, str, bail);
+      if (midStart < 0) return fail(midStart);
+      return tailAndGlobstar(m, ids, chain.globstar, str, midStart, bail);
+    }
+  }
+}
 
 // Element `e` on the segment at `pos`, the path's last one iff `last`:
 // the index just past it. The segment is bounded first, so a path of

@@ -128,6 +128,7 @@ impl SegmentMatcher {
         path.len() >= suffix.len() && self.affix_eq(suffix, &path[path.len() - suffix.len()..])
     }
 
+    /// Does chain `i` match the whole path?
     pub(super) fn chain_matches(&self, i: usize, path: &[u8]) -> bool {
         let chain = &self.chains[i];
         if chain.nodes.is_empty() {
@@ -457,9 +458,7 @@ impl SegmentMatcher {
             WildKind::Generic(nfa) => nfa.matches(seg),
         }
     }
-}
 
-impl SegmentMatcher {
     /// Binary search of a run's suffixes for `tail`, in the branch-free
     /// shape `slice::binary_search_by` uses.
     fn run_has(&self, index: &AffixIndex, run: &SuffixRun, tail: &[u8]) -> bool {

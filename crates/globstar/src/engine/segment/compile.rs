@@ -25,13 +25,13 @@ const ACCEPT: u32 = u32::MAX;
 const START: u32 = u32::MAX;
 
 pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
-    let g = Graph::build(ops, dot, ci);
-    let chains = g.chains();
+    let graph = Graph::build(ops, dot, ci);
+    let chains = graph.chains();
     // A lone chain with at most one globstar serves `match_dir` too;
     // anything else needs the NFA.
     let nfa = match &chains[..] {
         [c] if !matches!(c.shape, Shape::Many(_)) => None,
-        _ => Some(Box::new(g.nfa())),
+        _ => Some(Box::new(graph.nfa())),
     };
     let suffixes = facts::suffixes(ops);
     SegmentMatcher {
@@ -39,7 +39,7 @@ pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
         suffixes,
         chains,
         nfa,
-        elems: g.elems.into_boxed_slice(),
+        elems: graph.elems.into_boxed_slice(),
         prefixes: facts::static_prefixes(ops),
         case_insensitive: ci,
         dot,
@@ -164,42 +164,6 @@ impl Graph {
             AnyNfa::Wide(nfa_over(&self.elems, self.ci, self.edges.as_ref(), None))
         }
     }
-}
-
-/// The NFA over the lone chain a matcher kept instead of one (test
-/// hook).
-pub(super) fn chain_nfa(m: &SegmentMatcher) -> Nfa<Wide> {
-    let nodes = &m.chains[0].nodes;
-    let path = (!nodes.is_empty()).then_some(&nodes[..]);
-    nfa_over(&m.elems, m.case_insensitive, None, path)
-}
-
-/// NFA states over `elems`, the accept state included.
-fn n_states<'a>(elems: impl Iterator<Item = &'a Elem>) -> usize {
-    elems.map(Elem::states).sum::<usize>() + 1
-}
-
-/// Elements a brace-free pattern needs (one per boundary op plus the
-/// last segment; with braces a floor), and whether the pattern has a
-/// separator-crossing brace at all.
-fn survey(ops: &[Op]) -> (usize, bool) {
-    let mut boundaries = 0;
-    let mut linear = true;
-    for op in ops {
-        match op {
-            Op::Alternation(branches) => {
-                if crosses(op) {
-                    linear = false;
-                }
-                for b in branches {
-                    boundaries += survey(b).0;
-                }
-            }
-            Op::Lit(_) | Op::AnyChar | Op::Star | Op::Class(_) | Op::LeadingSeps => {}
-            _ => boundaries += 1,
-        }
-    }
-    (boundaries, linear)
 }
 
 /// The NFA over the positions of a path (`None`: the graph itself,
@@ -349,31 +313,9 @@ fn nfa_over<B: Bits>(
     }
 }
 
-/// FNV-1a: the node keys are a few bytes, hashed once per node.
-#[derive(Default)]
-struct Fnv(u64);
-
-impl Hasher for Fnv {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        let mut h = if self.0 == 0 {
-            0xcbf2_9ce4_8422_2325
-        } else {
-            self.0
-        };
-        for &b in bytes {
-            h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-        }
-        self.0 = h;
-    }
-}
-
-/// (length, bytes) order. One comparator, so its sort is compiled once.
-pub(super) fn len_then_bytes<T: AsRef<[u8]>>(a: &T, b: &T) -> std::cmp::Ordering {
-    let (a, b) = (a.as_ref(), b.as_ref());
-    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+/// NFA states over `elems`, the accept state included.
+fn n_states<'a>(elems: impl Iterator<Item = &'a Elem>) -> usize {
+    elems.map(Elem::states).sum::<usize>() + 1
 }
 
 /// Positions holding literals, by literal (case-folded when
@@ -393,6 +335,37 @@ pub(super) fn lit_cmp(a: &[u8], b: &[u8], ci: bool) -> std::cmp::Ordering {
     a.iter()
         .map(u8::to_ascii_lowercase)
         .cmp(b.iter().map(u8::to_ascii_lowercase))
+}
+
+/// The NFA over the lone chain a matcher kept instead of one (test
+/// hook).
+pub(super) fn chain_nfa(m: &SegmentMatcher) -> Nfa<Wide> {
+    let nodes = &m.chains[0].nodes;
+    let path = (!nodes.is_empty()).then_some(&nodes[..]);
+    nfa_over(&m.elems, m.case_insensitive, None, path)
+}
+
+/// Elements a brace-free pattern needs (one per boundary op plus the
+/// last segment; with braces a floor), and whether the pattern has a
+/// separator-crossing brace at all.
+fn survey(ops: &[Op]) -> (usize, bool) {
+    let mut boundaries = 0;
+    let mut linear = true;
+    for op in ops {
+        match op {
+            Op::Alternation(branches) => {
+                if crosses(op) {
+                    linear = false;
+                }
+                for b in branches {
+                    boundaries += survey(b).0;
+                }
+            }
+            Op::Lit(_) | Op::AnyChar | Op::Star | Op::Class(_) | Op::LeadingSeps => {}
+            _ => boundaries += 1,
+        }
+    }
+    (boundaries, linear)
 }
 
 /// What the last op left behind for the next element.
@@ -576,6 +549,7 @@ impl Builder {
         Some(h.finish())
     }
 
+    /// Is node `id` this element after these predecessors?
     fn same(&self, id: u32, elem: &Elem, tails: &[u32]) -> bool {
         let i = id as usize;
         if self.preds_of(i) != tails {
@@ -787,6 +761,27 @@ fn crosses(op: &Op) -> bool {
     }
 }
 
+/// FNV-1a: the node keys are a few bytes, hashed once per node.
+#[derive(Default)]
+struct Fnv(u64);
+
+impl Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut h = if self.0 == 0 {
+            0xcbf2_9ce4_8422_2325
+        } else {
+            self.0
+        };
+        for &b in bytes {
+            h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+        self.0 = h;
+    }
+}
+
 /// The bytes of a run of `Lit` ops, allocated once.
 fn concat_lits(ops: &[&Op]) -> Bytes {
     fn lit(op: &Op) -> &[u8] {
@@ -948,4 +943,10 @@ fn affix_set(prefix: Bytes, suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
         last,
         runs: runs.into_boxed_slice(),
     }))
+}
+
+/// (length, bytes) order. One comparator, so its sort is compiled once.
+pub(super) fn len_then_bytes<T: AsRef<[u8]>>(a: &T, b: &T) -> std::cmp::Ordering {
+    let (a, b) = (a.as_ref(), b.as_ref());
+    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
 }
