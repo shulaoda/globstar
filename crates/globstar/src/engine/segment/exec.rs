@@ -151,9 +151,10 @@ impl SegmentMatcher {
         }
     }
 
-    /// `elems[i]` against the segment at `pos`: `Some(end)` is the index
-    /// just past it. A literal is compared in place and must end at a
-    /// separator or the end; a wildcard needs the segment's end first.
+    /// `elems[i]` on the segment at `pos`, the path's last one iff
+    /// `last`: `Some(end)` is the index just past it. The segment is
+    /// bounded first, so a path of the wrong depth is rejected before
+    /// any wildcard runs; a literal is then compared in place.
     #[inline(always)]
     fn consume_at<E: ChainElems>(
         &self,
@@ -161,20 +162,28 @@ impl SegmentMatcher {
         i: usize,
         path: &[u8],
         pos: usize,
+        last: bool,
     ) -> Option<usize> {
-        match elems.at(i) {
+        let taken = match elems.at(i) {
             Elem::Lit(lit) => {
                 let end = pos + lit.len();
-                let bounded = end == path.len()
-                    || (end < path.len() && std::path::is_separator(path[end] as char));
-                (bounded && self.affix_eq(lit, &path[pos..end])).then_some(end)
+                let bounded = if last {
+                    end == path.len()
+                } else {
+                    end < path.len() && std::path::is_separator(path[end] as char)
+                };
+                (end, bounded && self.affix_eq(lit, &path[pos..end]))
             }
             Elem::Wild(w) => {
                 let end = seg_end(path, pos);
-                self.wild_consumes(w, &path[pos..end]).then_some(end)
+                (
+                    end,
+                    (end == path.len()) == last && self.wild_consumes(w, &path[pos..end]),
+                )
             }
-            _ => None,
-        }
+            _ => return None,
+        };
+        taken.1.then_some(taken.0)
     }
 
     /// Do `elems[range]` take the segments from `pos` to the end, one
@@ -188,12 +197,12 @@ impl SegmentMatcher {
     ) -> bool {
         let last = range.end - 1;
         for i in range.start..last {
-            match self.consume_at(elems, i, path, pos) {
-                Some(end) if end < path.len() => pos = end + 1,
-                _ => return false,
+            match self.consume_at(elems, i, path, pos, false) {
+                Some(end) => pos = end + 1,
+                None => return false,
             }
         }
-        self.consume_at(elems, last, path, pos) == Some(path.len())
+        self.consume_at(elems, last, path, pos, true).is_some()
     }
 
     /// The head `elems[..g]`, one segment each: where the segment after
@@ -204,10 +213,7 @@ impl SegmentMatcher {
     fn head<E: ChainElems>(&self, elems: &E, g: usize, path: &[u8]) -> Option<usize> {
         let mut pos = 0;
         for i in 0..g {
-            match self.consume_at(elems, i, path, pos) {
-                Some(end) if end < path.len() => pos = end + 1,
-                _ => return None,
-            }
+            pos = self.consume_at(elems, i, path, pos, false)? + 1;
         }
         Some(pos)
     }
@@ -313,18 +319,18 @@ impl SegmentMatcher {
         }
         let mut mid_start = 0;
         for i in 0..g {
-            let Some(end) = self.consume_at(elems, i, dir, mid_start) else {
-                return DirMatch::Pruned;
-            };
-            if end == dir.len() {
-                // `dir` is the chain's first `k` segments. A globstar
-                // reached with nothing absorbed covers all below iff its
-                // tail is at most one any-segment.
-                let k = i + 1;
-                let all = self.dot && g < n && k == g && tl <= 1 && tail_any;
-                return DirMatch::from_exact_prefix_all(k == n, k < n && open(k), all);
+            match self.consume_at(elems, i, dir, mid_start, false) {
+                Some(end) => mid_start = end + 1,
+                None if self.consume_at(elems, i, dir, mid_start, true).is_some() => {
+                    // `dir` is the chain's first `k` segments. A globstar
+                    // reached with nothing absorbed covers all below iff
+                    // its tail is at most one any-segment.
+                    let k = i + 1;
+                    let all = self.dot && g < n && k == g && tl <= 1 && tail_any;
+                    return DirMatch::from_exact_prefix_all(k == n, k < n && open(k), all);
+                }
+                None => return DirMatch::Pruned,
             }
-            mid_start = end + 1;
         }
         if g == n {
             // A fixed chain, and the directory is deeper.

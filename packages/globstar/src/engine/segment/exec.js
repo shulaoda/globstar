@@ -73,18 +73,20 @@ const MISS = -1;
 const BAILED = -2;
 const fail = (end) => (end === BAILED ? BAIL : NO);
 
-// Element `e` against the segment at `pos`: the index just past it. A
-// literal is compared in place and must end at a separator or the end;
-// a wildcard needs the segment's end first.
-function consumeAt(m, e, str, pos, bail) {
+// Element `e` on the segment at `pos`, the path's last one iff `last`:
+// the index just past it. The segment is bounded first, so a path of
+// the wrong depth is rejected before any wildcard runs; a literal is
+// then compared in place.
+function consumeAt(m, e, str, pos, last, bail) {
   if (e.kind === EL_LIT) {
     const end = pos + e.litStr.length;
-    if (end > str.length || (end < str.length && !isPathSep(str.charCodeAt(end)))) return MISS;
-    return affixEq(e.litStr, str, pos, m.ci) === YES ? end : MISS;
+    const bounded = last ? end === str.length : end < str.length && isPathSep(str.charCodeAt(end));
+    return bounded && affixEq(e.litStr, str, pos, m.ci) === YES ? end : MISS;
   }
   if (e.kind !== EL_WILD) return MISS;
   let end = nextSep(str, pos);
   if (end === -1) end = str.length;
+  if ((end === str.length) !== last) return MISS;
   const r = wildConsumes(e.wild, str, pos, end, m.ci, bail);
   return r === YES ? end : r === NO ? MISS : BAILED;
 }
@@ -94,14 +96,12 @@ function consumeAt(m, e, str, pos, bail) {
 function fixedRun(m, ids, from, to, str, pos, bail) {
   const nodes = m.nodes;
   for (let i = from; i < to - 1; i++) {
-    const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, bail);
+    const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, false, bail);
     if (end < 0) return fail(end);
-    if (end === str.length) return NO;
     pos = end + 1;
   }
-  const end = consumeAt(m, elemAt(nodes, ids, to - 1), str, pos, bail);
-  if (end < 0) return fail(end);
-  return end === str.length ? YES : NO;
+  const end = consumeAt(m, elemAt(nodes, ids, to - 1), str, pos, true, bail);
+  return end < 0 ? fail(end) : YES;
 }
 
 // The head (the elements before the globstar `g`), one segment each:
@@ -112,9 +112,8 @@ function head(m, ids, g, str, bail) {
   const nodes = m.nodes;
   let pos = 0;
   for (let i = 0; i < g; i++) {
-    const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, bail);
+    const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, false, bail);
     if (end < 0) return end;
-    if (end === str.length) return MISS;
     pos = end + 1;
   }
   return pos;
@@ -196,10 +195,13 @@ export function chainDir(m, str, bail) {
   }
   let midStart = 0;
   for (let i = 0; i < g; i++) {
-    const end = consumeAt(m, elemAt(nodes, ids, i), str, midStart, bail);
+    const e = elemAt(nodes, ids, i);
+    let end = consumeAt(m, e, str, midStart, false, bail);
     if (end === BAILED) return -1;
-    if (end === MISS) return PRUNED;
-    if (end === str.length) {
+    if (end === MISS) {
+      end = consumeAt(m, e, str, midStart, true, bail);
+      if (end === BAILED) return -1;
+      if (end === MISS) return PRUNED;
       // `str` is the chain's first `k` segments. A globstar reached with
       // nothing absorbed covers all below iff its tail is at most one
       // any-segment.
