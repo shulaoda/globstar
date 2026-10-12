@@ -153,7 +153,7 @@ impl Graph {
     /// those).
     fn chains(&self) -> Box<[Chain]> {
         if self.linear {
-            return self.chain(None, false).into_iter().collect();
+            return self.chain(None).into_iter().collect();
         }
         let mut paths: Vec<Vec<u32>> = Vec::new();
         // Depth-first, first branch first.
@@ -177,10 +177,9 @@ impl Graph {
                 stack.push((s, path.clone()));
             }
         }
-        let several = paths.len() > 1;
         paths
             .into_iter()
-            .map(|p| self.chain(Some(p), several))
+            .map(|p| self.chain(Some(p)))
             .collect::<Option<_>>()
             .unwrap_or_default()
     }
@@ -188,7 +187,7 @@ impl Graph {
     /// The chain of a path (`None`: the lone path of a brace-free
     /// pattern, whose nodes are `0..elems.len()`); `None` when its
     /// several-globstar NFA would not fit a `u64`.
-    fn chain(&self, path: Option<Vec<u32>>, several: bool) -> Option<Chain> {
+    fn chain(&self, path: Option<Vec<u32>>) -> Option<Chain> {
         let n = path.as_ref().map_or(self.elems.len(), Vec::len);
         let elem = |i: usize| &self.elems[path.as_ref().map_or(i, |p| p[i] as usize)];
         let mut globstars = (0..n).filter(|&i| elem(i).is_globstar());
@@ -210,36 +209,10 @@ impl Graph {
             _ => None,
         };
 
-        let joined_head = match globstar {
-            NO_G | MANY_G | 0 => Bytes::default(),
-            g => {
-                let head = (0..g as usize).map(elem);
-                if head.clone().all(|e| matches!(e, Elem::Lit(_))) {
-                    head.flat_map(|e| e.as_lit().iter().chain(b"/"))
-                        .copied()
-                        .collect()
-                } else {
-                    Bytes::default()
-                }
-            }
-        };
-
-        // Only consulted when there are several chains.
-        let quick_suffix = match elem(n - 1) {
-            Elem::Lit(lit) if several => lit.clone(),
-            Elem::Wild(Wild {
-                kind: WildKind::Affix { suffix, .. },
-                ..
-            }) if several => suffix.clone(),
-            _ => Bytes::default(),
-        };
-
         Some(Chain {
             nodes: path.map_or_else(Default::default, Vec::into_boxed_slice),
             globstar,
             nfa,
-            joined_head,
-            quick_suffix,
         })
     }
 
@@ -721,12 +694,27 @@ impl Builder {
     }
 
     fn close(&self, buf: &[&Op]) -> Elem {
-        if buf.iter().all(|op| matches!(op, Op::Lit(_))) {
-            // Empty, one literal, or literals glued across a brace edge.
-            Elem::Lit(concat_lits(buf))
-        } else {
-            Elem::Wild(compile_wild(buf, self.dot, self.g.ci))
+        if !buf.iter().all(|op| matches!(op, Op::Lit(_))) {
+            return Elem::Wild(compile_wild(buf, self.dot, self.g.ci));
         }
+        // Empty, one literal, or literals glued across a brace edge.
+        let lit = concat_lits(buf);
+        if lit.iter().any(|&b| std::path::is_separator(b as char)) {
+            // An escaped `\` on Windows: no segment holds a separator, so
+            // the literal is a silent miss (§2.4), kept as a wildcard
+            // that wants more bytes than any segment has.
+            return Elem::Wild(Wild {
+                kind: WildKind::Affix {
+                    prefix: lit,
+                    suffix: Bytes::default(),
+                },
+                min_len: u32::MAX,
+                variable: false,
+                dot_protect: false,
+                any_seg: false,
+            });
+        }
+        Elem::Lit(lit)
     }
 }
 

@@ -20,6 +20,20 @@ import {
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
 import { bitTest, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
 
+// Does the path end like the chain's last element (a literal, or an
+// affix's suffix)? Rejects most members of a union before the chain
+// runs; a single chain has the prefilter for that. Case-insensitive
+// matchers skip it: `endsWith` is exact.
+export function endsLike(m, chain, str) {
+  if (m.ci) return true;
+  const ids = chain.nodes;
+  const last = ids === null ? m.nodes[m.nodes.length - 1] : m.nodes[ids[ids.length - 1]];
+  if (last.kind === EL_LIT) return str.endsWith(last.litStr);
+  if (last.kind === EL_WILD && last.wild.kind === WK_AFFIX)
+    return str.endsWith(last.wild.suffixStr);
+  return true;
+}
+
 export function chainMatches(m, chain, str, bail) {
   switch (chain.globstar) {
     case NO_G:
@@ -52,24 +66,41 @@ function nextSep(str, from) {
   return i < j ? i : j;
 }
 
+// `consumeAt` results below zero: the element rejects the segment, or
+// string mode must bail.
+const MISS = -1;
+const BAILED = -2;
+const fail = (end) => (end === BAILED ? BAIL : NO);
+
+// Element `e` against the segment at `pos`: the index just past it. A
+// literal is compared in place and must end at a separator or the end;
+// a wildcard needs the segment's end first.
+function consumeAt(m, e, str, pos, bail) {
+  if (e.kind === EL_LIT) {
+    const end = pos + e.litStr.length;
+    if (end > str.length || (end < str.length && !isPathSep(str.charCodeAt(end)))) return MISS;
+    return affixEq(e.litStr, str, pos, m.ci) === YES ? end : MISS;
+  }
+  if (e.kind !== EL_WILD) return MISS;
+  let end = nextSep(str, pos);
+  if (end === -1) end = str.length;
+  const r = wildConsumes(e.wild, str, pos, end, m.ci, bail);
+  return r === YES ? end : r === NO ? MISS : BAILED;
+}
+
 function matchFixed(m, ids, str, bail) {
   const nodes = m.nodes;
-  const n = chainLen(nodes, ids);
+  const last = chainLen(nodes, ids) - 1;
   let pos = 0;
-  for (let i = 0; i < n; i++) {
-    let end = nextSep(str, pos);
-    const last = end === -1;
-    if (last) end = str.length;
-    if (i + 1 < n) {
-      if (last) return NO;
-    } else if (!last) {
-      return NO;
-    }
-    const r = elemConsumes(elemAt(nodes, ids, i), str, pos, end, m.ci, bail);
-    if (r !== YES) return r;
+  for (let i = 0; i < last; i++) {
+    const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, bail);
+    if (end < 0) return fail(end);
+    if (end === str.length) return NO;
     pos = end + 1;
   }
-  return YES;
+  const end = consumeAt(m, elemAt(nodes, ids, last), str, pos, bail);
+  if (end < 0) return fail(end);
+  return end === str.length ? YES : NO;
 }
 
 function matchSingleG(m, chain, str, bail) {
@@ -94,31 +125,14 @@ function matchSingleG(m, chain, str, bail) {
     ts = s;
   }
 
-  let midStart;
-  const jh = chain.joinedHeadStr;
-  if (jh !== null) {
-    if (str.length < jh.length) return NO;
-    if (!ci && !IS_WINDOWS_SEP) {
-      if (!str.startsWith(jh)) return NO;
-    } else {
-      for (let i = 0; i < jh.length; i++) {
-        const hb = jh.charCodeAt(i);
-        const pb = str.charCodeAt(i);
-        if (hb === 0x2f ? !isPathSep(pb) : ci ? !eqByteCi(hb, pb) : hb !== pb) return NO;
-      }
-    }
-    midStart = jh.length;
-  } else {
-    let pos = 0;
-    for (let i = 0; i < g; i++) {
-      if (pos > str.length) return NO;
-      let end = nextSep(str, pos);
-      if (end === -1) end = str.length;
-      const r = elemConsumes(elemAt(nodes, ids, i), str, pos, end, ci, bail);
-      if (r !== YES) return r;
-      pos = end + 1;
-    }
-    midStart = pos;
+  // Every globstar wants a segment after the head: G1 absorbs one, G0
+  // is followed by its tail.
+  let midStart = 0;
+  for (let i = 0; i < g; i++) {
+    const end = consumeAt(m, elemAt(nodes, ids, i), str, midStart, bail);
+    if (end < 0) return fail(end);
+    if (end === str.length) return NO;
+    midStart = end + 1;
   }
 
   let midExists;

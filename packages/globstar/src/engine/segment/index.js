@@ -10,7 +10,15 @@ import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSegment, opsHaveNonAscii } from "./compile.js";
 import { endsWithSepAware } from "../facts.js";
-import { chainMatches, nfaRun, nfaRunWide, coversBelow, coversBelowWide, affixEq } from "./exec.js";
+import {
+  chainMatches,
+  endsLike,
+  nfaRun,
+  nfaRunWide,
+  coversBelow,
+  coversBelowWide,
+  affixEq,
+} from "./exec.js";
 import { bitTest, bitsIntersect } from "./bits.js";
 
 // Paths through the graph `isMatch` still tries one by one; past that
@@ -95,11 +103,9 @@ export class SegmentMatcher {
     const chainList = this.chains;
     if (chainList.length === 0) return this._nfaMatch(str, bail);
     if (chainList.length === 1) return chainMatches(this, chainList[0], str, bail);
-    const quick = !this.ci;
     let bailed = false;
-    for (let i = 0; i < chainList.length; i++) {
-      const chain = chainList[i];
-      if (quick && chain.quickSuffixStr.length > 0 && !str.endsWith(chain.quickSuffixStr)) continue;
+    for (const chain of chainList) {
+      if (!endsLike(this, chain, str)) continue;
       const r = chainMatches(this, chain, str, bail);
       if (r === YES) return YES;
       if (r === BAIL) bailed = true;

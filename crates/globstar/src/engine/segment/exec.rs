@@ -6,33 +6,14 @@ use super::{
     AnyNfa, ByteSketch, Chain, Elem, LitSet, MANY_G, NO_G, Nfa, SegmentMatcher, Wild, WildKind,
 };
 
-#[derive(Clone, Copy)]
-struct SegIter<'a> {
-    path: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> SegIter<'a> {
-    fn new(path: &'a [u8]) -> Self {
-        Self { path, pos: 0 }
+/// Index just past the segment that starts at `pos`.
+#[inline(always)]
+fn seg_end(path: &[u8], pos: usize) -> usize {
+    let mut i = pos;
+    while i < path.len() && !std::path::is_separator(path[i] as char) {
+        i += 1;
     }
-}
-
-impl Iterator for SegIter<'_> {
-    type Item = (usize, usize);
-
-    fn next(&mut self) -> Option<(usize, usize)> {
-        let start = self.pos;
-        if start > self.path.len() {
-            return None;
-        }
-        let mut i = start;
-        while i < self.path.len() && !std::path::is_separator(self.path[i] as char) {
-            i += 1;
-        }
-        self.pos = i + 1;
-        Some((start, i))
-    }
+    i
 }
 
 /// A chain's elements in order: the matcher's slice for the lone path
@@ -104,6 +85,27 @@ impl SegmentMatcher {
                 .all(|(&s, &p)| self.pat_byte_eq(s, p))
     }
 
+    /// Does the path end like the chain's last element (a literal, or
+    /// an affix's suffix)? Rejects most members of a union before the
+    /// chain runs; a single chain has the prefilter for that.
+    #[inline(always)]
+    pub(super) fn ends_like(&self, i: usize, path: &[u8]) -> bool {
+        let chain = &self.chains[i];
+        let last = chain
+            .nodes
+            .last()
+            .map_or(self.elems.len() - 1, |&n| n as usize);
+        let suffix: &[u8] = match &self.elems[last] {
+            Elem::Lit(lit) => lit,
+            Elem::Wild(Wild {
+                kind: WildKind::Affix { suffix, .. },
+                ..
+            }) => suffix,
+            _ => &[],
+        };
+        path.len() >= suffix.len() && self.affix_eq(suffix, &path[path.len() - suffix.len()..])
+    }
+
     #[inline(always)]
     pub(super) fn chain_matches(&self, i: usize, path: &[u8]) -> bool {
         let chain = &self.chains[i];
@@ -127,30 +129,49 @@ impl SegmentMatcher {
                 (None, AnyNfa::Small(nfa)) => nfa.is_match(self, path),
                 (None, AnyNfa::Wide(nfa)) => nfa.is_match(self, path),
             },
-            g => self.match_single_g(chain, elems, g as usize, path),
+            g => self.match_single_g(elems, g as usize, path),
+        }
+    }
+
+    /// `elems[i]` against the segment at `pos`: `Some(end)` is the index
+    /// just past it. A literal is compared in place and must end at a
+    /// separator or the end; a wildcard needs the segment's end first.
+    #[inline(always)]
+    fn consume_at<E: ChainElems>(
+        &self,
+        elems: &E,
+        i: usize,
+        path: &[u8],
+        pos: usize,
+    ) -> Option<usize> {
+        match elems.at(i) {
+            Elem::Lit(lit) => {
+                let end = pos + lit.len();
+                let bounded = end == path.len()
+                    || (end < path.len() && std::path::is_separator(path[end] as char));
+                (bounded && self.affix_eq(lit, &path[pos..end])).then_some(end)
+            }
+            Elem::Wild(w) => {
+                let end = seg_end(path, pos);
+                self.wild_consumes(w, &path[pos..end]).then_some(end)
+            }
+            _ => None,
         }
     }
 
     fn match_fixed<E: ChainElems>(&self, elems: E, path: &[u8]) -> bool {
-        let mut segs = SegIter::new(path);
-        for i in 0..elems.len() {
-            let Some((s, t)) = segs.next() else {
-                return false;
-            };
-            if !self.elem_consumes(elems.at(i), &path[s..t]) {
-                return false;
+        let last = elems.len() - 1;
+        let mut pos = 0;
+        for i in 0..last {
+            match self.consume_at(&elems, i, path, pos) {
+                Some(end) if end < path.len() => pos = end + 1,
+                _ => return false,
             }
         }
-        segs.next().is_none()
+        self.consume_at(&elems, last, path, pos) == Some(path.len())
     }
 
-    fn match_single_g<E: ChainElems>(
-        &self,
-        chain: &Chain,
-        elems: E,
-        g: usize,
-        path: &[u8],
-    ) -> bool {
+    fn match_single_g<E: ChainElems>(&self, elems: E, g: usize, path: &[u8]) -> bool {
         let m = elems.len();
         let tail_len = m - g - 1;
 
@@ -173,26 +194,15 @@ impl SegmentMatcher {
             ts = s;
         }
 
-        let mid_start = if !chain.joined_head.is_empty() {
-            let head = &chain.joined_head;
-            if path.len() < head.len()
-                || !head.iter().zip(path).all(|(&h, &p)| self.pat_byte_eq(h, p))
-            {
-                return false;
+        // Every globstar wants a segment after the head: `G1` absorbs
+        // one, `G0` is followed by its tail.
+        let mut mid_start = 0;
+        for i in 0..g {
+            match self.consume_at(&elems, i, path, mid_start) {
+                Some(end) if end < path.len() => mid_start = end + 1,
+                _ => return false,
             }
-            head.len()
-        } else {
-            let mut iter = SegIter::new(path);
-            for i in 0..g {
-                let Some((s, t)) = iter.next() else {
-                    return false;
-                };
-                if !self.elem_consumes(elems.at(i), &path[s..t]) {
-                    return false;
-                }
-            }
-            iter.pos
-        };
+        }
 
         let (mid_exists, mid_end) = if tail_len > 0 {
             if ts < mid_start {
@@ -248,15 +258,18 @@ impl SegmentMatcher {
         lit.len() == seg.len() && self.affix_eq(lit, seg)
     }
 
+    /// Byte-wise, so short affixes stay inline rather than calling
+    /// `bcmp`.
     #[inline]
-    pub(super) fn affix_eq(&self, part: &[u8], seg_part: &[u8]) -> bool {
+    fn affix_eq(&self, part: &[u8], seg_part: &[u8]) -> bool {
         debug_assert_eq!(part.len(), seg_part.len());
-        if !self.case_insensitive {
-            return part == seg_part;
+        if self.case_insensitive {
+            part.iter()
+                .zip(seg_part)
+                .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
+        } else {
+            part.iter().zip(seg_part).all(|(a, b)| a == b)
         }
-        part.iter()
-            .zip(seg_part)
-            .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
     }
 
     /// The common part of a suffix set: the last-byte sketch, then
@@ -365,12 +378,15 @@ impl<B: Bits> Nfa<B> {
     fn run(&self, m: &SegmentMatcher, path: &[u8]) -> B {
         let mut active = self.init.clone();
         let mut next = B::zero(B::words(self.states.len()));
-        for (s, t) in SegIter::new(path) {
-            if active.is_zero() {
+        let mut pos = 0;
+        while !active.is_zero() {
+            let end = seg_end(path, pos);
+            self.step(m, &active, &path[pos..end], &mut next);
+            std::mem::swap(&mut active, &mut next);
+            if end == path.len() {
                 break;
             }
-            self.step(m, &active, &path[s..t], &mut next);
-            std::mem::swap(&mut active, &mut next);
+            pos = end + 1;
         }
         active
     }

@@ -196,13 +196,6 @@ struct Chain {
     /// With several globstars: the NFA over this chain alone, unless
     /// the chain is the whole graph (then the matcher's own serves).
     nfa: Option<Box<Nfa<u64>>>,
-    /// All-literal head before the globstar, pre-joined with `/`
-    /// (`"src/"`): one sep-aware compare instead of the segment loop.
-    /// Empty ⇒ not applicable.
-    joined_head: Bytes,
-    /// Byte suffix every match of this chain must end with (empty =
-    /// none). Filled only when there are several chains.
-    quick_suffix: Bytes,
 }
 
 /// An NFA over graph nodes: one state per node (two for `G0Strict`
@@ -290,16 +283,7 @@ impl SegmentMatcher {
         match self.chains.len() {
             0 => self.nfa_is_match(path),
             1 => self.chain_matches(0, path),
-            _ => (0..self.chains.len()).any(|i| {
-                let qs = &self.chains[i].quick_suffix;
-                if !qs.is_empty() {
-                    let n = path.len();
-                    if n < qs.len() || !self.affix_eq(qs, &path[n - qs.len()..]) {
-                        return false;
-                    }
-                }
-                self.chain_matches(i, path)
-            }),
+            n => (0..n).any(|i| self.ends_like(i, path) && self.chain_matches(i, path)),
         }
     }
 

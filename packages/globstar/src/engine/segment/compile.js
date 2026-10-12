@@ -21,6 +21,7 @@ import {
   OP_ALTERNATION,
 } from "../ops/index.js";
 import { CI_BYTE } from "../../ast.js";
+import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1 } from "../../utf8.js";
 import {
   EL_LIT,
@@ -358,8 +359,22 @@ class Builder {
 
   close(buf) {
     if (buf.length === 0) return makeElem(EL_LIT, EMPTY_BYTES, null);
-    if (buf.length === 1 && buf[0].kind === OP_LIT) return makeElem(EL_LIT, buf[0].bytes, null);
-    return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
+    if (buf.length > 1 || buf[0].kind !== OP_LIT) {
+      return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
+    }
+    const bytes = buf[0].bytes;
+    if (IS_WINDOWS_SEP && bytes.includes(0x5c)) {
+      // An escaped `\` on Windows: no segment holds a separator, so the
+      // literal is a silent miss (§2.4), kept as a wildcard that wants
+      // more bytes than any segment has.
+      const never = makeWild(WK_AFFIX, {
+        prefixStr: latin1(bytes),
+        minLen: 0x7fffffff,
+        variable: false,
+      });
+      return makeElem(EL_WILD, null, never);
+    }
+    return makeElem(EL_LIT, bytes, null);
   }
 }
 
@@ -370,7 +385,7 @@ class Builder {
 // globstars has more than 31 states (the NFA takes those).
 function chains(graph) {
   if (graph.linear) {
-    const chain = makeChain(graph, null, false);
+    const chain = makeChain(graph, null);
     return chain === null ? [] : [chain];
   }
   const paths = [];
@@ -389,10 +404,9 @@ function chains(graph) {
       stack.push([succ[k], k === 0 ? path : path.slice()]);
     }
   }
-  const several = paths.length > 1;
   const out = [];
   for (const nodes of paths) {
-    const chain = makeChain(graph, nodes, several);
+    const chain = makeChain(graph, nodes);
     if (chain === null) return [];
     out.push(chain);
   }
@@ -402,7 +416,7 @@ function chains(graph) {
 // The chain of a path (`null`: the lone path of a brace-free pattern,
 // whose nodes are `0..elems.length`), or `null` when its
 // several-globstar NFA would not fit an int32.
-function makeChain(graph, nodes, several) {
+function makeChain(graph, nodes) {
   const elems = graph.elems;
   const n = nodes === null ? elems.length : nodes.length;
   const elem = (i) => elems[nodes === null ? i : nodes[i]];
@@ -425,31 +439,7 @@ function makeChain(graph, nodes, several) {
     if (nStates > 31) return null;
     nfa = nfaSmall(graph, nodes);
   }
-
-  let joinedHeadStr = null;
-  if (globstar !== NO_G && globstar !== MANY_G && globstar > 0) {
-    let h = "";
-    for (let i = 0; i < globstar; i++) {
-      if (elem(i).kind !== EL_LIT) {
-        h = null;
-        break;
-      }
-      h += elem(i).litStr + "/";
-    }
-    joinedHeadStr = h;
-  }
-
-  // Only consulted when there are several chains.
-  let quickSuffixStr = "";
-  const last = elem(n - 1);
-  if (several) {
-    if (last.kind === EL_LIT) quickSuffixStr = last.litStr;
-    else if (last.kind === EL_WILD && last.wild.kind === WK_AFFIX) {
-      quickSuffixStr = last.wild.suffixStr;
-    }
-  }
-
-  return { nodes, globstar, nfa, joinedHeadStr, quickSuffixStr };
+  return { nodes, globstar, nfa };
 }
 
 // ── the NFA ─────────────────────────────────────────────────────────
