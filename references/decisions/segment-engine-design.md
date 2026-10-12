@@ -207,7 +207,7 @@ After consuming all of d's segments:
   tail element with dot=false is still satisfiable — by a non-dot-led
   descendant — so it stays satisfiable; a G blocked by a dot-led ABSORBED
   segment is a per-run check, which the simulation already performed).
-- Combine as today: `DirMatch::from_exact_prefix(exact, prefix)`.
+- Combine as today: `DirMatch::new(exact, prefix, all_below)`.
 
 This is exactly the byte engines' "run + hypothetical `/` step +
 reach-to-accept" logic, lifted to segment granularity. It is used for

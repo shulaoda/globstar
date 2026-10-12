@@ -38,7 +38,7 @@ Walker per directory frame (absolute, relative):
        if ignore.match(child_rel):     skip
        else if entry is directory:
            dm = matcher.match_dir(child_rel)
-           if DirMatch::should_descend(dm):
+           if DirMatch::may_match_below(dm):
                enqueue child frame
            # Match flag is unused: walker emits files only
        else if matcher.match(child_rel):
@@ -242,7 +242,7 @@ walker iterates:
   prefix = b"src"
   seed   = "/proj/src"
   statSync(seed) → directory
-  matchDir.shouldDescend(matcher.match_dir(b"src")) = true
+  DirMatch.mayMatchBelow(matcher.match_dir(b"src")) = true
   push frame { absolute: "/proj/src", relative: "src" }
 ```
 
@@ -333,7 +333,7 @@ If `**/*.test.ts` were instead routed through `match_dir`, the walker could prun
 | `compute_static_prefixes`                                                           | `engine/ops/prefixes.rs`                                                 |
 | `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                  |
 | `Graph::match_dir`, `Graph::covers_below`                                           | `engine/segment/exec.rs`                                                 |
-| `DirMatch`, `DirMatch::is_match`, `DirMatch::should_descend`, `DirMatch::is_pruned` | `dir_match.rs`                                                           |
+| `DirMatch`, `DirMatch::matches`, `DirMatch::may_match_below`, `DirMatch::matches_all_below` | `dir_match.rs`                                                           |
 | Walker glue (JS)                                                                    | `packages/globstar-walk/src/walk.js::initFromPrefixes`, `processDirents` |
 
 ## 7. References

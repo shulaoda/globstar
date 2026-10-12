@@ -253,7 +253,7 @@ Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of eve
    - Otherwise `isDir = false`.
 5. Compute `childAbs = joinAbs(parentAbs, name)` — see §7.4 for the rationale of bypassing `path.join`.
 6. Branch on `isDir`:
-   - **Directory.** Walker emits files only, so the directory result of `matcher.match_dir(childRel)` is consulted only for the descend decision. If `DirMatch::should_descend(dm)` is true, push a child frame into the descend list. The child frame's `symlinkAncestors` is determined by:
+   - **Directory.** Walker emits files only, so the directory result of `matcher.match_dir(childRel)` is consulted only for the descend decision. If `dm.may_match_below()` is true, push a child frame into the descend list. The child frame's `symlinkAncestors` is determined by:
      - **non-symlink dir** — copy the parent's `symlinkAncestors` unchanged;
      - **symlink-to-dir** — `fs.realpathSync(childAbs)` to get `resolved`. If `resolved ∈ frame.symlinkAncestors`, this is a cycle; skip the descent. Otherwise the child's `symlinkAncestors` is `frame.symlinkAncestors ++ [resolved]`. `fs.realpathSync` failures (broken / inaccessible link) MUST also skip the descent silently.
    - **Non-directory.** If `matcher.match(childRel)` is true, push `childAbs` into the result array. Output is always the absolute form (§8.2).

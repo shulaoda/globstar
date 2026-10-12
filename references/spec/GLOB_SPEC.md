@@ -892,7 +892,7 @@ enum DirMatch {
 }
 ```
 
-The result answers three questions about `d`: does it match, may something below it match, and does everything below it match (§13.6). The third implies the second.
+The result answers three questions about `d`: does it match (`matches`), may something below it match (`may_match_below`), and does everything below it match (`matches_all_below`, §13.6). The third implies the second. The names read from the pattern's side; what a walker does depends on the pattern's role. One that selects files walks into `d` while `may_match_below` holds. One that excludes files skips `d` whole once `matches_all_below` holds, and needs no further tests under `d` once `may_match_below` is false.
 
 ### 13.2 Semantics
 
@@ -977,11 +977,11 @@ seg             := one or more non-separator bytes
 
 Whether `d` itself matches plays no part. For the empty `d` — the walk root — the paths below are the `s` themselves, with no leading `/`.
 
-**Guarantee.** The flag is one-sided, the mirror image of the descend flag:
+**Guarantee.** The flag is one-sided, the mirror image of the may-below flag:
 
 | Flag | `true` means | `false` means |
 | --- | --- | --- |
-| descend (`should_descend`) | something below MAY match | nothing below matches — a guarantee |
+| may-below (`may_match_below`) | something below MAY match | nothing below matches — a guarantee |
 | all-below (`matches_all_below`) | everything below matches — a guarantee | not everything, or not provable |
 
 A consumer that skips a directory only on `matches_all_below` never hides a path the pattern does not match.
