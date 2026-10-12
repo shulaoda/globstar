@@ -16,8 +16,7 @@ use super::bits::{Bits, Wide};
 use super::seg_nfa::SegNfa;
 use super::{
     Affix, AffixIndex, AffixSet, AnyNfa, ByteSketch, Bytes, Chain, Elem, LINEAR_SUFFIXES, LitSet,
-    LitSets, MANY_G, MAX_CHAINS, NO_G, Nfa, SegmentMatcher, State, SuffixRun, Wild, WildKind,
-    facts,
+    LitSets, MAX_CHAINS, Nfa, SegmentMatcher, Shape, State, SuffixRun, Wild, WildKind, facts,
 };
 
 /// Successor marker for "the pattern ends here".
@@ -31,7 +30,7 @@ pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
     // A lone chain with at most one globstar serves `match_dir` too;
     // anything else needs the NFA.
     let nfa = match &chains[..] {
-        [c] if c.globstar != MANY_G => None,
+        [c] if !matches!(c.shape, Shape::Many(_)) => None,
         _ => Some(Box::new(g.nfa())),
     };
     let suffixes = facts::suffixes(ops);
@@ -47,25 +46,16 @@ pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
     }
 }
 
-/// The graph as the walk leaves it. A pattern without a
-/// separator-crossing brace is one path, emitted in order: its edges
-/// and start are implied and never stored.
+/// The graph as the walk leaves it: the nodes and, for a pattern with
+/// a separator-crossing brace, their edges. A brace-free pattern is
+/// one path, emitted in order; its edges are implied and never stored.
 struct Graph {
     elems: Vec<Elem>,
-    linear: bool,
-    /// Every node's predecessors, flat (`START` for the start); node
-    /// `i` owns `preds[pred_at[i]..pred_at[i + 1]]`. Non-linear only.
-    preds: Vec<u32>,
-    pred_at: Vec<u32>,
-    /// Nodes the pattern may end after.
-    ends: Vec<u32>,
-    /// Derived from `preds` once the walk is done. Non-linear only.
-    edges: Edges,
+    edges: Option<Edges>,
     ci: bool,
 }
 
 /// Successor lists in CSR form, and the start's successors.
-#[derive(Default)]
 struct Edges {
     offsets: Vec<u32>,
     targets: Vec<u32>,
@@ -80,20 +70,7 @@ impl Edges {
 
 impl Graph {
     fn build(ops: &[Op], dot: bool, ci: bool) -> Self {
-        let (boundaries, linear) = survey(ops);
-        let mut b = Builder {
-            g: Graph {
-                elems: Vec::with_capacity(boundaries + 1),
-                linear,
-                preds: Vec::new(),
-                pred_at: Vec::new(),
-                ends: Vec::new(),
-                edges: Edges::default(),
-                ci,
-            },
-            memo: HashMap::default(),
-            dot,
-        };
+        let mut b = Builder::new(ops, dot, ci);
         let groups = b.walk(ops, vec![Group::first()]);
         for mut g in groups {
             b.settle(&mut g);
@@ -106,64 +83,7 @@ impl Graph {
                 b.end_after(id);
             }
         }
-        let mut g = b.g;
-        if !linear {
-            g.build_successors();
-        }
-        g
-    }
-
-    fn preds_of(&self, id: usize) -> &[u32] {
-        let start = self.pred_at[id] as usize;
-        let end = self
-            .pred_at
-            .get(id + 1)
-            .map_or(self.preds.len(), |&e| e as usize);
-        &self.preds[start..end]
-    }
-
-    /// Invert the predecessor lists into CSR successor lists.
-    fn build_successors(&mut self) {
-        let n = self.elems.len();
-        let mut offsets = vec![0u32; n + 1];
-        for &from in self.preds.iter().chain(&self.ends) {
-            if from != START {
-                offsets[from as usize + 1] += 1;
-            }
-        }
-        for i in 0..n {
-            offsets[i + 1] += offsets[i];
-        }
-        let mut fill = offsets.clone();
-        let mut targets = vec![0u32; offsets[n] as usize];
-        let mut start = Vec::new();
-        for id in 0..n {
-            for &from in self.preds_of(id) {
-                if from == START {
-                    start.push(id as u32);
-                    continue;
-                }
-                let slot = &mut fill[from as usize];
-                targets[*slot as usize] = id as u32;
-                *slot += 1;
-            }
-        }
-        for &from in &self.ends {
-            if from != START {
-                let slot = &mut fill[from as usize];
-                targets[*slot as usize] = ACCEPT;
-                *slot += 1;
-            }
-        }
-        self.edges = Edges {
-            offsets,
-            targets,
-            start,
-        };
-    }
-
-    fn edges(&self) -> Option<&Edges> {
-        (!self.linear).then_some(&self.edges)
+        b.finish()
     }
 
     /// Every path through the graph as a `Chain`, in pattern order;
@@ -171,18 +91,13 @@ impl Graph {
     /// several globstars has more than 64 states (the NFA takes
     /// those).
     fn chains(&self) -> Box<[Chain]> {
-        if self.linear {
+        let Some(edges) = &self.edges else {
             return self.chain(None).into_iter().collect();
-        }
+        };
         let mut paths: Vec<Vec<u32>> = Vec::new();
         // Depth-first, first branch first.
-        let mut stack: Vec<(u32, Vec<u32>)> = self
-            .edges
-            .start
-            .iter()
-            .rev()
-            .map(|&s| (s, Vec::new()))
-            .collect();
+        let mut stack: Vec<(u32, Vec<u32>)> =
+            edges.start.iter().rev().map(|&s| (s, Vec::new())).collect();
         while let Some((id, mut path)) = stack.pop() {
             if id == ACCEPT {
                 paths.push(path);
@@ -192,7 +107,7 @@ impl Graph {
                 continue;
             }
             path.push(id);
-            let succ = self.edges.succ(id as usize);
+            let succ = edges.succ(id as usize);
             for (k, &s) in succ.iter().enumerate().rev() {
                 if k == 0 {
                     stack.push((s, path));
@@ -215,42 +130,38 @@ impl Graph {
         let n = path.as_ref().map_or(self.elems.len(), Vec::len);
         let elem = |i: usize| &self.elems[path.as_ref().map_or(i, |p| p[i] as usize)];
         let mut globstars = (0..n).filter(|&i| elem(i).is_globstar());
-        let globstar = match (globstars.next(), globstars.next()) {
-            (None, _) => NO_G,
-            (Some(g), None) => g as u32,
-            (Some(_), Some(_)) => MANY_G,
-        };
-
-        // Several globstars: the NFA over this path alone, unless the
-        // path is the whole graph (then the matcher's own serves).
-        let nfa = match &path {
-            Some(p) if globstar == MANY_G => {
-                if n_states((0..n).map(elem)) > 64 {
-                    return None;
+        let shape = match (globstars.next(), globstars.next()) {
+            (None, _) => Shape::Fixed,
+            (Some(g), None) => Shape::Single(g as u32),
+            // The lone path of a linear pattern has the matcher's own
+            // NFA; any other path gets one over its nodes alone.
+            (Some(_), Some(_)) => Shape::Many(match &path {
+                None => None,
+                Some(p) => {
+                    if n_states((0..n).map(elem)) > 64 {
+                        return None;
+                    }
+                    Some(Box::new(nfa_over::<u64>(
+                        &self.elems,
+                        self.ci,
+                        None,
+                        Some(p),
+                    )))
                 }
-                Some(Box::new(nfa_over::<u64>(
-                    &self.elems,
-                    self.ci,
-                    None,
-                    Some(p),
-                )))
-            }
-            _ => None,
+            }),
         };
-
         Some(Chain {
             nodes: path.map_or_else(Default::default, Vec::into_boxed_slice),
-            globstar,
-            nfa,
+            shape,
         })
     }
 
     /// The NFA over the whole graph: a `u64` active set when it fits.
     fn nfa(&self) -> AnyNfa {
         if n_states(self.elems.iter()) <= 64 {
-            AnyNfa::Small(nfa_over(&self.elems, self.ci, self.edges(), None))
+            AnyNfa::Small(nfa_over(&self.elems, self.ci, self.edges.as_ref(), None))
         } else {
-            AnyNfa::Wide(nfa_over(&self.elems, self.ci, self.edges(), None))
+            AnyNfa::Wide(nfa_over(&self.elems, self.ci, self.edges.as_ref(), None))
         }
     }
 }
@@ -521,21 +432,101 @@ impl Group<'_> {
     }
 }
 
+/// Builds the graph. A pattern with a separator-crossing brace also
+/// records every node's predecessors (flat, `START` for the start,
+/// node `i` owning `preds[pred_at[i]..pred_at[i + 1]]`), the nodes the
+/// pattern may end after, and reuses a node by its (element,
+/// predecessors) hash; a linear pattern records its nodes only.
 struct Builder {
-    g: Graph,
-    /// Node reuse for branches: hash of (element, predecessors) →
-    /// node. Non-linear only.
+    elems: Vec<Elem>,
+    linear: bool,
+    preds: Vec<u32>,
+    pred_at: Vec<u32>,
+    ends: Vec<u32>,
     memo: HashMap<u64, u32, BuildHasherDefault<Fnv>>,
     dot: bool,
+    ci: bool,
 }
 
 impl Builder {
+    fn new(ops: &[Op], dot: bool, ci: bool) -> Self {
+        let (boundaries, linear) = survey(ops);
+        Builder {
+            elems: Vec::with_capacity(boundaries + 1),
+            linear,
+            preds: Vec::new(),
+            pred_at: Vec::new(),
+            ends: Vec::new(),
+            memo: HashMap::default(),
+            dot,
+            ci,
+        }
+    }
+
+    fn finish(self) -> Graph {
+        let edges = (!self.linear).then(|| self.successors());
+        Graph {
+            elems: self.elems,
+            edges,
+            ci: self.ci,
+        }
+    }
+
+    fn preds_of(&self, id: usize) -> &[u32] {
+        let start = self.pred_at[id] as usize;
+        let end = self
+            .pred_at
+            .get(id + 1)
+            .map_or(self.preds.len(), |&e| e as usize);
+        &self.preds[start..end]
+    }
+
+    /// Invert the predecessor lists into CSR successor lists.
+    fn successors(&self) -> Edges {
+        let n = self.elems.len();
+        let mut offsets = vec![0u32; n + 1];
+        for &from in self.preds.iter().chain(&self.ends) {
+            if from != START {
+                offsets[from as usize + 1] += 1;
+            }
+        }
+        for i in 0..n {
+            offsets[i + 1] += offsets[i];
+        }
+        let mut fill = offsets.clone();
+        let mut targets = vec![0u32; offsets[n] as usize];
+        let mut start = Vec::new();
+        for id in 0..n {
+            for &from in self.preds_of(id) {
+                if from == START {
+                    start.push(id as u32);
+                    continue;
+                }
+                let slot = &mut fill[from as usize];
+                targets[*slot as usize] = id as u32;
+                *slot += 1;
+            }
+        }
+        for &from in &self.ends {
+            if from != START {
+                let slot = &mut fill[from as usize];
+                targets[*slot as usize] = ACCEPT;
+                *slot += 1;
+            }
+        }
+        Edges {
+            offsets,
+            targets,
+            start,
+        }
+    }
+
     /// A node for `elem` after `tails`; an existing one when a branch
     /// already made it.
     fn emit(&mut self, elem: Elem, tails: &[u32]) -> u32 {
-        let id = self.g.elems.len() as u32;
-        if self.g.linear {
-            self.g.elems.push(elem);
+        let id = self.elems.len() as u32;
+        if self.linear {
+            self.elems.push(elem);
             return id;
         }
         let key = self.key(&elem, tails);
@@ -544,9 +535,9 @@ impl Builder {
         {
             return found;
         }
-        self.g.elems.push(elem);
-        self.g.pred_at.push(self.g.preds.len() as u32);
-        self.g.preds.extend_from_slice(tails);
+        self.elems.push(elem);
+        self.pred_at.push(self.preds.len() as u32);
+        self.preds.extend_from_slice(tails);
         if let Some(k) = key {
             self.memo.entry(k).or_insert(id);
         }
@@ -574,10 +565,10 @@ impl Builder {
 
     fn same(&self, id: u32, elem: &Elem, tails: &[u32]) -> bool {
         let i = id as usize;
-        if self.g.preds_of(i) != tails {
+        if self.preds_of(i) != tails {
             return false;
         }
-        match (&self.g.elems[i], elem) {
+        match (&self.elems[i], elem) {
             (Elem::Lit(a), Elem::Lit(b)) => a == b,
             (Elem::G0, Elem::G0) | (Elem::G0Strict, Elem::G0Strict) | (Elem::G1, Elem::G1) => true,
             _ => false,
@@ -586,8 +577,8 @@ impl Builder {
 
     /// Record that the pattern may end after `from`.
     fn end_after(&mut self, from: u32) {
-        if !self.g.linear {
-            self.g.ends.push(from);
+        if !self.linear {
+            self.ends.push(from);
         }
     }
 
@@ -736,7 +727,7 @@ impl Builder {
 
     fn close(&self, buf: &[&Op]) -> Elem {
         if !buf.iter().all(|op| matches!(op, Op::Lit(_))) {
-            return Elem::Wild(compile_wild(buf, self.dot, self.g.ci));
+            return Elem::Wild(compile_wild(buf, self.dot, self.ci));
         }
         // Empty, one literal, or literals glued across a brace edge.
         let lit = concat_lits(buf);

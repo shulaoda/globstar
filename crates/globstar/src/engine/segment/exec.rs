@@ -5,8 +5,8 @@ use crate::dir_match::DirMatch;
 use super::bits::Bits;
 use super::compile::lit_cmp;
 use super::{
-    AffixIndex, ByteSketch, Chain, Elem, LitSet, MANY_G, NO_G, Nfa, SegmentMatcher, SuffixRun,
-    Wild, WildKind,
+    AffixIndex, ByteSketch, Chain, Elem, LitSet, Nfa, SegmentMatcher, Shape, SuffixRun, Wild,
+    WildKind,
 };
 
 /// Index just past the segment that starts at `pos`.
@@ -135,24 +135,20 @@ impl SegmentMatcher {
 
     #[inline(always)]
     fn chain_matches_on<E: ChainElems>(&self, chain: &Chain, elems: &E, path: &[u8]) -> bool {
-        match chain.globstar {
-            NO_G => self.fixed_run(elems, 0..elems.len(), path, 0),
-            MANY_G => match &chain.nfa {
-                Some(nfa) => nfa.is_match(self, path),
-                // The lone path of a linear pattern: the matcher's NFA
-                // is its own.
-                None => self
-                    .nfa
-                    .as_ref()
-                    .is_some_and(|nfa| nfa.is_match(self, path)),
-            },
-            g => {
-                let g = g as usize;
-                match self.head(elems, g, path) {
-                    Some(mid_start) => self.tail_and_globstar(elems, g, path, mid_start),
-                    None => false,
-                }
+        match &chain.shape {
+            Shape::Fixed => self.fixed_run(elems, 0..elems.len(), path, 0),
+            Shape::Single(g) => {
+                let g = *g as usize;
+                self.head(elems, g, path)
+                    .is_some_and(|mid_start| self.tail_and_globstar(elems, g, path, mid_start))
             }
+            Shape::Many(Some(nfa)) => nfa.is_match(self, path),
+            // The lone path of a linear pattern: the matcher's NFA is
+            // its own.
+            Shape::Many(None) => self
+                .nfa
+                .as_ref()
+                .is_some_and(|nfa| nfa.is_match(self, path)),
         }
     }
 
@@ -169,7 +165,7 @@ impl SegmentMatcher {
         pos: usize,
         last: bool,
     ) -> Option<usize> {
-        let taken = match elems.at(i) {
+        let (end, taken) = match elems.at(i) {
             Elem::Lit(lit) => {
                 let end = pos + lit.len();
                 let bounded = if last {
@@ -181,14 +177,12 @@ impl SegmentMatcher {
             }
             Elem::Wild(w) => {
                 let end = seg_end(path, pos);
-                (
-                    end,
-                    (end == path.len()) == last && self.wild_consumes(w, &path[pos..end]),
-                )
+                let bounded = (end == path.len()) == last;
+                (end, bounded && self.wild_consumes(w, &path[pos..end]))
             }
             _ => return None,
         };
-        taken.1.then_some(taken.0)
+        taken.then_some(end)
     }
 
     /// Do `elems[range]` take the segments from `pos` to the end, one
@@ -288,14 +282,19 @@ impl SegmentMatcher {
     /// NFA.
     pub(super) fn chain_dir(&self, dir: &[u8]) -> DirMatch {
         let chain = &self.chains[0];
+        let g = match &chain.shape {
+            Shape::Fixed => None,
+            Shape::Single(g) => Some(*g as usize),
+            Shape::Many(_) => unreachable!("a chain with several globstars keeps the NFA"),
+        };
         if chain.nodes.is_empty() {
-            self.chain_dir_on(chain.globstar, &&self.elems[..], dir)
+            self.chain_dir_on(g, &&self.elems[..], dir)
         } else {
             let elems = Mapped {
                 nodes: &chain.nodes,
                 elems: &self.elems,
             };
-            self.chain_dir_on(chain.globstar, &elems, dir)
+            self.chain_dir_on(g, &elems, dir)
         }
     }
 
@@ -304,13 +303,11 @@ impl SegmentMatcher {
     /// globstar when it has taken everything after the head, and a
     /// tail position when the tail's first elements take the last
     /// segments.
-    fn chain_dir_on<E: ChainElems>(&self, globstar: u32, elems: &E, dir: &[u8]) -> DirMatch {
+    fn chain_dir_on<E: ChainElems>(&self, g: Option<usize>, elems: &E, dir: &[u8]) -> DirMatch {
         let n = elems.len();
-        let g = if globstar == NO_G {
-            n
-        } else {
-            globstar as usize
-        };
+        // A fixed chain: the globstar sits past the end, the tail is
+        // empty.
+        let g = g.unwrap_or(n);
         let tl = n - g - usize::from(g < n);
         // Every element from `i` on takes some segment: a token there
         // still reaches accept.

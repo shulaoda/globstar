@@ -9,7 +9,7 @@ globstar = { path = "../../crates/globstar" }
 globset = "0.4"
 wax = "0.6"
 
-# Single-pattern memory: production globstar / PikeVM vs globset / wax,
+# Single-pattern memory: globstar vs globset / wax,
 # matching the 7-pattern corpus in
 # `packages/bench/benches/matcher_single.js`.
 [[bin]]

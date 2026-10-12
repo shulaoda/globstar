@@ -18,7 +18,7 @@ import {
   MANY_G,
   elemSatisfiable,
   elemAnySeg,
-} from "./index.js";
+} from "./elem.js";
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { bitTest, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";

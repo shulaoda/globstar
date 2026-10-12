@@ -160,8 +160,8 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
     }
 }
 
-/// Same four properties over OR-union matchers (`Glob::union` vs a forced
-/// merged PikeVm), on every ordered pair from an 8-pattern set plus every
+/// Same four properties over OR-union matchers (`Glob::union`, chains vs
+/// the forced NFA), on every ordered pair from an 8-pattern set plus every
 /// ordered triple from a 4-pattern core.
 fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool) {
     let below = below_map(paths);

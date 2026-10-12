@@ -46,7 +46,7 @@ export function lower(node, caseInsensitive) {
   foldGlobstars(ops);
   applyLeadingSeps(ops, false);
   const ci = !!caseInsensitive;
-  return { ops, facts: LiteralFacts.extract(ops, ci), caseInsensitive: ci };
+  return { ops, facts: LiteralFacts.extract(ops), caseInsensitive: ci };
 }
 
 function lowerInto(node, out, caseInsensitive, flag) {

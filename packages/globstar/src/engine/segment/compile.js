@@ -38,12 +38,12 @@ import {
   NO_G,
   MANY_G,
   elemSatisfiable,
-} from "./index.js";
+} from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
 import { wordsFor, bitSet, bitsOr, bitTest, bitsIntersect } from "./bits.js";
 
 // Successor marker for "the pattern ends here".
-export const ACCEPT = -1;
+const ACCEPT = -1;
 // Tail marker for "the graph start".
 const START = -2;
 

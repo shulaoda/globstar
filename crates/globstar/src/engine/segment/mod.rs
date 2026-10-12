@@ -17,9 +17,8 @@ use crate::engine::ops::OpProgram;
 use bits::{Bits, Wide};
 use seg_nfa::SegNfa;
 
-/// Paths through the graph `is_match` still tries one by one; past
-/// that it runs the NFA over the whole graph, as `match_dir` always
-/// does.
+/// Paths through the graph `is_match` tries one by one; past that the
+/// NFA over the whole graph runs.
 const MAX_CHAINS: usize = 64;
 /// An `AffixSet` up to this size is scanned in pattern order; a
 /// larger one is sorted and binary-searched per suffix length.
@@ -222,10 +221,6 @@ struct SuffixRun {
     count: u32,
 }
 
-/// `Chain::globstar` when the chain has none / several.
-const NO_G: u32 = u32::MAX;
-const MANY_G: u32 = u32::MAX - 1;
-
 /// One path through the graph.
 #[derive(Debug, Clone)]
 struct Chain {
@@ -233,11 +228,20 @@ struct Chain {
     /// without a separator-crossing brace, whose nodes are
     /// `0..elems.len()`.
     nodes: Box<[u32]>,
-    /// Index of its globstar, or `NO_G` / `MANY_G`.
-    globstar: u32,
-    /// With several globstars: the NFA over this chain alone, unless
-    /// the chain is the whole graph (then the matcher's own serves).
-    nfa: Option<Box<Nfa<u64>>>,
+    shape: Shape,
+}
+
+/// Where a chain's globstars are, which decides how it is matched.
+#[derive(Debug, Clone)]
+enum Shape {
+    /// None: one element per segment.
+    Fixed,
+    /// One, at this index: the head and the tail are anchored around
+    /// it.
+    Single(u32),
+    /// Several: the NFA over this chain alone, or the matcher's own
+    /// when the chain is the whole graph.
+    Many(Option<Box<Nfa<u64>>>),
 }
 
 /// An NFA over graph nodes: one state per node (two for `G0Strict`

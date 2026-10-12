@@ -1,29 +1,20 @@
 import { isPathSep, eqByteCi } from "../bytes.js";
 import { OP_LIT, OP_SEP, OP_ALTERNATION } from "./ops/ir.js";
 
+// The literal suffixes a match must end with: one, or one per branch
+// of a trailing brace (`suffixSet`), or neither. The segment matcher's
+// prefilter reads them.
 export class LiteralFacts {
-  constructor(suffix, suffixSet, caseInsensitive) {
+  constructor(suffix, suffixSet) {
     this.suffix = suffix;
     this.suffixSet = suffixSet;
-    this.caseInsensitive = caseInsensitive;
   }
 
-  static extract(ops, caseInsensitive) {
+  static extract(ops) {
     // One char per byte, like the path strings they are compared with.
     const suffix = String.fromCharCode(...suffixArray(ops, ops.length));
     const suffixSet = suffix.length === 0 ? extractSuffixSet(ops) : [];
-    return new LiteralFacts(suffix, suffixSet, caseInsensitive);
-  }
-
-  // `str` holds one char per path byte (see `utf8Latin1`).
-  accept(str) {
-    const ci = this.caseInsensitive;
-    if (this.suffix.length > 0) return endsWithSepAware(str, this.suffix, ci);
-    if (this.suffixSet.length === 0) return true;
-    for (let i = 0; i < this.suffixSet.length; i++) {
-      if (endsWithSepAware(str, this.suffixSet[i], ci)) return true;
-    }
-    return false;
+    return new LiteralFacts(suffix, suffixSet);
   }
 }
 
