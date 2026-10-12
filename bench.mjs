@@ -282,16 +282,12 @@ function combinedTable(rowLabelHeader, rowLabels, sources) {
 
 const empty = {};
 
-// The globstar PikeVM columns force the fallback engine on the same corpus.
-// The default columns route almost every pattern through the segment engine,
-// so thompson/pikevm changes would otherwise be invisible here.
 const rustSingle = {
   compile: {
     data: rust.matcherSingle ?? empty,
     rowKey: (l) => `compile_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar (Rust PikeVM)", "globstar_pikevm"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
     ],
@@ -301,7 +297,6 @@ const rustSingle = {
     rowKey: (l) => `match_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar (Rust PikeVM)", "globstar_pikevm"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
       ["fast_glob (Rust)", "fast_glob"],
@@ -313,7 +308,6 @@ const rustSingle = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar (Rust PikeVM)", "PikeVM"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
     ],
@@ -327,7 +321,6 @@ const jsSingle = {
     rowKey: (l) => `compile: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -338,7 +331,6 @@ const jsSingle = {
     rowKey: (l) => `match: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -349,7 +341,6 @@ const jsSingle = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -364,7 +355,6 @@ const rustMulti = {
     rowKey: (l) => `compile_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar (Rust PikeVM)", "PikeVM_union"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_or"],
     ],
@@ -374,7 +364,6 @@ const rustMulti = {
     rowKey: (l) => `match_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
-      ["globstar (Rust PikeVM)", "PikeVM_union"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_or"],
       ["fast_glob (Rust)", "fast_glob_or"],
@@ -386,7 +375,6 @@ const rustMulti = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (Rust)", "gs_union"],
-      ["globstar (Rust PikeVM)", "pike_union"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_per"],
     ],
@@ -400,7 +388,6 @@ const jsMulti = {
     rowKey: (l) => `compile: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -411,7 +398,6 @@ const jsMulti = {
     rowKey: (l) => `match: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],
@@ -422,7 +408,6 @@ const jsMulti = {
     rowKey: (l) => l,
     libCols: [
       ["globstar (JS)", "globstar"],
-      ["globstar (JS PikeVM)", "globstar_pikevm"],
       ["picomatch (JS)", "picomatch"],
       ["minimatch (JS)", "minimatch"],
       ["micromatch (JS)", "micromatch"],

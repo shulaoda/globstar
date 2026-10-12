@@ -1,6 +1,6 @@
 # 05 — Literal Suffix Prefilter
 
-The matcher composes a fast prefilter with the exact engine (`SegmentMatcher` or `PikeVm`). The prefilter rejects byte strings that cannot match the pattern by checking a guaranteed literal suffix; it is sound (no false negatives) and approximate (some false positives).
+The matcher composes a fast prefilter with the exact engine (`SegmentMatcher`). The prefilter rejects byte strings that cannot match the pattern by checking a guaranteed literal suffix; it is sound (no false negatives) and approximate (some false positives).
 
 Implementations: `crates/globstar/src/engine/facts.rs` and `packages/globstar/src/engine/facts.js`.
 
@@ -128,7 +128,7 @@ LiteralFacts::accept(w) = 0   ⇒   w ∉ L(P).
 
 _Proof sketch._ Both extraction routines yield sets `S` such that every `w ∈ L(P)` satisfies `∃ s ∈ S. w ends with s` (with `S` a singleton in the suffix case). `accept(w)` returns `1` iff `w` ends with at least one element of `S` under the separator-aware comparison. If `accept(w) = 0`, then `w` ends with none of them, so `w ∉ L(P)`. ∎
 
-The corollary is that the matcher may safely short-circuit `is_match` to `false` whenever `accept(w) = 0`, independently of whether the exact engine is SegmentMatcher or PikeVm.
+The corollary is that the matcher may safely short-circuit `is_match` to `false` whenever `accept(w) = 0`, whichever path of the exact engine would have run.
 
 `accept` is **not** used by `match_dir`: a directory path in general does not yet end with the pattern's suffix (the pattern's literal tail occurs in the file segment, not the directory segment), so the prefilter would over-reject. `match_dir` therefore runs the engine without the prefilter.
 

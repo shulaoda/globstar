@@ -9,9 +9,11 @@ packages/globstar        — JavaScript matcher published as @globstar/core
 packages/globstar-walk   — JavaScript walker published as @globstar/walk
 ```
 
-Both `globstar` implementations use the segment-structured matcher (SSM)
-as their primary engine, with Pike VM fallback for bounded or unusual
-shapes. See
+Both `globstar` implementations compile every non-literal pattern to
+the segment-structured matcher (SSM): a graph of per-segment elements,
+matched by anchored compares where the pattern is linear and by an NFA
+over the graph otherwise. There is no fallback engine and no pattern
+size cap beyond the parser's expansion budget. See
 [`references/theory/07-segment-matcher.md`](./references/theory/07-segment-matcher.md).
 
 ## Why this exists

@@ -31,9 +31,9 @@
 //!
 //! Patterns are `&str` (their UTF-8 bytes are what match); paths are
 //! arbitrary `&[u8]`, so non-UTF-8 filenames compare byte-for-byte.
-//! Compilation picks one of three engines automatically (pure-literal,
-//! segment-structured, or a Pike-VM fallback) — [`Glob::engine_name`]
-//! reveals the choice for diagnostics.
+//! Compilation picks one of two engines automatically (pure-literal or
+//! segment-structured) — [`Glob::engine_name`] reveals the choice for
+//! diagnostics.
 //!
 //! Only the items re-exported at the crate root are supported API; the
 //! `#[doc(hidden)]` modules are internal and may change shape in any
@@ -69,7 +69,6 @@ use std::collections::HashSet;
 use ast::{Ast, Node};
 use engine::literal::LiteralMatcher;
 use engine::ops::lower;
-use engine::pikevm::PikeVm;
 use engine::segment::SegmentMatcher;
 use factor::factor_branches;
 
@@ -102,11 +101,8 @@ pub struct Glob {
 enum Engine {
     /// Tier 0 — pure literal byte comparison.
     Literal(LiteralMatcher),
-    /// Tier 1/2 — segment-structured matcher for the dominant shapes.
+    /// Tier 1/2 — segment-structured matcher for everything else.
     Segment(Box<SegmentMatcher>),
-    /// Linear-time O(n·m) fallback for shapes or bounded expansions
-    /// the segment representation cannot express.
-    PikeVm(Box<PikeVm>),
 }
 
 impl Glob {
@@ -192,10 +188,7 @@ impl Glob {
                     Tier::SimpleWildcard
                 };
                 let program = lower(ast.body, opts.case_insensitive);
-                let engine = match SegmentMatcher::build(program, opts.dot) {
-                    Ok(segment) => Engine::Segment(segment),
-                    Err(program) => Engine::PikeVm(Box::new(PikeVm::new(program, opts.dot))),
-                };
+                let engine = Engine::Segment(SegmentMatcher::build(program, opts.dot));
                 (tier, engine)
             }
         };
@@ -211,13 +204,12 @@ impl Glob {
         self.tier
     }
 
-    /// Which engine compilation chose: `"Literal"`, `"Segment"`, or
-    /// `"PikeVm"`. Diagnostic only.
+    /// Which engine compilation chose: `"Literal"` or `"Segment"`.
+    /// Diagnostic only.
     pub fn engine_name(&self) -> &'static str {
         match &self.engine {
             Engine::Literal(_) => "Literal",
             Engine::Segment(_) => "Segment",
-            Engine::PikeVm(_) => "PikeVm",
         }
     }
 
@@ -227,7 +219,18 @@ impl Glob {
         let raw = match &self.engine {
             Engine::Literal(m) => m.is_match(path),
             Engine::Segment(m) => m.is_match(path),
-            Engine::PikeVm(m) => m.is_match(path),
+        };
+        raw ^ self.negated
+    }
+
+    /// [`is_match`](Self::is_match) with the segment engine's anchored
+    /// chains bypassed: the NFA over the whole pattern graph decides.
+    /// A test hook that cross-checks the two code paths.
+    #[doc(hidden)]
+    pub fn is_match_nfa(&self, path: &[u8]) -> bool {
+        let raw = match &self.engine {
+            Engine::Literal(m) => m.is_match(path),
+            Engine::Segment(m) => m.is_match_nfa(path),
         };
         raw ^ self.negated
     }
@@ -240,8 +243,7 @@ impl Glob {
         }
         match &self.engine {
             Engine::Literal(m) => m.static_prefixes(),
-            Engine::Segment(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
-            Engine::PikeVm(m) => m.static_prefixes().iter().map(|p| p.to_vec()).collect(),
+            Engine::Segment(m) => m.static_prefixes(),
         }
     }
 
@@ -255,7 +257,6 @@ impl Glob {
         match &self.engine {
             Engine::Literal(m) => m.match_dir(dir_path),
             Engine::Segment(m) => m.match_dir(dir_path),
-            Engine::PikeVm(m) => m.match_dir(dir_path),
         }
     }
 }

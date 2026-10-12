@@ -56,7 +56,7 @@ NFA(p) ─subset─→ DFA(p) ─toggle accept set─→ DFA(¬p)
 
 The cost is a tight upper bound of `2^{|p|}` DFA states. This bound is reached for natural patterns (e.g. `(a|b)^n`); a single occurrence of `!(...)` therefore suffices to push the compile-time state count past any reasonable matcher budget.
 
-The production architecture deliberately avoids complement construction: SegmentMatcher represents positive glob structure directly, while PikeVm simulates a positive Thompson NFA. Supporting `!(...)` would require determinization (or a different total representation) before complementing the accepting set, with a potential exponential state blow-up. Excluding it preserves the bounded compile model; leading whole-pattern `!` is instead handled by boolean inversion outside the engine.
+The production architecture deliberately avoids complement construction: SegmentMatcher represents positive glob structure directly and simulates a positive NFA over it. Supporting `!(...)` would require determinization (or a different total representation) before complementing the accepting set, with a potential exponential state blow-up. Excluding it preserves the bounded compile model; leading whole-pattern `!` is instead handled by boolean inversion outside the engine.
 
 The dialect therefore restricts to union, concatenation, and Kleene closure as primitives; the complement is reserved for the top-level predicate inversion described next.
 

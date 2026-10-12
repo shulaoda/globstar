@@ -3,13 +3,14 @@
 //
 // Every pattern from a fixed segment alphabet (full 14-token set at 1-2
 // segments, core 8-token set at 3) runs against every path in a fixed
-// universe, on the default engine stack and a forced PikeVm, checking the
-// properties that define matchDir relative to match:
+// universe, checking the properties that define matchDir relative to
+// match:
 //   1. the match flag is exactly match(dir);
 //   2. any matching universe path strictly below the dir forces descent
 //      (a pruning walker must never lose a match);
 //   3. Pruned implies no universe descendant matches;
-//   4. the two engines agree on every match and every matchDir;
+//   4. the segment engine's anchored chains and its NFA agree on every
+//      match (`__engine: "nfa"`);
 //   5. the all-below flag is set exactly when every path up to three
 //      levels below the dir matches — a directory is skipped whole only
 //      when nothing below it escapes. Three levels is past the deepest
@@ -81,7 +82,7 @@ function check(pats, paths, dot, ci) {
   for (const pattern of pats) {
     const opts = { dot, caseInsensitive: ci };
     const def = compileMatcher(pattern, opts);
-    const pike = compileMatcher(pattern, { ...opts, __engine: "pikevm" });
+    const nfa = compileMatcher(pattern, { ...opts, __engine: "nfa" });
 
     const matched = paths.map((p) => def.match(p));
 
@@ -89,10 +90,9 @@ function check(pats, paths, dot, ci) {
       const dir = paths[i];
       const ctx = `pattern=${JSON.stringify(pattern)} dir=${JSON.stringify(dir)} dot=${dot} ci=${ci}`;
 
-      assert.equal(pike.match(dir), matched[i], `is_match disagreement: ${ctx}`);
+      assert.equal(nfa.match(dir), matched[i], `is_match disagreement: ${ctx}`);
 
       const dm = def.matchDir(dir);
-      assert.equal(pike.matchDir(dir), dm, `matchDir disagreement: ${ctx}`);
 
       assert.equal(DirMatch.isMatch(dm), matched[i], `match flag != match: ${ctx} dm=${dm}`);
 
@@ -128,7 +128,7 @@ function checkUnion(sets, paths, dot, ci) {
   for (const set of sets) {
     const opts = { dot, caseInsensitive: ci };
     const def = compileMatcher(set, opts);
-    const pike = compileMatcher(set, { ...opts, __engine: "pikevm" });
+    const nfa = compileMatcher(set, { ...opts, __engine: "nfa" });
 
     const matched = paths.map((p) => def.match(p));
 
@@ -136,10 +136,9 @@ function checkUnion(sets, paths, dot, ci) {
       const dir = paths[i];
       const ctx = `patterns=${JSON.stringify(set)} dir=${JSON.stringify(dir)} dot=${dot} ci=${ci}`;
 
-      assert.equal(pike.match(dir), matched[i], `union is_match disagreement: ${ctx}`);
+      assert.equal(nfa.match(dir), matched[i], `union is_match disagreement: ${ctx}`);
 
       const dm = def.matchDir(dir);
-      assert.equal(pike.matchDir(dir), dm, `union matchDir disagreement: ${ctx}`);
 
       assert.equal(DirMatch.isMatch(dm), matched[i], `union match flag != match: ${ctx} dm=${dm}`);
 
@@ -181,20 +180,5 @@ const ciPatterns = [...enumerate(CI_SEGMENTS, 1), ...enumerate(CI_SEGMENTS, 2)];
 const ciUniverse = [...enumerate(CI_PSEG, 1), ...enumerate(CI_PSEG, 2)];
 total += check(ciPatterns, ciUniverse, true, false);
 total += check(ciPatterns, ciUniverse, true, true);
-
-// Property 4 holds on the enumerated space, not everywhere. The all-below
-// flag is a guarantee from either engine, but the Pike VM proves more: it
-// counts the bytes of a name, so branches that split the names by length
-// cover together, while the segment engine needs one element that takes
-// every name. Pinned so that a change on either side is noticed.
-{
-  const set = ["?/**/?", "**/??*"];
-  const dir = "c/x.js";
-  const def = compileMatcher(set);
-  const pike = compileMatcher(set, { __engine: "pikevm" });
-  assert.ok(allBelow(def, dir));
-  assert.equal(def.matchDir(dir), DirMatch.DescendAndMatch);
-  assert.equal(pike.matchDir(dir), DirMatch.DescendAllAndMatch);
-}
 
 console.log(`✓ matchDir properties hold on ${total} exhaustive pattern×dir cases`);

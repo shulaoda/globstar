@@ -2,15 +2,15 @@
 //!
 //! Enumerates EVERY pattern buildable from a fixed segment alphabet (the
 //! full 14-token set at 1-2 segments, a core 8-token set at 3) against
-//! every path in a fixed universe, on both the default engine stack and a
-//! forced PikeVm, and checks the properties that define `match_dir`
-//! relative to `is_match`:
+//! every path in a fixed universe, and checks the properties that define
+//! `match_dir` relative to `is_match`:
 //!
 //! 1. the match flag is exactly `is_match(dir)`;
 //! 2. if any universe path strictly below the dir matches, the result must
 //!    descend — a pruning walker must never lose a match;
 //! 3. `Pruned` implies no universe descendant matches;
-//! 4. the two engines agree on every `is_match` and every `match_dir`;
+//! 4. the segment engine's anchored chains and its NFA agree on every
+//!    `is_match` (`Glob::is_match_nfa`);
 //! 5. the all-below flag is set exactly when every path up to three
 //!    levels below the dir matches — a directory is skipped whole only
 //!    when nothing below it escapes. Three levels is past the deepest
@@ -21,12 +21,7 @@
 //! (packages/globstar/tests/dir-exhaustive.mjs) runs the identical
 //! enumeration.
 
-use globstar::ast::Node;
-use globstar::engine::ops::lower;
-use globstar::engine::pikevm::PikeVm;
-use globstar::factor::factor_branches;
-use globstar::parser::parse;
-use globstar::{CompileOptions, DirMatch, Glob};
+use globstar::{CompileOptions, Glob};
 
 /// Full alphabet: literals, wildcards, classes, dot heads, braces, globstar.
 const SEGMENTS: &[&str] = &[
@@ -95,19 +90,6 @@ fn is_below(child: &str, dir: &str) -> bool {
     child.len() > dir.len() && child.as_bytes()[dir.len()] == b'/' && child.starts_with(dir)
 }
 
-fn build_pikevm(pattern: &str, dot: bool, ci: bool) -> PikeVm {
-    let ast = parse(pattern.as_bytes()).expect("parse");
-    PikeVm::new(lower(ast.body, ci), dot)
-}
-
-fn build_pikevm_union(patterns: &[&str], dot: bool, ci: bool) -> PikeVm {
-    let bodies: Vec<Node> = patterns
-        .iter()
-        .map(|p| parse(p.as_bytes()).expect("parse").body)
-        .collect();
-    PikeVm::new(lower(factor_branches(bodies), ci), dot)
-}
-
 /// Precompute the strictly-below relation over the universe.
 fn below_map(paths: &[String]) -> Vec<Vec<usize>> {
     paths
@@ -130,7 +112,6 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
     for pattern in patterns {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
         let default = Glob::new_with(pattern, opts).expect("compile");
-        let pike = build_pikevm(pattern, dot, ci);
 
         let matched: Vec<bool> = paths
             .iter()
@@ -138,20 +119,15 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
             .collect();
 
         for (i, dir) in paths.iter().enumerate() {
-            let pm = pike.is_match(dir.as_bytes());
+            let pm = default.is_match_nfa(dir.as_bytes());
             assert_eq!(
                 matched[i], pm,
                 "is_match disagreement: pattern={pattern:?} path={dir:?} dot={dot} ci={ci} \
-                 default={} pikevm={pm}",
+                 chains={} nfa={pm}",
                 matched[i]
             );
 
             let dm = default.match_dir(dir.as_bytes());
-            let pdm = pike.match_dir(dir.as_bytes());
-            assert_eq!(
-                dm, pdm,
-                "match_dir disagreement: pattern={pattern:?} dir={dir:?} dot={dot} ci={ci}"
-            );
 
             assert_eq!(
                 dm.is_match(),
@@ -194,7 +170,6 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
     for set in sets {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
         let default = Glob::union_with(set.iter().copied(), opts).expect("union");
-        let pike = build_pikevm_union(set, dot, ci);
 
         let matched: Vec<bool> = paths
             .iter()
@@ -202,18 +177,13 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
             .collect();
 
         for (i, dir) in paths.iter().enumerate() {
-            let pm = pike.is_match(dir.as_bytes());
+            let pm = default.is_match_nfa(dir.as_bytes());
             assert_eq!(
                 matched[i], pm,
                 "union is_match disagreement: patterns={set:?} path={dir:?} dot={dot} ci={ci}"
             );
 
             let dm = default.match_dir(dir.as_bytes());
-            let pdm = pike.match_dir(dir.as_bytes());
-            assert_eq!(
-                dm, pdm,
-                "union match_dir disagreement: patterns={set:?} dir={dir:?} dot={dot} ci={ci}"
-            );
 
             assert_eq!(
                 dm.is_match(),
@@ -276,25 +246,6 @@ fn dir_exhaustive_unions() {
     let paths = universe();
     check_union(&sets, &paths, false, false);
     check_union(&sets, &paths, true, false);
-}
-
-/// Property 4 holds on the enumerated space, not everywhere. The
-/// all-below flag is a guarantee from either engine, but the Pike VM
-/// proves more: it counts the bytes of a name, so branches that split
-/// the names by length cover together, while the segment engine needs
-/// one element that takes every name. Pinned so that a change on either
-/// side is noticed.
-#[test]
-fn all_below_engines_differ_on_length_split_branches() {
-    let set = ["?/**/?", "**/??*"];
-    let dir = "c/x.js";
-    let default = Glob::union(set).expect("union");
-    let pike = build_pikevm_union(&set, true, false);
-
-    assert!(all_below(|p| default.is_match(p), dir, &suffixes()));
-    assert_eq!(default.engine_name(), "Segment");
-    assert_eq!(default.match_dir(dir.as_bytes()), DirMatch::DescendAndMatch);
-    assert_eq!(pike.match_dir(dir.as_bytes()), DirMatch::DescendAllAndMatch);
 }
 
 #[test]

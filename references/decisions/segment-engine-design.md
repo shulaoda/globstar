@@ -262,19 +262,18 @@ records with offset/len into a shared byte blob) + blob + suffix facts.
 Target ≤ 300 B for every bench single-pattern row. JS: small monomorphic
 objects, shared shapes; no typed-array tables except `WGeneric` masks.
 
-## 9. Fallback + testing
+## 9. Totality + testing
 
-Production dispatch: Literal → LiteralMatcher
-(shared); segmentizable ∧ elements ≤ 64 ∧ forks ≤ 64 ∧ WGeneric
-positions ≤ 64 → SSM; else the shared PikeVm — the only _total_
-engine and the non-backtracking ReDoS floor. The former eager DFA was
-removed after SSM became primary: it duplicated compile and maintenance
-cost while PikeVm was still required for total coverage.
+Production dispatch: Literal → LiteralMatcher (shared); everything else
+→ SSM. Since 2026-10 the SSM is total: the pattern becomes a graph of
+elements (`total-segment-engine.md`), the in-segment NFA and the graph
+NFA grow their active sets past 64 states, and the Pike VM is gone.
+The non-backtracking O(n·m) floor is the graph NFA itself.
 
 Gates, in order, after every change: `cargo test --workspace`,
-`node verify.mjs` (public SSM plus forced PikeVm oracle),
-`node fuzz.mjs` sweeps (JS globstar ↔ Rust globstar cross-runtime), then
-`node bench.mjs`.
+`node verify.mjs` (public SSM plus the forced-NFA lane, which runs
+`is_match` without the anchored chains), `node fuzz.mjs` sweeps (JS
+globstar ↔ Rust globstar cross-runtime), then `node bench.mjs`.
 
 ## 10. Adversarial-review errata (all folded into §2.1 and the code)
 
