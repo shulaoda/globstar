@@ -327,7 +327,7 @@ impl SegmentMatcher {
             // The walk root: nothing consumed yet. All below iff a
             // leading globstar is followed by at most one any-segment.
             let all = self.dot && g == 0 && tl <= 1 && tail_any;
-            return DirMatch::from_exact_prefix_all(self.is_match(dir), true, all);
+            return DirMatch::new(self.is_match(dir), true, all);
         }
         let mut mid_start = 0;
         for i in 0..g {
@@ -339,7 +339,7 @@ impl SegmentMatcher {
                     // its tail is at most one any-segment.
                     let k = i + 1;
                     let all = self.dot && g < n && k == g && tl <= 1 && tail_any;
-                    return DirMatch::from_exact_prefix_all(k == n, k < n && open(k), all);
+                    return DirMatch::new(k == n, k < n && open(k), all);
                 }
                 None => return DirMatch::Pruned,
             }
@@ -373,7 +373,7 @@ impl SegmentMatcher {
                 end = start - 1;
             }
         }
-        DirMatch::from_exact_prefix_all(exact, prefix, all)
+        DirMatch::new(exact, prefix, all)
     }
 
     #[inline(always)]
@@ -519,7 +519,7 @@ impl<B: Bits> Nfa<B> {
         // `dot=false` never covers a subtree: no wildcard matches the
         // dot-led names below.
         let all = m.dot && prefix && self.covers_below(m, &mut active);
-        DirMatch::from_exact_prefix_all(exact, prefix, all)
+        DirMatch::new(exact, prefix, all)
     }
 
     /// The active set after every segment of `path`.

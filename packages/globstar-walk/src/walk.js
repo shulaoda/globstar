@@ -236,7 +236,7 @@ function initFromPrefixes(ctx) {
 
     if (stat.isDirectory()) {
       // Walker only emits files; dir matchDir result just gates descend.
-      if (DirMatch.shouldDescend(ctx.matcher.matchDir(prefixStr))) {
+      if (DirMatch.mayMatchBelow(ctx.matcher.matchDir(prefixStr))) {
         ctx.seedFrames.push({ absolute: joined, relative: prefixStr, symlinkAncestors: [] });
       }
     } else if (ctx.matcher.match(prefixStr)) {
@@ -316,7 +316,7 @@ function processDirents(ctx, dirents, frame, results, descend) {
     }
 
     if (isDir) {
-      if (DirMatch.shouldDescend(matcher.matchDir(childRel))) {
+      if (DirMatch.mayMatchBelow(matcher.matchDir(childRel))) {
         // Cycle break: when descending through a symlink target,
         // realpath and check against the ancestor chain. Already-
         // seen target → skip descent.

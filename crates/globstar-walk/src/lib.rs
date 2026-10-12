@@ -345,14 +345,14 @@ impl Walk {
             match fs::metadata(&absolute) {
                 Ok(meta) if meta.is_dir() => {
                     let dm = matcher.match_dir(&prefix);
-                    if dm.is_match() {
+                    if dm.matches() {
                         // Entries carry symlink-preserving file_type.
                         if let Ok(lmeta) = fs::symlink_metadata(&absolute) {
                             self.ready
                                 .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
                         }
                     }
-                    if dm.should_descend() {
+                    if dm.may_match_below() {
                         self.stack.push(Frame {
                             absolute,
                             relative: prefix,
@@ -548,10 +548,10 @@ impl Walk {
 
             if is_dir {
                 let dm = matcher.match_dir(&child_rel);
-                if dm.is_match() {
+                if dm.matches() {
                     self.ready.push(Ok(make_entry(entry.path())));
                 }
-                if dm.should_descend() {
+                if dm.may_match_below() {
                     // Cycle break: when descending through a symlink
                     // target, canonicalize and check against the
                     // ancestor chain. Already-seen target → skip

@@ -47,9 +47,10 @@ export function globstar(
 
 /**
  * Result of {@link Matcher.matchDir} — what a directory path means
- * for the pattern set. Walkers consult this per-directory to decide
- * whether to yield the dir, descend into it, or prune the subtree.
- * Mirrors the Rust crate's `DirMatch`.
+ * for the pattern set. The names read from the pattern's side; a walker
+ * reads the three facts (`matches`, `mayMatchBelow`, `matchesAllBelow`)
+ * according to the role the pattern plays. Mirrors the Rust crate's
+ * `DirMatch`.
  */
 export type DirMatchValue = 0 | 1 | 2 | 3 | 4 | 5;
 
@@ -73,12 +74,16 @@ export declare const DirMatch: {
   readonly DescendAndMatch: 3;
   readonly DescendAll: 4;
   readonly DescendAllAndMatch: 5;
-  /** `Match`, `DescendAndMatch` or `DescendAllAndMatch`. */
-  isMatch(d: DirMatchValue): boolean;
-  /** Anything but `Match` and `Pruned`. */
-  shouldDescend(d: DirMatchValue): boolean;
-  /** `Pruned` — the whole subtree can be skipped. */
-  isPruned(d: DirMatchValue): boolean;
+  /** The verdict with these facts; `allBelow` implies `mayBelow`. */
+  from(matches: boolean, mayBelow: boolean, allBelow: boolean): DirMatchValue;
+  /** Does the directory's own path match? */
+  matches(d: DirMatchValue): boolean;
+  /**
+   * May some path below the directory match? `false` is a guarantee
+   * that none does: a walker selecting files can skip the directory,
+   * and one excluding files needs no more tests below it.
+   */
+  mayMatchBelow(d: DirMatchValue): boolean;
   /**
    * `DescendAll` or `DescendAllAndMatch` — every path below the
    * directory matches: `match(dir + "/" + s)` holds for every `s` of one
@@ -86,14 +91,10 @@ export declare const DirMatch: {
    * "not all, or not provable". Always `false` under `dot: false`, where
    * no wildcard matches the dot-led names below.
    *
-   * A consumer that excludes files by glob may skip a whole directory
-   * only when this holds.
+   * A walker excluding files may skip the directory whole only when
+   * this holds.
    */
   matchesAllBelow(d: DirMatchValue): boolean;
-  /** Combine the exact-match and prefix-match axes into one value. */
-  fromExactPrefix(exact: boolean, prefix: boolean): DirMatchValue;
-  /** `fromExactPrefix` plus the all-below axis, which implies `prefix`. */
-  fromExactPrefixAll(exact: boolean, prefix: boolean, all: boolean): DirMatchValue;
 };
 
 /** Compiled pattern set returned by {@link compileMatcher}. */

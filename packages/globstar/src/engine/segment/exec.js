@@ -192,7 +192,7 @@ export function chainDir(m, str, bail) {
     // The walk root: nothing consumed yet. All below iff a leading
     // globstar is followed by at most one any-segment.
     const all = m.dot && g === 0 && tl <= 1 && tailAny;
-    return DirMatch.fromExactPrefixAll(m.isMatch(str), true, all);
+    return DirMatch.from(m.isMatch(str), true, all);
   }
   let midStart = 0;
   for (let i = 0; i < g; i++) {
@@ -208,7 +208,7 @@ export function chainDir(m, str, bail) {
       // any-segment.
       const k = i + 1;
       const all = m.dot && g < n && k === g && tl <= 1 && tailAny;
-      return DirMatch.fromExactPrefixAll(k === n, k < n && open(k), all);
+      return DirMatch.from(k === n, k < n && open(k), all);
     }
     midStart = end + 1;
   }
@@ -244,7 +244,7 @@ export function chainDir(m, str, bail) {
       end = start - 1;
     }
   }
-  return DirMatch.fromExactPrefixAll(exact === YES, prefix, all);
+  return DirMatch.from(exact === YES, prefix, all);
 }
 
 // ── graph NFA, int32 active set ─────────────────────────────────────

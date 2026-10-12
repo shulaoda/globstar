@@ -85,7 +85,7 @@ function makeMatcher(positiveEngine, negativeEngines) {
     if (positiveEngine === null) return DirMatch.Descend;
     const dm = positiveEngine.matchDir(input);
     if (hasNegatives) {
-      return DirMatch.fromExactPrefixAll(DirMatch.isMatch(dm), true, DirMatch.matchesAllBelow(dm));
+      return DirMatch.from(DirMatch.matches(dm), true, DirMatch.matchesAllBelow(dm));
     }
     return dm;
   };

@@ -21,7 +21,7 @@
 //! (packages/globstar/tests/dir-exhaustive.mjs) runs the identical
 //! enumeration.
 
-use globstar::{CompileOptions, Glob};
+use globstar::{CompileOptions, DirMatch, Glob};
 
 /// Full alphabet: literals, wildcards, classes, dot heads, braces, globstar.
 const SEGMENTS: &[&str] = &[
@@ -130,7 +130,7 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
             let dm = default.match_dir(dir.as_bytes());
 
             assert_eq!(
-                dm.is_match(),
+                dm.matches(),
                 matched[i],
                 "match flag != is_match: pattern={pattern:?} dir={dir:?} dot={dot} ci={ci} dm={dm:?}"
             );
@@ -138,12 +138,12 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
             let any_below = below[i].iter().any(|&j| matched[j]);
             if any_below {
                 assert!(
-                    dm.should_descend(),
+                    dm.may_match_below(),
                     "walker would lose a match: pattern={pattern:?} dir={dir:?} dot={dot} \
                      ci={ci} dm={dm:?}"
                 );
             }
-            if dm.is_pruned() {
+            if dm == DirMatch::Pruned {
                 assert!(
                     !any_below,
                     "pruned but a descendant matches: pattern={pattern:?} dir={dir:?} dot={dot} ci={ci}"
@@ -186,7 +186,7 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
             let dm = default.match_dir(dir.as_bytes());
 
             assert_eq!(
-                dm.is_match(),
+                dm.matches(),
                 matched[i],
                 "union match flag != is_match: patterns={set:?} dir={dir:?} dot={dot} ci={ci} dm={dm:?}"
             );
@@ -194,12 +194,12 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
             let any_below = below[i].iter().any(|&j| matched[j]);
             if any_below {
                 assert!(
-                    dm.should_descend(),
+                    dm.may_match_below(),
                     "union walker would lose a match: patterns={set:?} dir={dir:?} dot={dot} \
                      ci={ci} dm={dm:?}"
                 );
             }
-            if dm.is_pruned() {
+            if dm == DirMatch::Pruned {
                 assert!(
                     !any_below,
                     "union pruned but a descendant matches: patterns={set:?} dir={dir:?} dot={dot} ci={ci}"

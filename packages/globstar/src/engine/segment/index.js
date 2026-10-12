@@ -122,7 +122,7 @@ export class SegmentMatcher {
       // The empty dir is the walk root: nothing consumed yet.
       const all =
         this.dot && (g.wide ? coversBelowWide(this, g.init.slice()) : coversBelow(this, g.init));
-      return DirMatch.fromExactPrefixAll(this.isMatch(str), true, all);
+      return DirMatch.from(this.isMatch(str), true, all);
     }
     let exact;
     let prefix;
@@ -142,6 +142,6 @@ export class SegmentMatcher {
       prefix = (active & g.reach1) !== 0;
       all = this.dot && prefix && coversBelow(this, active);
     }
-    return DirMatch.fromExactPrefixAll(exact, prefix, all);
+    return DirMatch.from(exact, prefix, all);
   }
 }

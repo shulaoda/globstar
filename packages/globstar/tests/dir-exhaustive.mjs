@@ -94,11 +94,11 @@ function check(pats, paths, dot, ci) {
 
       const dm = def.matchDir(dir);
 
-      assert.equal(DirMatch.isMatch(dm), matched[i], `match flag != match: ${ctx} dm=${dm}`);
+      assert.equal(DirMatch.matches(dm), matched[i], `match flag != match: ${ctx} dm=${dm}`);
 
       const anyBelow = below[i].some((j) => matched[j]);
       if (anyBelow) {
-        assert.ok(DirMatch.shouldDescend(dm), `walker would lose a match: ${ctx} dm=${dm}`);
+        assert.ok(DirMatch.mayMatchBelow(dm), `walker would lose a match: ${ctx} dm=${dm}`);
       }
       if (dm === DirMatch.Pruned) {
         assert.ok(!anyBelow, `pruned but a descendant matches: ${ctx}`);
@@ -140,11 +140,11 @@ function checkUnion(sets, paths, dot, ci) {
 
       const dm = def.matchDir(dir);
 
-      assert.equal(DirMatch.isMatch(dm), matched[i], `union match flag != match: ${ctx} dm=${dm}`);
+      assert.equal(DirMatch.matches(dm), matched[i], `union match flag != match: ${ctx} dm=${dm}`);
 
       const anyBelow = below[i].some((j) => matched[j]);
       if (anyBelow) {
-        assert.ok(DirMatch.shouldDescend(dm), `union walker would lose a match: ${ctx} dm=${dm}`);
+        assert.ok(DirMatch.mayMatchBelow(dm), `union walker would lose a match: ${ctx} dm=${dm}`);
       }
       if (dm === DirMatch.Pruned) {
         assert.ok(!anyBelow, `union pruned but a descendant matches: ${ctx}`);

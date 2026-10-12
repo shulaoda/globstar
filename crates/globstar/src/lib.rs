@@ -17,11 +17,13 @@
 //! assert!(glob.is_match(b"src/engine/mod.rs"));
 //! assert!(!glob.is_match(b"README.md"));
 //!
-//! // Directory-level pruning for walkers:
+//! // A walker selecting files walks into a directory while something
+//! // below it may match:
 //! assert_eq!(glob.match_dir(b"src/engine"), DirMatch::Descend);
+//! assert!(glob.match_dir(b"src/engine").may_match_below());
 //! assert_eq!(glob.match_dir(b"target"), DirMatch::Pruned);
 //!
-//! // A pattern that excludes files skips a directory whole only when
+//! // A walker excluding files skips a directory whole only when
 //! // everything below it matches:
 //! let exclude = Glob::union(["**/node_modules/**", "**/*.log"])?;
 //! assert!(exclude.match_dir(b"/p/node_modules").matches_all_below());
@@ -247,9 +249,10 @@ impl Glob {
         }
     }
 
-    /// Directory-level verdict for walker pruning (see [`DirMatch`]).
+    /// What the pattern says about a directory (see [`DirMatch`]).
     ///
-    /// A negated pattern is always [`DirMatch::Descend`].
+    /// A negated pattern is always [`DirMatch::Descend`]: what it
+    /// excludes below a directory cannot be told from the directory.
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
         if self.negated {
             return DirMatch::Descend;
