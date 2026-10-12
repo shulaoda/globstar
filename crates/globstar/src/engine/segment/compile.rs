@@ -311,17 +311,15 @@ fn nfa_over<B: Bits>(
     let mut lit_sets: Vec<LitSet<B>> = Vec::new();
     let mut grouped = B::zero(words);
     if edges.is_some() {
-        let lit_of = |s: u32| elems[states[s as usize].node as usize].as_lit();
         let mut lit_set = |targets: &mut dyn Iterator<Item = u32>| {
-            let mut sorted: Vec<u32> = targets
+            let mut positions: Vec<u32> = targets
                 .filter(|&t| t != ACCEPT && matches!(elem(t as usize), Elem::Lit(_)))
-                .map(|t| entries[t as usize])
                 .collect();
-            if sorted.len() < 2 {
+            if positions.len() < 2 {
                 return;
             }
-            sorted.sort_unstable_by(|&a, &b| lit_cmp(lit_of(a), lit_of(b), ci).then(a.cmp(&b)));
-            sorted.dedup();
+            sort_by_literal(&mut positions, elems, path, ci);
+            let sorted: Box<[u32]> = positions.iter().map(|&t| entries[t as usize]).collect();
             let mut set = B::zero(words);
             for &s in &sorted {
                 set.set(s as usize);
@@ -329,7 +327,7 @@ fn nfa_over<B: Bits>(
             grouped.or_with(&set);
             lit_sets.push(LitSet {
                 states: set,
-                sorted: sorted.into_boxed_slice(),
+                sorted,
             });
         };
         lit_set(&mut start.iter().copied());
@@ -370,6 +368,21 @@ impl Hasher for Fnv {
         }
         self.0 = h;
     }
+}
+
+/// (length, bytes) order. One comparator, so its sort is compiled once.
+pub(super) fn len_then_bytes<T: AsRef<[u8]>>(a: &T, b: &T) -> std::cmp::Ordering {
+    let (a, b) = (a.as_ref(), b.as_ref());
+    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+}
+
+/// Positions holding literals, by literal (case-folded when
+/// insensitive) then position, duplicates dropped. Not generic over the
+/// bit set, so the sort is compiled once.
+fn sort_by_literal(positions: &mut Vec<u32>, elems: &[Elem], path: Option<&[u32]>, ci: bool) {
+    let lit = |t: u32| elems[path.map_or(t as usize, |p| p[t as usize] as usize)].as_lit();
+    positions.sort_unstable_by(|&a, &b| lit_cmp(lit(a), lit(b), ci).then(a.cmp(&b)));
+    positions.dedup();
 }
 
 /// Byte order, ASCII case folded when insensitive.
@@ -899,10 +912,11 @@ fn suffix_product(ops: &[&Op]) -> Option<Vec<Vec<u8>>> {
 /// Up to `LINEAR_SUFFIXES` the set is scanned in pattern order; past
 /// it the suffixes are sorted by (length, bytes) and indexed per
 /// length so `wild_consumes` can binary-search them.
-fn affix_set(prefix: Bytes, mut suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
+fn affix_set(prefix: Bytes, suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
+    // The product's buffers are exact, so this keeps them as they are.
+    let mut suffixes: Vec<Bytes> = suffixes.into_iter().map(Vec::into_boxed_slice).collect();
     let last = ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci);
     if suffixes.len() <= LINEAR_SUFFIXES {
-        let suffixes = suffixes.iter().map(|s| Bytes::from(&s[..]));
         return WildKind::AffixSet(AffixSet {
             parts: std::iter::once(prefix).chain(suffixes).collect(),
             last,
@@ -913,9 +927,9 @@ fn affix_set(prefix: Bytes, mut suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
             s.make_ascii_lowercase();
         }
     }
-    suffixes.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+    suffixes.sort_unstable_by(len_then_bytes);
     suffixes.dedup();
-    let mut bytes = Vec::with_capacity(suffixes.iter().map(Vec::len).sum());
+    let mut bytes = Vec::with_capacity(suffixes.iter().map(|s| s.len()).sum());
     let mut runs: Vec<SuffixRun> = Vec::new();
     for s in &suffixes {
         match runs.last_mut() {

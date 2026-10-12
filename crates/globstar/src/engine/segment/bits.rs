@@ -19,43 +19,43 @@ pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
 }
 
 impl Bits for u64 {
-    #[inline(always)]
+    #[inline]
     fn zero(_: usize) -> Self {
         0
     }
-    #[inline(always)]
+    #[inline]
     fn words(_: usize) -> usize {
         1
     }
-    #[inline(always)]
+    #[inline]
     fn set(&mut self, i: usize) {
         *self |= 1u64 << i;
     }
-    #[inline(always)]
+    #[inline]
     fn unset(&mut self, i: usize) {
         *self &= !(1u64 << i);
     }
-    #[inline(always)]
+    #[inline]
     fn test(&self, i: usize) -> bool {
         *self & (1u64 << i) != 0
     }
-    #[inline(always)]
+    #[inline]
     fn is_zero(&self) -> bool {
         *self == 0
     }
-    #[inline(always)]
+    #[inline]
     fn clear(&mut self) {
         *self = 0;
     }
-    #[inline(always)]
+    #[inline]
     fn or_with(&mut self, other: &Self) {
         *self |= *other;
     }
-    #[inline(always)]
+    #[inline]
     fn intersects(&self, other: &Self) -> bool {
         *self & *other != 0
     }
-    #[inline(always)]
+    #[inline]
     fn for_each(&self, mut f: impl FnMut(usize)) {
         let mut bits = *self;
         while bits != 0 {

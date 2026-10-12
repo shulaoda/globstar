@@ -1,11 +1,10 @@
 //! Literal facts read off the ops at compile time: the suffix
 //! prefilter and the static prefixes a walker seeds from.
 
-use std::collections::BTreeSet;
-
 use crate::engine::ops::Op;
 
 use super::Bytes;
+use super::compile::len_then_bytes;
 
 /// Largest suffix set worth scanning before the engine runs; a
 /// bigger alternation gets no prefilter (the engine indexes it).
@@ -128,22 +127,21 @@ fn prefixes_per_branch(ops: &[Op], acc: &mut Vec<u8>, out: &mut Vec<Bytes>) {
 }
 
 /// Drop prefixes a shorter one already covers; an empty one covers all.
+/// Shortest first, so a prefix is only ever covered by one kept before.
 fn dedupe(mut prefixes: Vec<Bytes>) -> Vec<Bytes> {
-    prefixes.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a[..].cmp(&b[..])));
-    let mut accepted: BTreeSet<Vec<u8>> = BTreeSet::new();
+    prefixes.sort_unstable_by(len_then_bytes);
+    prefixes.dedup();
+    let mut kept: Vec<Bytes> = Vec::new();
     for p in prefixes {
         if p.is_empty() {
             return vec![p];
         }
-        let covered = p
+        let covered = kept
             .iter()
-            .enumerate()
-            .any(|(i, &b)| b == b'/' && accepted.contains(&p[..i]));
+            .any(|k| p.len() > k.len() && p[k.len()] == b'/' && p[..k.len()] == k[..]);
         if !covered {
-            accepted.insert(p.to_vec());
+            kept.push(p);
         }
     }
-    let mut result: Vec<Bytes> = accepted.into_iter().map(Vec::into_boxed_slice).collect();
-    result.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a[..].cmp(&b[..])));
-    result
+    kept
 }

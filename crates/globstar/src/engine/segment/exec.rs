@@ -1,3 +1,12 @@
+//! Matching over the segment graph: anchored chains for a path with at
+//! most one globstar, the NFA otherwise.
+//!
+//! The predicates that run once per segment or per element
+//! (`consume_at`, `elem_consumes`, `wild_consumes`, `affix_eq`,
+//! `set_head`, `absorbs`) are forced inline: LLVM leaves them out of
+//! line on its own, and a call there costs 10–40% on the shortest
+//! paths. Everything else is left to the compiler.
+
 use std::cmp::Ordering;
 
 use crate::dir_match::DirMatch;
@@ -10,7 +19,7 @@ use super::{
 };
 
 /// Index just past the segment that starts at `pos`.
-#[inline(always)]
+#[inline]
 fn seg_end(path: &[u8], pos: usize) -> usize {
     let mut i = pos;
     while i < path.len() && !std::path::is_separator(path[i] as char) {
@@ -20,7 +29,7 @@ fn seg_end(path: &[u8], pos: usize) -> usize {
 }
 
 /// Start of the segment that ends at `end`.
-#[inline(always)]
+#[inline]
 fn seg_start(path: &[u8], end: usize) -> usize {
     let mut s = end;
     while s > 0 && !std::path::is_separator(path[s - 1] as char) {
@@ -37,11 +46,11 @@ trait ChainElems {
 }
 
 impl ChainElems for &[Elem] {
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         <[Elem]>::len(self)
     }
-    #[inline(always)]
+    #[inline]
     fn at(&self, i: usize) -> &Elem {
         &self[i]
     }
@@ -53,11 +62,11 @@ struct Mapped<'a> {
 }
 
 impl ChainElems for Mapped<'_> {
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         self.nodes.len()
     }
-    #[inline(always)]
+    #[inline]
     fn at(&self, i: usize) -> &Elem {
         &self.elems[self.nodes[i] as usize]
     }
@@ -65,7 +74,7 @@ impl ChainElems for Mapped<'_> {
 
 impl SegmentMatcher {
     /// The suffix prefilter: `false` means the path cannot match.
-    #[inline(always)]
+    #[inline]
     pub(super) fn prefilter(&self, path: &[u8]) -> bool {
         match &self.suffixes[..] {
             [] => true,
@@ -76,7 +85,7 @@ impl SegmentMatcher {
 
     /// A pattern byte against a path byte: `/` stands for any
     /// separator, letters fold when case-insensitive.
-    #[inline(always)]
+    #[inline]
     fn pat_byte_eq(&self, pat: u8, b: u8) -> bool {
         if pat == b'/' {
             std::path::is_separator(b as char)
@@ -88,7 +97,7 @@ impl SegmentMatcher {
     }
 
     /// Suffix test, last byte first: that is where extensions differ.
-    #[inline(always)]
+    #[inline]
     fn ends_with(&self, path: &[u8], suffix: &[u8]) -> bool {
         path.len() >= suffix.len()
             && suffix
@@ -101,7 +110,7 @@ impl SegmentMatcher {
     /// Does the path end like the chain's last element (a literal, or
     /// an affix's suffix)? Rejects most members of a union before the
     /// chain runs; a single chain has the prefilter for that.
-    #[inline(always)]
+    #[inline]
     pub(super) fn ends_like(&self, i: usize, path: &[u8]) -> bool {
         let chain = &self.chains[i];
         let last = chain
@@ -119,7 +128,6 @@ impl SegmentMatcher {
         path.len() >= suffix.len() && self.affix_eq(suffix, &path[path.len() - suffix.len()..])
     }
 
-    #[inline(always)]
     pub(super) fn chain_matches(&self, i: usize, path: &[u8]) -> bool {
         let chain = &self.chains[i];
         if chain.nodes.is_empty() {
@@ -133,7 +141,7 @@ impl SegmentMatcher {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn chain_matches_on<E: ChainElems>(&self, chain: &Chain, elems: &E, path: &[u8]) -> bool {
         match &chain.shape {
             Shape::Fixed => self.fixed_run(elems, 0..elems.len(), path, 0),
@@ -208,7 +216,7 @@ impl SegmentMatcher {
     /// it starts. Every globstar wants that segment (`G1` absorbs one,
     /// `G0` is followed by its tail), so a path that ends in the head
     /// fails.
-    #[inline(always)]
+    #[inline]
     fn head<E: ChainElems>(&self, elems: &E, g: usize, path: &[u8]) -> Option<usize> {
         let mut pos = 0;
         for i in 0..g {
@@ -250,6 +258,7 @@ impl SegmentMatcher {
     /// Can the globstar `kind` take the segments between the head
     /// (ending before `from`) and the tail starting at `split`?
     /// `split == from` means no segment at all.
+    #[inline(always)]
     fn absorbs(&self, kind: &Elem, path: &[u8], from: usize, split: usize) -> bool {
         if split == from {
             return kind.nullable();
@@ -382,7 +391,7 @@ impl SegmentMatcher {
 
     /// Byte-wise, so short affixes stay inline rather than calling
     /// `bcmp`.
-    #[inline]
+    #[inline(always)]
     fn affix_eq(&self, part: &[u8], seg_part: &[u8]) -> bool {
         debug_assert_eq!(part.len(), seg_part.len());
         if self.case_insensitive {
@@ -488,7 +497,7 @@ fn cmp_folded(suffix: &[u8], tail: &[u8]) -> Ordering {
 }
 
 impl<B: Bits> Nfa<B> {
-    #[inline(always)]
+    #[inline]
     fn accept(&self) -> usize {
         self.states.len() - 1
     }

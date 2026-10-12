@@ -56,7 +56,7 @@ impl ByteSketch {
         ByteSketch(bits)
     }
 
-    #[inline(always)]
+    #[inline]
     fn may_end(self, s: &[u8]) -> bool {
         match s.last() {
             None => self.0 == u64::MAX,
@@ -183,12 +183,12 @@ impl Affix {
         Affix { bytes, split }
     }
 
-    #[inline(always)]
+    #[inline]
     fn parts(&self) -> (&[u8], &[u8]) {
         self.bytes.split_at(self.split as usize)
     }
 
-    #[inline(always)]
+    #[inline]
     fn suffix(&self) -> &[u8] {
         self.parts().1
     }

@@ -109,7 +109,6 @@ impl SegNfa {
         }
     }
 
-    #[inline]
     pub(super) fn matches(&self, seg: &[u8]) -> bool {
         match &self.kind {
             Kind::Small(n) => n.matches(seg),
