@@ -76,16 +76,16 @@ pub(super) fn static_prefixes(ops: &[Op]) -> Box<[Bytes]> {
 }
 
 fn prefixes_per_branch(ops: &[Op], acc: &mut Vec<u8>, out: &mut Vec<Bytes>) {
-    if let Some(Op::Alternation(branches)) = ops.first() {
-        if matches!(
+    if let Some(Op::Alternation(branches)) = ops.first()
+        && matches!(
             ops.get(1),
             None | Some(Op::Sep) | Some(Op::SepRun) | Some(Op::SlashAnything)
-        ) {
-            for branch in branches {
-                prefixes_per_branch(branch, acc, out);
-            }
-            return;
+        )
+    {
+        for branch in branches {
+            prefixes_per_branch(branch, acc, out);
         }
+        return;
     }
     acc.clear();
     let mut last_boundary = 0usize;

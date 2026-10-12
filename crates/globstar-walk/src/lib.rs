@@ -305,10 +305,10 @@ impl Walk {
                 continue;
             }
 
-            if let Some(ig) = &self.ignore {
-                if seed_ignored(ig, &prefix) {
-                    continue;
-                }
+            if let Some(ig) = &self.ignore
+                && seed_ignored(ig, &prefix)
+            {
+                continue;
             }
 
             let absolute = match std::str::from_utf8(&prefix) {
@@ -362,11 +362,11 @@ impl Walk {
                     }
                 }
                 Ok(_) => {
-                    if matcher.is_match(&prefix) {
-                        if let Ok(lmeta) = fs::symlink_metadata(&absolute) {
-                            self.ready
-                                .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
-                        }
+                    if matcher.is_match(&prefix)
+                        && let Ok(lmeta) = fs::symlink_metadata(&absolute)
+                    {
+                        self.ready
+                            .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
                     }
                 }
                 Err(_) => match fs::symlink_metadata(&absolute) {
@@ -506,10 +506,10 @@ impl Walk {
 
             // Ignore-filter before any stat, so an ignored symlink never
             // costs a metadata resolution (WALKER_SPEC §7.1 order).
-            if let Some(ig) = ignore {
-                if ig.is_match(&child_rel) {
-                    continue;
-                }
+            if let Some(ig) = ignore
+                && ig.is_match(&child_rel)
+            {
+                continue;
             }
 
             // On Windows, `std::fs::DirEntry::metadata` is free — the data

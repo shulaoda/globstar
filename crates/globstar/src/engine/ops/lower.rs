@@ -64,10 +64,11 @@ fn lower_into(node: Node, out: &mut Vec<Op>, case_insensitive: bool) {
                 // `absorb_seps` gave the `/` to the first, so a `**/`
                 // opening a branch of the second keeps its lenient boundary
                 // (§12.3) by taking any further separators itself.
-                if after_brace && brace {
-                    if let Some(Op::Alternation(branches)) = out.last_mut() {
-                        take_leading_seps(branches);
-                    }
+                if after_brace
+                    && brace
+                    && let Some(Op::Alternation(branches)) = out.last_mut()
+                {
+                    take_leading_seps(branches);
                 }
                 after_brace = brace;
             }

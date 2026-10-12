@@ -539,10 +539,10 @@ impl Builder {
             return id;
         }
         let key = self.key(&elem, tails);
-        if let Some(&found) = key.and_then(|k| self.memo.get(&k)) {
-            if self.same(found, &elem, tails) {
-                return found;
-            }
+        if let Some(&found) = key.and_then(|k| self.memo.get(&k))
+            && self.same(found, &elem, tails)
+        {
+            return found;
         }
         self.g.elems.push(elem);
         self.g.pred_at.push(self.g.preds.len() as u32);

@@ -11,7 +11,6 @@ members = [
 version = "0.0.4"
 edition = "2024"
 license = "MIT"
-rust-version = "1.85.0"
 repository = "https://github.com/shulaoda/globstar"
 
 [workspace.dependencies]
