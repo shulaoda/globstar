@@ -10,7 +10,15 @@ import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSegment, opsHaveNonAscii } from "./compile.js";
 import { endsWithSepAware } from "../facts.js";
-import { chainMatches, nfaRun, nfaRunWide, coversBelow, coversBelowWide, affixEq } from "./exec.js";
+import {
+  chainMatches,
+  chainDir,
+  nfaRun,
+  nfaRunWide,
+  coversBelow,
+  coversBelowWide,
+  affixEq,
+} from "./exec.js";
 import { bitTest, bitsIntersect } from "./bits.js";
 
 // Paths through the graph `isMatch` still tries one by one; past that
@@ -39,11 +47,22 @@ export const NO = 0;
 export const YES = 1;
 export const BAIL = 2;
 
+// Can the element take some segment?
+export const elemSatisfiable = (e) =>
+  e.kind !== EL_WILD || e.wild.kind !== WK_GENERIC || e.wild.nfa.satisfiable;
+// Takes every non-empty segment (`matchDir`'s all-below).
+export const elemAnySeg = (e) =>
+  e.kind === EL_LIT ? false : e.kind === EL_WILD ? e.wild.anySeg : true;
+
 export class SegmentMatcher {
   constructor(compiled, program, byteOnly, dot) {
     this.nodes = compiled.elems;
-    this.graph = compiled.nfa;
+    // The paths through the graph, tried in order; none past MAX_CHAINS.
     this.chains = compiled.chains;
+    // The NFA over the graph, kept only when the chains cannot serve:
+    // none, several (`matchDir` runs them as one), or one with several
+    // globstars.
+    this.graph = compiled.nfa;
     this.ci = !!program.caseInsensitive;
     this.dot = dot;
     this.byteOnly = byteOnly;
@@ -57,8 +76,9 @@ export class SegmentMatcher {
   // `opts.forceNfa` bypasses the chains, `opts.byteOnly` the string
   // mode: test hooks that cross-check the code paths.
   static build(program, dot, opts = {}) {
-    const compiled = compileSegment(program.ops, dot, !!program.caseInsensitive);
-    if (opts.forceNfa) compiled.chains = [];
+    const forceNfa = !!opts.forceNfa;
+    const compiled = compileSegment(program.ops, dot, !!program.caseInsensitive, forceNfa);
+    if (forceNfa) compiled.chains = [];
     const byteOnly = !!opts.byteOnly || opsHaveNonAscii(program.ops);
     return new SegmentMatcher(compiled, program, byteOnly, dot);
   }
@@ -76,13 +96,6 @@ export class SegmentMatcher {
   }
 
   matchDir(input) {
-    if (input.length === 0) {
-      // The empty dir is the walk root: nothing consumed yet.
-      const g = this.graph;
-      const all =
-        this.dot && (g.wide ? coversBelowWide(this, g.init.slice()) : coversBelow(this, g.init));
-      return DirMatch.fromExactPrefixAll(this.isMatch(input), true, all);
-    }
     if (!this.byteOnly) {
       const r = this._matchDir(input, true);
       if (r !== -1) return r;
@@ -137,6 +150,13 @@ export class SegmentMatcher {
 
   _matchDir(str, bail) {
     const g = this.graph;
+    if (g === null) return chainDir(this, str, bail);
+    if (str.length === 0) {
+      // The empty dir is the walk root: nothing consumed yet.
+      const all =
+        this.dot && (g.wide ? coversBelowWide(this, g.init.slice()) : coversBelow(this, g.init));
+      return DirMatch.fromExactPrefixAll(this.isMatch(str), true, all);
+    }
     let exact;
     let prefix;
     let all;

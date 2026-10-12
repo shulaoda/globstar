@@ -6,8 +6,8 @@
 import {
   EL_LIT,
   EL_WILD,
+  EL_G0,
   EL_G0_STRICT,
-  EL_G1,
   WK_AFFIX,
   WK_AFFIX_SET,
   WK_AFFIX_INDEX,
@@ -16,14 +16,18 @@ import {
   BAIL,
   NO_G,
   MANY_G,
+  elemSatisfiable,
+  elemAnySeg,
 } from "./index.js";
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
+import { DirMatch, PRUNED } from "../../dir-match.js";
 import { bitTest, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
 
 export function chainMatches(m, chain, str, bail) {
+  const ids = chain.nodes;
   switch (chain.globstar) {
     case NO_G:
-      return matchFixed(m, chain.nodes, str, bail);
+      return fixedRun(m, ids, 0, chainLen(m.nodes, ids), str, 0, bail);
     case MANY_G: {
       // The NFA over this chain alone, or the matcher's when the
       // pattern is that one chain.
@@ -33,8 +37,11 @@ export function chainMatches(m, chain, str, bail) {
       if (active === -1) return BAIL;
       return (active & (1 << g.accept)) !== 0 ? YES : NO;
     }
-    default:
-      return matchSingleG(m, chain, str, bail);
+    default: {
+      const midStart = head(m, ids, chain.globstar, str, bail);
+      if (midStart < 0) return fail(midStart);
+      return tailAndGlobstar(m, ids, chain.globstar, str, midStart, bail);
+    }
   }
 }
 
@@ -50,6 +57,14 @@ function nextSep(str, from) {
   if (i === -1) return j;
   if (j === -1) return i;
   return i < j ? i : j;
+}
+
+function lastSepBefore(str, end) {
+  if (end <= 0) return -1;
+  const i = str.lastIndexOf("/", end - 1);
+  if (!IS_WINDOWS_SEP) return i;
+  const j = str.lastIndexOf("\\", end - 1);
+  return i > j ? i : j;
 }
 
 // `consumeAt` results below zero: the element rejects the segment, or
@@ -74,87 +89,159 @@ function consumeAt(m, e, str, pos, bail) {
   return r === YES ? end : r === NO ? MISS : BAILED;
 }
 
-function matchFixed(m, ids, str, bail) {
+// Do the elements `from..to` take the segments from `pos` to the end,
+// one each?
+function fixedRun(m, ids, from, to, str, pos, bail) {
   const nodes = m.nodes;
-  const last = chainLen(nodes, ids) - 1;
-  let pos = 0;
-  for (let i = 0; i < last; i++) {
+  for (let i = from; i < to - 1; i++) {
     const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, bail);
     if (end < 0) return fail(end);
     if (end === str.length) return NO;
     pos = end + 1;
   }
-  const end = consumeAt(m, elemAt(nodes, ids, last), str, pos, bail);
+  const end = consumeAt(m, elemAt(nodes, ids, to - 1), str, pos, bail);
   if (end < 0) return fail(end);
   return end === str.length ? YES : NO;
 }
 
-function matchSingleG(m, chain, str, bail) {
+// The head (the elements before the globstar `g`), one segment each:
+// where the segment after it starts, or MISS/BAILED. Every globstar
+// wants that segment (G1 absorbs one, G0 is followed by its tail), so
+// a path that ends in the head fails.
+function head(m, ids, g, str, bail) {
   const nodes = m.nodes;
-  const ids = chain.nodes;
-  const ci = m.ci;
-  const g = chain.globstar;
-  const n = chainLen(nodes, ids);
-  const tailLen = n - g - 1;
-
-  let tailEnd = str.length;
-  let ts = 0;
-  for (let j = tailLen - 1; j >= 0; j--) {
-    let s = lastSepBefore(str, tailEnd);
-    s = s === -1 ? 0 : s + 1;
-    const r = elemConsumes(elemAt(nodes, ids, g + 1 + j), str, s, tailEnd, ci, bail);
-    if (r !== YES) return r;
-    if (j > 0) {
-      if (s === 0) return NO;
-      tailEnd = s - 1;
-    }
-    ts = s;
-  }
-
-  // Every globstar wants a segment after the head: G1 absorbs one, G0
-  // is followed by its tail.
-  let midStart = 0;
+  let pos = 0;
   for (let i = 0; i < g; i++) {
-    const end = consumeAt(m, elemAt(nodes, ids, i), str, midStart, bail);
-    if (end < 0) return fail(end);
-    if (end === str.length) return NO;
-    midStart = end + 1;
+    const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, bail);
+    if (end < 0) return end;
+    if (end === str.length) return MISS;
+    pos = end + 1;
   }
+  return pos;
+}
 
-  let midExists;
-  let midEnd;
-  if (tailLen > 0) {
-    if (ts < midStart) return NO;
-    midExists = ts > midStart;
-    midEnd = ts > 0 ? ts - 1 : 0;
-  } else {
-    midExists = midStart <= str.length;
-    midEnd = str.length;
+// With the head consumed up to `midStart`: the tail on the last
+// segments, found backward, and the globstar on what lies between.
+function tailAndGlobstar(m, ids, g, str, midStart, bail) {
+  const nodes = m.nodes;
+  const n = chainLen(nodes, ids);
+  // Where the tail starts; past the end when there is none.
+  let split = str.length + 1;
+  let end = str.length;
+  for (let j = n - 1; j > g; j--) {
+    const s = lastSepBefore(str, end) + 1;
+    if (s < midStart) return NO;
+    const r = elemConsumes(elemAt(nodes, ids, j), str, s, end, m.ci, bail);
+    if (r !== YES) return r;
+    split = s;
+    if (j > g + 1) {
+      if (s === 0) return NO;
+      end = s - 1;
+    }
   }
+  return absorbs(m, elemAt(nodes, ids, g).kind, str, midStart, split) ? YES : NO;
+}
 
-  const gk = elemAt(nodes, ids, g).kind;
-  if (gk === EL_G1) {
-    if (!midExists) return NO;
-  } else if (gk === EL_G0_STRICT) {
-    if (midExists && isPathSep(str.charCodeAt(midStart))) return NO;
-  }
+// Can the globstar `kind` take the segments between the head (ending
+// before `from`) and the tail starting at `split`? `split === from`
+// means no segment at all.
+function absorbs(m, kind, str, from, split) {
+  if (split === from) return kind === EL_G0 || kind === EL_G0_STRICT;
+  // Up to the separator before the tail, or the end.
+  const to = split - 1;
+  // G0_STRICT may not start with an empty segment.
+  if (kind === EL_G0_STRICT && (from === to || isPathSep(str.charCodeAt(from)))) return false;
+  return dotFree(m, str, from, to);
+}
 
-  if (m.dot || !midExists) return YES;
-  if (midStart < midEnd && str.charCodeAt(midStart) === 0x2e) return NO;
-  for (let i = midStart; ; ) {
+// Under `dot=false`, no segment within `str[from, to)` may start with
+// a `.`.
+function dotFree(m, str, from, to) {
+  if (m.dot) return true;
+  if (from < to && str.charCodeAt(from) === 0x2e) return false;
+  for (let i = from; ; ) {
     i = nextSep(str, i);
-    if (i === -1 || i + 1 >= midEnd) return YES;
-    if (str.charCodeAt(i + 1) === 0x2e) return NO;
+    if (i === -1 || i + 1 >= to) return true;
+    if (str.charCodeAt(i + 1) === 0x2e) return false;
     i += 1;
   }
 }
 
-function lastSepBefore(str, end) {
-  if (end <= 0) return -1;
-  const i = str.lastIndexOf("/", end - 1);
-  if (!IS_WINDOWS_SEP) return i;
-  const j = str.lastIndexOf("\\", end - 1);
-  return i > j ? i : j;
+// `matchDir` through the lone chain of a matcher that keeps no NFA:
+// the DirMatch, or -1 on a string-mode bail. The tokens the NFA would
+// hold after `str`, read off the chain: a head position when the
+// directory ends inside the head, the globstar when it has taken
+// everything after the head, and a tail position when the tail's
+// first elements take the last segments.
+export function chainDir(m, str, bail) {
+  const nodes = m.nodes;
+  const chain = m.chains[0];
+  const ids = chain.nodes;
+  const n = chainLen(nodes, ids);
+  const g = chain.globstar === NO_G ? n : chain.globstar;
+  const tl = g < n ? n - g - 1 : 0;
+  // Every element from `i` on takes some segment: a token there still
+  // reaches accept.
+  const open = (i) => {
+    for (let j = i; j < n; j++) if (!elemSatisfiable(elemAt(nodes, ids, j))) return false;
+    return true;
+  };
+  let tailAny = true;
+  for (let j = n - tl; j < n; j++) if (!elemAnySeg(elemAt(nodes, ids, j))) tailAny = false;
+  if (str.length === 0) {
+    // The walk root: nothing consumed yet. All below iff a leading
+    // globstar is followed by at most one any-segment.
+    const all = m.dot && g === 0 && tl <= 1 && tailAny;
+    return DirMatch.fromExactPrefixAll(m.isMatch(str), true, all);
+  }
+  let midStart = 0;
+  for (let i = 0; i < g; i++) {
+    const end = consumeAt(m, elemAt(nodes, ids, i), str, midStart, bail);
+    if (end === BAILED) return -1;
+    if (end === MISS) return PRUNED;
+    if (end === str.length) {
+      // `str` is the chain's first `k` segments. A globstar reached with
+      // nothing absorbed covers all below iff its tail is at most one
+      // any-segment.
+      const k = i + 1;
+      const all = m.dot && g < n && k === g && tl <= 1 && tailAny;
+      return DirMatch.fromExactPrefixAll(k === n, k < n && open(k), all);
+    }
+    midStart = end + 1;
+  }
+  // A fixed chain, and the directory is deeper.
+  if (g === n) return PRUNED;
+  const kind = elemAt(nodes, ids, g).kind;
+  const exact = tailAndGlobstar(m, ids, g, str, midStart, bail);
+  if (exact === BAIL) return -1;
+  // The globstar took everything after the head.
+  const gAlive = absorbs(m, kind, str, midStart, str.length + 1);
+  let prefix = gAlive && open(g + 1);
+  let all = m.dot && gAlive && tailAny;
+  // Tail tokens: the tail's first `j` elements on the last `j` segments
+  // with the globstar released before them. A dead globstar may leave
+  // one; `all` needs them all.
+  if ((!prefix || all) && tl > 1) {
+    let end = str.length;
+    for (let j = 1; j < tl; j++) {
+      const start = lastSepBefore(str, end) + 1;
+      let alive = absorbs(m, kind, str, midStart, start);
+      if (alive) {
+        const r = fixedRun(m, ids, g + 1, g + 1 + j, str, start, bail);
+        if (r === BAIL) return -1;
+        alive = r === YES;
+      }
+      prefix ||= alive && open(g + 1 + j);
+      all &&= alive;
+      if (start === midStart) {
+        // No segment is left for a longer tail.
+        all &&= j + 1 === tl;
+        break;
+      }
+      end = start - 1;
+    }
+  }
+  return DirMatch.fromExactPrefixAll(exact === YES, prefix, all);
 }
 
 // ── graph NFA, int32 active set ─────────────────────────────────────
@@ -225,9 +312,7 @@ function nfaStepWild(m, active) {
   while (bits !== 0) {
     const s = ctz32(bits);
     bits &= bits - 1;
-    const e = nodes[tab[(s << 1) | 1]];
-    if (e.kind === EL_LIT) continue;
-    if (e.kind === EL_WILD && !e.wild.anySeg) continue;
+    if (!elemAnySeg(nodes[tab[(s << 1) | 1]])) continue;
     next |= tab[s << 1];
   }
   return next;
@@ -320,10 +405,7 @@ function nfaStepWildWide(m, active, next) {
   const nodes = m.nodes;
   next.fill(0);
   bitsForEach(active, (s) => {
-    if (s === g.accept) return;
-    const e = nodes[g.nodeOf[s]];
-    if (e.kind === EL_LIT) return;
-    if (e.kind === EL_WILD && !e.wild.anySeg) return;
+    if (s === g.accept || !elemAnySeg(nodes[g.nodeOf[s]])) return;
     bitsOr(next, g.after[s]);
   });
 }

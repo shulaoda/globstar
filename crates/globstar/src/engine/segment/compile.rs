@@ -12,7 +12,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::engine::ops::Op;
 
-use super::bits::Bits;
+use super::bits::{Bits, Wide};
 use super::seg_nfa::SegNfa;
 use super::{
     AffixIndex, AnyNfa, ByteSketch, Bytes, Chain, Elem, LINEAR_SUFFIXES, LitSet, LitSets, MANY_G,
@@ -26,12 +26,19 @@ const START: u32 = u32::MAX;
 
 pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
     let g = Graph::build(ops, dot, ci);
+    let chains = g.chains();
+    // A lone chain with at most one globstar serves `match_dir` too;
+    // anything else needs the NFA.
+    let nfa = match &chains[..] {
+        [c] if c.globstar != MANY_G => None,
+        _ => Some(Box::new(g.nfa())),
+    };
     let suffixes = facts::suffixes(ops);
     SegmentMatcher {
         suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
         suffixes,
-        chains: g.chains(),
-        nfa: g.nfa(),
+        chains,
+        nfa,
         elems: g.elems.into_boxed_slice(),
         prefixes: facts::static_prefixes(ops),
         case_insensitive: ci,
@@ -51,12 +58,23 @@ struct Graph {
     pred_at: Vec<u32>,
     /// Nodes the pattern may end after.
     ends: Vec<u32>,
-    /// Successor lists in CSR form, derived from `preds`, and the
-    /// start's successors. Non-linear only.
+    /// Derived from `preds` once the walk is done. Non-linear only.
+    edges: Edges,
+    ci: bool,
+}
+
+/// Successor lists in CSR form, and the start's successors.
+#[derive(Default)]
+struct Edges {
     offsets: Vec<u32>,
     targets: Vec<u32>,
     start: Vec<u32>,
-    ci: bool,
+}
+
+impl Edges {
+    fn succ(&self, i: usize) -> &[u32] {
+        &self.targets[self.offsets[i] as usize..self.offsets[i + 1] as usize]
+    }
 }
 
 impl Graph {
@@ -69,9 +87,7 @@ impl Graph {
                 preds: Vec::new(),
                 pred_at: Vec::new(),
                 ends: Vec::new(),
-                offsets: Vec::new(),
-                targets: Vec::new(),
-                start: Vec::new(),
+                edges: Edges::default(),
                 ci,
             },
             memo: HashMap::default(),
@@ -138,13 +154,15 @@ impl Graph {
                 *slot += 1;
             }
         }
-        self.start = start;
-        self.offsets = offsets;
-        self.targets = targets;
+        self.edges = Edges {
+            offsets,
+            targets,
+            start,
+        };
     }
 
-    fn succ(&self, i: usize) -> &[u32] {
-        &self.targets[self.offsets[i] as usize..self.offsets[i + 1] as usize]
+    fn edges(&self) -> Option<&Edges> {
+        (!self.linear).then_some(&self.edges)
     }
 
     /// Every path through the graph as a `Chain`, in pattern order;
@@ -157,8 +175,13 @@ impl Graph {
         }
         let mut paths: Vec<Vec<u32>> = Vec::new();
         // Depth-first, first branch first.
-        let mut stack: Vec<(u32, Vec<u32>)> =
-            self.start.iter().rev().map(|&s| (s, Vec::new())).collect();
+        let mut stack: Vec<(u32, Vec<u32>)> = self
+            .edges
+            .start
+            .iter()
+            .rev()
+            .map(|&s| (s, Vec::new()))
+            .collect();
         while let Some((id, mut path)) = stack.pop() {
             if id == ACCEPT {
                 paths.push(path);
@@ -168,7 +191,7 @@ impl Graph {
                 continue;
             }
             path.push(id);
-            let succ = self.succ(id as usize);
+            let succ = self.edges.succ(id as usize);
             for (k, &s) in succ.iter().enumerate().rev() {
                 if k == 0 {
                     stack.push((s, path));
@@ -204,7 +227,12 @@ impl Graph {
                 if n_states((0..n).map(elem)) > 64 {
                     return None;
                 }
-                Some(Box::new(nfa_over::<u64>(self, Some(p))))
+                Some(Box::new(nfa_over::<u64>(
+                    &self.elems,
+                    self.ci,
+                    None,
+                    Some(p),
+                )))
             }
             _ => None,
         };
@@ -219,11 +247,19 @@ impl Graph {
     /// The NFA over the whole graph: a `u64` active set when it fits.
     fn nfa(&self) -> AnyNfa {
         if n_states(self.elems.iter()) <= 64 {
-            AnyNfa::Small(nfa_over(self, None))
+            AnyNfa::Small(nfa_over(&self.elems, self.ci, self.edges(), None))
         } else {
-            AnyNfa::Wide(Box::new(nfa_over(self, None)))
+            AnyNfa::Wide(nfa_over(&self.elems, self.ci, self.edges(), None))
         }
     }
+}
+
+/// The NFA over the lone chain a matcher kept instead of one (test
+/// hook).
+pub(super) fn chain_nfa(m: &SegmentMatcher) -> Nfa<Wide> {
+    let nodes = &m.chains[0].nodes;
+    let path = (!nodes.is_empty()).then_some(&nodes[..]);
+    nfa_over(&m.elems, m.case_insensitive, None, path)
 }
 
 /// NFA states over `elems`, the accept state included.
@@ -254,26 +290,30 @@ fn survey(ops: &[Op]) -> (usize, bool) {
     (boundaries, linear)
 }
 
-/// The NFA over the positions of a path (`None`: the graph itself).
+/// The NFA over the positions of a path (`None`: the graph itself,
+/// whose `edges` a brace pattern stores; a linear one has none).
 /// States are numbered by position, the accept state last. On the
 /// graph of a brace pattern, literal siblings (same predecessor) are
 /// gathered into `LitSet`s.
-fn nfa_over<B: Bits>(g: &Graph, path: Option<&[u32]>) -> Nfa<B> {
-    let n = path.map_or(g.elems.len(), <[u32]>::len);
+fn nfa_over<B: Bits>(
+    elems: &[Elem],
+    ci: bool,
+    edges: Option<&Edges>,
+    path: Option<&[u32]>,
+) -> Nfa<B> {
+    let n = path.map_or(elems.len(), <[u32]>::len);
     let node_at = |i: usize| path.map_or(i as u32, |p| p[i]);
-    let elem = |i: usize| &g.elems[node_at(i) as usize];
-    // Positions of a path follow one another; only the graph of a
-    // brace pattern has stored edges.
-    let chained = path.is_some() || g.linear;
+    let elem = |i: usize| &elems[node_at(i) as usize];
+    // Positions of a path follow one another.
+    let edges = if path.is_some() { None } else { edges };
     let succs = |i: usize| {
-        let (next, stored): (Option<u32>, &[u32]) = if chained {
-            (Some(if i + 1 < n { i as u32 + 1 } else { ACCEPT }), &[])
-        } else {
-            (None, g.succ(i))
+        let (next, stored): (Option<u32>, &[u32]) = match edges {
+            Some(e) => (None, e.succ(i)),
+            None => (Some(if i + 1 < n { i as u32 + 1 } else { ACCEPT }), &[]),
         };
         next.into_iter().chain(stored.iter().copied())
     };
-    let start: &[u32] = if chained { &[0] } else { &g.start };
+    let start: &[u32] = edges.map_or(&[0], |e| &e.start);
 
     // Entry state per position; on the stack for the common sizes.
     let mut stack = [0u32; 64];
@@ -358,8 +398,8 @@ fn nfa_over<B: Bits>(g: &Graph, path: Option<&[u32]>) -> Nfa<B> {
     // the start) when there are at least two.
     let mut lit_sets: Vec<LitSet<B>> = Vec::new();
     let mut grouped = B::zero(words);
-    if !chained {
-        let lit_of = |s: u32| g.elems[states[s as usize].node as usize].as_lit();
+    if edges.is_some() {
+        let lit_of = |s: u32| elems[states[s as usize].node as usize].as_lit();
         let mut lit_set = |targets: &mut dyn Iterator<Item = u32>| {
             let mut sorted: Vec<u32> = targets
                 .filter(|&t| t != ACCEPT && matches!(elem(t as usize), Elem::Lit(_)))
@@ -368,7 +408,7 @@ fn nfa_over<B: Bits>(g: &Graph, path: Option<&[u32]>) -> Nfa<B> {
             if sorted.len() < 2 {
                 return;
             }
-            sorted.sort_unstable_by(|&a, &b| lit_cmp(lit_of(a), lit_of(b), g.ci).then(a.cmp(&b)));
+            sorted.sort_unstable_by(|&a, &b| lit_cmp(lit_of(a), lit_of(b), ci).then(a.cmp(&b)));
             sorted.dedup();
             let mut set = B::zero(words);
             for &s in &sorted {

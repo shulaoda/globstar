@@ -37,19 +37,24 @@ Let m = element count, n = segment count. `is_match` enumerates the
 paths through the graph as _chains_ while there are at most 64 of
 them (one for a brace-free pattern); each is matched on its own, in
 pattern order, with a quick last-segment suffix check between them.
-Past 64 paths, and always for `match_dir`, the NFA over the whole
-graph runs instead.
+Past 64 paths the NFA over the whole graph runs instead. `match_dir`
+goes the same way: one chain with at most one globstar — the common
+case — answers it by the same anchored compares, reading the tokens
+the NFA would hold after the directory off the chain, and such a
+matcher keeps no NFA at all. Only a matcher whose chains cannot serve
+(none, several, or one with several globstars) builds the NFA.
 
 - **Zero G**: positional — n must equal m, element i consumes segment
   i. O(n).
 - **One G at g** (the dominant real-world shape): the head `0..g` and
   tail `g+1..m` are both _anchored_ — head against the first g
-  segments (one pre-joined sep-aware memcmp when all-literal), tail
+  segments (a literal is compared in place, no segment scan), tail
   against the last m−g−1 segments right-to-left. The absorber takes
   whatever remains; arity (G1 ≥ 1, overlap) is byte-position
   arithmetic, and the `dot=false` rule is one scan of the absorbed
   byte range for `(^|/)\.`. O(n), no search, no backtracking.
-- **Several Gs / `match_dir` / > 64 paths**: an NFA over the graph,
+- **Several Gs / a union's `match_dir` / > 64 paths**: an NFA over the
+  graph,
   one state per node (two for `G0Strict`/`G1`), stepped once per
   _segment_. The active set is one u64 (int32 in JS) while the graph
   has at most 64 states (31 in JS) and a word slice beyond, so no

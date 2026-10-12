@@ -2,9 +2,7 @@ use crate::dir_match::DirMatch;
 
 use super::bits::Bits;
 use super::compile::lit_cmp;
-use super::{
-    AnyNfa, ByteSketch, Chain, Elem, LitSet, MANY_G, NO_G, Nfa, SegmentMatcher, Wild, WildKind,
-};
+use super::{ByteSketch, Chain, Elem, LitSet, MANY_G, NO_G, Nfa, SegmentMatcher, Wild, WildKind};
 
 /// Index just past the segment that starts at `pos`.
 #[inline(always)]
@@ -14,6 +12,16 @@ fn seg_end(path: &[u8], pos: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Start of the segment that ends at `end`.
+#[inline(always)]
+fn seg_start(path: &[u8], end: usize) -> usize {
+    let mut s = end;
+    while s > 0 && !std::path::is_separator(path[s - 1] as char) {
+        s -= 1;
+    }
+    s
 }
 
 /// A chain's elements in order: the matcher's slice for the lone path
@@ -110,26 +118,36 @@ impl SegmentMatcher {
     pub(super) fn chain_matches(&self, i: usize, path: &[u8]) -> bool {
         let chain = &self.chains[i];
         if chain.nodes.is_empty() {
-            self.chain_matches_on(chain, &self.elems[..], path)
+            self.chain_matches_on(chain, &&self.elems[..], path)
         } else {
             let elems = Mapped {
                 nodes: &chain.nodes,
                 elems: &self.elems,
             };
-            self.chain_matches_on(chain, elems, path)
+            self.chain_matches_on(chain, &elems, path)
         }
     }
 
     #[inline(always)]
-    fn chain_matches_on<E: ChainElems>(&self, chain: &Chain, elems: E, path: &[u8]) -> bool {
+    fn chain_matches_on<E: ChainElems>(&self, chain: &Chain, elems: &E, path: &[u8]) -> bool {
         match chain.globstar {
-            NO_G => self.match_fixed(elems, path),
-            MANY_G => match (&chain.nfa, &self.nfa) {
-                (Some(nfa), _) => nfa.is_match(self, path),
-                (None, AnyNfa::Small(nfa)) => nfa.is_match(self, path),
-                (None, AnyNfa::Wide(nfa)) => nfa.is_match(self, path),
+            NO_G => self.fixed_run(elems, 0..elems.len(), path, 0),
+            MANY_G => match &chain.nfa {
+                Some(nfa) => nfa.is_match(self, path),
+                // The lone path of a linear pattern: the matcher's NFA
+                // is its own.
+                None => self
+                    .nfa
+                    .as_ref()
+                    .is_some_and(|nfa| nfa.is_match(self, path)),
             },
-            g => self.match_single_g(elems, g as usize, path),
+            g => {
+                let g = g as usize;
+                match self.head(elems, g, path) {
+                    Some(mid_start) => self.tail_and_globstar(elems, g, path, mid_start),
+                    None => false,
+                }
+            }
         }
     }
 
@@ -159,89 +177,185 @@ impl SegmentMatcher {
         }
     }
 
-    fn match_fixed<E: ChainElems>(&self, elems: E, path: &[u8]) -> bool {
-        let last = elems.len() - 1;
-        let mut pos = 0;
-        for i in 0..last {
-            match self.consume_at(&elems, i, path, pos) {
+    /// Do `elems[range]` take the segments from `pos` to the end, one
+    /// each?
+    fn fixed_run<E: ChainElems>(
+        &self,
+        elems: &E,
+        range: std::ops::Range<usize>,
+        path: &[u8],
+        mut pos: usize,
+    ) -> bool {
+        let last = range.end - 1;
+        for i in range.start..last {
+            match self.consume_at(elems, i, path, pos) {
                 Some(end) if end < path.len() => pos = end + 1,
                 _ => return false,
             }
         }
-        self.consume_at(&elems, last, path, pos) == Some(path.len())
+        self.consume_at(elems, last, path, pos) == Some(path.len())
     }
 
-    fn match_single_g<E: ChainElems>(&self, elems: E, g: usize, path: &[u8]) -> bool {
-        let m = elems.len();
-        let tail_len = m - g - 1;
-
-        let mut tail_end = path.len();
-        let mut ts = 0usize;
-        for j in (0..tail_len).rev() {
-            let mut s = tail_end;
-            while s > 0 && !std::path::is_separator(path[s - 1] as char) {
-                s -= 1;
+    /// The head `elems[..g]`, one segment each: where the segment after
+    /// it starts. Every globstar wants that segment (`G1` absorbs one,
+    /// `G0` is followed by its tail), so a path that ends in the head
+    /// fails.
+    #[inline(always)]
+    fn head<E: ChainElems>(&self, elems: &E, g: usize, path: &[u8]) -> Option<usize> {
+        let mut pos = 0;
+        for i in 0..g {
+            match self.consume_at(elems, i, path, pos) {
+                Some(end) if end < path.len() => pos = end + 1,
+                _ => return None,
             }
-            if !self.elem_consumes(elems.at(g + 1 + j), &path[s..tail_end]) {
+        }
+        Some(pos)
+    }
+
+    /// With the head consumed up to `mid_start`: the tail
+    /// `elems[g + 1..]` on the last segments, found backward, and the
+    /// globstar on what lies between.
+    fn tail_and_globstar<E: ChainElems>(
+        &self,
+        elems: &E,
+        g: usize,
+        path: &[u8],
+        mid_start: usize,
+    ) -> bool {
+        let n = elems.len();
+        // Where the tail starts; past the end when there is none.
+        let mut split = path.len() + 1;
+        let mut end = path.len();
+        for j in (g + 1..n).rev() {
+            let s = seg_start(path, end);
+            if s < mid_start || !self.elem_consumes(elems.at(j), &path[s..end]) {
                 return false;
             }
-            if j > 0 {
+            split = s;
+            if j > g + 1 {
                 if s == 0 {
                     return false;
                 }
-                tail_end = s - 1;
-            }
-            ts = s;
-        }
-
-        // Every globstar wants a segment after the head: `G1` absorbs
-        // one, `G0` is followed by its tail.
-        let mut mid_start = 0;
-        for i in 0..g {
-            match self.consume_at(&elems, i, path, mid_start) {
-                Some(end) if end < path.len() => mid_start = end + 1,
-                _ => return false,
+                end = s - 1;
             }
         }
+        self.absorbs(elems.at(g), path, mid_start, split)
+    }
 
-        let (mid_exists, mid_end) = if tail_len > 0 {
-            if ts < mid_start {
-                return false;
-            }
-            (ts > mid_start, ts.saturating_sub(1))
-        } else {
-            (mid_start <= path.len(), path.len())
-        };
-
-        match elems.at(g) {
-            Elem::G0 => {}
-            Elem::G0Strict => {
-                if mid_exists && std::path::is_separator(path[mid_start] as char) {
-                    return false;
-                }
-            }
-            Elem::G1 => {
-                if !mid_exists {
-                    return false;
-                }
-            }
-            _ => unreachable!(),
+    /// Can the globstar `kind` take the segments between the head
+    /// (ending before `from`) and the tail starting at `split`?
+    /// `split == from` means no segment at all.
+    fn absorbs(&self, kind: &Elem, path: &[u8], from: usize, split: usize) -> bool {
+        if split == from {
+            return kind.nullable();
         }
-
-        if self.dot || !mid_exists {
-            return true;
-        }
-        if mid_start < mid_end && path[mid_start] == b'.' {
+        // Up to the separator before the tail, or the end.
+        let to = split - 1;
+        // `G0Strict` may not start with an empty segment.
+        if matches!(kind, Elem::G0Strict)
+            && (from == to || std::path::is_separator(path[from] as char))
+        {
             return false;
         }
-        let mut i = mid_start;
-        while i < mid_end {
-            if std::path::is_separator(path[i] as char) && i + 1 < mid_end && path[i + 1] == b'.' {
-                return false;
-            }
-            i += 1;
+        self.dot_free(path, from, to)
+    }
+
+    /// Under `dot=false`, no segment within `path[from..to)` may start
+    /// with a `.`.
+    fn dot_free(&self, path: &[u8], from: usize, to: usize) -> bool {
+        if self.dot {
+            return true;
         }
-        true
+        if from < to && path[from] == b'.' {
+            return false;
+        }
+        !(from..to)
+            .any(|i| std::path::is_separator(path[i] as char) && i + 1 < to && path[i + 1] == b'.')
+    }
+
+    /// `match_dir` through the lone chain of a matcher that keeps no
+    /// NFA.
+    pub(super) fn chain_dir(&self, dir: &[u8]) -> DirMatch {
+        let chain = &self.chains[0];
+        if chain.nodes.is_empty() {
+            self.chain_dir_on(chain.globstar, &&self.elems[..], dir)
+        } else {
+            let elems = Mapped {
+                nodes: &chain.nodes,
+                elems: &self.elems,
+            };
+            self.chain_dir_on(chain.globstar, &elems, dir)
+        }
+    }
+
+    /// The tokens the NFA would hold after `dir`, read off the chain: a
+    /// head position when the directory ends inside the head, the
+    /// globstar when it has taken everything after the head, and a
+    /// tail position when the tail's first elements take the last
+    /// segments.
+    fn chain_dir_on<E: ChainElems>(&self, globstar: u32, elems: &E, dir: &[u8]) -> DirMatch {
+        let n = elems.len();
+        let g = if globstar == NO_G {
+            n
+        } else {
+            globstar as usize
+        };
+        let tl = n - g - usize::from(g < n);
+        // Every element from `i` on takes some segment: a token there
+        // still reaches accept.
+        let open = |i: usize| (i..n).all(|j| elems.at(j).satisfiable());
+        let tail_any = (n - tl..n).all(|j| elems.at(j).any_seg());
+        if dir.is_empty() {
+            // The walk root: nothing consumed yet. All below iff a
+            // leading globstar is followed by at most one any-segment.
+            let all = self.dot && g == 0 && tl <= 1 && tail_any;
+            return DirMatch::from_exact_prefix_all(self.is_match(dir), true, all);
+        }
+        let mut mid_start = 0;
+        for i in 0..g {
+            let Some(end) = self.consume_at(elems, i, dir, mid_start) else {
+                return DirMatch::Pruned;
+            };
+            if end == dir.len() {
+                // `dir` is the chain's first `k` segments. A globstar
+                // reached with nothing absorbed covers all below iff its
+                // tail is at most one any-segment.
+                let k = i + 1;
+                let all = self.dot && g < n && k == g && tl <= 1 && tail_any;
+                return DirMatch::from_exact_prefix_all(k == n, k < n && open(k), all);
+            }
+            mid_start = end + 1;
+        }
+        if g == n {
+            // A fixed chain, and the directory is deeper.
+            return DirMatch::Pruned;
+        }
+        let kind = elems.at(g);
+        let exact = self.tail_and_globstar(elems, g, dir, mid_start);
+        // The globstar took everything after the head.
+        let g_alive = self.absorbs(kind, dir, mid_start, dir.len() + 1);
+        let mut prefix = g_alive && open(g + 1);
+        let mut all = self.dot && g_alive && tail_any;
+        // Tail tokens: `elems[g + 1..g + 1 + j]` on the last `j`
+        // segments with the globstar released before them. A dead
+        // globstar may leave one; `all` needs them all.
+        if (!prefix || all) && tl > 1 {
+            let mut end = dir.len();
+            for j in 1..tl {
+                let start = seg_start(dir, end);
+                let alive = self.absorbs(kind, dir, mid_start, start)
+                    && self.fixed_run(elems, g + 1..g + 1 + j, dir, start);
+                prefix |= alive && open(g + 1 + j);
+                all &= alive;
+                if start == mid_start {
+                    // No segment is left for a longer tail.
+                    all &= j + 1 == tl;
+                    break;
+                }
+                end = start - 1;
+            }
+        }
+        DirMatch::from_exact_prefix_all(exact, prefix, all)
     }
 
     #[inline(always)]
@@ -465,12 +579,7 @@ impl<B: Bits> Nfa<B> {
                 return;
             }
             let state = &self.states[s];
-            let consumes = match &m.elems[state.node as usize] {
-                Elem::Lit(_) => false,
-                Elem::Wild(w) => w.any_seg,
-                Elem::G0 | Elem::G0Strict | Elem::G1 => true,
-            };
-            if consumes {
+            if m.elems[state.node as usize].any_seg() {
                 next.or_with(&state.after);
             }
         });

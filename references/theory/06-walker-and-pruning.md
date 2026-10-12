@@ -128,7 +128,7 @@ combine(false, false, false) = Pruned
 
 ### 2.2 Segment realization
 
-SegmentMatcher splits `d` at path separators and runs its element-position NFA. The active `u64` position set is then classified with two precomputed masks:
+A matcher with one chain and at most one globstar — the common case — keeps no NFA: `chain_dir` reads the tokens the NFA would hold after `d` off the chain (a head position when `d` ends inside the head, the globstar when it took everything after the head, a tail position when the tail's first elements take the last segments) and classifies them as below. Any other SegmentMatcher splits `d` at path separators and runs its element-position NFA. The active `u64` position set is then classified with two precomputed masks:
 
 ```
 S ← run the segments of d
@@ -174,6 +174,8 @@ repeat:
 ```
 
 Tokens only move right along a sequence or sit on a globstar, so the loop ends within the number of states. The per-`Wild` bit is precomputed: `*` and `?*` have it, `*.js` and `?` do not, and a `Generic` in-segment NFA gets it from the same simulation run over its `Any` states.
+
+On a lone chain the simulation has a closed form, which `chain_dir` uses: the globstar is alive after `d`, every tail element is such a `Wild`, and every shorter tail token is alive as well (the tail's first j elements take the last j segments, the globstar released before them), for 1 ≤ j < tail length.
 
 Under `dot=false` it returns `false` without simulating: `**` does not match a dot-led name, so some `d/.x` always escapes.
 

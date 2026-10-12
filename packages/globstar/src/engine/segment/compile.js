@@ -37,6 +37,7 @@ import {
   LINEAR_SUFFIXES,
   NO_G,
   MANY_G,
+  elemSatisfiable,
 } from "./index.js";
 import { compileSegNfa } from "./seg-nfa.js";
 import { wordsFor, bitSet, bitsOr, bitTest, bitsIntersect } from "./bits.js";
@@ -55,12 +56,17 @@ const B_OPEN = 4; // a bare `**` absorbs the rest of the path
 
 const EMPTY_BYTES = new Uint8Array(0);
 
-export function compileSegment(ops, dot, ci) {
+export function compileSegment(ops, dot, ci, forceNfa) {
   const graph = buildGraph(ops, dot, ci);
   const chainList = chains(graph);
-  let nStates = 1;
-  for (const e of graph.elems) nStates += elemStates(e);
-  const nfa = nStates <= 31 ? nfaSmall(graph, null) : nfaWide(graph, null);
+  // A lone chain with at most one globstar serves `matchDir` too;
+  // anything else needs the NFA (the test hook always does).
+  let nfa = null;
+  if (forceNfa || chainList.length !== 1 || chainList[0].globstar === MANY_G) {
+    let nStates = 1;
+    for (const e of graph.elems) nStates += elemStates(e);
+    nfa = nStates <= 31 ? nfaSmall(graph, null) : nfaWide(graph, null);
+  }
   return { elems: graph.elems, chains: chainList, nfa };
 }
 
@@ -74,9 +80,6 @@ const nullable = (e) => e.kind === EL_G0 || e.kind === EL_G0_STRICT;
 // NFA states the element owns: G0_STRICT/G1 have a body state right
 // after their entry.
 const elemStates = (e) => (e.kind === EL_G0_STRICT || e.kind === EL_G1 ? 2 : 1);
-// Can the element consume some segment?
-const elemSatisfiable = (e) =>
-  e.kind !== EL_WILD || e.wild.kind !== WK_GENERIC || e.wild.nfa.satisfiable;
 
 // Does the op hold a segment boundary?
 function crosses(op) {

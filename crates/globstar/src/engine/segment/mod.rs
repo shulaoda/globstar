@@ -101,6 +101,15 @@ impl Elem {
         matches!(self, Elem::G0 | Elem::G0Strict)
     }
 
+    /// Takes every non-empty segment (`match_dir`'s all-below).
+    fn any_seg(&self) -> bool {
+        match self {
+            Elem::Lit(_) => false,
+            Elem::Wild(w) => w.any_seg,
+            _ => true,
+        }
+    }
+
     /// NFA states the element owns: `G0Strict`/`G1` have a body state
     /// right after their entry.
     #[inline]
@@ -242,15 +251,36 @@ struct LitSet<B: Bits> {
 #[derive(Debug, Clone)]
 enum AnyNfa {
     Small(Nfa<u64>),
-    Wide(Box<Nfa<Wide>>),
+    Wide(Nfa<Wide>),
+}
+
+impl AnyNfa {
+    fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
+        match self {
+            AnyNfa::Small(n) => n.is_match(m, path),
+            AnyNfa::Wide(n) => n.is_match(m, path),
+        }
+    }
+
+    fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
+        match self {
+            AnyNfa::Small(n) => n.match_dir(m, dir_path),
+            AnyNfa::Wide(n) => n.match_dir(m, dir_path),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct SegmentMatcher {
     /// The graph's nodes, in emission order.
     elems: Box<[Elem]>,
-    nfa: AnyNfa,
+    /// The paths through the graph, tried in order; none past
+    /// `MAX_CHAINS`.
     chains: Box<[Chain]>,
+    /// The NFA over the graph, kept only when the chains cannot serve:
+    /// none, several (`match_dir` runs them as one), or one with
+    /// several globstars.
+    nfa: Option<Box<AnyNfa>>,
     /// Prefilter: literal suffixes one of which every match ends
     /// with (empty: none known), sketched by last byte.
     suffixes: Box<[Bytes]>,
@@ -280,29 +310,31 @@ impl SegmentMatcher {
         if !self.prefilter(path) {
             return false;
         }
-        match self.chains.len() {
-            0 => self.nfa_is_match(path),
-            1 => self.chain_matches(0, path),
-            n => (0..n).any(|i| self.ends_like(i, path) && self.chain_matches(i, path)),
+        match (&self.chains[..], &self.nfa) {
+            ([], Some(nfa)) => nfa.is_match(self, path),
+            ([_], _) => self.chain_matches(0, path),
+            (chains, _) => {
+                (0..chains.len()).any(|i| self.ends_like(i, path) && self.chain_matches(i, path))
+            }
         }
     }
 
-    /// `is_match` through the NFA only (test hook).
+    /// `is_match` through an NFA only (test hook): the matcher's own,
+    /// or one laid out over the lone chain it kept instead.
     pub(crate) fn is_match_nfa(&self, path: &[u8]) -> bool {
-        self.prefilter(path) && self.nfa_is_match(path)
-    }
-
-    fn nfa_is_match(&self, path: &[u8]) -> bool {
+        if !self.prefilter(path) {
+            return false;
+        }
         match &self.nfa {
-            AnyNfa::Small(n) => n.is_match(self, path),
-            AnyNfa::Wide(n) => n.is_match(self, path),
+            Some(nfa) => nfa.is_match(self, path),
+            None => compile::chain_nfa(self).is_match(self, path),
         }
     }
 
     pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
         match &self.nfa {
-            AnyNfa::Small(n) => n.match_dir(self, dir_path),
-            AnyNfa::Wide(n) => n.match_dir(self, dir_path),
+            Some(nfa) => nfa.match_dir(self, dir_path),
+            None => self.chain_dir(dir_path),
         }
     }
 }
