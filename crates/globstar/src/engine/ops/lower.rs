@@ -3,7 +3,7 @@ use crate::ast::Node;
 use super::ir::{Op, OpProgram};
 
 /// Lower an AST into one normalized [`OpProgram`]. The nodes move into
-/// the ops, so a brace that needs the `/` beside it (see [`absorb_seps`])
+/// the ops, so a brace that needs the `/` beside it (see `absorb_seps`)
 /// is found by a scan first.
 pub fn lower(node: Node, case_insensitive: bool) -> OpProgram {
     let node = if needs_absorb(&node) {

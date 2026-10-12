@@ -9,6 +9,7 @@ permissions:
   contents: read
 
 jobs:
+  # Static checks, docs and the cross-runtime fuzz smoke, once.
   checks:
     runs-on: ubuntu-latest
     steps:
@@ -22,8 +23,6 @@ jobs:
           tool: just
       - run: pnpm install --frozen-lockfile
       - run: just lint
-      - run: just test
-      - run: just verify
       - name: Docs
         run: cargo doc --workspace --no-deps
         env:
@@ -31,9 +30,15 @@ jobs:
       - name: Fuzz (smoke)
         run: just fuzz --count 20000
 
-  # The only place `corpus-windows.txt` and the `\`-separator paths run.
-  windows:
-    runs-on: windows-latest
+  # The Rust and JS suites plus the cross-runtime verify on every
+  # platform; Windows is the only place `corpus-windows.txt` and the
+  # `\`-separator paths run.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
