@@ -7,11 +7,18 @@
     "check": "vp check",
     "fix": "vp check --fix",
     "lint": "vp lint",
-    "fmt": "vp fmt"
+    "fmt": "vp fmt",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
     "mitata": "^1.0.34",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitepress": "^1.6.4",
+    "vue": "^3.5.43"
   },
   "packageManager": "pnpm@10.33.0"
 }

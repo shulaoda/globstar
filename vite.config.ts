@@ -9,6 +9,8 @@ const ignorePatterns = [
   "fixtures/**",
   "references/**",
   "BENCHMARKS.md",
+  "docs/.vitepress/cache/**",
+  "docs/.vitepress/dist/**",
 ];
 
 export default defineConfig({

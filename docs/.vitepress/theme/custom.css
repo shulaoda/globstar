@@ -1,0 +1,9 @@
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #3b82f6 30%, #06b6d4);
+}
+
+/* Behavior tables read better when the cells do not wrap. */
+.vp-doc table code {
+  white-space: nowrap;
+}
