@@ -1,5 +1,5 @@
 import { parse } from "./parser.js";
-import { lower } from "./engine/ops/index.js";
+import { lower } from "./engine/ops.js";
 import { LiteralMatcher } from "./engine/literal.js";
 import { SegmentMatcher } from "./engine/segment/index.js";
 import { nodeToLiteralBytes } from "./ast.js";

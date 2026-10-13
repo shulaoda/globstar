@@ -19,7 +19,7 @@ import {
   OP_GLOBSTAR_ANY,
   OP_LEADING_SEPS,
   OP_ALTERNATION,
-} from "../ops/index.js";
+} from "../ops.js";
 import { CI_BYTE } from "../../ast.js";
 import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1 } from "../../utf8.js";

@@ -30,7 +30,7 @@ import {
   OP_SLASH_ANYTHING,
   OP_STAR,
   lower,
-} from "../src/engine/ops/index.js";
+} from "../src/engine/ops.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cases = readFileSync(resolve(here, "../../../fixtures/compiler-stages.tsv"), "utf8");

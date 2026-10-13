@@ -4,12 +4,11 @@
 // the graph with at most one globstar, an NFA over the graph for
 // everything else.
 
-import { computeStaticPrefixes } from "../ops/index.js";
 import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSegment, opsHaveNonAscii } from "./compile.js";
-import { endsWithSepAware } from "../facts.js";
+import { LiteralFacts, computeStaticPrefixes, endsWithSepAware } from "./facts.js";
 import {
   chainMatches,
   chainDir,
@@ -35,7 +34,7 @@ export class SegmentMatcher {
     this.byteOnly = byteOnly;
     this.prefixes = computeStaticPrefixes(program.ops);
     this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
-    const f = program.facts;
+    const f = LiteralFacts.extract(program.ops);
     this.factsSuffixStr = f.suffix.length > 0 ? f.suffix : null;
     this.factsSuffixSetStr = f.suffixSet.length > 0 ? f.suffixSet : null;
   }

@@ -1,3 +1,29 @@
+// The linear IR between the parser and the engines, and the AST → ops
+// lowering that produces it. JS twin of `crates/globstar/src/engine/ops.rs`.
+
+export const OP_LIT = 0;
+export const OP_ANYCHAR = 1;
+export const OP_STAR = 2;
+export const OP_CLASS = 3;
+export const OP_SEP = 4;
+export const OP_SEP_RUN = 5;
+export const OP_GLOBSTAR = 6;
+export const OP_OPT_SEGMENTS_SLASH = 7;
+export const OP_SLASH_ANYTHING = 8;
+export const OP_GLOBSTAR_ANY = 9;
+export const OP_LEADING_SEPS = 10;
+export const OP_ALTERNATION = 11;
+
+export const ANYCHAR_OP = Object.freeze({ kind: OP_ANYCHAR });
+export const STAR_OP = Object.freeze({ kind: OP_STAR });
+export const SEP_OP = Object.freeze({ kind: OP_SEP });
+export const SEP_RUN_OP = Object.freeze({ kind: OP_SEP_RUN });
+export const GLOBSTAR_OP = Object.freeze({ kind: OP_GLOBSTAR });
+export const OSS_OP = Object.freeze({ kind: OP_OPT_SEGMENTS_SLASH });
+export const SLASH_ANY_OP = Object.freeze({ kind: OP_SLASH_ANYTHING });
+export const GSTAR_ANY_OP = Object.freeze({ kind: OP_GLOBSTAR_ANY });
+export const LEADING_SEPS_OP = Object.freeze({ kind: OP_LEADING_SEPS });
+
 import {
   N_ANYCHAR,
   N_BRACE,
@@ -11,26 +37,7 @@ import {
   classExpandedAsciiCi,
   concat,
   sep,
-} from "../../ast.js";
-import { LiteralFacts } from "../facts.js";
-import {
-  ANYCHAR_OP,
-  GLOBSTAR_OP,
-  GSTAR_ANY_OP,
-  LEADING_SEPS_OP,
-  OP_ALTERNATION,
-  OP_CLASS,
-  OP_GLOBSTAR,
-  OP_LIT,
-  OP_OPT_SEGMENTS_SLASH,
-  OP_SEP,
-  OP_STAR,
-  OSS_OP,
-  SEP_OP,
-  SEP_RUN_OP,
-  SLASH_ANY_OP,
-  STAR_OP,
-} from "./ir.js";
+} from "../ast.js";
 
 // Nodes are shared, not copied, so a brace that needs the `/` beside it
 // (see `absorbSeps`) is cheapest to find while lowering; the rare second
@@ -46,7 +53,7 @@ export function lower(node, caseInsensitive) {
   foldGlobstars(ops);
   applyLeadingSeps(ops, false);
   const ci = !!caseInsensitive;
-  return { ops, facts: LiteralFacts.extract(ops), caseInsensitive: ci };
+  return { ops, caseInsensitive: ci };
 }
 
 function lowerInto(node, out, caseInsensitive, flag) {

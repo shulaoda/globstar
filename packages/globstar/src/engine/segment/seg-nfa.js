@@ -4,7 +4,7 @@
 // for up to 32 states and Int32Array words beyond, so no in-segment
 // pattern is too large.
 
-import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION } from "../ops/index.js";
+import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION } from "../ops.js";
 import { classMatches, ciLetter } from "../../ast.js";
 import { ctz32 } from "../../bytes.js";
 import { wordsFor, bitTest, bitSet, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
