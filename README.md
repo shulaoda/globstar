@@ -37,6 +37,17 @@ documented edge case. The Rust crate is the canonical implementation
 and the JS package is held to the same semantics via the differential
 test corpus under `crates/globstar/tests/corpus/`.
 
+## Documentation
+
+The user guide and a browser playground live under [`docs/`](./docs)
+as a [VitePress](https://vitepress.dev/) site. The playground runs the
+`@globstar/core` source from this checkout.
+
+```sh
+pnpm docs:dev     # local dev server
+pnpm docs:build   # static site in docs/.vitepress/dist
+```
+
 ## Specifications
 
 The pattern language and walker behavior are formalized under
