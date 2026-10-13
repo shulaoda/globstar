@@ -6,7 +6,7 @@ use crate::ast::Node;
 /// token, so the union still starts the way its members do and keeps
 /// their static prefixes: `{src/**,spec/**}` stays, `s{rc,pec}/**` would
 /// not; `src/mod{1,2}/index.ts` is fine.
-pub fn factor_branches(branches: Vec<Node>) -> Node {
+pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches
         .into_iter()
         .map(|n| match n {

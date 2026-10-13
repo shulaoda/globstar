@@ -1,6 +1,56 @@
-use crate::ast::Node;
+//! The linear IR between the parser and the engines, and the
+//! AST → ops lowering that produces it.
 
-use super::ir::{Op, OpProgram};
+use crate::ast::{CharClass, Node};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Op {
+    /// Match a literal byte sequence verbatim.
+    Lit(Vec<u8>),
+    /// Match a single non-separator byte.
+    AnyChar,
+    /// Match zero or more non-separator bytes.
+    Star,
+    /// Match one byte against the class.
+    Class(CharClass),
+    /// Match exactly one path separator.
+    Sep,
+    /// Match one or more path separators at a lenient globstar boundary.
+    SepRun,
+    /// Raw `**`; internal to lowering and normalized before publication.
+    Globstar,
+    /// `(?:[^/]+/+)*`, used for leading and middle `**/`. Every absorbed
+    /// segment is nonempty, empty segments come from the boundary ops.
+    OptSegmentsSlash,
+    /// `/.*`, used for strict trailing `/**`.
+    SlashAnything,
+    /// `.*`, used for a bare `**`.
+    GlobstarAny,
+    /// Zero or more platform separators: for pattern-head `**/`, and for a
+    /// `**/` that opens a brace branch after a brace that took the `/`.
+    LeadingSeps,
+    /// Brace alternation. Branches remain nested rather than cartesian-expanded.
+    Alternation(Vec<Vec<Op>>),
+}
+
+#[derive(Debug, Clone)]
+pub struct OpProgram {
+    pub(crate) ops: Vec<Op>,
+    pub(crate) case_insensitive: bool,
+}
+
+impl OpProgram {
+    pub fn ops(&self) -> &[Op] {
+        &self.ops
+    }
+
+    fn from_normalized(ops: Vec<Op>, case_insensitive: bool) -> Self {
+        Self {
+            ops,
+            case_insensitive,
+        }
+    }
+}
 
 /// Lower an AST into one normalized [`OpProgram`]. The nodes move into
 /// the ops, so a brace that needs the `/` beside it (see `absorb_seps`)

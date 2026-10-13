@@ -51,20 +51,13 @@ mod distribute;
 #[doc(hidden)]
 pub mod engine;
 pub mod error;
-#[doc(hidden)]
-pub mod factor;
-#[doc(hidden)]
-pub mod matcher;
-#[doc(hidden)]
-pub mod options;
+mod factor;
 #[doc(hidden)]
 pub mod parser;
 mod resolve;
 
 pub use dir_match::DirMatch;
 pub use error::GlobError;
-pub use matcher::Matcher;
-pub use options::CompileOptions;
 
 use std::collections::HashSet;
 
@@ -84,6 +77,41 @@ pub enum Tier {
     SimpleWildcard,
     /// Contains `**` or brace expansion.
     Globstar,
+}
+
+/// Compile-time options for [`Glob::new_with`] and [`Glob::union_with`].
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct CompileOptions {
+    /// When `false`, wildcards (`*` `?` `[^x]`) cannot consume a leading
+    /// `.` — dotfile protection. `Glob` defaults to `true`, `Walk` to
+    /// `false` (GLOB_SPEC.md §11.1 / §12.4).
+    pub dot: bool,
+
+    /// ASCII-only case folding, `false` by default; non-ASCII bytes
+    /// compare verbatim (GLOB_SPEC.md §11.2 / §12.5).
+    pub case_insensitive: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self {
+            dot: true,
+            case_insensitive: false,
+        }
+    }
+}
+
+impl CompileOptions {
+    pub fn dot(mut self, v: bool) -> Self {
+        self.dot = v;
+        self
+    }
+
+    pub fn case_insensitive(mut self, v: bool) -> Self {
+        self.case_insensitive = v;
+        self
+    }
 }
 
 /// A compiled glob pattern (or [`union`](Glob::union) of patterns).
@@ -270,6 +298,21 @@ fn contains_brace(node: &Node) -> bool {
         Node::Concat(xs) => xs.iter().any(contains_brace),
         _ => false,
     }
+}
+
+/// The matcher surface a filesystem walker consumes — implemented by
+/// [`Glob`]. Object-safe, so walkers can hold
+/// `Box<dyn Matcher>` when they mix matcher sources.
+pub trait Matcher {
+    /// Whole-path match: is `path` in the pattern's language?
+    fn is_match(&self, path: &[u8]) -> bool;
+
+    /// Directory-level verdict for pruning (see [`DirMatch`]).
+    fn match_dir(&self, dir_path: &[u8]) -> DirMatch;
+
+    /// Literal path prefixes a walker can seed traversal from. Every
+    /// matching path starts with one of the returned byte strings.
+    fn static_prefixes(&self) -> Vec<Vec<u8>>;
 }
 
 impl Matcher for Glob {
