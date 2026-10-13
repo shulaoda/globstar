@@ -23,10 +23,12 @@ jobs:
           tool: just
       - run: pnpm install --frozen-lockfile
       - run: just lint
-      - name: Docs
+      - name: Rust docs
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+      - name: Docs site
+        run: pnpm docs:build
       - name: Fuzz (smoke)
         run: just fuzz --count 20000
 
