@@ -7,7 +7,7 @@ The matcher exposes two outputs that drive directory-level pruning:
 
 Implementation:
 
-- `engine/ops/prefixes.rs::compute_static_prefixes` — the prefix extraction pass.
+- `engine/segment/facts.rs::static_prefixes` — the prefix extraction pass.
 - `engine/segment/::SegmentMatcher::match_dir` — the realization.
 - `dir_match.rs` — the `DirMatch` algebraic datatype.
 
@@ -64,7 +64,7 @@ The segment-boundary requirement matters because the walker uses `SP(P)` to seed
 
 ### 1.2 Extraction
 
-`compute_static_prefixes(ops)` returns one prefix per top-level brace branch:
+`static_prefixes(ops)` returns one prefix per top-level brace branch:
 
 - if `ops[0] = Op::Alternation(branches)`, recurse into each branch and collect the union of returned prefixes;
 - otherwise, scan `o₁, o₂, …` left to right, accumulating bytes from `Op::Lit` and separator bytes from `Op::Sep`/`Op::SepRun`; halt at the first non-literal op or at the first separator whose successor is non-literal.
@@ -330,7 +330,7 @@ If `**/*.test.ts` were instead routed through `match_dir`, the walker could prun
 
 | Symbol                                                                              | File                                                                     |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `compute_static_prefixes`                                                           | `engine/ops/prefixes.rs`                                                 |
+| `static_prefixes`                                                                   | `engine/segment/facts.rs`                                                |
 | `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                  |
 | `Graph::match_dir`, `Graph::covers_below`                                           | `engine/segment/exec.rs`                                                 |
 | `DirMatch`, `DirMatch::matches`, `DirMatch::may_match_below`, `DirMatch::matches_all_below` | `dir_match.rs`                                                           |

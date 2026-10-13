@@ -205,7 +205,7 @@ The same filesystem folding cuts the OTHER way under `caseInsensitive: false` on
 
 ## 6. Static-prefix Seeding
 
-The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, and see `computeStaticPrefixes` in `packages/globstar/src/engine/ops/prefixes.js`): the deepest segment-bounded literal prefix per branch of the pattern's top-level brace. Examples:
+The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, and see `computeStaticPrefixes` in `packages/globstar/src/engine/segment/facts.js`): the deepest segment-bounded literal prefix per branch of the pattern's top-level brace. Examples:
 
 | Pattern           | Static prefixes                         |
 | ----------------- | --------------------------------------- |

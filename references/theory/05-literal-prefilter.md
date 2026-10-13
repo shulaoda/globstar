@@ -2,7 +2,7 @@
 
 The matcher composes a fast prefilter with the exact engine (`SegmentMatcher`). The prefilter rejects byte strings that cannot match the pattern by checking a guaranteed literal suffix; it is sound (no false negatives) and approximate (some false positives).
 
-Implementations: `crates/globstar/src/engine/facts.rs` and `packages/globstar/src/engine/facts.js`.
+Implementations: `crates/globstar/src/engine/segment/facts.rs` and `packages/globstar/src/engine/segment/facts.js`.
 
 ## 0. Pipeline
 
@@ -219,7 +219,7 @@ The 7-byte anchor is more selective than the 3-byte ".ts" / ".tsx" / ".js" of §
 
 ## 8. Source map
 
-`engine/facts.rs`:
+`engine/segment/facts.rs`:
 
 - `pub struct LiteralFacts { suffix, suffix_set, case_insensitive }`.
 - `LiteralFacts::extract(ops, ci)` — entry; runs `extract_suffix`, falls back to `extract_suffix_set` if the single suffix is empty.
