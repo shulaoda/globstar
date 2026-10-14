@@ -6,7 +6,6 @@ const ignorePatterns = [
   "rust-toolchain.toml",
   "crates/**",
   "tools/**",
-  "fixtures/**",
   "references/**",
   "BENCHMARKS.md",
   "docs/.vitepress/cache/**",
