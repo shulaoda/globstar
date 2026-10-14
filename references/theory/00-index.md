@@ -9,7 +9,7 @@ These notes record the formal foundations of the engine modules under `crates/gl
 3. [05-literal-prefilter.md](05-literal-prefilter.md) — the suffix-anchored literal prefilter used to short-circuit the matcher; its correctness invariant.
 4. [06-walker-and-pruning.md](06-walker-and-pruning.md) — static-prefix extraction and the six-valued `match_dir` predicate, which together drive directory-level pruning.
 
-The notes `02-thompson-nfa.md` and `04-pike-vm.md` described the byte-level Thompson NFA and Pike VM that served as the fallback engine until 2026-10; they were removed with it (see `references/decisions/total-segment-engine.md`).
+The notes `02-thompson-nfa.md` and `04-pike-vm.md` described the byte-level Thompson NFA and Pike VM that served as the fallback engine until 2026-10; they were removed with it (commit 35bdc8c).
 
 ## Engine map
 

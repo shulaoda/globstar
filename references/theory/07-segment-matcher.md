@@ -2,8 +2,6 @@
 
 Source: `crates/globstar/src/engine/segment/` (Rust),
 `packages/globstar/src/engine/segment/` (JS).
-Design + errata: `references/decisions/segment-engine-design.md`;
-the move to a total engine: `references/decisions/total-segment-engine.md`.
 
 ## The observation
 
@@ -96,8 +94,7 @@ representation, never reject one.
 Compile O(|pattern| + edges) — linear in the ops for a brace-free
 pattern, and a separator-crossing brace adds one node per branch
 rather than a product. Match O(n·m) worst case — the NFA over the
-graph is the non-backtracking floor that rules out ReDoS (see
-`../decisions/total-segment-engine.md`) — and O(n) for
+graph is the non-backtracking floor that rules out ReDoS — and O(n) for
 a chain with ≤ 1 globstar. The engine answers `is_match`, `match_dir`,
 and `static_prefixes` natively.
 

@@ -1,6 +1,6 @@
 # GLOB_SPEC: Syntax and Semantics
 
-**Status.** This document is the normative definition of the glob dialect implemented by the `globstar` Rust crate (`crates/globstar`) and the `@globstar/core` JS package (`packages/globstar`). When code, tests or other documents disagree with it, the code changes. Changes to this document are discussed and recorded under [`../decisions/`](../decisions/).
+**Status.** This document is the normative definition of the glob dialect implemented by the `globstar` Rust crate (`crates/globstar`) and the `@globstar/core` JS package (`packages/globstar`). When code, tests or other documents disagree with it, the code changes.
 
 **Version.** 0.2.4, draft. The document is not frozen; Appendix A (§17) lists every change.
 
