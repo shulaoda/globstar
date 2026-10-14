@@ -115,7 +115,7 @@ function check(pats, paths, dot, ci) {
   return cases;
 }
 
-// Same four properties over OR-union matchers, on every ordered pair from
+// Same five properties over OR-union matchers, on every ordered pair from
 // an 8-pattern set plus every ordered triple from a 4-pattern core.
 function checkUnion(sets, paths, dot, ci) {
   const below = paths.map((d) => {

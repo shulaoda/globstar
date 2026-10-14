@@ -472,7 +472,7 @@ sections.push(`## Test corpus
 | \`brace-suffix\` | \`**/*.{ts,tsx,js,jsx}\` | \`**\` + 4-way brace alternation |
 | \`reject-prefilter\` | \`**/*.md\` | \`**\` + suffix-anchored prefilter (rejects most paths) |
 | \`class-anychar\` | \`src/**/n*d[k-m]e?txt\` | character class + multiple wildcards |
-| \`brace-anychar\` | \`src/**/{tob,crazy}/?*.{png,txt}\` | brace + class + complex tail |
+| \`brace-anychar\` | \`src/**/{tob,crazy}/?*.{png,txt}\` | brace + \`?*\` + brace suffix |
 
 ### Multi-pattern test sets
 

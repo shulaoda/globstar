@@ -14,15 +14,15 @@ export const OP_GLOBSTAR_ANY = 9;
 export const OP_LEADING_SEPS = 10;
 export const OP_ALTERNATION = 11;
 
-export const ANYCHAR_OP = Object.freeze({ kind: OP_ANYCHAR });
-export const STAR_OP = Object.freeze({ kind: OP_STAR });
-export const SEP_OP = Object.freeze({ kind: OP_SEP });
-export const SEP_RUN_OP = Object.freeze({ kind: OP_SEP_RUN });
-export const GLOBSTAR_OP = Object.freeze({ kind: OP_GLOBSTAR });
-export const OSS_OP = Object.freeze({ kind: OP_OPT_SEGMENTS_SLASH });
-export const SLASH_ANY_OP = Object.freeze({ kind: OP_SLASH_ANYTHING });
-export const GSTAR_ANY_OP = Object.freeze({ kind: OP_GLOBSTAR_ANY });
-export const LEADING_SEPS_OP = Object.freeze({ kind: OP_LEADING_SEPS });
+const ANYCHAR_OP = Object.freeze({ kind: OP_ANYCHAR });
+const STAR_OP = Object.freeze({ kind: OP_STAR });
+const SEP_OP = Object.freeze({ kind: OP_SEP });
+const SEP_RUN_OP = Object.freeze({ kind: OP_SEP_RUN });
+const GLOBSTAR_OP = Object.freeze({ kind: OP_GLOBSTAR });
+const OSS_OP = Object.freeze({ kind: OP_OPT_SEGMENTS_SLASH });
+const SLASH_ANY_OP = Object.freeze({ kind: OP_SLASH_ANYTHING });
+const GSTAR_ANY_OP = Object.freeze({ kind: OP_GLOBSTAR_ANY });
+const LEADING_SEPS_OP = Object.freeze({ kind: OP_LEADING_SEPS });
 
 import {
   N_ANYCHAR,
@@ -152,7 +152,7 @@ function trailsGlobstar(node) {
 
 // `tailIsOss`: the enclosing program continues with an OptSegmentsSlash
 // (union factoring lifts shared trailing `**/` behind the alternation),
-// so an empty branch's fork starts with `**/` and needs the §8.5
+// so an empty branch's expansion starts with `**/` and needs the §8.5
 // LeadingSeps.
 function applyLeadingSeps(ops, tailIsOss) {
   if (ops.length === 0) return;

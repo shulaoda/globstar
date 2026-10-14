@@ -7,7 +7,7 @@ import { bench, run, group, summary, do_not_optimize } from "mitata";
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
-import { compileMatcher } from "../../globstar/src/glob.js";
+import { globstar } from "@globstar/core";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
@@ -39,7 +39,7 @@ const PATHS = [
 const N = PATHS.length;
 
 const LIBS = [
-  ["globstar", (p) => compileMatcher(p).match, (m, s) => m(s)],
+  ["globstar", (p) => globstar(p), (m, s) => m(s)],
   ["picomatch", (p) => pico(p), (m, s) => m(s)],
   ["minimatch", (p) => new Minimatch(p), (m, s) => m.match(s)],
   ["micromatch", (p) => micro.matcher(p), (m, s) => m(s)],

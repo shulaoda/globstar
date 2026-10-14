@@ -6,21 +6,14 @@ import { isPathSep, eqByteCi } from "../../bytes.js";
 import { latin1 } from "../../utf8.js";
 import { OP_ALTERNATION, OP_LIT, OP_SEP, OP_SEP_RUN, OP_SLASH_ANYTHING } from "../ops.js";
 
-// The literal suffixes a match must end with: one, or one per branch
-// of a trailing brace (`suffixSet`), or neither. The segment matcher's
-// prefilter reads them.
-export class LiteralFacts {
-  constructor(suffix, suffixSet) {
-    this.suffix = suffix;
-    this.suffixSet = suffixSet;
-  }
-
-  static extract(ops) {
-    // One char per byte, like the path strings they are compared with.
-    const suffix = String.fromCharCode(...suffixArray(ops, ops.length));
-    const suffixSet = suffix.length === 0 ? extractSuffixSet(ops) : [];
-    return new LiteralFacts(suffix, suffixSet);
-  }
+// Literal suffixes one of which every match ends with: the trailing
+// `Lit`/`Sep` run (separators as `/`), or when the pattern ends in a
+// brace, one per branch. Empty when nothing is guaranteed. One char per
+// byte, like the path strings they are compared with.
+export function suffixes(ops) {
+  const suffix = suffixArray(ops, ops.length);
+  if (suffix.length > 0) return [latin1(Uint8Array.from(suffix))];
+  return extractSuffixSet(ops);
 }
 
 // Does `str` end with `suffix`? A pattern `/` takes any separator byte.
@@ -80,9 +73,9 @@ function extractSuffixSet(ops) {
       }
     }
 
-    const full = allLiteral
-      ? String.fromCharCode(...commonTail.concat(branchSuffix))
-      : String.fromCharCode(...branchSuffix);
+    const full = latin1(
+      Uint8Array.from(allLiteral ? commonTail.concat(branchSuffix) : branchSuffix),
+    );
     if (full.length === 0) return [];
     set.push(full);
   }
@@ -137,7 +130,6 @@ function extractLeadingPrefix(ops) {
   let length = fullyLiteral ? acc.length : lastBoundary;
   while (length > 0 && acc[length - 1] === 0x2f) length--;
   acc.length = length;
-  // latin1 chunks fromCharCode; a spread would overflow on ~64k bytes.
   return latin1(Uint8Array.from(acc));
 }
 

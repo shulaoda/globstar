@@ -6,7 +6,7 @@ import { bench, run, group, summary, do_not_optimize } from "mitata";
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
-import { compileMatcher } from "../../globstar/src/glob.js";
+import { globstar } from "@globstar/core";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
@@ -59,30 +59,22 @@ const PATHS = [
 ];
 const N = PATHS.length;
 
-// Per-pattern + Array.some for the third-party libs (no native union API).
+// One matcher per pattern for the third-party libs (no native union API).
 function buildPerPattern(compileSingle) {
-  return (patterns) =>
-    patterns.map((p) => {
-      const neg = p.startsWith("!");
-      const body = neg ? p.slice(1) : p;
-      return { neg, m: compileSingle(body) };
-    });
+  return (patterns) => patterns.map(compileSingle);
 }
 function runPerPattern(matchOne) {
   return (arr, s) => {
     let any = false;
     for (let i = 0; i < arr.length; i++) {
-      const { neg, m } = arr[i];
-      const ok = matchOne(m, s);
-      if (neg ? !ok : ok) any = true;
+      if (matchOne(arr[i], s)) any = true;
     }
     return any;
   };
 }
 
 const LIBS = [
-  // globstar handles `!`-prefixed patterns natively in `compileMatcher`.
-  ["globstar", (patterns) => compileMatcher(patterns).match, (fn, s) => fn(s)],
+  ["globstar", (patterns) => globstar(patterns), (fn, s) => fn(s)],
   ["picomatch", buildPerPattern((b) => pico(b)), runPerPattern((m, s) => m(s))],
   ["minimatch", buildPerPattern((b) => new Minimatch(b)), runPerPattern((m, s) => m.match(s))],
   ["micromatch", buildPerPattern((b) => micro.matcher(b)), runPerPattern((m, s) => m(s))],

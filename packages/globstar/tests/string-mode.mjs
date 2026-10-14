@@ -95,7 +95,6 @@ function genPath() {
 }
 
 let tried = 0;
-let compiled = 0;
 let bad = 0;
 for (let i = 0; i < COUNT; i++) {
   const pat = genPattern();
@@ -108,7 +107,6 @@ for (let i = 0; i < COUNT; i++) {
   } catch {
     continue; // parse error — fine
   }
-  compiled++;
   const path = genPath();
   tried++;
 
@@ -136,4 +134,4 @@ if (bad > 0) {
   console.error(`✗ ${bad} divergences over ${tried} cases`);
   process.exit(1);
 }
-console.log(`✓ string mode ≡ byte mode on ${tried} cases (${compiled} compiled patterns)`);
+console.log(`✓ string mode ≡ byte mode on ${tried} cases`);

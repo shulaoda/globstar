@@ -1,12 +1,10 @@
-const ENCODER = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+const ENCODER = new TextEncoder();
 
+// A string's UTF-8 bytes.
 export function toBytes(input) {
-  if (input instanceof Uint8Array) return input;
   const n = input.length;
   for (let i = 0; i < n; i++) {
-    if (input.charCodeAt(i) > 0x7f) {
-      return ENCODER !== null ? ENCODER.encode(input) : Uint8Array.from(Buffer.from(input, "utf8"));
-    }
+    if (input.charCodeAt(i) > 0x7f) return ENCODER.encode(input);
   }
   // ASCII fast path: each char is its own byte, skip TextEncoder.
   const out = new Uint8Array(n);

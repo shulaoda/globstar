@@ -444,7 +444,7 @@ function litEq(lit, str, s, t, ci) {
   return YES;
 }
 
-export function affixEq(part, str, at, ci) {
+function affixEq(part, str, at, ci) {
   if (!ci) return str.startsWith(part, at) ? YES : NO;
   for (let i = 0; i < part.length; i++) {
     if (!eqByteCi(part.charCodeAt(i), str.charCodeAt(at + i))) return NO;

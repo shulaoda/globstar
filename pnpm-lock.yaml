@@ -24,9 +24,6 @@ importers:
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
-      mitata:
-        specifier: ^1.0.34
-        version: 1.0.34
       vite-plus:
         specifier: 'catalog:'
         version: 0.1.20(@types/node@26.6.5)(esbuild@0.28.2)(vite@8.0.10(@types/node@26.6.5)(esbuild@0.28.2))

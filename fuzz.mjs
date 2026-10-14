@@ -329,7 +329,7 @@ function runSeed(seed) {
         samples.push({ c: cases[i], js: jsResults[i], rust: rustResults[i] });
     }
   }
-  return { seed, n: jsResults.length, diff, samples, jsResults };
+  return { seed, n: jsResults.length, diff, samples };
 }
 
 // ── main ─────────────────────────────────────────────────────────────

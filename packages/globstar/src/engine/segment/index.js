@@ -8,7 +8,7 @@ import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSegment, opsHaveNonAscii } from "./compile.js";
-import { LiteralFacts, computeStaticPrefixes, endsWithSepAware } from "./facts.js";
+import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
 import {
   chainMatches,
   chainDir,
@@ -34,9 +34,8 @@ export class SegmentMatcher {
     this.byteOnly = byteOnly;
     this.prefixes = computeStaticPrefixes(program.ops);
     this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
-    const f = LiteralFacts.extract(program.ops);
-    this.factsSuffixStr = f.suffix.length > 0 ? f.suffix : null;
-    this.factsSuffixSetStr = f.suffixSet.length > 0 ? f.suffixSet : null;
+    const suf = suffixes(program.ops);
+    this.suffixes = suf.length > 0 ? suf : null;
   }
 
   // `opts.forceNfa` bypasses the chains, `opts.byteOnly` the string
@@ -99,19 +98,13 @@ export class SegmentMatcher {
   }
 
   _factsAccept(str) {
+    const set = this.suffixes;
+    if (set === null) return true;
     const plain = this.factsPlain;
-    const suf = this.factsSuffixStr;
-    if (suf !== null) {
-      return plain ? str.endsWith(suf) : endsWithSepAware(str, suf, this.ci);
+    for (let i = 0; i < set.length; i++) {
+      if (plain ? str.endsWith(set[i]) : endsWithSepAware(str, set[i], this.ci)) return true;
     }
-    const set = this.factsSuffixSetStr;
-    if (set !== null) {
-      for (let i = 0; i < set.length; i++) {
-        if (plain ? str.endsWith(set[i]) : endsWithSepAware(str, set[i], this.ci)) return true;
-      }
-      return false;
-    }
-    return true;
+    return false;
   }
 
   _matchDir(str, bail) {

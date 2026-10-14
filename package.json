@@ -1,5 +1,5 @@
 {
-  "name": "glob-research-impl",
+  "name": "globstar-monorepo",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,6 @@
   "devDependencies": {
     "@types/node": "^26.6.5",
     "esbuild": "^0.28.2",
-    "mitata": "^1.0.34",
     "vite-plus": "catalog:",
     "vitepress": "^1.6.4",
     "vue": "^3.5.43"
