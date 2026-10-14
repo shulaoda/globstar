@@ -3,7 +3,7 @@
 //! Runs every `(pattern, path, expected)` row through the public engine
 //! and asserts it agrees with the recorded truth:
 //!
-//! - `globstar`     — public API (`Glob::new` / `Glob::union`), tier routing
+//! - `globstar`     — public API (`Glob::new` / `Glob::union`), engine dispatch
 //! - `nfa`          — the same `Glob`, `is_match` forced onto the segment
 //!   engine's NFA instead of its anchored chains (`Glob::is_match_nfa`)
 //!

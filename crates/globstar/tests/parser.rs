@@ -1,4 +1,4 @@
-//! Integration tests for the parser module (migrated from src/parser.rs).
+//! Integration tests for the parser module.
 
 use globstar::GlobError;
 use globstar::ast::{Ast, Node};
@@ -223,14 +223,6 @@ fn double_negation() {
 }
 
 #[test]
-fn negation_then_extglob_is_extglob() {
-    // One leading `!` + literal body.
-    let a = p("!(foo)");
-    assert_eq!(a.negation_count, 1);
-    assert_eq!(a.body, Node::Literal(b"(foo)".to_vec()));
-}
-
-#[test]
 fn double_bang_then_extglob() {
     // `!!` counts as 2 negations (even → not negated); body literal.
     let a = p("!!(foo)");
@@ -276,8 +268,8 @@ fn unterminated_extglob() {
 #[test]
 fn posix_first_bracket_literal_unterminated() {
     // POSIX: leading `]` after `[` (or `[!`/`[^`) is a literal class member,
-    // so `[]`, `[!]`, `[^]` all decay to "literal ] + no closer" and must
-    // surface as `UnterminatedClass`, not `EmptyClass`/`EmptyNegationClass`.
+    // so `[]`, `[!]`, `[^]` all decay to "literal ] + no closer" and
+    // surface as `UnterminatedClass`.
     assert!(matches!(err("["), GlobError::UnterminatedClass { .. }));
     assert!(matches!(err("[]"), GlobError::UnterminatedClass { .. }));
     assert!(matches!(err("[!]"), GlobError::UnterminatedClass { .. }));

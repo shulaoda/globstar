@@ -6,7 +6,7 @@
 //! plain tokens as it reads, and leaves one beside a brace, or at the edge
 //! of a branch, to this pass, which runs only then. Such a `**` meets a
 //! different token in every branch, so the braces are first taken apart by
-//! [`distribute`](crate::distribute::distribute); [`may_touch`] tells when
+//! [`distribute`]; [`may_touch`] tells when
 //! that can be the case. Then [`decide`] turns every `**` into a globstar
 //! or a star by the tokens beside it.
 

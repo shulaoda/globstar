@@ -115,7 +115,7 @@ pub struct Walk {
 
 #[derive(Debug)]
 struct Frame {
-    /// Absolute (or user-provided) path to read via `fs::read_dir`.
+    /// Absolute path to read via `fs::read_dir`.
     absolute: PathBuf,
 
     /// Relative path from the walker's base directory, encoded with `/`
@@ -172,7 +172,7 @@ impl Walk {
         // Partition input by leading-`!` parity (GLOB_SPEC §9.5): count
         // all leading `!`s, route by parity (odd → ignore, even → match),
         // strip every leading `!` from the body so the parser sees a
-        // clean pattern. Matches the JS walker's `walker/walk.js`.
+        // clean pattern. Matches the JS walker (`packages/globstar-walk/src/walk.js`).
         let mut positives: Vec<String> = Vec::new();
         let mut negatives: Vec<String> = Vec::new();
         for p in patterns {
@@ -313,7 +313,7 @@ impl Walk {
 
             let absolute = match std::str::from_utf8(&prefix) {
                 Ok(s) => {
-                    // Defense-in-depth: `compile_set` already strips
+                    // Defense-in-depth: `normalize_pattern` already strips
                     // Unix-style leading `/`, but on Windows a prefix
                     // like `C:/foo` or `\\server\share` would still
                     // make `Path::join` replace `self.base`. Reject

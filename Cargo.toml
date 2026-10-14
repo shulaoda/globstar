@@ -15,7 +15,6 @@ repository = "https://github.com/shulaoda/globstar"
 
 [workspace.dependencies]
 globstar = { path = "crates/globstar", version = "0.0.4" }
-globstar-walk = { path = "crates/globstar-walk", version = "0.0.4" }
 
 [profile.release]
 lto = "thin"

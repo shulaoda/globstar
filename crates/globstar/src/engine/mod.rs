@@ -1,7 +1,8 @@
 //! Compiled-engine module hierarchy.
 //!
-//! - `ops` — `Op` enum and AST→linear lowering, shared by all matchers.
-//! - `literal` — Tier 0 pure-literal matcher.
+//! - `ops` — `Op` enum and the AST → ops lowering the segment engine
+//!   compiles from.
+//! - `literal` — the pure-literal matcher.
 //! - `segment` — the segment-structured matcher for every other
 //!   pattern.
 

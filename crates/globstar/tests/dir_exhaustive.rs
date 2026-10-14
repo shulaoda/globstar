@@ -119,11 +119,11 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
             .collect();
 
         for (i, dir) in paths.iter().enumerate() {
-            let pm = default.is_match_nfa(dir.as_bytes());
+            let nfa = default.is_match_nfa(dir.as_bytes());
             assert_eq!(
-                matched[i], pm,
+                matched[i], nfa,
                 "is_match disagreement: pattern={pattern:?} path={dir:?} dot={dot} ci={ci} \
-                 chains={} nfa={pm}",
+                 chains={} nfa={nfa}",
                 matched[i]
             );
 
@@ -160,7 +160,7 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
     }
 }
 
-/// Same four properties over OR-union matchers (`Glob::union`, chains vs
+/// Same five properties over OR-union matchers (`Glob::union`, chains vs
 /// the forced NFA), on every ordered pair from an 8-pattern set plus every
 /// ordered triple from a 4-pattern core.
 fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool) {
@@ -177,9 +177,9 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
             .collect();
 
         for (i, dir) in paths.iter().enumerate() {
-            let pm = default.is_match_nfa(dir.as_bytes());
+            let nfa = default.is_match_nfa(dir.as_bytes());
             assert_eq!(
-                matched[i], pm,
+                matched[i], nfa,
                 "union is_match disagreement: patterns={set:?} path={dir:?} dot={dot} ci={ci}"
             );
 

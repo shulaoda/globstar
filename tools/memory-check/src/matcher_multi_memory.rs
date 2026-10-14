@@ -12,7 +12,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use globset::GlobBuilder;
-use globstar::Glob as GcGlob;
+use globstar::Glob;
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
@@ -111,7 +111,7 @@ fn main() {
         // globstar union — one merged Glob.
         let mut samples: Vec<usize> = (0..trials)
             .map(|_| {
-                let (_v, heap) = measure_heap(|| GcGlob::union(patterns.iter().copied()).unwrap());
+                let (_v, heap) = measure_heap(|| Glob::union(patterns.iter().copied()).unwrap());
                 heap
             })
             .collect();
@@ -124,7 +124,7 @@ fn main() {
                 let (_v, heap) = measure_heap(|| {
                     patterns
                         .iter()
-                        .map(|p| GcGlob::new(p).unwrap())
+                        .map(|p| Glob::new(p).unwrap())
                         .collect::<Vec<_>>()
                 });
                 heap

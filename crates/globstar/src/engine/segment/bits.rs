@@ -1,6 +1,7 @@
 //! Bit sets for the NFA simulations: one `u64` when the automaton has
-//! at most 64 states, a boxed word slice beyond. Both engines are
-//! generic over this trait so the common case is a plain register.
+//! at most 64 states, a boxed word slice beyond. Both NFAs (the graph
+//! `Nfa` and the in-segment `SegNfa`) are generic over this trait so
+//! the common case is a plain register.
 
 pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     /// The empty set over `words` words.

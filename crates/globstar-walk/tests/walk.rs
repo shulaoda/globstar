@@ -149,9 +149,7 @@ fn walker_extglob_negate() {
 #[test]
 fn walker_lone_negation_yields_nothing() {
     // A lone `!`-prefixed pattern means "no positive patterns" after the
-    // auto-split — so the walker yields nothing. Replaces the previous
-    // GlobSet-aggregated "everything-except-X" footgun semantic
-    // (cf. picomatch array of negated patterns).
+    // auto-split — so the walker yields nothing.
     let t = TmpTree::new("lone_neg");
     t.touch("a.js");
     t.touch("b.js");
@@ -164,7 +162,7 @@ fn walker_lone_negation_yields_nothing() {
 fn walker_multi_bang_parity_routes_by_count() {
     // GLOB_SPEC §9.5: leading-`!` parity rule. Odd count → ignore set,
     // even count → match set; all leading `!`s are stripped from the
-    // body. JS walker uses the same rule (`walker/walk.js`).
+    // body. The JS walker uses the same rule (`packages/globstar-walk/src/walk.js`).
     let t = TmpTree::new("multi_bang");
     t.touch("a.js");
     t.touch("b.js");
@@ -1150,8 +1148,6 @@ fn walker_seed_symlink_follow_false() {
     let got = collect_rel(Walk::new("link/*.txt", opts(true)).unwrap(), t.root());
     assert_eq!(got, ["link/a.txt"].iter().map(|s| s.to_string()).collect());
 }
-
-// ── 2026-08 audit regressions ───────────────────────────────────────────
 
 #[test]
 fn walker_ignore_applies_to_seeded_prefixes() {

@@ -2,8 +2,8 @@ use crate::dir_match::DirMatch;
 
 #[derive(Debug, Clone)]
 pub struct LiteralMatcher {
-    pub(crate) literal: Vec<u8>,
-    pub(crate) case_insensitive: bool,
+    literal: Vec<u8>,
+    case_insensitive: bool,
 }
 
 impl LiteralMatcher {

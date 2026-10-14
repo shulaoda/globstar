@@ -45,8 +45,7 @@
 
 #[doc(hidden)]
 pub mod ast;
-#[doc(hidden)]
-pub mod dir_match;
+mod dir_match;
 mod distribute;
 #[doc(hidden)]
 pub mod engine;
@@ -68,7 +67,7 @@ use engine::segment::SegmentMatcher;
 use factor::factor_branches;
 
 /// Syntactic complexity class of a compiled pattern — useful for
-/// diagnostics and benchmarks, not consulted at match time.
+/// diagnostics, not consulted at match time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
     /// Pure literal (no metacharacter).
@@ -129,9 +128,9 @@ pub struct Glob {
 
 #[derive(Debug, Clone)]
 enum Engine {
-    /// Tier 0 — pure literal byte comparison.
+    /// Pure literal byte comparison.
     Literal(LiteralMatcher),
-    /// Tier 1/2 — segment-structured matcher for everything else.
+    /// The segment-structured matcher for everything else.
     Segment(Box<SegmentMatcher>),
 }
 
@@ -171,7 +170,8 @@ impl Glob {
         S: AsRef<str>,
     {
         // The same pattern twice adds nothing to the union; factored into
-        // `p{,}` it would only send the matcher to a slower engine.
+        // `p{,}` a literal would lose the Literal engine and any other
+        // pattern would carry a useless brace.
         let patterns: Vec<S> = patterns.into_iter().collect();
         let mut seen = HashSet::with_capacity(patterns.len());
         let mut bodies: Vec<Node> = Vec::with_capacity(patterns.len());
@@ -300,9 +300,8 @@ fn contains_brace(node: &Node) -> bool {
     }
 }
 
-/// The matcher surface a filesystem walker consumes — implemented by
-/// [`Glob`]. Object-safe, so walkers can hold
-/// `Box<dyn Matcher>` when they mix matcher sources.
+/// The matcher surface, implemented by [`Glob`]. Object-safe, so a
+/// consumer can hold `Box<dyn Matcher>` when it mixes matcher sources.
 pub trait Matcher {
     /// Whole-path match: is `path` in the pattern's language?
     fn is_match(&self, path: &[u8]) -> bool;

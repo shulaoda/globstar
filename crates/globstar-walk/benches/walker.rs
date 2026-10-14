@@ -1,9 +1,9 @@
 //! Multi-pattern walker comparison across tree scales.
 //!
 //! Three axes:
-//! - **scale**: small (~1K) / medium (~13K) / large (~50K) files
+//! - **scale**: small (~120) / medium (~3.7K) / large (~25K) files
 //! - **patterns**: multi-small (4 patterns) / multi-huge (10 patterns)
-//! - **lib**: globstar-walk (SSM-first) / globwalk / ignore::WalkBuilder
+//! - **lib**: globstar-walk / globwalk / ignore::WalkBuilder
 //!
 //! `wax::walk` is single-pattern only and skipped here.
 
@@ -13,18 +13,14 @@ use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use std::fs;
 use std::path::PathBuf;
 
-const TREE_SCALES: &[(&str, &TreeShape)] = &[
-    ("small", &TREE_SMALL),
-    ("medium", &TREE_MEDIUM),
-    ("large", &TREE_LARGE),
-];
+const TREE_SCALES: &[&TreeShape] = &[&TREE_SMALL, &TREE_MEDIUM, &TREE_LARGE];
 
 struct TreeShape {
     /// Directory key (also bench tree dir name).
     name: &'static str,
-    /// `src/<area>/module_<n>.<ext>` per (area × module × ext) =
-    /// `areas.len() * modules * exts.len()` files plus `subs *
-    /// areas.len() * modules` more.
+    /// `src/<area>/module_<n>.<ext>` for every area × module × one of
+    /// four extensions, and the same files again under `subs`
+    /// sub-folders of each area.
     areas: usize,
     modules: usize,
     subs: usize,
@@ -142,7 +138,6 @@ fn bench_combo(c: &mut Criterion, scale: &TreeShape, label: &str, patterns: &[&s
     let mut g = c.benchmark_group(&group_name);
     g.sample_size(20);
 
-    // globstar-walk default SSM-first API.
     g.bench_function("globstar_walk", |b| {
         b.iter(|| {
             let w = Walk::from_patterns(black_box(patterns), &root).unwrap();
@@ -186,7 +181,7 @@ fn bench_combo(c: &mut Criterion, scale: &TreeShape, label: &str, patterns: &[&s
 }
 
 fn run(c: &mut Criterion) {
-    for (_, shape) in TREE_SCALES {
+    for shape in TREE_SCALES {
         bench_combo(c, shape, "multi-small", PATTERNS_SMALL);
         bench_combo(c, shape, "multi-huge", PATTERNS_HUGE);
     }

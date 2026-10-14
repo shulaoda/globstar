@@ -30,7 +30,7 @@ type Bytes = Box<[u8]>;
 
 /// A 64-slot sketch of a set of bytes (`b % 64`): a byte not in the
 /// sketch is not in the set, so a set scan can be skipped.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 struct ByteSketch(u64);
 
 impl ByteSketch {

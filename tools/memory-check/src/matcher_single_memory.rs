@@ -32,7 +32,7 @@ unsafe impl GlobalAlloc for Counter {
 #[global_allocator]
 static A: Counter = Counter;
 
-/// Public-API build of the existing crate. `dot=true` mirrors the
+/// Public-API build of `globstar`. `dot=true` mirrors the
 /// JS default.
 fn build_public(pattern: &str) -> Glob {
     Glob::new_with(pattern, CompileOptions::default().dot(true)).expect("compile")

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // One-shot version bump across every manifest, kept in lockstep:
-// Cargo.toml (workspace.package + the two path-dependency pins),
+// Cargo.toml (workspace.package + the path-dependency pin),
 // both package.json files, and Cargo.lock.
 //
 //   node release.mjs            # bump patch (0.0.1 -> 0.0.2)

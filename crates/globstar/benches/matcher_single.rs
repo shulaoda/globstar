@@ -1,6 +1,5 @@
-//! Engine-level head-to-head: production `globstar` (SSM-first), forced
-//! and third-party matchers. Mirrors the JS-side
-//! `matcher_single.js` so the same
+//! Single-pattern head-to-head: `globstar` against third-party
+//! matchers. Mirrors the JS-side `matcher_single.js` so the same
 //! `(pattern, path)` corpus drives both rows in the comparison table.
 //!
 //! Each pattern reports two timings:
@@ -48,19 +47,17 @@ const PATHS: &[&str] = &[
     "src/a/bigger/path/to/the/crazy/needle.txt",
 ];
 
-/// Dot=true mirrors `globstar(...)`'s default in `glob.js`
-/// (`DEFAULT_OPTIONS.dot = true`), so `**/*.md` doesn't filter out
-/// dotfiles — keeps Rust and JS results comparable.
+/// `dot` defaults to `true` in both runtimes, so `**/*.md` doesn't
+/// filter out dotfiles — keeps Rust and JS results comparable.
 const DOT: bool = true;
 
-/// Public-API build of the production SSM-first crate — the
-/// "globstar (Rust)" column in BENCHMARKS.md.
+/// Public-API build — the "globstar (Rust)" column in BENCHMARKS.md.
 fn build_public(pattern: &str) -> Glob {
     Glob::new_with(pattern, CompileOptions::default().dot(DOT)).expect("compile")
 }
 
 /// Sanity check: production and fast_glob must agree on every
-/// (pattern, path) pair. Runs once per group before timing starts.
+/// (pattern, path) pair. Runs once before timing starts.
 fn assert_all_agree() {
     for &(label, pattern) in PATTERNS {
         let public = build_public(pattern);
@@ -133,7 +130,7 @@ fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
         });
     });
     // Stateless fast_glob — parse + match per call, batched over PATHS
-    // so its number can be added to the other two on the same axis.
+    // so its number sits on the same axis as the others.
     group.bench_function("fast_glob", |b| {
         b.iter(|| {
             for p in PATHS {

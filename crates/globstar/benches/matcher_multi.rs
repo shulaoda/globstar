@@ -1,13 +1,14 @@
+//! Multi-pattern bench: `Glob::union` against third-party baselines,
 //! mirroring JS's `matcher_multi.js`.
 //!
 //! Columns:
-//!   globstar       — `Glob::union` production SSM-first API
-//!   globset / wax / fast_glob / glob — third-party baselines
+//!   globstar       — `Glob::union`
+//!   globset / wax / fast_glob — third-party baselines
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;
 use globset::GlobBuilder;
-use globstar::Glob as GcGlob;
+use globstar::Glob;
 use std::path::Path;
 use wax::Pattern as WaxPattern;
 
@@ -61,15 +62,10 @@ fn pattern_sets() -> Vec<(&'static str, Vec<&'static str>)> {
     ]
 }
 
-fn has_brace(patterns: &[&str]) -> bool {
-    patterns.iter().any(|p| p.contains('{'))
-}
-
 // ---------- globstar configurations ----------
 
-/// `Glob::union` production SSM-first API.
-fn build_globstar(patterns: &[&str]) -> GcGlob {
-    GcGlob::union(patterns.iter().copied()).unwrap()
+fn build_globstar(patterns: &[&str]) -> Glob {
+    Glob::union(patterns.iter().copied()).unwrap()
 }
 
 // ---------- third-party libs ----------
@@ -94,21 +90,6 @@ fn build_wax(patterns: &[&str]) -> Vec<wax::Glob<'static>> {
         .collect()
 }
 
-fn build_glob(patterns: &[&str]) -> Vec<glob::Pattern> {
-    patterns
-        .iter()
-        .map(|p| glob::Pattern::new(p).expect("glob parse"))
-        .collect()
-}
-
-fn glob_opts() -> glob::MatchOptions {
-    glob::MatchOptions {
-        case_sensitive: true,
-        require_literal_separator: true,
-        require_literal_leading_dot: false,
-    }
-}
-
 // ---------- COMPILE bench ----------
 fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let mut group = c.benchmark_group(format!("compile_{label}"));
@@ -121,11 +102,6 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.bench_function("wax_or", |b| {
         b.iter(|| black_box(build_wax(black_box(patterns))));
     });
-    if !has_brace(patterns) {
-        group.bench_function("glob_or", |b| {
-            b.iter(|| black_box(build_glob(black_box(patterns))));
-        });
-    }
     group.finish();
 }
 
@@ -134,12 +110,6 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let gs = build_globstar(patterns);
     let gset = build_globset(patterns);
     let wax_g = build_wax(patterns);
-    let glob_g = if !has_brace(patterns) {
-        Some(build_glob(patterns))
-    } else {
-        None
-    };
-    let go = glob_opts();
 
     let mut group = c.benchmark_group(format!("match_{label}"));
     group.bench_function("globstar", |b| {
@@ -164,16 +134,6 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
             }
         });
     });
-    if let Some(gp) = &glob_g {
-        group.bench_function("glob_or", |b| {
-            b.iter(|| {
-                for p in PATHS {
-                    let any = gp.iter().any(|g| g.matches_with(black_box(*p), go));
-                    black_box(any);
-                }
-            });
-        });
-    }
     group.bench_function("fast_glob_or", |b| {
         b.iter(|| {
             for p in PATHS {

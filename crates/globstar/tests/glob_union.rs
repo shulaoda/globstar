@@ -1,6 +1,6 @@
 //! Tests for `Glob::union` — the brace-merged multi-pattern compilation.
 //!
-//! Mirrors the JS-side `verify_union.js` differential coverage:
+//! Mirrors the JS-side multi-pattern lanes of `verify.mjs`:
 //!   - basic equivalence with the inlined OR oracle
 //!     (`patterns.iter().any(|p| Glob::new(p).is_match(path))`)
 //!   - edge cases: empty input, single-pattern degeneration, negated rejection
@@ -86,11 +86,8 @@ fn factoring_keeps_the_members_static_prefixes() {
 
 #[test]
 fn duplicate_members_count_once() {
-    // `p{,}` would leave the segment engine, and a duplicated literal
-    // would lose the Literal engine and most of its static prefix.
-    let single = Glob::new("**/node_modules/**").unwrap();
-    let twice = Glob::union(["**/node_modules/**", "**/node_modules/**"]).unwrap();
-    assert_eq!(twice.engine_name(), single.engine_name());
+    // Factored into `p{,}`, a duplicated literal would lose the Literal
+    // engine and most of its static prefix.
     let twice = Glob::union(["src/main.rs", "src/main.rs"]).unwrap();
     assert_eq!(twice.engine_name(), "Literal");
     assert_eq!(

@@ -1,4 +1,4 @@
-//! Integration tests for the ast module (migrated from src/ast.rs).
+//! Integration tests for the ast module.
 
 use globstar::ast::{CharClass, ClassItem, Node};
 use globstar::parser::parse;

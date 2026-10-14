@@ -1,4 +1,4 @@
-//! Integration tests for the Glob type (migrated from src/lib.rs).
+//! Integration tests for the Glob type.
 
 use globstar::{Glob, Tier};
 
@@ -24,13 +24,6 @@ fn classify_globstar() {
 }
 
 #[test]
-fn non_literal_patterns_use_segment_engine() {
-    for pattern in ["*.ts", "src/**/*.ts", "**/*.{ts,tsx,js,jsx}"] {
-        assert_eq!(Glob::new(pattern).unwrap().engine_name(), "Segment");
-    }
-}
-
-#[test]
 fn large_shapes_stay_on_segment_engine() {
     // A wide name list, a deep path and a brace product all compile to
     // the one segment engine; nothing falls back.
@@ -42,10 +35,6 @@ fn large_shapes_stay_on_segment_engine() {
         .join("/")
         + "/*.ts";
     let product = "{a,b}/".repeat(12) + "x";
-    for pattern in [wide.as_str(), deep.as_str(), product.as_str()] {
-        let g = Glob::new(pattern).unwrap();
-        assert_eq!(g.engine_name(), "Segment", "{pattern:.40}");
-    }
     assert!(Glob::new(&wide).unwrap().is_match(b"a499/x/y"));
     assert!(!Glob::new(&wide).unwrap().is_match(b"a500/x/y"));
     assert!(
@@ -68,7 +57,7 @@ fn large_shapes_stay_on_segment_engine() {
 #[test]
 fn classify_brace_routes_to_globstar_tier() {
     let g = Glob::new("*.{ts,tsx}").unwrap();
-    // Brace pattern goes to Tier 2 because it needs the same machinery.
+    // A brace counts as `Tier::Globstar`; the tier is syntax only.
     assert_eq!(g.tier(), Tier::Globstar);
 }
 

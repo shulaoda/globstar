@@ -1,4 +1,4 @@
-//! The linear IR between the parser and the engines, and the
+//! The linear IR between the parser and the segment engine, and the
 //! AST → ops lowering that produces it.
 
 use crate::ast::{CharClass, Node};
@@ -170,7 +170,7 @@ fn trails_globstar(node: &Node) -> bool {
 
 /// `tail_is_oss`: the enclosing program continues with an
 /// `OptSegmentsSlash` (union factoring lifts shared trailing `**/`
-/// behind the alternation), so an empty branch's fork starts with
+/// behind the alternation), so an empty branch's expansion starts with
 /// `**/` and needs the §8.5 `LeadingSeps`.
 fn apply_leading_seps(ops: &mut Vec<Op>, tail_is_oss: bool) {
     let next_is_oss = match ops.get(1) {
