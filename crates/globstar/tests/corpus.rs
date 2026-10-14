@@ -14,7 +14,7 @@
 //! (engines see only well-formed programs).
 //!
 //! Output lines like `corpus=single engine=globstar pass=N fail=N skip=N`
-//! are picked up by the root `verify.mjs` orchestrator when this file
+//! are picked up by the `scripts/verify.mjs` orchestrator when this file
 //! is invoked via `cargo test --test corpus -- --nocapture`.
 
 use globstar::{CompileOptions, DirMatch, Glob};

@@ -3,13 +3,17 @@
 // Cargo.toml (workspace.package + the path-dependency pin),
 // both package.json files, and Cargo.lock.
 //
-//   node release.mjs            # bump patch (0.0.1 -> 0.0.2)
-//   node release.mjs minor      # 0.0.2 -> 0.1.0
-//   node release.mjs major      # 0.1.0 -> 1.0.0
-//   node release.mjs 1.2.3      # explicit target
+//   node scripts/release.mjs            # bump patch (0.0.1 -> 0.0.2)
+//   node scripts/release.mjs minor      # 0.0.2 -> 0.1.0
+//   node scripts/release.mjs major      # 0.1.0 -> 1.0.0
+//   node scripts/release.mjs 1.2.3      # explicit target
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+process.chdir(dirname(dirname(fileURLToPath(import.meta.url))));
 
 const CARGO = "Cargo.toml";
 const PKGS = ["packages/globstar/package.json", "packages/globstar-walk/package.json"];

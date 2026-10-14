@@ -20,16 +20,16 @@
 // the test's `corpus=… engine=… pass=N fail=N skip=N` output. JS path
 // is inlined below.
 //
-//   node verify.mjs              # full
-//   node verify.mjs --skip-rust  # JS only
-//   node verify.mjs --skip-js    # Rust only
+//   node scripts/verify.mjs              # full
+//   node scripts/verify.mjs --skip-rust  # JS only
+//   node scripts/verify.mjs --skip-js    # Rust only
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 process.chdir(ROOT);
 
 const args = new Set(process.argv.slice(2));
@@ -129,9 +129,9 @@ function record(stats, ok, msgFn) {
 // ── JS-side runners ─────────────────────────────────────────────────
 
 async function runJsVerify() {
-  const { globstar } = await import("./packages/globstar/src/index.js");
-  const { compileMatcher } = await import("./packages/globstar/src/glob.js");
-  const { GlobError } = await import("./packages/globstar/src/error.js");
+  const { globstar } = await import("../packages/globstar/src/index.js");
+  const { compileMatcher } = await import("../packages/globstar/src/glob.js");
+  const { GlobError } = await import("../packages/globstar/src/error.js");
 
   // ── single-pattern corpus
   function* singleRows() {

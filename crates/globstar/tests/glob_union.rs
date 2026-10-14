@@ -1,6 +1,6 @@
 //! Tests for `Glob::union` — the brace-merged multi-pattern compilation.
 //!
-//! Mirrors the JS-side multi-pattern lanes of `verify.mjs`:
+//! Mirrors the JS-side multi-pattern lanes of `scripts/verify.mjs`:
 //!   - basic equivalence with the inlined OR oracle
 //!     (`patterns.iter().any(|p| Glob::new(p).is_match(path))`)
 //!   - edge cases: empty input, single-pattern degeneration, negated rejection

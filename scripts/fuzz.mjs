@@ -9,23 +9,23 @@
 // one stdin stream and asserts every result token agrees. A divergence is a
 // real JS↔Rust drift bug, reproducible from its seed.
 //
-//   node fuzz.mjs                         # 50k mixed cases, seed 1
-//   node fuzz.mjs --seed 99 --count 200000
-//   node fuzz.mjs --mode m                # only is_match (incl. negation)
-//   node fuzz.mjs --mode d                # only match_dir (6-valued, incl. negation)
-//   node fuzz.mjs --mode u                # only multi-pattern union
-//   node fuzz.mjs --mode s                # only static_prefixes
-//   node fuzz.mjs --seeds 1-20 --count 50000   # sweep seeds (nightly)
+//   node scripts/fuzz.mjs                         # 50k mixed cases, seed 1
+//   node scripts/fuzz.mjs --seed 99 --count 200000
+//   node scripts/fuzz.mjs --mode m                # only is_match (incl. negation)
+//   node scripts/fuzz.mjs --mode d                # only match_dir (6-valued, incl. negation)
+//   node scripts/fuzz.mjs --mode u                # only multi-pattern union
+//   node scripts/fuzz.mjs --mode s                # only static_prefixes
+//   node scripts/fuzz.mjs --seeds 1-20 --count 50000   # sweep seeds (nightly)
 //
 // Wire format and escaping mirror tools/difftest/src/main.rs exactly.
 
 import { spawnSync } from "node:child_process";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMatcher } from "./packages/globstar/src/glob.js";
-import { GlobError } from "./packages/globstar/src/error.js";
+import { compileMatcher } from "../packages/globstar/src/glob.js";
+import { GlobError } from "../packages/globstar/src/error.js";
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 process.chdir(ROOT);
 
 // ── CLI ──────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 // Walker comparison across tree scales: globstar (default API)
-// vs fast-glob / globby / tinyglobby. Output is consumed by `bench.mjs`.
+// vs fast-glob / globby / tinyglobby. Output is consumed by
+// `scripts/bench.mjs`.
 
 import { bench, run, group, summary, do_not_optimize } from "mitata";
 import fastGlob from "fast-glob";

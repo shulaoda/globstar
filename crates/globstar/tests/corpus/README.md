@@ -15,7 +15,7 @@ and `corpus-windows.txt`.
 Other surfaces: `corpus-dir.txt` (`match_dir`), `corpus-multi.txt` /
 `corpus-multi-dir.txt` (unions), `corpus-err.txt` (parse errors).
 
-The file lists are hard-coded in `tests/corpus.rs` and `verify.mjs` —
+The file lists are hard-coded in `tests/corpus.rs` and `scripts/verify.mjs` —
 a new corpus file must be registered in BOTH, or it runs nowhere.
 
 ## Format

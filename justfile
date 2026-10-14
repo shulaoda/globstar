@@ -12,22 +12,22 @@ setup:
 
 # Cross-runtime correctness verification (Rust + JS × {single, multi, dir, mdir, err}).
 verify *args:
-    node verify.mjs {{args}}
+    node scripts/verify.mjs {{args}}
 
 # Cross-runtime benchmarks → BENCHMARKS.md.
 bench *args:
-    node bench.mjs {{args}}
+    node scripts/bench.mjs {{args}}
 
 # Bump every manifest version in lockstep (patch | minor | major | X.Y.Z),
 # then print the commit/tag/push commands that trigger the release CI.
 release version="patch":
-    node release.mjs {{version}}
+    node scripts/release.mjs {{version}}
 
 # Cross-runtime differential fuzzing (JS vs Rust on random inputs the
 # corpus can't reach). `just fuzz --seeds 1-20 --count 100000` for nightly.
 fuzz *args:
     cargo build --release -p difftest
-    node fuzz.mjs {{args}}
+    node scripts/fuzz.mjs {{args}}
 
 # All static checks: JS format/lint + Rust fmt + clippy. CI-grade strict.
 lint:

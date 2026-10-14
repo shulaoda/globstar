@@ -1,6 +1,6 @@
 // Multi-pattern matcher comparison: globstar (default API) vs
 // picomatch / minimatch / micromatch (per-pattern matchers OR'd at
-// runtime). Output is consumed by `bench.mjs`.
+// runtime). Output is consumed by `scripts/bench.mjs`.
 
 import { bench, run, group, summary, do_not_optimize } from "mitata";
 import pico from "picomatch";

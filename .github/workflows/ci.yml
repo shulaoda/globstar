@@ -54,4 +54,4 @@ jobs:
       - run: node packages/globstar/tests/dir-exhaustive.mjs
       - run: node packages/globstar/tests/dir-match.mjs
       - run: node packages/globstar-walk/tests/walk.mjs
-      - run: node verify.mjs
+      - run: node scripts/verify.mjs

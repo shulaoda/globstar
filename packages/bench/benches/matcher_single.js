@@ -1,6 +1,6 @@
 // Single-pattern matcher comparison: globstar (default API) vs
 // picomatch / minimatch / micromatch. Three phases (compile / match /
-// memory). Output is consumed by `bench.mjs` to populate
+// memory). Output is consumed by `scripts/bench.mjs` to populate
 // BENCHMARKS.md.
 
 import { bench, run, group, summary, do_not_optimize } from "mitata";
@@ -97,7 +97,7 @@ function median(xs) {
   return xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 }
 
-// Header chosen to match the parser hint in `bench.mjs`.
+// Header chosen to match the parser hint in `scripts/bench.mjs`.
 console.log(`\n===== PHASE 3: MEMORY (median of ${TRIALS}, B/matcher) =====\n`);
 const widths = [22, 12, 16, 12, 12, 12];
 const header = ["Pattern", ...LIBS.map(([n]) => n)]
