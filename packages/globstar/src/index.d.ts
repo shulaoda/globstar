@@ -119,7 +119,8 @@ export interface Matcher {
  * traversal seeding (`staticPrefixes`) alongside the plain `match`
  * predicate. `@globstar/walk` is built on this.
  *
- * Throws a {@link GlobError} if any pattern fails to compile.
+ * Throws a {@link GlobError} if any pattern fails to compile, and a
+ * `TypeError` if a pattern is not a string.
  */
 export function compileMatcher(
   patterns: string | readonly string[],
@@ -150,8 +151,7 @@ export class GlobError extends Error {
     | "BraceNestingTooDeep"
     | "BraceExpansionTooLarge"
     | "InvalidRange"
-    | "EmptyPatternSet"
-    | "TooManyStates";
+    | "EmptyPatternSet";
   /** Byte offset of the offending construct (kind-dependent). */
   readonly at?: number;
   /** Pattern length for "TooLong". */
@@ -161,7 +161,5 @@ export class GlobError extends Error {
   /** Range bounds for "InvalidRange". */
   readonly low?: number;
   readonly high?: number;
-  /** State count for "TooManyStates". */
-  readonly n?: number;
   constructor(kind: GlobError["kind"], info?: Record<string, unknown>);
 }
