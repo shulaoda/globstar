@@ -120,10 +120,9 @@ a/**/b	other	pruned
 a/**/b	/a	pruned
 
 ## trailing.wildcard.segment.dot_protection
-# Regression (PikeVm match_dir): under dot=false the prefix-descent check must
-# ε-expand DOT_GUARD states, or a separator consumer hidden behind the guard
-# (e.g. the trailing `/` of `*/`) is missed and the subtree wrongly pruned.
-# The production matcher was already correct; PikeVm matched it after the fix.
+# Regression: under dot=false the descend check must look through the dot
+# guard, or a separator hidden behind it (the trailing `/` of `*/`) is
+# missed and the subtree wrongly pruned.
 */	a	descend
 */	a	descend	dot=true
 ?*/	a	descend
@@ -215,7 +214,7 @@ x/{**,a}/**	x/.y	pruned	dot=false
 ## cwd.empty_dir
 # Empty dir path is the cwd; every relative match lives under it, so every
 # engine answers descend, or descend-match when the pattern also matches
-# the empty string. Pins the contract across literal, segment, and PikeVm
+# the empty string. Pins the contract for the literal and segment engines
 # (the walker itself never asks, so only this corpus exercises it).
 src/**/*.ts		descend
 *.md		descend

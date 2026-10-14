@@ -10,7 +10,7 @@ setup:
     cargo build --release --workspace
     git config core.hooksPath .githooks
 
-# Cross-runtime correctness verification (Rust + JS × {single, multi, err}).
+# Cross-runtime correctness verification (Rust + JS × {single, multi, dir, mdir, err}).
 verify *args:
     node verify.mjs {{args}}
 

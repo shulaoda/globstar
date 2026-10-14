@@ -3,11 +3,13 @@
 //
 // Five corpora share the same harness:
 //
-//   single — SINGLE_FILES list below              single-pattern × 2 lanes
-//   multi  — `tests/corpus/corpus-multi.txt`      N-pattern OR × 2 lanes
-//   dir    — `tests/corpus/corpus-dir.txt`        match_dir
-//   mdir   — `tests/corpus/corpus-multi-dir.txt`  N-pattern match_dir
-//   err    — `tests/corpus/corpus-err.txt`        parse-error variants
+// All live in `crates/globstar/tests/corpus/`:
+//
+//   single — SINGLE_FILES list below   single-pattern × 2 lanes
+//   multi  — `corpus-multi.txt`        N-pattern OR × 2 lanes
+//   dir    — `corpus-dir.txt`          match_dir
+//   mdir   — `corpus-multi-dir.txt`    N-pattern match_dir
+//   err    — `corpus-err.txt`          parse-error variants
 //
 // Two lanes per match row:
 //   - globstar     — public API (`globstar(...)`, `Glob::new` / `Glob::union`)
@@ -267,10 +269,10 @@ async function runJsVerify() {
     else record(multi.nfa, p === row.expected, () => multiFail(row, "nfa", p));
   }
 
-  // ── match_dir corpus — public SSM plus reference engines vs truth.
-  // Mirrors the Rust `corpus_dir_engines_vs_truth` test: rows default to
-  // `dot=false` (the walker convention), and negated patterns are skipped
-  // because `match_dir` does not invert a leading `!`.
+  // ── match_dir corpus — public API vs truth. Mirrors the Rust
+  // `corpus_dir_engines_vs_truth` test: rows default to `dot=false` (the
+  // walker convention); negated rows run too, a negated pattern answers
+  // `Descend` (§13.4).
   // Indexed by JS `DirMatch` value (Match=0, Pruned=1, Descend=2, DescendAndMatch=3,
   // DescendAll=4, DescendAllAndMatch=5).
   const DIR_TOKEN = [
@@ -305,9 +307,8 @@ async function runJsVerify() {
   }
 
   function runDirEngine(row) {
-    // `compileMatcher`'s `matchDir` inverts leading-`!` negation at the
-    // wrapper level (conservative Descend, §13.4), so negated rows are
-    // exercised too and no row is skipped.
+    // `matchDir` answers `Descend` for a negated pattern (§13.4), so no
+    // row is skipped.
     try {
       const dm = compileMatcher(row.pattern, {
         dot: row.dot,
@@ -473,8 +474,8 @@ console.log(
 );
 console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 5 + 5));
 
-// Stable cross-runtime row order: single → multi → err, then
-// globstar → nfa. Rust prints in cargo-test name
+// Stable cross-runtime row order: single → multi → dir → mdir → err,
+// then globstar → nfa. Rust prints in cargo-test name
 // order (alphabetical), JS in author order — sort so both line up.
 const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, mdir: 3, err: 4 };
 const ENGINE_ORDER = { globstar: 0, nfa: 1 };

@@ -125,11 +125,9 @@
 ["{}**","{a}**"]	{}x	match
 
 ## union.factored-suffix.leading-seps
-# Factoring a shared trailing **/ produces [Alternation([..,eps]), OSS]:
-# the eps branch fork starts with **/ and must keep the paragraph-8.5
-# LeadingSeps. Pinned 2026-08: the big row overflows MAX_FORKS and
-# routes to PikeVm, which needed the op (the segment engine derives the
-# leniency from boundary state and was already right — the small row).
+# Factoring a shared trailing `**/` leaves an empty branch whose expansion
+# starts with `**/`; it must keep the §8.5 leading-separator leniency, for
+# a large brace fan-out (the long rows) and a small one (the short rows).
 ["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]	/	match
 ["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]		match
 ["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]	a/	match
