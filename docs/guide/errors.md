@@ -26,19 +26,19 @@ Spec: [GLOB_SPEC §10](https://github.com/shulaoda/globstar/blob/main/references
 
 The JS `GlobError` has a `.kind` string. The Rust `GlobError` is an enum with a variant of the same name. Some kinds carry extra fields: in JS they are properties on the error object, in Rust they are fields of the variant.
 
-| Kind                     | When it happens                                                                           | Example pattern                     | Extra fields        |
-| ------------------------ | ----------------------------------------------------------------------------------------- | ----------------------------------- | ------------------- |
-| `Empty`                  | The pattern is the empty string.                                                          | `""`                                | –                   |
-| `TooLong`                | The pattern is longer than 65,536 bytes.                                                  | `"a".repeat(65537)`                 | `len`, `max`        |
-| `UnterminatedClass`      | A `[` has no `]` before the next `/` or the end. `[]`, `[!]` and `[/]` are cases of this. | `src/[a-z.ts`, `[]`, `[/]`          | `at`                |
-| `UnterminatedBrace`      | A `{` has no matching `}`.                                                                | `src/{a,b.ts`                       | `at`                |
-| `TrailingBackslash`      | The pattern ends with a single `\`.                                                       | `foo\`                              | –                   |
-| `EscapedSeparator`       | The pattern contains `\/`. No file name can hold a `/`, so it could never match.          | `a\/b`                              | `at`                |
-| `BraceNestingTooDeep`    | Braces are nested more than 32 levels deep.                                               | `{a,` × 33, then `b`, then `}` × 33 | `max`               |
-| `BraceExpansionTooLarge` | Braces next to `**` would need more than 4096 copies to expand.                           | `{**,a}{/,b}` repeated 5 times      | `max`               |
-| `InvalidRange`           | A class range ends below where it starts.                                                 | `[z-a]`, `[a-A]`                    | `at`, `low`, `high` |
-| `EmptyPatternSet`        | A pattern list is empty.                                                                  | `compileMatcher([])`                | –                   |
-| `NegatedInUnion`         | Rust only: a `!` pattern was given to `Glob::union`.                                      | `Glob::union(["src/**", "!*.log"])` | `index`, `pattern`  |
+| Kind                     | When it happens                                                                              | Example pattern                     | Extra fields        |
+| ------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------- |
+| `Empty`                  | The pattern is the empty string.                                                             | `""`                                | –                   |
+| `TooLong`                | The pattern is longer than 65,536 bytes.                                                     | `"a".repeat(65537)`                 | `len`, `max`        |
+| `UnterminatedClass`      | A `[` has no `]` before the next `/` or the end. `[]`, `[!]` and `[/]` are cases of this.    | `src/[a-z.ts`, `[]`, `[/]`          | `at`                |
+| `UnterminatedBrace`      | A `{` has no matching `}`.                                                                   | `src/{a,b.ts`                       | `at`                |
+| `TrailingBackslash`      | The pattern ends with a single `\`.                                                          | `foo\`                              | –                   |
+| `EscapedSeparator`       | The pattern contains `\/`. No file name can hold a `/`, so it could never match.             | `a\/b`                              | `at`                |
+| `BraceNestingTooDeep`    | Braces are nested more than 32 levels deep. Every `{` counts, even one that ends up literal. | `{a,` × 33, then `b`, then `}` × 33 | `max`               |
+| `BraceExpansionTooLarge` | Braces next to `**` would need more than 4096 copies to expand.                              | `{**,a}{/,b}` repeated 5 times      | `max`               |
+| `InvalidRange`           | A class range ends below where it starts.                                                    | `[z-a]`, `[a-A]`                    | `at`, `low`, `high` |
+| `EmptyPatternSet`        | A pattern list is empty.                                                                     | `compileMatcher([])`                | –                   |
+| `NegatedInUnion`         | Rust only: a `!` pattern was given to `Glob::union`.                                         | `Glob::union(["src/**", "!*.log"])` | `index`, `pattern`  |
 
 What the fields hold:
 
@@ -62,8 +62,8 @@ The limits stop a hostile or broken pattern from using huge amounts of memory or
 | Brace expansion | 4096 copies  | `MAX_EXPANSION`     | `BraceExpansionTooLarge` |
 
 - **Pattern length** counts UTF-8 bytes, not characters. A pattern of 32,768 `é` (65,536 bytes) compiles; one more `é` is too long.
-- **Brace nesting** counts how many braces are open inside each other. It also counts nesting that appears when globstar spreads braces around a `**`: `**` followed by `{,/a}` 33 times fails, even though no brace is written inside another one.
-- **Brace expansion** only applies to braces that sit next to a `**`. globstar never expands other braces, so a brace with hundreds of plain branches is fine. Every copy counts: each token once, a literal or class by its length, and each brace branch once. The count is shared by **all patterns in one list**. For example, `{**,a}{/,b}` repeated 4 times compiles alone. Four such patterns (with different letters) in one list fail together.
+- **Brace nesting** counts how many braces are open inside each other, including a `{` with no comma that ends up literal. It also counts nesting that appears when globstar spreads braces around a `**`: `**` followed by `{,/a}` 33 times fails, even though no brace is written inside another one.
+- **Brace expansion** only applies to braces that sit next to a `**`. globstar never expands other braces, so a brace with hundreds of plain branches is fine. The count is shared by **all patterns in one list**: `{**,a}{/,b}` repeated 4 times compiles alone, and four such patterns in one list fail together. [Brace expansion](./braces.md#expansion-budget-4096) shows which shapes are copied.
 
 In Rust the limits are public constants in `globstar::error`. The JS package does not export them; read `err.max` on the error instead.
 
@@ -105,20 +105,6 @@ match Glob::new("src/[a-z.ts") {
 
 ## Lists of patterns: JS and Rust differ
 
-Both languages reject an empty list with `EmptyPatternSet`. They treat a `!` member differently.
-
-**JS accepts a `!` member.** Each member is judged on its own, and a `!` member adds its _complement_ to the OR. It does not remove paths from the other members. With `["src/**", "!**/*.test.ts"]`:
-
-| Path            | Match? | Why                                      |
-| --------------- | ------ | ---------------------------------------- |
-| `src/a.test.ts` | ✅     | `src/**` matches it                      |
-| `lib/a.ts`      | ✅     | not a test file, so the `!` member holds |
-| `lib/a.test.ts` | ❌     | neither member matches                   |
-
-**Rust rejects it.** `Glob::union(["src/**", "!**/*.test.ts"])` returns `GlobError::NegatedInUnion { index: 1, pattern: "!**/*.test.ts" }`. Drop the `!` and keep your excludes in a union of their own.
-
-::: warning A `!` in a list does not exclude
-In JS, `compileMatcher(["src/**", "!**/*.test.ts"])` matches almost every path. To filter "these, but not those", use two matchers, or the walker's ignore list. See [Multiple patterns](./multi-pattern.md).
-:::
+Both languages reject an empty list with `EmptyPatternSet`. A `!` member is accepted in JS, where it adds its complement to the OR, and rejected in Rust: `Glob::union(["src/**", "!**/*.test.ts"])` returns `GlobError::NegatedInUnion { index: 1, pattern: "!**/*.test.ts" }`. Either way a `!` in a list never excludes anything; see [Negated members](./multi-pattern.md#negated-members).
 
 Spec: [GLOB_SPEC §10, §14](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

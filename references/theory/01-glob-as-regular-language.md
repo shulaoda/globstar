@@ -26,8 +26,8 @@ Each glob construct denotes a regular operation on Σ. Letting `Sep ⊆ Σ` deno
 | `[abc]`          | `{a, b, c}`                                |
 | `[!abc]`         | `Σ \ (Sep ∪ {a, b, c})`                    |
 | `**`             | `Σ*`                                       |
-| `**/X` (lead)    | `Sep* · ((Σ \ Sep)⁺ · Sep)* · L(X)`        |
-| `a/**/b` (mid)   | `L(a) · Sep⁺ · ((Σ \ Sep)⁺ · Sep)* · L(b)` |
+| `**/X` (lead)    | `(Sep \| (Σ \ Sep)⁺ · Sep)* · L(X)`       |
+| `a/**/b` (mid)   | `L(a) · Sep · (Σ* · Sep)? · L(b)`          |
 | `a/**` (trail)   | `L(a) · Sep · Σ*`                          |
 | `{r₁, ..., rₙ}`  | `⋃ᵢ L(rᵢ)`                                 |
 | `\X`             | `{X}`                                      |
@@ -70,7 +70,7 @@ match(!P, w) := ¬match(P, w)         for all w ∈ Σ*
 
 The matcher computes `match(P, w)` and inverts the boolean. No automaton over `Σ* \ L(P)` is constructed; the language definition of `P` is unchanged.
 
-Even-numbered runs of leading `!` cancel; odd-numbered runs negate once. This is the parity rule formalized in `references/spec/GLOB_SPEC.md` §9.5 and implemented in the parser (`parser.rs::parse_negation`).
+Even-numbered runs of leading `!` cancel; odd-numbered runs negate once. This is the parity rule formalized in `references/spec/GLOB_SPEC.md` §9.5 and implemented in the parser: `parser.rs::parse_within` counts the run, and `Ast::is_negated` gives the parity.
 
 ## 6. Empty pattern; empty string; the empty language
 
@@ -78,7 +78,7 @@ Three distinct notions:
 
 - **Empty pattern.** The input string of length zero is rejected at parse time (`GlobError::Empty`). It denotes nothing in the language.
 - **Empty string ε.** A member of `L(*)`, of `L(**)`, of `L({a,})`, and of every Kleene-starred language. Several patterns admit it.
-- **Empty language `∅`.** Not denotable by any well-formed pattern. The matcher never compiles to a `Match`-unreachable NFA from a legal source input.
+- **Empty language `∅`.** Not denotable by any well-formed pattern, with one exception on Windows: there `\` is a separator, and a literal or class `\` never matches a separator, so `\\` and `[\\]` match nothing (`references/spec/GLOB_SPEC.md` §2.4, §6.2). A pattern that needs one of them denotes `∅`. Apart from that, the matcher never compiles to a `Match`-unreachable NFA from a legal source input.
 
 ## 7. References
 

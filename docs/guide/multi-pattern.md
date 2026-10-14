@@ -85,7 +85,7 @@ compileMatcher(["src/**/*.ts", "**/*.md"]).staticPrefixes(); // "" (the root)
 
 ## The shared expansion budget
 
-Braces next to `**` are taken apart at compile time, and the copies that makes are charged to a budget of 4096 units per pattern. In a union all members share one budget, so a long list of brace-heavy patterns can fail with `BraceExpansionTooLarge` where each member alone would compile. Details are in [Brace expansion](./braces.md) and [Errors and limits](./errors.md).
+Braces next to `**` are taken apart at compile time, and the copies that makes are charged to one budget of 4096 units per compile: a single pattern, or a whole list together. So a long list of brace-heavy patterns can fail with `BraceExpansionTooLarge` where each member alone would compile. Details are in [Brace expansion](./braces.md) and [Errors and limits](./errors.md).
 
 ## Errors
 

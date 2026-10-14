@@ -113,27 +113,13 @@ A branch may contain its own `**`. Each branch is separate, so the `**` in one b
 | `{src/**/*.ts,lib/**/*.js}` | `lib/c.js`   | ✅     |
 | `{src/**/*.ts,lib/**/*.js}` | `lib/c.ts`   | ❌     |
 
-A `**` right next to a brace, or at the edge of a branch, is judged on each expansion. It is a real `**` only in the expansions where it fills a whole segment:
-
-| Pattern          | Path        | Match? |
-| ---------------- | ----------- | ------ |
-| `{**,dist}/*.js` | `a/b/c.js`  | ✅     |
-| `src{**,x}.ts`   | `srcfoo.ts` | ✅     |
-| `src{**,x}.ts`   | `src/a.ts`  | ❌     |
-
-`{**,dist}/*.js` expands to `**/*.js`, where `**` owns a segment. `src{**,x}.ts` expands to `src**.ts`, where it does not, so it acts as `*`. [The `**` wildcard](./globstar.md#next-to-a-brace) page has the full rules.
+A `**` right next to a brace, or at the edge of a branch, is judged on each expansion: `{**,dist}/*.js` expands to `**/*.js`, where `**` owns a segment, while `src{**,x}.ts` expands to `src**.ts`, where it acts as `*`. See [`**` next to a brace](./globstar.md#next-to-a-brace).
 
 Spec: [GLOB_SPEC §7.8](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Braces and character classes
 
-A branch may hold a class, as in `{[0-9],x}.log`. Inside a class, `{`, `}`, and `,` are plain characters. See [Character classes](./character-classes.md#classes-and-braces).
-
-| Pattern         | Path     | Match? |
-| --------------- | -------- | ------ |
-| `{[0-9],x}.log` | `1.log`  | ✅     |
-| `{[0-9],x}.log` | `x.log`  | ✅     |
-| `{[0-9],x}.log` | `10.log` | ❌     |
+A branch may hold a class, as in `{[0-9],x}.log`. Inside a class, `{`, `}`, and `,` are plain characters. See [Classes and braces](./character-classes.md#classes-and-braces) for examples.
 
 Spec: [GLOB_SPEC §7.9](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -143,7 +129,7 @@ Most brace patterns have no size limit. Two limits exist to stop a hostile or br
 
 ### Nesting depth: 32
 
-Braces may be nested up to 32 levels deep. One more level fails with `BraceNestingTooDeep`. Real patterns rarely go past three or four levels.
+Braces may be nested up to 32 levels deep. One more level fails with `BraceNestingTooDeep`. Every `{` counts as it opens, even one with no comma that ends up literal. Real patterns rarely go past three or four levels.
 
 A `**` next to braces can create nesting you did not write yourself, and that nesting counts too. For example, `**` followed by `{,/a}` written 33 times fails with the same error.
 

@@ -67,7 +67,7 @@ for (const dir of ["", "src", "docs/guide", "node_modules"]) {
 }
 ```
 
-The empty string is the walk root: it always may match below (unless the pattern can match nothing at all).
+The empty string is the walk root: it always may match below.
 
 ## A pattern that excludes files
 

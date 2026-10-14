@@ -69,17 +69,17 @@ Spec: [GLOB_SPEC §2.2](https://github.com/shulaoda/globstar/blob/main/reference
 
 These characters can have a special meaning: `*` `?` `[` `]` `{` `}` `,` `\`, plus `!` at the very start of a pattern. Some are special everywhere; others only in one place.
 
-| Character          | Special when                                | Otherwise |
-| ------------------ | ------------------------------------------- | --------- |
-| `*`, `?`           | always (wildcards)                          | —         |
-| `[`                | always: opens a class, which must be closed | —         |
-| `]`                | it closes an open class                     | literal   |
-| `{`                | always: opens a brace, which must be closed | —         |
-| `}`                | it closes an open brace                     | literal   |
-| `,`                | inside a brace (splits branches)            | literal   |
-| `\`                | always (escapes the next character)         | —         |
-| `!`                | it is at the very start of the pattern      | literal   |
-| `(`, `)`, `@`, `+` | never                                       | literal   |
+| Character                | Special when                                | Otherwise |
+| ------------------------ | ------------------------------------------- | --------- |
+| `*`, `?`                 | always (wildcards)                          | —         |
+| `[`                      | always: opens a class, which must be closed | —         |
+| `]`                      | it closes an open class                     | literal   |
+| `{`                      | always: opens a brace, which must be closed | —         |
+| `}`                      | it closes an open brace                     | literal   |
+| `,`                      | inside a brace (splits branches)            | literal   |
+| `\`                      | always (escapes the next character)         | —         |
+| `!`                      | it is at the very start of the pattern      | literal   |
+| `(`, `)`, `@`, `+`, `\|` | never                                       | literal   |
 
 So a stray closer is fine: `a]b` matches the path `a]b`, and `a}b` matches `a}b`. An opener with no closer is an error: `[a` and `{a` both fail to compile. See [Compile-time errors](./errors.md).
 
@@ -219,7 +219,7 @@ Negation always applies to the whole pattern. There is no way to negate just one
 The leading `!` is read before braces are expanded, so a `!` inside a brace is literal: `{!a,b}` matches `!a` and `b`, but not `a`.
 
 ::: warning `!` in a list of patterns
-A list of patterns is an OR. In JavaScript, a `!` pattern in a list adds every path it matches, and `!*.test.ts` matches almost every path. So `compileMatcher(["src/**", "!*.test.ts"])` matches `lib/x.ts` too: the `!` does not subtract. In Rust, `Glob::union` rejects `!` patterns. To exclude files, keep the excludes in their own matcher, or let the walker (`@globstar/walk`) split them out. See [Multi-pattern matchers](./multi-pattern.md).
+A list is an OR, so a `!` member adds paths instead of removing them. See [Negated members](./multi-pattern.md#negated-members).
 :::
 
 Spec: [GLOB_SPEC §9.3–9.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

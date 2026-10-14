@@ -24,5 +24,5 @@ features:
   - title: Small and dependency-free
     details: No runtime dependencies in either language. Pure string matching, no filesystem access, no node:* imports. The playground on this site runs the real package in your browser.
   - title: Written down first
-    details: Every rule lives in GLOB_SPEC before it lives in code. A behavior is stable only when the shared corpus has a row for it.
+    details: Every rule is written down in GLOB_SPEC, and a behavior counts as stable only when the shared corpus has a row for it that both runtimes pass.
 ---

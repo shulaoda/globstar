@@ -8,7 +8,7 @@ The matcher exposes two outputs that drive directory-level pruning:
 Implementation:
 
 - `engine/segment/facts.rs::static_prefixes` — the prefix extraction pass.
-- `engine/segment/::SegmentMatcher::match_dir` — the realization.
+- `engine/segment/mod.rs::SegmentMatcher::match_dir` — the realization.
 - `dir_match.rs` — the `DirMatch` algebraic datatype.
 
 This note formalizes both and documents how the walker (`references/spec/WALKER_SPEC.md`) consumes them.
@@ -57,8 +57,11 @@ For a pattern `P` whose lowered form is the linear `Op` program `o₁ o₂ … o
 SP(P) := the longest s ∈ Σ* such that
          every w ∈ L(P) starts with s,
          and s ends at a path-segment boundary
-        (i.e. either s = ε or the last byte of s is in Sep).
+        (i.e. s = ε, or every w ∈ L(P) either equals s
+         or goes on after s with a separator).
 ```
+
+The separator after `s` is not kept: the prefix of `src/*.ts` is `src`, and a fully literal pattern is its own prefix (`src/main.rs`).
 
 The segment-boundary requirement matters because the walker uses `SP(P)` to seed traversal at `cwd ++ s`, and `fs.readdir` only operates on directories. A non-segment-aligned prefix would force the walker to filter mid-segment, which it cannot.
 
@@ -66,10 +69,12 @@ The segment-boundary requirement matters because the walker uses `SP(P)` to seed
 
 `static_prefixes(ops)` returns one prefix per top-level brace branch:
 
-- if `ops[0] = Op::Alternation(branches)`, recurse into each branch and collect the union of returned prefixes;
-- otherwise, scan `o₁, o₂, …` left to right, accumulating bytes from `Op::Lit` and separator bytes from `Op::Sep`/`Op::SepRun`; halt at the first non-literal op or at the first separator whose successor is non-literal.
+- if `ops[0] = Op::Alternation(branches)` and the brace is followed by a separator, a trailing `/**` or the end, recurse into each branch and collect the union of returned prefixes;
+- otherwise, scan `o₁, o₂, …` left to right, accumulating bytes from `Op::Lit` and separator bytes from `Op::Sep`/`Op::SepRun`; at the first non-literal op, cut the bytes back to the last separator before it (a trailing `/**`, or a brace whose every branch starts with a separator, also ends a whole segment). Trailing separators are dropped.
 
-The algorithm is `O(|ops|)`. Output is `Box<[Box<[u8]>]>`, cached on the matcher.
+When there are several prefixes, a dedupe step (`facts.rs::dedupe`) sorts them by (length, bytes) and drops any prefix that a shorter kept one already covers (`src` covers `src/a`); an empty prefix covers all.
+
+The algorithm is `O(|ops|)` before the dedupe. Output is `Box<[Box<[u8]>]>`, cached on the matcher.
 
 ### 1.3 Examples
 
@@ -79,6 +84,7 @@ src/*.ts           →  ["src"]
 src/**/*.ts        →  ["src"]
 **/*.ts            →  [""]               (no literal head)
 {src,test}/*.rs    →  ["src", "test"]
+{src,src/a}/*.rs   →  ["src"]            (src/a is covered by src)
 ```
 
 ### 1.4 Properties
@@ -107,9 +113,11 @@ pub enum DirMatch {
 Given `P` and a directory path `d`, the walker uses
 
 ```
-exact_match(P, d) := d ∈ L(P)
-prefix_match(P, d) := ∃ w ∈ Σ+. d ++ "/" ++ w ∈ L(P)
-all_below(P, d)    := ∀ s ∈ R.  d ++ "/" ++ s ∈ L(P)      (R: one or more non-empty segments)
+below(d)           := Σ⁺                              if d = ""   (the walk root)
+                      { d ++ "/" ++ w : w ∈ Σ* }      otherwise
+exact_match(P, d)  := d ∈ L(P)
+prefix_match(P, d) := below(d) ∩ L(P) ≠ ∅
+all_below(P, d)    := ∀ s ∈ R.  (d = "" ? s : d ++ "/" ++ s) ∈ L(P)      (R: one or more non-empty segments)
 match_dir(P, d) := combine(exact_match(P, d), prefix_match(P, d), all_below(P, d))
 ```
 
@@ -124,38 +132,44 @@ combine(false, true,  false) = Descend
 combine(false, false, false) = Pruned
 ```
 
-`Pruned` is the only verdict that licenses the walker to skip `readdir(d)`. The two `DescendAll…` verdicts license the opposite kind of consumer — one that EXCLUDES files by glob, such as a watcher — to skip `d` whole (§2.6).
+These are the definitions of `references/spec/GLOB_SPEC.md` §13.2 and §13.6. At the root the engines report `prefix_match` as true for every pattern.
+
+`Pruned` is the only verdict that licenses the walker to skip `readdir(d)`. The two `DescendAll…` verdicts license the opposite kind of consumer — one that EXCLUDES files by glob, such as a watcher — to skip `d` whole (§2.5).
 
 ### 2.2 Segment realization
 
-A matcher with one chain and at most one globstar — the common case — keeps no NFA: `chain_dir` reads the tokens the NFA would hold after `d` off the chain (a head position when `d` ends inside the head, the globstar when it took everything after the head, a tail position when the tail's first elements take the last segments) and classifies them as below. Any other SegmentMatcher splits `d` at path separators and runs its element-position NFA. The active `u64` position set is then classified with two precomputed masks:
+A matcher with one chain and at most one globstar — the common case — keeps no NFA: `chain_dir` reads the tokens the NFA would hold after `d` off the chain (a head position when `d` ends inside the head, the globstar when it took everything after the head, a tail position when the tail's first elements take the last segments) and classifies them as below. Any other SegmentMatcher splits `d` at path separators and runs its element-position NFA. The active position set — a bit set: one `u64` up to 64 states, a word slice beyond — is then classified with the accept bit and the precomputed `reach1` mask:
 
 ```
 S ← run the segments of d
 exact  ← S intersects accepting positions
-prefix ← S intersects positions that can consume at least one descendant
-verdict ← combine(exact, prefix)
+prefix ← d = "" or S intersects reach1 (positions that can consume at least one descendant)
+all    ← dot and prefix and covers_below(S)      (§2.5)
+verdict ← combine(exact, prefix, all)
 ```
 
 This is the production path. It answers the directory query without rebuilding a byte-level automaton or allocating per call.
 
-### 2.4 The suffix prefilter is not used
+### 2.3 The suffix prefilter is not used
 
-Unlike `is_match`, `match_dir` does not consult `LiteralFacts::accept` (§05). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. The engine runs unfiltered for `match_dir`.
+Unlike `is_match`, `match_dir` does not consult the suffix prefilter (§05; Rust `SegmentMatcher::prefilter`, JS `_factsAccept`). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. The engine runs unfiltered for `match_dir`.
 
-### 2.5 Negated patterns
+### 2.4 Negated patterns
 
-For multi-pattern matchers (`matcher/glob.js::compileMatcher` in the JS port), if any branch of `P` is negated, the verdict is forced conservative:
+A lone negated pattern always returns `Descend`, in both runtimes (`references/spec/GLOB_SPEC.md` §13.4). A negated pattern matches paths _not_ in some sublanguage, and the walker has not yet seen the deeper paths; it cannot rule out their membership in the complement.
+
+Rust's `Glob::union` rejects `!` members (`NegatedInUnion`). The JS multi-pattern matcher (`compileMatcher` in `packages/globstar/src/glob.js`, built by `makeMatcher`) accepts them, and each negated member contributes `Descend` (GLOB_SPEC §14.3). So when any member is negated, may-below is forced true, while the positive members still give the `matches` and all-below bits:
 
 ```
-match_dir(P with negations, d) ∈ {Descend, DescendAndMatch}
+match_dir(P with negations, d) = combine(positive matches, true, positive all-below)
+                               ∈ {Descend, DescendAndMatch, DescendAll, DescendAllAndMatch}
 ```
 
-i.e. pruning is suppressed. A negated branch matches paths _not_ in some sublanguage, and the walker has not yet seen the deeper paths; it cannot rule out their membership in the complement. The implementation still preserves the positive `Match` flag where possible: if the positive engine reports `Match`, the verdict is `DescendAndMatch`; otherwise it is `Descend`. Pruning is restored only when no negative branch exists.
+i.e. pruning is suppressed: the verdict is never `Pruned` or `Match`. For example `compileMatcher(["a/**", "!b"]).matchDir("a")` is `DescendAll`. Pruning is restored only when no negative member exists.
 
-This is the formal counterpart of `references/spec/GLOB_SPEC.md` §13.4. The walker (§ `references/spec/WALKER_SPEC.md` §4) splits `!`-prefixed input patterns into its own ignore set, so the matcher receives only positive patterns at the walker layer; the conservative case applies only to direct standalone callers.
+This is the formal counterpart of `references/spec/GLOB_SPEC.md` §13.4 and §14.3. The walker (§ `references/spec/WALKER_SPEC.md` §4) splits `!`-prefixed input patterns into its own ignore set, so the matcher receives only positive patterns at the walker layer; the conservative case applies only to direct standalone callers.
 
-### 2.6 All-below
+### 2.5 All-below
 
 `prefix_match` over-approximates: `Descend` means a descendant MAY match. `all_below` under-approximates: it is set only when every descendant provably matches. Both err on the consumer's safe side.
 
@@ -195,10 +209,10 @@ The walker's responsibilities relative to this module are documented in `referen
 **Proposition 5 (no false pruning).** For every `P`, `d`, and `w ∈ Σ*`:
 
 ```
-match_dir(P, d) = Pruned   ⇒   ∀ w. d' ++ w ∉ L(P)
+match_dir(P, d) = Pruned   ⇒   d ∉ L(P) ∧ ∀ w. d ++ "/" ++ w ∉ L(P)
 ```
 
-_Proof sketch._ `Pruned` is returned only when `exact = false ∧ prefix = false`. `exact = false` excludes `d` itself. `prefix = false` means no active segment/NFA position can consume a separator and a non-empty descendant path to acceptance. Together, neither `d` nor any descendant is accepted. ∎
+_Proof sketch._ `Pruned` is returned only when `exact = false ∧ prefix = false`. `exact = false` excludes `d` itself. `prefix = false` means no active segment/NFA position can consume a separator and a descendant path (possibly empty) to acceptance. Together, neither `d` nor any descendant is accepted. ∎
 
 This is the soundness property the walker requires: it may safely prune any subtree whose root receives `Pruned`.
 
@@ -289,8 +303,8 @@ For "Button.tsx":
   child_rel = "src/components/Button.tsx"
   isDirectory = false
   matcher.match("src/components/Button.tsx"):
-    suffix is ".ts" → ends_with(".ts") fails in LiteralFacts.accept.
-    accept(path) returns false (suffix mismatch on last byte 'x' vs 's').
+    suffix is ".ts" → ends_with(".ts") fails in the prefilter.
+    prefilter(path) returns false (suffix mismatch on last byte 'x' vs 's').
   → match = false; do not emit
 
 For "Card.tsx": same, do not emit.
@@ -304,7 +318,7 @@ fs.readdir(...) → [run.ts]
 For "run.ts":
   child_rel = "src/cli/run.ts"
   isDirectory = false
-  facts.accept("src/cli/run.ts") → ends with ".ts" → true
+  prefilter("src/cli/run.ts") → ends with ".ts" → true
   matcher.match runs SegmentMatcher → reaches accept
   → emit "src/cli/run.ts"
 ```
@@ -324,7 +338,7 @@ For "src/cli/run.ts":
   ignore.match("src/cli/run.ts")    = false → continue (emitted via main matcher)
 ```
 
-If `**/*.test.ts` were instead routed through `match_dir`, the walker could prune directories that contain only test files; we deliberately do not do this (Pruned via ignore would require proving every descendant matches the ignore, which is not generally decidable from a pattern's structure alone).
+If `**/*.test.ts` were instead routed through `match_dir`, a directory where `matches_all_below` holds (§2.5) could be skipped whole. The walker does not do this: it still tests ignore patterns per entry with `match`.
 
 ## 6. Source map
 
@@ -332,11 +346,11 @@ If `**/*.test.ts` were instead routed through `match_dir`, the walker could prun
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `static_prefixes`                                                                   | `engine/segment/facts.rs`                                                |
 | `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                  |
-| `Graph::match_dir`, `Graph::covers_below`                                           | `engine/segment/exec.rs`                                                 |
+| `Nfa::match_dir`, `Nfa::covers_below`, `SegmentMatcher::chain_dir`                  | `engine/segment/exec.rs`                                                 |
 | `DirMatch`, `DirMatch::matches`, `DirMatch::may_match_below`, `DirMatch::matches_all_below` | `dir_match.rs`                                                           |
 | Walker glue (JS)                                                                    | `packages/globstar-walk/src/walk.js::initFromPrefixes`, `processDirents` |
 
 ## 7. References
 
-- Hopcroft, J. E., Motwani, R., Ullman, J. D. _Introduction to Automata Theory, Languages, and Computation_. Reverse reachability and quotient automata are textbook material; the `reach_to_accept` BFS is a direct application.
-- The `DirMatch` four-valued formulation is characteristic of the Rust `globset` / `ignore` ecosystem; the equivalent verdict is used internally by `walkdir::WalkDir::filter`. The literature for prefix-based pruning of regular-expression search lives in index-pattern work (e.g. _Cox, R., Russ Cox's regular expression notes_) and incremental DFA matching.
+- Hopcroft, J. E., Motwani, R., Ullman, J. D. _Introduction to Automata Theory, Languages, and Computation_. Reverse reachability and quotient automata are textbook material; the `reach1` mask (`engine/segment/compile.rs`) is a direct application.
+- The `DirMatch` six-valued formulation is characteristic of the Rust `globset` / `ignore` ecosystem; the equivalent verdict is used internally by `walkdir::WalkDir::filter`. The literature for prefix-based pruning of regular-expression search lives in index-pattern work (e.g. _Cox, R., Russ Cox's regular expression notes_) and incremental DFA matching.

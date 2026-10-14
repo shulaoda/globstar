@@ -7,28 +7,28 @@ Implementations: `crates/globstar/src/engine/segment/facts.rs` and `packages/glo
 ## 0. Pipeline
 
 ```
-Vec<Op>  ──►  extract_suffix(ops)        ──►  suffix:    Vec<u8>
+Vec<Op>  ──►  push_suffix(ops)           ──►  one suffix
    │          (right-to-left over Lit/Sep ops)        │
    │                                                  │
-   └────►  if suffix is empty AND tail is Alternation:
-              extract_suffix_set(ops)    ──►  suffix_set: Vec<Vec<u8>>
+   └────►  if that suffix is empty AND tail is an Alternation of ≤ 16 branches:
+              suffix_set(ops)            ──►  one suffix per branch
 
                                                   │
                                                   ▼
-                                  LiteralFacts { suffix, suffix_set, ci }
+                          suffixes(ops): a list of byte strings (empty = no prefilter)
                                                   │
                                                   │  carried inside the matcher
                                                   ▼
    ┌──────────────────────────────────────────────────────┐
    │ is_match(path):                                      │
-   │   if !facts.accept(path) { return false }            │  ← O(|suffix|), end-anchored
+   │   if !accept(path) { return false }                  │  ← O(|suffix|), end-anchored
    │   else { run engine }                                │
    └──────────────────────────────────────────────────────┘
 ```
 
-`accept(path)` is a separator-aware `ends_with`: a `'/'` byte in the suffix matches any `Seps` byte in the path (so `**/main.ts` rejects `src\foo.js` on Windows and accepts `src\main.ts`).
+`accept(path)` is the check: `SegmentMatcher::prefilter` in Rust (`exec.rs`), `_factsAccept` in JS (`engine/segment/index.js`). It is a separator-aware `ends_with`: a `'/'` byte in the suffix matches any `Seps` byte in the path (so `*/main.ts`, suffix `/main.ts`, rejects `src\foo.js` on Windows and accepts `src\main.ts`).
 
-When `suffix` is non-empty it is the single anchor. When the program ends in an `Op::Alternation` of all-literal branches (e.g. `**/*.{ts,tsx,js}`), `extract_suffix_set` instead derives one anchor per branch and `accept` succeeds if `path` ends with any of them.
+When the trailing `Lit`/`Sep` run is non-empty it is the single anchor. Otherwise, when the program ends in an `Op::Alternation` of at most 16 branches (e.g. `**/*.{ts,tsx,js}`), `suffix_set` derives one anchor per branch and `accept` succeeds if `path` ends with any of them.
 
 ## 1. The prefilter abstraction
 
@@ -57,16 +57,16 @@ suffix(P) := the longest s ∈ Σ* such that
 prefilter_P(w) := w ends with suffix(P)
 ```
 
-is a sound prefilter: any `w ∈ L(P)` ends with `suffix(P)` by definition. The implementation stores `suffix(P)` as `Vec<u8>` and evaluates `prefilter_P` by separator-aware `ends_with` (§4).
+is a sound prefilter: any `w ∈ L(P)` ends with `suffix(P)` by definition. The implementation stores `suffix(P)` as one byte string and evaluates `prefilter_P` by separator-aware `ends_with` (§4).
 
-For patterns whose tail is an `Op::Alternation` of literal-only branches, we extract a _suffix set_ instead:
+For patterns with no such suffix whose tail is an `Op::Alternation` of at most 16 branches (`MAX_SUFFIX_SET`), we extract a _suffix set_ instead:
 
 ```
 suffix_set(P) := { s_i : s_i is the suffix contributed by branch i }
 prefilter_P(w) := ∃ s ∈ suffix_set(P). w ends with s
 ```
 
-This handles common idioms like `**/*.{ts,tsx,js}` whose single longest common suffix is the `.` shared across branches but whose suffix-set is `{".ts", ".tsx", ".js"}`, providing a stronger filter.
+This handles common idioms like `**/*.{ts,tsx,js}` whose single longest common suffix is empty (`.ts` and `.tsx` end differently) but whose suffix-set is `{".ts", ".tsx", ".js"}`, providing a stronger filter. A brace with more than 16 branches gets no prefilter: the engine indexes such name lists itself (`AffixIndex`, §07).
 
 ## 3. Why suffix and not prefix
 
@@ -78,34 +78,33 @@ The implementation accordingly stores only suffix facts. The historical prefix f
 
 ## 4. Separator-aware comparison
 
-The end-anchored comparison must respect the platform separator set `Sep` (`references/spec/GLOB_SPEC.md` §12.3): on Windows, a pattern suffix `/` should match a path-side `\`. The `ends_with` in `LiteralFacts::accept` therefore matches a byte `b` against the suffix byte `s` as
+The end-anchored comparison must respect the platform separator set `Sep` (`references/spec/GLOB_SPEC.md` §12.3): on Windows, a pattern suffix `/` should match a path-side `\`. The `ends_with` in `accept` (Rust `SegmentMatcher::ends_with`, JS `endsWithSepAware`) therefore matches a byte `b` against the suffix byte `s` as
 
 ```
 b matches s   ⇔   (s ∈ Sep ⇒ b ∈ Sep) ∧
                   (s ∉ Sep ⇒ b == s under case-folding flag)
 ```
 
-Without this rule, `**/main.ts` would incorrectly reject `src\main.ts` on Windows.
+Without this rule, `*/main.ts` (suffix `/main.ts`) would incorrectly reject `src\main.ts` on Windows.
 
 ## 5. Extraction algorithm
 
-`extract_suffix(ops)` walks the linear `Op` program right to left, collecting bytes:
+`push_suffix(ops)` (JS `suffixArray`) walks the linear `Op` program right to left, collecting bytes:
 
 ```
 Op::Lit(b₁ … bₖ)             → push bₖ, …, b₁
 Op::Sep                      → push '/'
-Op::SepRun, Op::OptSegmentsSlash → push '/' (one boundary byte)
 any other                    → halt collection
 ```
 
-The collected bytes are reversed to form the suffix. Halting at the first non-literal op is required for soundness: a non-literal op can produce arbitrary bytes at the suffix, so prepending its contribution would be unsound.
+The collected bytes are reversed to form the suffix. Halting at the first non-literal op is required for soundness: a non-literal op can produce arbitrary bytes at the suffix, so prepending its contribution would be unsound. `SepRun` and `OptSegmentsSlash` halt it too, so the suffix of `a/**/b` is `b`, not `/b`.
 
-`extract_suffix_set(ops)` is invoked when `extract_suffix(ops)` yields the empty suffix and the program ends with `Op::Alternation(branches)`:
+`suffix_set(ops)` (JS `extractSuffixSet`) is invoked when `push_suffix(ops)` yields the empty suffix and the program ends with `Op::Alternation(branches)` of at most `MAX_SUFFIX_SET = 16` branches:
 
 ```
-common_tail := extract_suffix(ops without the trailing Alternation)
+common_tail := push_suffix(ops without the trailing Alternation)
 for branch in branches:
-    branch_suffix := extract_suffix(branch)
+    branch_suffix := push_suffix(branch)
     if branch is not all-literal AND branch_suffix is empty:
         return {}                    // abort the strategy
     full_suffix := if branch is all-literal then
@@ -123,7 +122,7 @@ The all-literal check is required because gluing `common_tail` to a non-all-lite
 **Proposition 3.** For every `w ∈ Σ*`,
 
 ```
-LiteralFacts::accept(w) = 0   ⇒   w ∉ L(P).
+accept(w) = 0   ⇒   w ∉ L(P).
 ```
 
 _Proof sketch._ Both extraction routines yield sets `S` such that every `w ∈ L(P)` satisfies `∃ s ∈ S. w ends with s` (with `S` a singleton in the suffix case). `accept(w)` returns `1` iff `w` ends with at least one element of `S` under the separator-aware comparison. If `accept(w) = 0`, then `w` ends with none of them, so `w ∉ L(P)`. ∎
@@ -137,13 +136,12 @@ The corollary is that the matcher may safely short-circuit `is_match` to `false`
 ### 7.1 `**/*.ts` (single suffix)
 
 ```
-Vec<Op>          : [ OptSegmentsSlash, Star, Lit(".ts") ]
+Vec<Op>          : [ LeadingSeps, OptSegmentsSlash, Star, Lit(".ts") ]
 right-to-left:
   Lit(".ts")     → push 's', 't', '.'
   Star           → halt (non-literal)
 reverse buffer   → ".ts"
-suffix           = b".ts"
-suffix_set       = []                       (suffix is non-empty)
+suffixes         = [ b".ts" ]               (suffix_set not tried: the suffix is non-empty)
 ```
 
 `accept(path)`:
@@ -161,19 +159,19 @@ The engine is invoked only on rows that returned `true`. For a walker pulling 10
 ### 7.2 `**/*.{ts,tsx,js}` (suffix set)
 
 ```
-Vec<Op>          : [ OptSegmentsSlash, Star, Lit("."),
+Vec<Op>          : [ LeadingSeps, OptSegmentsSlash, Star, Lit("."),
                      Alternation([
                        [Lit("ts")],
                        [Lit("tsx")],
                        [Lit("js")],
                      ]) ]
 
-extract_suffix(full ops): walks right-to-left;
+push_suffix(full ops): walks right-to-left;
   the trailing Alternation halts the walk → suffix = ε
 
-extract_suffix_set:
-  trailing op is Alternation, all-literal branches:
-    common_tail = extract_suffix([OptSegmentsSlash, Star, Lit(".")])
+suffix_set:
+  trailing op is an Alternation of 3 (≤ 16) all-literal branches:
+    common_tail = push_suffix([LeadingSeps, OptSegmentsSlash, Star, Lit(".")])
                 = ".";
     branch[0] all-literal "ts"  → full = "." + "ts"  = ".ts"
     branch[1] all-literal "tsx" → full = "." + "tsx" = ".tsx"
@@ -186,15 +184,15 @@ suffix_set       = [ b".ts", b".tsx", b".js" ]
 ### 7.3 `src/**/*` (no usable suffix)
 
 ```
-Vec<Op>          : [ Lit("src"), Sep, OptSegmentsSlash, Star ]
+Vec<Op>          : [ Lit("src"), SepRun, OptSegmentsSlash, Star ]
 right-to-left:
   Star           → halt (non-literal)
 suffix           = ε
-extract_suffix_set: tail is not an Alternation → returns ∅
-suffix_set       = []
+suffix_set: tail is not an Alternation → returns ∅
+suffixes         = []
 ```
 
-Both anchors empty. `accept(path)` always returns `true`; the prefilter is bypassed and every candidate goes straight to the engine. This is acceptable: patterns without a literal tail genuinely cannot be filtered by an end-anchored test, and the engine itself runs at constant per-byte cost.
+No anchor: `suffixes` is empty. `accept(path)` always returns `true`; the prefilter is bypassed and every candidate goes straight to the engine. This is acceptable: patterns without a literal tail genuinely cannot be filtered by an end-anchored test, and the engine itself runs at constant per-byte cost.
 
 ### 7.4 `src/main.{ts,rs}` (mixed-suffix set)
 
@@ -202,29 +200,34 @@ Both anchors empty. `accept(path)` always returns `true`; the prefilter is bypas
 Vec<Op>          : [ Lit("src"), Sep, Lit("main."),
                      Alternation([ [Lit("ts")], [Lit("rs")] ]) ]
 
-extract_suffix: tail Alternation halts → ε
-extract_suffix_set:
-  common_tail = "main." (from extract_suffix of the prefix)
-                — actually walking right-to-left: the alternation
-                  is the rightmost op, so common_tail is the suffix
-                  of [Lit("src"), Sep, Lit("main.")] = "main."
-  branch[0] → "main." + "ts" = "main.ts"
-  branch[1] → "main." + "rs" = "main.rs"
-suffix_set       = [ b"main.ts", b"main.rs" ]
+push_suffix: tail Alternation halts → ε
+suffix_set:
+  common_tail = push_suffix([Lit("src"), Sep, Lit("main.")])
+              = "src/main."   (a Sep is collected as '/', so the walk
+                               goes on through it to Lit("src"))
+  branch[0] → "src/main." + "ts" = "src/main.ts"
+  branch[1] → "src/main." + "rs" = "src/main.rs"
+suffix_set       = [ b"src/main.ts", b"src/main.rs" ]
 ```
 
-`accept("src/lib/main.ts")` succeeds on the first element; `accept("src/Cargo.toml")` fails both.
+`accept("src/main.ts")` succeeds on the first element; `accept("src/Cargo.toml")` fails both. `accept("x/src/main.rs")` passes, and the engine then rejects it: the prefilter may over-accept (§1).
 
-The 7-byte anchor is more selective than the 3-byte ".ts" / ".tsx" / ".js" of §7.2 — long literal tails reject more paths per call, and the cost grows only linearly with the anchor length.
+The 11-byte anchor is more selective than the 3-byte ".ts" / ".tsx" / ".js" of §7.2 — long literal tails reject more paths per call, and the cost grows only linearly with the anchor length.
 
 ## 8. Source map
 
-`engine/segment/facts.rs`:
+Rust, `crates/globstar/src/engine/segment/`:
 
-- `pub struct LiteralFacts { suffix, suffix_set, case_insensitive }`.
-- `LiteralFacts::extract(ops, ci)` — entry; runs `extract_suffix`, falls back to `extract_suffix_set` if the single suffix is empty.
-- `LiteralFacts::accept(path)` — separator-aware end-anchored comparison (single suffix or set).
-- `extract_suffix(ops)` / `extract_suffix_set(ops)` — internal helpers.
+- `facts.rs::suffixes(ops)` — entry; returns the suffix list (`Box<[Bytes]>`), empty when there is no prefilter. Runs `push_suffix`, falls back to `suffix_set` if the single suffix is empty.
+- `facts.rs::push_suffix` / `facts.rs::suffix_set` — internal helpers; `MAX_SUFFIX_SET = 16`.
+- `exec.rs::SegmentMatcher::prefilter(path)` — separator-aware end-anchored comparison (single suffix or set), the first step of `is_match`.
+
+JS, `packages/globstar/src/engine/segment/`:
+
+- `facts.js::suffixes(ops)` — entry; returns a string array (one char per byte), empty when there is no prefilter.
+- `facts.js::suffixArray` / `facts.js::extractSuffixSet` — internal helpers; `MAX_SUFFIX_SET = 16`.
+- `facts.js::endsWithSepAware` — the separator-aware `ends_with`.
+- `index.js::SegmentMatcher._factsAccept(str)` — the check, the first step of `_isMatch`.
 
 ## 9. References
 
@@ -232,4 +235,4 @@ The technique is sometimes called "literal acceleration" in the regex literature
 
 - Boyer, R. and Moore, J. (1977). A Fast String Searching Algorithm. _CACM_ 20(10):762–772. The algorithmic ancestor of modern `memmem`.
 - Wang, X. et al. (2019). Hyperscan: A Fast Multi-pattern Regex Matcher for Modern CPUs. _NSDI_. The most aggressive deployment of filter-then-verify in production.
-- Aho, A. V. and Corasick, M. J. (1975). Efficient string matching: An aid to bibliographic search. _CACM_ 18(6):333–340. Multi- pattern alphabet for filter sets, applicable should we ship a multi-pattern accelerator over `LiteralFacts` derivatives in the future.
+- Aho, A. V. and Corasick, M. J. (1975). Efficient string matching: An aid to bibliographic search. _CACM_ 18(6):333–340. Multi- pattern alphabet for filter sets, applicable should we ship a multi-pattern accelerator over the `suffixes` lists in the future.

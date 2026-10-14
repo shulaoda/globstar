@@ -1,8 +1,7 @@
 # Decision: one total segment engine, no Pike VM
 
-Date: 2026-10-12. Status: implemented in both runtimes, uncommitted at
-the time of writing (the benchmark refresh `c092dad` is the last commit
-before it).
+Date: 2026-10-12. Status: implemented in both runtimes, committed as
+`35bdc8c` (2026-10-13) with the follow-up `6bed824`.
 
 ## The question
 

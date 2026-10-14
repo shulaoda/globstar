@@ -1,5 +1,14 @@
 # SSM — Segment-Structured Matcher (design)
 
+> **Historical record (2026-07).** This is the design as of July 2026.
+> The Pike VM fallback, the forks (`FORK_CAP`, `MAX_FORKS`) and the
+> 64-state caps it describes were removed on 2026-10-12/13 (commits
+> `35bdc8c`, `6bed824`). `LiteralFacts` became `facts.rs::suffixes`
+> (JS `facts.js::suffixes`). The `W*` wildcard kinds are design names;
+> the code has `Affix`, `AffixSet`, `AffixIndex` and `Generic`. See
+> [`total-segment-engine.md`](total-segment-engine.md) for the current
+> design.
+
 **Status:** promoted to the primary engine inside the Rust `globstar` crate
 and JavaScript `@globstar/core` package after standalone development
 and head-to-head validation; adversarially reviewed against the byte
@@ -53,7 +62,7 @@ Element := Lit(bytes)      -- literal segment, memcmp (sep-free by construction)
 `match(pattern, p)` ⇔ the element sequence derives the segment sequence,
 where `Lit`/`Wild` each consume exactly one segment and `G0`/`G1` absorb a
 run of segments (of any content, including empty segments), subject to the
-dot rule (§5).
+dot rule (§4).
 
 ### 2.1 Mapping the folded ops to elements
 
@@ -72,28 +81,28 @@ Ops are scanned linearly, cutting at `Sep` boundaries:
 **Equivalence claims** (each verified against the byte engines by the
 corpus + differential fuzzer; reviewers: attack these):
 
-- **C1 (mid `**`)**: `A/**/B`⇔ elements`[…A, G0, B…]`. The byte form is
-`A SepRun OSS B`; `SepRun`(1+ seps) followed by`OSS`
-(`(seg sep-run)\*`) generates exactly: one separator, then any sequence
-of segments each followed by a separator run. In segment terms: the
-boundary `/`that separates`A` from what follows, then **any (possibly
+- **C1 (mid `**`)**: `A/**/B` ⇔ elements `[…A, G0, B…]`. The byte form is
+  `A SepRun OSS B`; `SepRun` (1+ seps) followed by `OSS`
+  (`(seg sep-run)*`) generates exactly: one separator, then any sequence
+  of segments each followed by a separator run. In segment terms: the
+  boundary `/` that separates `A` from what follows, then **any (possibly
   empty) sequence of segments** — empty ones arising from extra
   separators in the run — then `B`. So G0 = "absorb any k ≥ 0 segments".
-  Examples: `a/**/b`matches`a/b`(k=0),`a//b`(k=1, [""]),`a/x//y/b` (k=3, [x,"",y]).
-- **C2 (leading `**/`)**: `\*_/X`⇔`[G0, X…]`. Byte form
-`LeadingSeps OSS X`: 0+ leading seps (= leading empty segments) then
-`(seg sep-run)_`. Absorbs any k ≥ 0 segments including leading empty
-ones: `/a/X`= ["", a] absorbed;`//srv/share/X` = ["", "", srv, share].
-- **C3 (trailing `/**`)**: `A/\*_`⇔`[…A, G1]`. Byte form
-`A SlashAnything`=`A / ._`: one required separator then anything.
-Segment terms: at least one more segment after `A`(the first may be
-empty:`a/`= [a, ""] matches;`a` = [a] does not), then arbitrary
+  Examples: `a/**/b` matches `a/b` (k=0), `a//b` (k=1, [""]), `a/x//y/b` (k=3, [x,"",y]).
+- **C2 (leading `**/`)**: `**/X` ⇔ `[G0, X…]`. Byte form
+  `LeadingSeps OSS X`: 0+ leading seps (= leading empty segments) then
+  `(seg sep-run)*`. Absorbs any k ≥ 0 segments including leading empty
+  ones: `/a/X` = ["", a] absorbed; `//srv/share/X` = ["", "", srv, share].
+- **C3 (trailing `/**`)**: `A/**` ⇔ `[…A, G1]`. Byte form
+  `A SlashAnything` = `A /.*`: one required separator then anything.
+  Segment terms: at least one more segment after `A` (the first may be
+  empty: `a/` = [a, ""] matches; `a` = [a] does not), then arbitrary
   further content = arbitrary further segments.
-- **C4 (bare `**`)**: `**`⇔`[G0]`where G0 consumes the whole segment
-list — matches everything (dot rule aside), including`""`→ [""]
-(one empty segment absorbed… note [""] must be absorbable by G0 for`**`to match the empty path; G0 absorbing "the entire list" vs the
-fixed-point "empty path has one empty segment" is resolved in §3:
-a sequence of elements matches the segment LIST, and`[G0]` matches
+- **C4 (bare `**`)**: `**` ⇔ `[G0]` where G0 consumes the whole segment
+  list — matches everything (dot rule aside), including `""` → [""]
+  (one empty segment absorbed… note [""] must be absorbable by G0 for `**` to match the empty path; G0 absorbing "the entire list" vs the
+  fixed-point "empty path has one empty segment" is resolved in §3:
+  a sequence of elements matches the segment LIST, and `[G0]` matches
   [""] by absorbing the single empty segment).
 - **C5 (strict Sep)**: `a/b` ⇔ `[Lit a, Lit b]` and `a//b` ⇔
   `[Lit a, Lit "", Lit b]` — segment-count equality gives the strict
@@ -116,7 +125,7 @@ guarantee for the common case. (Forking IS a bounded expansion; the cap +
 fallback keeps compile/memory linear. Note `{a,b}{c,d}{e,f}…` stays
 in-segment = one Wild, no expansion at all.)
 
-Match = OR over sequences; match_dir = flag-combine (§6).
+Match = OR over sequences; match_dir = flag-combine (§5).
 
 ## 3. Matching
 
@@ -131,7 +140,7 @@ has one segment).
      E[g+1+j] consumes S[n−t+j] (requires n − g ≥ t, i.e. the middle
      `mid = S[g .. n−t]` has length ≥ 0)
   3. G0: |mid| ≥ 0; G1: |mid| ≥ 1
-  4. dot rule on `mid` (§5)
+  4. dot rule on `mid` (§4)
 - **Multiple Gs**: segment-level greedy with backtracking — the classic
   wildcard-match two-pointer where the "alphabet" is segments and `G`
   plays `*`. O(n·m) worst case (same bound as PikeVm), linear in
@@ -155,7 +164,7 @@ sep-free) are classified at compile time:
 | `WSuffixSet` | `*.{a,b,…}` (all-literal trailing alternation) | any-of ends_with ∧ dot-check                                                                                                        |
 | `WGeneric`   | anything else                                  | u64 bitmask position-NFA over in-segment ops (linear time, built without hash maps; > 64 positions → whole-pattern PikeVm fallback) |
 
-Dot-check (§5) applies to any wildcard-led matcher. Case-insensitive mode
+Dot-check (§4) applies to any wildcard-led matcher. Case-insensitive mode
 routes every byte compare through the ASCII fold (compile-time expanded
 classes stay as today).
 
@@ -288,15 +297,15 @@ globstar ↔ Rust globstar cross-runtime), then `node bench.mjs`.
 Three review agents probed the draft's element mapping against the
 byte engines (difftest + the JS engines, ~950 tuples). Findings:
 
-1. **`/**`and`/**/a`** — a pattern-leading `/` before a globstar
+1. **`/**` and `/**/a`** — a pattern-leading `/` before a globstar
    fold emits an empty `Lit` element first (`[Lit "", G1]`,
    `[Lit "", G0, Lit a]`); the draft's table lost the
    absolute-path requirement.
-2. **Brace-spliced bare `**`composes strictly** —`{**,x}/y`,
-`x/{**,q}`, `a/{\*_,q}/b`all behave as`G1`, not `G0`: a strict
-separator adjacent to a spliced `._` demands ≥ 1 absorbed segment.
-Only the native folds (`SepRun`/`LeadingSeps`/`OSS`/
-`SlashAnything`) absorb their boundary separators.
+2. **Brace-spliced bare `**` composes strictly** — `{**,x}/y`,
+   `x/{**,q}`, `a/{**,q}/b` all behave as `G1`, not `G0`: a strict
+   separator adjacent to a spliced `.*` demands ≥ 1 absorbed segment.
+   Only the native folds (`SepRun`/`LeadingSeps`/`OSS`/
+   `SlashAnything`) absorb their boundary separators.
 3. **No G-collapse across separators** — `**//**` ≡
    `[G0, Lit "", G1]` (each extra `/` between globstar folds is a
    strict `Sep` emitting `Lit ""`); `{**,x}/**` ≡ `[G1, G1]`
@@ -305,26 +314,31 @@ Only the native folds (`SepRun`/`LeadingSeps`/`OSS`/
 4. **Escaped separators** — `\/` lowers into a `Lit` containing a
    real separator byte, matched byte-exactly by the automata tiers.
    Segments are sep-free, so such patterns are not
-   segment-expressible: fall back (`a\/b*`).
+   segment-expressible: fall back (`a\/b*`). (Fixed: `\/` is now a
+   parse error, `EscapedSeparator`, GLOB_SPEC §2.4.)
 5. **`match_dir` does NOT canonicalize** `d` to `d + "/"` — the
    engines simulate exactly d's segments (`a/` vs dir `a` →
    Descend, not Match; spec §13.2's formula is stale, engines win).
    `prefix` = ∃ continuation of ≥ 1 segments (empty allowed,
    multiple allowed) reaching accept — realized as the per-state
-   `reach1` mask over suffix satisfiability.
+   `reach1` mask over suffix satisfiability. (Fixed: GLOB_SPEC §13.2
+   now says `d` is never canonicalized.)
 6. **Spec drift found (not SSM bugs)**: GLOB_SPEC §8.4 says
    `match_dir("a/", "a/**") = Match` but both engines return
    DescendAndMatch; §13.4's negated-pattern guidance is followed by
    JS but not Rust (pre-existing runtime divergence, out of scope
-   here — the fuzzer strips `!` for `d` ops).
+   here — the fuzzer strips `!` for `d` ops). (Fixed: §8.4 now says
+   `DescendAndMatch`, and a negated pattern gives `Descend` in both
+   runtimes, §13.4.)
 7. **Pre-existing bug found by the review tooling**: the JS PikeVm
    `match_dir` DotGuard ε-fixpoint compared a signed `|` result
    against an unsigned `Uint32Array` read — an infinite loop
    whenever bit 31 participated (≥ 32-state NFA + `dot=false`).
-   Fixed with `>>> 0` in `pikevm.js`.
+   Fixed with `>>> 0` in `pikevm.js`. (Removed: `pikevm.js` is gone
+   with the Pike VM.)
 8. **All-below (2026-09-28)** — `match_dir` gained a third bit,
    "every path below d matches", for consumers that exclude files
    by glob. It is NOT a per-state mask like `reach1`: coverage can
    be a joint property of several states (`a/*` with `a/*/**`), so
    the engines simulate wildcard-only paths from the whole state
-   set instead (theory §06 §2.6). Set under `dot=true` only.
+   set instead (theory §06 §2.5). Set under `dot=true` only.

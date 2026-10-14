@@ -10,10 +10,11 @@ packages/globstar-walk   — JavaScript walker published as @globstar/walk
 ```
 
 Both `globstar` implementations compile every non-literal pattern to
-the segment-structured matcher (SSM): a graph of per-segment elements,
-matched by anchored compares where the pattern is linear and by an NFA
-over the graph otherwise. There is no fallback engine and no pattern
-size cap beyond the parser's expansion budget. See
+the segment-structured matcher: a graph of per-segment elements,
+matched by anchored compares along each path through the graph, or by
+an NFA over the graph when there are too many paths or a path needs too
+many states. There is no fallback engine; the only caps are the parser's
+limits on pattern length, brace nesting and the expansion around `**`. See
 [`references/theory/07-segment-matcher.md`](./references/theory/07-segment-matcher.md).
 
 ## Why this exists
@@ -26,7 +27,7 @@ size cap beyond the parser's expansion budget. See
   matched paths to wire up dynamic imports.
 
 Existing JS glob libraries (`fast-glob`, `tinyglobby`, `picomatch`) and
-existing Rust crates (`globset`, `glob`, the user's own `fast-glob`)
+existing Rust crates (`globset`, `glob`, `fast-glob`)
 implement subtly different dialects. Mixing two of them in one
 pipeline produces "matches in dev, misses in build" bugs that are
 painful to track down.

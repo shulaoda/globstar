@@ -145,7 +145,7 @@ A `]` that comes first in a class (right after `[`, `[!`, or `[^`) is a plain me
 | `[!]`, `[^]` | `UnterminatedClass` error, for the same reason                               |
 | `[`          | `UnterminatedClass` error                                                    |
 
-The same rule is why `[!]foo` does not match `!foo`. Write `[\!]foo` or `\!foo` instead.
+The same rule is why `[!]foo` fails to compile. Write `[\!]foo` or `\!foo` instead.
 
 Spec: [GLOB_SPEC §6.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -172,7 +172,7 @@ A class matches one **byte**, not one visible character. A character like `é` t
 
 ## POSIX named classes
 
-Named classes such as `[[:alpha:]]` and `[[:digit:]]` are not supported. `[[:alpha:]]` is not a letter class and does not match `a`. Write the ranges yourself:
+Named classes such as `[[:alpha:]]` and `[[:digit:]]` are not supported and not recognized. `[[:alpha:]]` is the class `[[:alpha:]` followed by a literal `]`, so it matches `a]` and never `a` alone. Write the ranges yourself:
 
 | Instead of    | Write         |
 | ------------- | ------------- |

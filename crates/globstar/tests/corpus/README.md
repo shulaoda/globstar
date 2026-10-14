@@ -1,6 +1,6 @@
 # Golden Test Corpus
 
-This directory is the **executable form** of `spec/GLOB_SPEC.md`. Any
+This directory is the **executable form** of `references/spec/GLOB_SPEC.md`. Any
 implementation claiming spec conformance must pass every test here.
 
 ## Files
@@ -32,13 +32,14 @@ PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
 
 ### Fields
 
-- **PATTERN** (column 1): the glob string.
+- **PATTERN** (column 1): the glob string; in `corpus-multi*.txt` a JSON array of
+  glob strings.
 - **PATH** (column 2): the path being matched.
 - **EXPECTED** (column 3): expected result.
   - `corpus.txt` / `corpus-*.txt`: `match` | `no-match`
-  - `corpus-dir.txt`: `pruned` | `descend` | `match` | `descend-match` |
-    `descend-all` | `descend-all-match`
-  - `corpus-err.txt`: an `ErrorKind` name (e.g. `UnterminatedClass`)
+  - `corpus-dir.txt` / `corpus-multi-dir.txt`: `pruned` | `descend` | `match` |
+    `descend-match` | `descend-all` | `descend-all-match`
+  - `corpus-err.txt`: a `GlobError` variant name (e.g. `UnterminatedClass`), in column 2 — error rows have no PATH
 - **FLAGS** (column 4, optional): `k=v[,k=v]`, e.g. `dot=true`.
 
 ### Escape rules
@@ -85,7 +86,7 @@ fn corpus() {
 ```
 
 `corpus-dir.txt` and `corpus-err.txt` follow the same shape but call
-`match_dir` or assert on `Glob::new().is_err()` respectively.
+`match_dir` or compare the `GlobError` variant name respectively.
 
 ## Provenance
 

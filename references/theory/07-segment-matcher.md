@@ -7,9 +7,9 @@ the move to a total engine: `references/decisions/total-segment-engine.md`.
 
 ## The observation
 
-Every construct in the dialect except `**` is segment-local (§GLOB*SPEC
-6.2, 12.3): `*`, `?`, `[...]`cannot cross a separator, and
-dot-protection keys on segment starts. After the globstar fold,`\*_`
+Every construct in the dialect except `**` is segment-local (GLOB_SPEC
+§6.2, §12.3): `*`, `?`, `[...]` cannot cross a separator, and
+dot-protection keys on segment starts. After the globstar fold, `**`
 appears in exactly four op forms, each of which denotes a
 _segment-run absorber_. A pattern is therefore a graph of
 segment-shaped elements — a line for a pattern without a
@@ -66,7 +66,7 @@ reach1`, where `reach1[s]` ⇔ some ≥ 1-segment continuation from s
   globstars carries its own small NFA (its nodes alone) so a union
   member like `**/node_modules/**` costs what it would alone.
   `match_dir`'s all-below bit steps the graph NFA over wildcard-only
-  segments until the set settles (§06 §2.6).
+  segments until the set settles (§06 §2.5).
 
 In-segment `Wild` matchers are classified at compile time:
 `Affix` (prefix/suffix literals + `*`/`?` runs → length bounds + two
@@ -83,18 +83,21 @@ exactly).
 
 One walk over the ops: groups → graph nodes → classify each
 segment; then the chains (paths) are enumerated and the NFA tables
-laid out. No subset construction, no hash maps, no byte-class
-tables. Every pattern the parser accepts compiles; the only limits
-are the parser's brace-expansion budget and the 64-chain /
-8-suffix / 1024-product thresholds that pick a representation, never
-reject one.
+laid out. No subset construction, no byte-class tables; the one
+hash map, in the Rust builder only, lets a brace branch reuse a
+node another branch already made. Every pattern the parser accepts
+compiles; the only limits are the parser's — 64 KiB of pattern, 32
+levels of brace nesting, the brace-expansion budget — and the
+64-chain / 8-suffix / 1024-product thresholds pick a
+representation, never reject one.
 
 ## Complexity and safety
 
 Compile O(|pattern| + edges) — linear in the ops for a brace-free
 pattern, and a separator-crossing brace adds one node per branch
 rather than a product. Match O(n·m) worst case — the NFA over the
-graph is the non-backtracking ReDoS floor of ADR-007 — and O(n) for
+graph is the non-backtracking floor that rules out ReDoS (see
+`../decisions/total-segment-engine.md`) — and O(n) for
 a chain with ≤ 1 globstar. The engine answers `is_match`, `match_dir`,
 and `static_prefixes` natively.
 

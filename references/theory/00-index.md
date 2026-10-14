@@ -17,8 +17,8 @@ The notes `02-thompson-nfa.md` and `04-pike-vm.md` described the byte-level Thom
 | ------------------- | ----------- | ---------------------------------------------------------------------- |
 | `engine/literal.rs` | —           | Tier 0 byte-equality matcher for pure-literal patterns.                |
 | `engine/segment/`   | §07         | Segment-structured matcher for every non-literal pattern.              |
-| `engine/ops.rs`     | §06         | IR and AST-to-linear lowering.                                         |
-| `engine/segment/facts.rs` | §05   | Suffix prefilter and static-prefix analysis.                           |
+| `engine/ops.rs`     | —           | IR and AST-to-linear lowering.                                         |
+| `engine/segment/facts.rs` | §05, §06 | Suffix prefilter (§05) and static-prefix analysis (§06).          |
 
 ## Notation
 
@@ -27,4 +27,4 @@ The notes `02-thompson-nfa.md` and `04-pike-vm.md` described the byte-level Thom
 - An NFA is a 5-tuple `(Q, Σ, δ, q₀, F)`: states, alphabet, transition relation, initial state, accepting set.
 - For a regular expression `r`, `L(r) ⊆ Σ*` is its language. `|r|` is its size (count of grammar symbols).
 
-References to the implementation use the source-file path and identifier name (`segment/compile.rs::build_graph`, etc.).
+References to the implementation use the source-file path and identifier name (`segment/compile.rs::Graph::build`, etc.).
