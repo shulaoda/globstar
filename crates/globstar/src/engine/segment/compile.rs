@@ -521,7 +521,7 @@ fn survey(ops: &[Op]) -> (usize, bool, usize) {
 
 /// What an op costs the walk to copy and compile: a literal its length,
 /// a brace one plus its branches, anything else one.
-fn op_weight(op: &Op) -> usize {
+pub(super) fn op_weight(op: &Op) -> usize {
     match op {
         Op::Lit(bytes) => bytes.len(),
         Op::Alternation(branches) => 1 + branches.iter().flatten().map(op_weight).sum::<usize>(),

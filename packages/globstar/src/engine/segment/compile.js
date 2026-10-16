@@ -216,7 +216,7 @@ function tooComplex(max) {
 
 // What an op costs the walk to copy and compile: a literal its length, a
 // brace one plus its branches, anything else one.
-function opWeight(op) {
+export function opWeight(op) {
   if (op.kind === OP_LIT) return op.bytes.length;
   return op.kind === OP_ALTERNATION ? braceWeight(op) : 1;
 }

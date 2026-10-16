@@ -73,15 +73,35 @@ fn factoring_keeps_the_members_static_prefixes() {
         out
     };
     // Lifting the shared `s` of `src`/`spec` would leave the walker with no
-    // directory to start from; the shared `mod` behind `src/` is harmless.
+    // directory to start from; what factoring shares behind a `/` is read
+    // back per member.
     assert_eq!(prefixes(&["src/**/*.ts", "test/**/*.js"]), ["src", "test"]);
     assert_eq!(prefixes(&["src/**", "spec/**"]), ["spec", "src"]);
     assert_eq!(prefixes(&["dir1/*.ts", "dir2/*.ts"]), ["dir1", "dir2"]);
     assert_eq!(prefixes(&["foo.ts", "foobar.ts"]), ["foo.ts", "foobar.ts"]);
     assert_eq!(
         prefixes(&["src/mod1/index.ts", "src/mod2/index.ts"]),
-        ["src"]
+        ["src/mod1/index.ts", "src/mod2/index.ts"]
     );
+    // A shared head or tail no longer hides a member's own prefix, and a
+    // member that is a folder another member walks keeps it.
+    assert_eq!(
+        prefixes(&[
+            "node_modules/react/package.json",
+            "node_modules/vue/package.json"
+        ]),
+        [
+            "node_modules/react/package.json",
+            "node_modules/vue/package.json"
+        ]
+    );
+    assert_eq!(
+        prefixes(&["README.md", "node_modules/lodash/README.md"]),
+        ["README.md", "node_modules/lodash/README.md"]
+    );
+    assert_eq!(prefixes(&["src", "src/**"]), ["src"]);
+    assert_eq!(prefixes(&["docs/**", "docs/*.md"]), ["docs"]);
+    assert_eq!(prefixes(&["src/**/*.ts", "test/*.ts"]), ["src", "test"]);
 }
 
 #[test]

@@ -5,6 +5,7 @@
 import { isPathSep, eqByteCi } from "../../bytes.js";
 import { latin1 } from "../../utf8.js";
 import { OP_ALTERNATION, OP_LIT, OP_SEP, OP_SEP_RUN, OP_SLASH_ANYTHING } from "../ops.js";
+import { opWeight } from "./compile.js";
 
 // Literal suffixes one of which every match ends with: the trailing
 // `Lit`/`Sep` run (separators as `/`), or when the pattern ends in a
@@ -82,59 +83,101 @@ function extractSuffixSet(ops) {
   return set;
 }
 
-// The deepest segment-bounded literal prefix per top-level brace branch,
-// deduplicated, sorted by (length, bytes).
+// How deep brace expansions may nest along one static prefix, and the
+// part of its budget that does not depend on the pattern.
+const MAX_HEAD_DEPTH = 64;
+const HEAD_BUDGET_FLOOR = 4096;
+
+// The deepest segment-bounded literal head of each expansion,
+// deduplicated, sorted by (length, bytes). A brace in the head is taken
+// branch by branch with what follows it (`{a,b}/c` gives `a/c` and
+// `b/c`), so a factored union keeps its members' heads.
+//
+// Every byte read and every branch taken costs one unit of a budget of
+// HEAD_BUDGET_FLOOR plus twice the pattern's weight (`opWeight`, only
+// worked out once the floor is spent): reading each op once costs at
+// most its weight, and re-reading what follows a brace for each branch
+// is what the rest pays for. Past the budget, or past MAX_HEAD_DEPTH
+// nested braces, the head ends at its last whole segment, a shorter
+// prefix that still holds: `{a,b}{c,d}…` stops after a few braces
+// instead of doubling, and a brace before a long literal copies it a few
+// times, not once per branch.
 export function computeStaticPrefixes(ops) {
-  return dedupePrefixes(extractPrefixesPerBranch(ops));
+  const heads = { root: ops, spent: 0, limit: HEAD_BUDGET_FLOOR, weighed: false, out: [] };
+  readHeads(heads, ops, 0, null, [], 0, 0);
+  return dedupePrefixes(heads.out);
 }
 
-function extractPrefixesPerBranch(ops) {
-  if (ops.length > 0 && ops[0].kind === OP_ALTERNATION) {
-    const next = ops[1];
-    if (
-      next === undefined ||
-      next.kind === OP_SEP ||
-      next.kind === OP_SEP_RUN ||
-      next.kind === OP_SLASH_ANYTHING
-    ) {
-      const out = [];
-      for (const branch of ops[0].branches) {
-        for (const prefix of extractPrefixesPerBranch(branch)) out.push(prefix);
+// Read `ops` from `at`, then `then` (`{ ops, at, next }`: what follows
+// them), after the bytes `acc` (whose last whole segment ends at
+// `boundary`), and record the head each expansion reaches.
+function readHeads(heads, ops, at, then, acc, boundary, depth) {
+  const mark = acc.length;
+  let i = at;
+  let end;
+  for (;;) {
+    if (i === ops.length) {
+      if (then === null) {
+        end = acc.length; // all literal
+        break;
       }
-      return out;
+      ops = then.ops;
+      i = then.at;
+      then = then.next;
+      continue;
     }
-  }
-  return [extractLeadingPrefix(ops)];
-}
-
-function extractLeadingPrefix(ops) {
-  const acc = [];
-  let lastBoundary = 0;
-  let fullyLiteral = true;
-  for (const op of ops) {
-    if (op.kind === OP_LIT) {
-      for (let i = 0; i < op.bytes.length; i++) acc.push(op.bytes[i]);
-    } else if (op.kind === OP_SEP || op.kind === OP_SEP_RUN) {
+    const op = ops[i++];
+    if (op.kind === OP_LIT && afford(heads, op.bytes.length)) {
+      for (let k = 0; k < op.bytes.length; k++) acc.push(op.bytes[k]);
+    } else if ((op.kind === OP_SEP || op.kind === OP_SEP_RUN) && afford(heads, 1)) {
       acc.push(0x2f);
-      lastBoundary = acc.length;
+      boundary = acc.length;
+    } else if (op.kind === OP_SLASH_ANYTHING) {
+      // `/**`: the segment before it is whole.
+      end = acc.length;
+      break;
+    } else if (
+      op.kind === OP_ALTERNATION &&
+      depth < MAX_HEAD_DEPTH &&
+      afford(heads, op.branches.length)
+    ) {
+      const after = { ops, at: i, next: then };
+      for (const branch of op.branches) {
+        // An empty head covers every other one: nothing more to read.
+        if (heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0) break;
+        readHeads(heads, branch, 0, after, acc, boundary, depth + 1);
+      }
+      acc.length = mark;
+      return;
     } else {
       // Every branch of an alternation opening a new segment leaves what
-      // came before whole, like a trailing `/**`.
-      if (op.kind === OP_SLASH_ANYTHING || (op.kind === OP_ALTERNATION && opensSegment(op))) {
-        lastBoundary = acc.length;
-      }
-      fullyLiteral = false;
+      // came before whole.
+      end = op.kind === OP_ALTERNATION && opensSegment(op) ? acc.length : boundary;
       break;
     }
   }
-  let length = fullyLiteral ? acc.length : lastBoundary;
-  while (length > 0 && acc[length - 1] === 0x2f) length--;
-  acc.length = length;
-  return latin1(Uint8Array.from(acc));
+  while (end > 0 && acc[end - 1] === 0x2f) end--;
+  heads.out.push(latin1(Uint8Array.from(acc.slice(0, end))));
+  acc.length = mark;
+}
+
+// Spend `n` units, unless that passes the limit (the floor until it is
+// spent, then the floor plus twice the weight).
+function afford(heads, n) {
+  if (heads.spent + n > heads.limit && !heads.weighed) {
+    heads.weighed = true;
+    for (const op of heads.root) heads.limit += 2 * opWeight(op);
+  }
+  if (heads.spent + n > heads.limit) return false;
+  heads.spent += n;
+  return true;
 }
 
 function opensSegment(alt) {
-  return alt.branches.every((b) => b[0]?.kind === OP_SEP || b[0]?.kind === OP_SEP_RUN);
+  return alt.branches.every((b) => {
+    const k = b[0]?.kind;
+    return k === OP_SEP || k === OP_SEP_RUN || k === OP_SLASH_ANYTHING;
+  });
 }
 
 function dedupePrefixes(prefixes) {

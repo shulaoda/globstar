@@ -265,8 +265,14 @@ impl Glob {
         raw ^ self.negated
     }
 
-    /// Literal path prefixes a walker can seed traversal from: every
-    /// matching path starts with one of the returned byte strings.
+    /// Literal path prefixes a walker can seed traversal from: for each
+    /// expansion of the pattern's braces, its literal head up to its last
+    /// whole segment, with heads a shorter one covers removed
+    /// (`{src,lib}/index.ts` gives `src/index.ts` and `lib/index.ts`). The
+    /// heads are bytes spelled with `/` and in the pattern's case: every
+    /// match starts with one of them byte for byte, except that under
+    /// `case_insensitive` a match may differ in case, and on Windows in
+    /// its separators (`\`). An empty prefix means the root.
     pub fn static_prefixes(&self) -> Vec<Vec<u8>> {
         if self.negated {
             return vec![Vec::new()];
@@ -309,8 +315,8 @@ pub trait Matcher {
     /// Directory-level verdict for pruning (see [`DirMatch`]).
     fn match_dir(&self, dir_path: &[u8]) -> DirMatch;
 
-    /// Literal path prefixes a walker can seed traversal from. Every
-    /// matching path starts with one of the returned byte strings.
+    /// Literal path prefixes a walker can seed traversal from (see
+    /// [`Glob::static_prefixes`]).
     fn static_prefixes(&self) -> Vec<Vec<u8>>;
 }
 

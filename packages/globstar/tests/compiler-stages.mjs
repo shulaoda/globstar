@@ -159,6 +159,36 @@ assert.deepEqual(prefixesOf("{**,src}/x"), [""]);
 // (a single empty prefix, never an empty list — the Rust convention).
 assert.deepEqual(prefixesOf(["src/*.ts", "!x"]), [""]);
 assert.deepEqual(prefixesOf(["!x"]), [""]);
+// Each expansion's literal head: a brace is taken with what follows it,
+// and a factored union keeps its members' heads. Twins of
+// `prefixes_take_a_brace_with_what_follows_it` (glob.rs) and
+// `factoring_keeps_the_members_static_prefixes` (glob_union.rs).
+assert.deepEqual(prefixesOf("{node_modules,packages}/lodash/package.json"), [
+  "node_modules/lodash/package.json",
+  "packages/lodash/package.json",
+]);
+assert.deepEqual(prefixesOf("a{b,c}d/x"), ["abd/x", "acd/x"]);
+assert.deepEqual(prefixesOf("{a/**,b}/c"), ["a", "b/c"]);
+assert.deepEqual(prefixesOf("src/{**,*.ts}"), ["src"]);
+assert.equal(prefixesOf("{a,b}".repeat(8) + "/x").length, 256);
+assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
+assert.deepEqual(prefixesOf(["src/mod1/index.ts", "src/mod2/index.ts"]), [
+  "src/mod1/index.ts",
+  "src/mod2/index.ts",
+]);
+assert.deepEqual(prefixesOf(["README.md", "node_modules/lodash/README.md"]), [
+  "README.md",
+  "node_modules/lodash/README.md",
+]);
+assert.deepEqual(prefixesOf(["src", "src/**"]), ["src"]);
+assert.deepEqual(prefixesOf(["docs/**", "docs/*.md"]), ["docs"]);
+{
+  const branches = Array.from({ length: 1000 }, (_, i) => `b${i}`).join(",");
+  const pattern = `{${branches}}/${"z".repeat(20_000)}`;
+  const px = prefixesOf(pattern);
+  assert.equal(px.length, 1000);
+  assert.ok(px.reduce((n, p) => n + p.length, 0) <= 4 * pattern.length, "prefixes stay linear");
+}
 console.log("✓ static prefix extraction");
 
 // One body under two spellings: factoring lifts all of it and keeps one

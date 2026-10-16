@@ -76,7 +76,7 @@ Spec: [GLOB_SPEC §14.3](https://github.com/shulaoda/globstar/blob/main/referenc
 
 ## Static prefixes of a union
 
-`staticPrefixes()` returns one literal prefix per distinct root the members start from, shortest first, with prefixes covered by a shorter one removed. A member that can match at the root (such as `**/*.ts`) makes the whole list the single empty prefix.
+`staticPrefixes()` returns each member's own literal heads (each expansion's literal head up to its last whole segment), shortest first, with prefixes covered by a shorter one removed. What the union shares does not shorten them: `["node_modules/react/package.json", "node_modules/vue/package.json"]` gives both full paths. A member that can match at the root (such as `**/*.ts`) makes the whole list the single empty prefix.
 
 ```js
 compileMatcher(["src/**/*.ts", "docs/**/*.md"]).staticPrefixes(); // src, docs

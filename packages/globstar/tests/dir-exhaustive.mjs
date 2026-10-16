@@ -68,6 +68,17 @@ const suffixes = [...enumerate(PSEG, 1), ...enumerate(PSEG, 2), ...enumerate(PSE
 // Does every `dir + "/" + suffix` match?
 const allBelow = (matcher, dir, set = suffixes) => set.every((s) => matcher.match(`${dir}/${s}`));
 
+// Every match starts with one of the static prefixes, byte for byte.
+// (Under caseInsensitive a match may differ in case: not checked.)
+function assertPrefixesCover(matcher, paths, matched) {
+  const prefixes = matcher.staticPrefixes().map((b) => new TextDecoder().decode(b));
+  paths.forEach((path, i) => {
+    if (!matched[i]) return;
+    const ok = prefixes.some((q) => q === "" || path === q || path.startsWith(q + "/"));
+    assert.ok(ok, `${JSON.stringify(path)} starts with none of ${JSON.stringify(prefixes)}`);
+  });
+}
+
 const isBelow = (child, dir) =>
   child.length > dir.length && child[dir.length] === "/" && child.startsWith(dir);
 
@@ -86,6 +97,7 @@ function check(pats, paths, dot, ci, set = suffixes) {
     const nfa = compileMatcher(pattern, { ...opts, __engine: "nfa" });
 
     const matched = paths.map((p) => def.match(p));
+    if (!ci) assertPrefixesCover(def, paths, matched);
 
     for (let i = 0; i < paths.length; i++) {
       const dir = paths[i];
@@ -132,6 +144,7 @@ function checkUnion(sets, paths, dot, ci) {
     const nfa = compileMatcher(set, { ...opts, __engine: "nfa" });
 
     const matched = paths.map((p) => def.match(p));
+    if (!ci) assertPrefixesCover(def, paths, matched);
 
     for (let i = 0; i < paths.length; i++) {
       const dir = paths[i];

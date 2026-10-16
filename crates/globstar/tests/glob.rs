@@ -196,6 +196,50 @@ fn prefixes_brace_dedupes_nested() {
 }
 
 #[test]
+fn prefixes_take_a_brace_with_what_follows_it() {
+    // Each expansion's literal head: a brace in the head no longer cuts
+    // the prefix at the brace.
+    let sorted = |p: &str| {
+        let mut v = prefixes(p);
+        v.sort();
+        v
+    };
+    assert_eq!(
+        sorted("{node_modules,packages}/lodash/package.json"),
+        vec![
+            b"node_modules/lodash/package.json".to_vec(),
+            b"packages/lodash/package.json".to_vec()
+        ]
+    );
+    assert_eq!(
+        sorted("{src,lib}/index.ts"),
+        vec![b"lib/index.ts".to_vec(), b"src/index.ts".to_vec()]
+    );
+    assert_eq!(
+        sorted("a{b,c}d/x"),
+        vec![b"abd/x".to_vec(), b"acd/x".to_vec()]
+    );
+    assert_eq!(sorted("{a/**,b}/c"), vec![b"a".to_vec(), b"b/c".to_vec()]);
+    assert_eq!(prefixes("src/{**,*.ts}"), vec![b"src".to_vec()]);
+    // Doubling braces expand while the budget lasts (eight give 256
+    // heads); sixteen pass it, and nothing whole is literal before them.
+    assert_eq!(prefixes(&("{a,b}".repeat(8) + "/x")).len(), 256);
+    assert_eq!(prefixes(&("{a,b}".repeat(16) + "/x")), vec![b"".to_vec()]);
+}
+
+#[test]
+fn prefixes_stay_linear_in_the_pattern() {
+    // A brace before a long literal copies it while the budget lasts,
+    // then cuts the rest at their last whole segment.
+    let branches: Vec<String> = (0..1000).map(|i| format!("b{i}")).collect();
+    let pattern = format!("{{{}}}/{}", branches.join(","), "z".repeat(20_000));
+    let p = prefixes(&pattern);
+    assert_eq!(p.len(), 1000);
+    let bytes: usize = p.iter().map(Vec::len).sum();
+    assert!(bytes <= 4 * pattern.len(), "{bytes} bytes of prefixes");
+}
+
+#[test]
 fn prefixes_trailing_slash_globstar() {
     // Strict trailing `/**` keeps the full literal head as the seed.
     assert_eq!(prefixes("src/**"), vec![b"src".to_vec()]);

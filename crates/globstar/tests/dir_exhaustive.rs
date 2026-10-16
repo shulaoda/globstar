@@ -85,6 +85,21 @@ fn all_below(is_match: impl Fn(&[u8]) -> bool, dir: &str, suffixes: &[String]) -
         .all(|s| is_match(format!("{dir}/{s}").as_bytes()))
 }
 
+/// Every match starts with one of the static prefixes, byte for byte.
+/// (Under case_insensitive a match may differ in case: not checked.)
+fn assert_prefixes_cover(glob: &Glob, paths: &[String], matched: &[bool]) {
+    let prefixes = glob.static_prefixes();
+    for (path, _) in paths.iter().zip(matched).filter(|(_, m)| **m) {
+        let p = path.as_bytes();
+        assert!(
+            prefixes
+                .iter()
+                .any(|q| q.is_empty() || p == &q[..] || (p.starts_with(q) && p[q.len()] == b'/')),
+            "{glob:?}: {path:?} starts with none of {prefixes:?}"
+        );
+    }
+}
+
 /// `child` is strictly below `dir` (dir + `/` + more).
 fn is_below(child: &str, dir: &str) -> bool {
     child.len() > dir.len() && child.as_bytes()[dir.len()] == b'/' && child.starts_with(dir)
@@ -121,6 +136,9 @@ fn check_below(patterns: &[String], paths: &[String], suffixes: &[String], dot: 
             .iter()
             .map(|p| default.is_match(p.as_bytes()))
             .collect();
+        if !ci {
+            assert_prefixes_cover(&default, paths, &matched);
+        }
 
         for (i, dir) in paths.iter().enumerate() {
             let nfa = default.is_match_nfa(dir.as_bytes());
@@ -179,6 +197,9 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
             .iter()
             .map(|p| default.is_match(p.as_bytes()))
             .collect();
+        if !ci {
+            assert_prefixes_cover(&default, paths, &matched);
+        }
 
         for (i, dir) in paths.iter().enumerate() {
             let nfa = default.is_match_nfa(dir.as_bytes());

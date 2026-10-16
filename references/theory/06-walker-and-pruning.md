@@ -51,30 +51,26 @@ Two outputs from the matcher drive the walker: `static_prefixes` jumps the trave
 
 ### 1.1 Definition
 
-For a pattern `P` whose lowered form is the linear `Op` program `o₁ o₂ … oₙ`, define the _static prefix_ of `P` as
+For a pattern `P` with brace expansions `E(P)` (GLOB_SPEC §7.0), let `head(e)` be the longest literal prefix of the expansion `e` that ends at a path-segment boundary: every `w ∈ L(e)` starts with it, and it is `ε` or every such `w` equals it or goes on after it with a separator. The _static prefixes_ of `P` are
 
 ```
-SP(P) := the longest s ∈ Σ* such that
-         every w ∈ L(P) starts with s,
-         and s ends at a path-segment boundary
-        (i.e. s = ε, or every w ∈ L(P) either equals s
-         or goes on after s with a separator).
+SP(P) := the minimal elements of { head(e) : e ∈ E(P) }
+         under "is a segment-prefix of"   (an antichain)
 ```
 
-The separator after `s` is not kept: the prefix of `src/*.ts` is `src`, and a fully literal pattern is its own prefix (`src/main.rs`).
+The separator after a head is not kept: the head of `src/*.ts` is `src`, and a fully literal pattern is its own prefix (`src/main.rs`). For a union the expansions are its members', so `SP` of a union is the antichain of its members' heads. The heads are bytes in the pattern's own spelling: `/` for every separator and the pattern's case.
 
 The segment-boundary requirement matters because the walker uses `SP(P)` to seed traversal at `cwd ++ s`, and `fs.readdir` only operates on directories. A non-segment-aligned prefix would force the walker to filter mid-segment, which it cannot.
 
 ### 1.2 Extraction
 
-`static_prefixes(ops)` returns one prefix per top-level brace branch:
+`static_prefixes(ops)` reads the ops left to right, accumulating bytes from `Op::Lit` and separator bytes from `Op::Sep`/`Op::SepRun`. A brace in the head is read branch by branch, each followed by what follows the brace (a continuation, so nothing is copied). At the first non-literal op the bytes are cut back to the last separator before it; a trailing `/**`, or a brace whose every branch starts with a separator, ends a whole segment instead. Trailing separators are dropped. Each path through the head braces records one head.
 
-- if `ops[0] = Op::Alternation(branches)` and the brace is followed by a separator, a trailing `/**` or the end, recurse into each branch and collect the union of returned prefixes;
-- otherwise, scan `o₁, o₂, …` left to right, accumulating bytes from `Op::Lit` and separator bytes from `Op::Sep`/`Op::SepRun`; at the first non-literal op, cut the bytes back to the last separator before it (a trailing `/**`, or a brace whose every branch starts with a separator, also ends a whole segment). Trailing separators are dropped.
+Re-reading the continuation once per branch is what could cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal copies it once per branch. So every byte read and every branch taken costs one unit of a budget of `4096 + 2·weight(P)`, and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment — a shorter prefix, still sound. Reading every op once costs at most its weight, so the budget only ever cuts heads that re-read what a brace shares.
 
 When there are several prefixes, a dedupe step (`facts.rs::dedupe`) sorts them by (length, bytes) and drops any prefix that a shorter kept one already covers (`src` covers `src/a`); an empty prefix covers all.
 
-The algorithm is `O(|ops|)` before the dedupe. Output is `Box<[Box<[u8]>]>`, cached on the matcher.
+The work and the output are `O(weight(P))` before the dedupe. Output is `Box<[Box<[u8]>]>`, cached on the matcher.
 
 ### 1.3 Examples
 
@@ -85,13 +81,16 @@ src/**/*.ts        →  ["src"]
 **/*.ts            →  [""]               (no literal head)
 {src,test}/*.rs    →  ["src", "test"]
 {src,src/a}/*.rs   →  ["src"]            (src/a is covered by src)
+{src,lib}/main.rs  →  ["lib/main.rs", "src/main.rs"]
+{a/**,b}/c         →  ["a", "b/c"]
+a{b,c}d/x          →  ["abd/x", "acd/x"]
 ```
 
 ### 1.4 Properties
 
 **Proposition 4.** For every `w ∈ L(P)`, there exists `s ∈ SP(P)` such that `w` starts with `s`.
 
-_Proof sketch._ Top-level alternations produce per-branch prefixes by construction. Each non-alternation prefix is built only from ops whose languages contain no Σ-quantifier in the head segment, so it is a guaranteed left-anchored byte string of every match in that branch. ∎
+_Proof sketch._ Every `w ∈ L(P)` lies in `L(e)` for some expansion `e`, and the read follows `e`'s branches through the head braces. The bytes it keeps come only from literal ops before the first non-literal one, cut back to a segment boundary, so they start every `w ∈ L(e)`. A head cut short by the budget is a segment-prefix of `head(e)` and starts every such `w` too, and the dedupe only drops a head when a shorter kept one covers it. ∎
 
 The corollary is that the walker may safely seed a separate traversal frame for each `s ∈ SP(P)`: paths that do not start with any `s` are excluded from `L(P)`, so they need not be visited.
 

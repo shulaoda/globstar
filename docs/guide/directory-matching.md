@@ -133,7 +133,9 @@ Walkers get directory names from `readdir` without a trailing separator, and tha
 
 ## Static prefixes
 
-`staticPrefixes()` returns the literal path prefixes every match starts with, so a walk can begin there instead of at the root. `src/**/*.ts` and `docs/**/*.md` together give `src` and `docs`; `**/*.ts` gives the empty prefix, meaning the root.
+`staticPrefixes()` returns the literal path prefixes every match starts with, so a walk can begin there instead of at the root. Each one is the literal head of one expansion of the pattern's braces, up to its last whole segment: `src/**/*.ts` and `docs/**/*.md` together give `src` and `docs`, `{node_modules,packages}/lodash/package.json` gives both full paths, and `**/*.ts` gives the empty prefix, meaning the root. A prefix that a shorter one covers is left out.
+
+The prefixes are spelled the way the pattern is: with `/`, and in the pattern's case. With `caseInsensitive: true`, `SRC/*.ts` matches `src/a.ts` but its prefix is `SRC`, so a walker on a case-sensitive disk finds no such folder; write the prefix in the case the disk uses, or start with a class (`[Ss]rc/*.ts`) to walk from the root.
 
 ```js
 compileMatcher(["src/**/*.ts", "docs/**/*.md"]).staticPrefixes(); // [src, docs] as Uint8Array

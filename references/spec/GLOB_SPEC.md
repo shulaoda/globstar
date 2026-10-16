@@ -732,7 +732,7 @@ A negated pattern SHOULD return `Descend` for every `d`, and never a covering re
 
 > **Implementation note.** Feed `d` to the matcher and classify where it stops: no live state is `Pruned`; an accepting state is `Match` or `DescendAndMatch`; live states without acceptance are `Descend`. For the all-below flag, continue from those states as §13.6 describes.
 >
-> The same analysis yields `static_prefixes`: the literal path prefixes every match of the pattern must start with, one per top-level branch. Walkers seed traversal from them (WALKER_SPEC.md §6).
+> The same analysis yields `static_prefixes`: for each expansion of the pattern's braces (§7.0), its literal head up to its last whole segment, with heads a shorter one covers removed. Every match starts with one of them, compared byte for byte with `/` as the separator and in the pattern's case (a case-insensitive match, or a Windows path with `\`, may differ there). Walkers seed traversal from them (WALKER_SPEC.md §6). The reference implementations bound the work linearly in the pattern; past the bound a head ends at its last whole segment, which is a shorter prefix and still holds.
 
 ### 13.6 All-below: `DescendAll` and `DescendAllAndMatch`
 
@@ -1063,4 +1063,4 @@ Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional, n/a not applicable.
 | All-below              | Every path below a directory matches (§13.6). The two `DescendAll…` results carry it.                                    |
 | Union                  | The boolean OR of N patterns: `Glob::union` in Rust, `globstar(patterns)` and `compileMatcher(patterns)` in JS (§14).    |
 | Literal facts          | Byte facts every match of a pattern must satisfy (prefix, suffix, substring, exact), used to reject paths early (§14.4). |
-| Static prefixes        | The literal path prefixes every match must start with (§13.5). Walkers seed traversal from them.                         |
+| Static prefixes        | Each expansion's literal head up to its last whole segment; every match starts with one (§13.5). Walkers seed from them. |

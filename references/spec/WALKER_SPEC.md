@@ -211,7 +211,7 @@ The same filesystem folding cuts the OTHER way under `caseInsensitive: false` on
 
 ## 6. Static-prefix Seeding
 
-The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, and see `computeStaticPrefixes` in `packages/globstar/src/engine/segment/facts.js`): the deepest segment-bounded literal prefix per branch of the pattern's top-level brace. Examples:
+The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, and see `computeStaticPrefixes` in `packages/globstar/src/engine/segment/facts.js`): for each expansion of the pattern's braces, its literal head up to its last whole segment, with heads a shorter one covers removed. For a union these are its members' heads. Examples:
 
 | Pattern           | Static prefixes                         |
 | ----------------- | --------------------------------------- |
@@ -220,6 +220,7 @@ The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, 
 | `src/**/*.ts`     | `["src"]`                               |
 | `**/*.ts`         | `[""]` (empty — walk from `cwd` itself) |
 | `{src,test}/*.rs` | `["src", "test"]`                       |
+| `{src,lib}/main.rs` | `["lib/main.rs", "src/main.rs"]`      |
 
 The walker uses these to skip directories that no branch of the pattern can possibly match. Seeding MUST be observationally equivalent to a root walk — a seed may only skip work, never change results. For each prefix the walker:
 
@@ -445,6 +446,6 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **Frame.** One unit of walker work: an absolute directory path paired with its relative-to-`cwd` form. The traversal stack / scheduler holds frames.
 - **Seed frame.** A frame produced from the matcher's static prefixes during initialization, before any `readdir` has been issued.
 - **Auto-split.** The walker's preprocessing of a `patterns` array that routes `!`-prefixed entries to the ignore set (§4.2).
-- **Static prefix.** The deepest segment-bounded literal prefix of a pattern branch (GLOB_SPEC.md §13.5, §18). Walker uses these to skip directories no branch can match.
+- **Static prefix.** The literal head of one expansion of the pattern's braces, up to its last whole segment (GLOB_SPEC.md §13.5). Walker uses these to skip directories no expansion can match.
 - **`joinAbs`.** The walker's path-concatenation primitive that bypasses `path.join`'s normalization for measurable speedup (§7.4).
 - **Late callback.** An `fs.readdir` callback that fires after the walker has already rejected its returned Promise. The async traversal MUST drop these (§7.3).

@@ -114,7 +114,16 @@ export interface Matcher {
    * Throws a `TypeError` on non-string input.
    */
   matchDir(input: string): DirMatchValue;
-  /** Literal path prefixes a walker can seed traversal from. */
+  /**
+   * Literal path prefixes a walker can seed traversal from: for each
+   * expansion of the pattern's braces, its literal head up to its last
+   * whole segment, with heads a shorter one covers removed
+   * (`{src,lib}/index.ts` gives `src/index.ts` and `lib/index.ts`). The
+   * heads are UTF-8 bytes spelled with `/` and in the pattern's case:
+   * every match starts with one of them, except that with
+   * `caseInsensitive` a match may differ in case, and on Windows in its
+   * separators. An empty prefix means the root.
+   */
   staticPrefixes(): Uint8Array[];
 }
 

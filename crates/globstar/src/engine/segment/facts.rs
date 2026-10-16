@@ -4,7 +4,7 @@
 use crate::engine::ops::Op;
 
 use super::Bytes;
-use super::compile::len_then_bytes;
+use super::compile::{len_then_bytes, op_weight};
 
 /// Largest suffix set worth scanning before the engine runs; a
 /// bigger alternation gets no prefilter (the engine indexes it).
@@ -62,68 +62,140 @@ fn suffix_set(ops: &[Op]) -> Box<[Bytes]> {
     set.into_boxed_slice()
 }
 
-/// The deepest segment-bounded literal prefix per top-level brace
-/// branch, deduplicated, sorted by (length, bytes).
+/// How deep brace expansions may nest along one static prefix, and the
+/// part of its budget that does not depend on the pattern.
+const MAX_HEAD_DEPTH: usize = 64;
+const HEAD_BUDGET_FLOOR: usize = 4096;
+
+/// The deepest segment-bounded literal head of each expansion,
+/// deduplicated, sorted by (length, bytes). A brace in the head is taken
+/// branch by branch with what follows it (`{a,b}/c` gives `a/c` and
+/// `b/c`), so a factored union keeps its members' heads.
+///
+/// Every byte read and every branch taken costs one unit of a budget of
+/// `HEAD_BUDGET_FLOOR` plus twice the pattern's weight (`op_weight`, only
+/// worked out once the floor is spent): reading each op once costs
+/// at most its weight, and re-reading what follows a brace for each
+/// branch is what the rest pays for. Past the budget, or past
+/// `MAX_HEAD_DEPTH` nested braces, the head ends at its last whole
+/// segment, a shorter prefix that still holds: `{a,b}{c,d}…` stops after
+/// a few braces instead of doubling, and a brace before a long literal
+/// copies it a few times, not once per branch.
 pub(super) fn static_prefixes(ops: &[Op]) -> Box<[Bytes]> {
-    let mut out = Vec::with_capacity(1);
-    let mut acc = Vec::new();
-    prefixes_per_branch(ops, &mut acc, &mut out);
-    if out.len() > 1 {
-        out = dedupe(out);
-    }
+    let mut heads = Heads {
+        root: ops,
+        spent: 0,
+        limit: HEAD_BUDGET_FLOOR,
+        weighed: false,
+        out: Vec::with_capacity(1),
+    };
+    heads.read(ops, None, &mut Vec::new(), 0, 0);
+    let out = if heads.out.len() > 1 {
+        dedupe(heads.out)
+    } else {
+        heads.out
+    };
     out.into_boxed_slice()
 }
 
-fn prefixes_per_branch(ops: &[Op], acc: &mut Vec<u8>, out: &mut Vec<Bytes>) {
-    if let Some(Op::Alternation(branches)) = ops.first()
-        && matches!(
-            ops.get(1),
-            None | Some(Op::Sep) | Some(Op::SepRun) | Some(Op::SlashAnything)
-        )
-    {
-        for branch in branches {
-            prefixes_per_branch(branch, acc, out);
+/// What follows the ops being read: the rest of an enclosing sequence.
+struct Then<'a> {
+    ops: &'a [Op],
+    next: Option<&'a Then<'a>>,
+}
+
+struct Heads<'r> {
+    root: &'r [Op],
+    spent: usize,
+    /// The floor until it is spent, then the floor plus twice the weight.
+    limit: usize,
+    weighed: bool,
+    out: Vec<Bytes>,
+}
+
+impl Heads<'_> {
+    /// Spend `n` units, unless that passes the limit.
+    fn afford(&mut self, n: usize) -> bool {
+        if self.spent + n > self.limit && !self.weighed {
+            self.weighed = true;
+            self.limit += 2 * self.root.iter().map(op_weight).sum::<usize>();
         }
-        return;
-    }
-    acc.clear();
-    let mut last_boundary = 0usize;
-    let mut fully_literal = true;
-    for op in ops {
-        match op {
-            Op::Lit(bytes) => acc.extend_from_slice(bytes),
-            Op::Sep | Op::SepRun => {
-                acc.push(b'/');
-                last_boundary = acc.len();
-            }
-            Op::SlashAnything => {
-                last_boundary = acc.len();
-                fully_literal = false;
-                break;
-            }
-            // Every branch opens a new segment, so what came before is whole.
-            Op::Alternation(branches)
-                if branches
-                    .iter()
-                    .all(|b| matches!(b.first(), Some(Op::Sep | Op::SepRun))) =>
-            {
-                last_boundary = acc.len();
-                fully_literal = false;
-                break;
-            }
-            _ => {
-                fully_literal = false;
-                break;
-            }
+        if self.spent + n > self.limit {
+            return false;
         }
+        self.spent += n;
+        true
     }
-    if !fully_literal {
-        acc.truncate(last_boundary);
+
+    /// An empty head covers every other one: nothing more to read.
+    fn covered(&self) -> bool {
+        self.out.last().is_some_and(|h| h.is_empty())
     }
-    while acc.last() == Some(&b'/') {
-        acc.pop();
+
+    /// Read `ops`, then `then`, after `acc` (whose last whole segment
+    /// ends at `boundary`), and record the head each expansion reaches.
+    fn read<'a>(
+        &mut self,
+        mut ops: &'a [Op],
+        mut then: Option<&'a Then<'a>>,
+        acc: &mut Vec<u8>,
+        mut boundary: usize,
+        depth: usize,
+    ) {
+        let mark = acc.len();
+        let end = loop {
+            let Some((op, rest)) = ops.split_first() else {
+                match then {
+                    Some(t) => {
+                        ops = t.ops;
+                        then = t.next;
+                        continue;
+                    }
+                    None => break acc.len(), // all literal
+                }
+            };
+            match op {
+                Op::Lit(bytes) if self.afford(bytes.len()) => acc.extend_from_slice(bytes),
+                Op::Sep | Op::SepRun if self.afford(1) => {
+                    acc.push(b'/');
+                    boundary = acc.len();
+                }
+                // `/**`: the segment before it is whole.
+                Op::SlashAnything => break acc.len(),
+                Op::Alternation(bs) if depth < MAX_HEAD_DEPTH && self.afford(bs.len()) => {
+                    let after = Then {
+                        ops: rest,
+                        next: then,
+                    };
+                    for branch in bs {
+                        if self.covered() {
+                            break;
+                        }
+                        self.read(branch, Some(&after), acc, boundary, depth + 1);
+                    }
+                    acc.truncate(mark);
+                    return;
+                }
+                // Every branch opening a new segment leaves what came
+                // before whole.
+                Op::Alternation(bs)
+                    if bs.iter().all(|b| {
+                        matches!(b.first(), Some(Op::Sep | Op::SepRun | Op::SlashAnything))
+                    }) =>
+                {
+                    break acc.len();
+                }
+                _ => break boundary,
+            }
+            ops = rest;
+        };
+        let mut head = &acc[..end];
+        while let [rest @ .., b'/'] = head {
+            head = rest;
+        }
+        self.out.push(Bytes::from(head));
+        acc.truncate(mark);
     }
-    out.push(Bytes::from(&acc[..]));
 }
 
 /// Drop prefixes a shorter one already covers; an empty one covers all.
