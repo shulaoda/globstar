@@ -29,11 +29,6 @@ export const MANY_G = -2;
 export const NFA_SMALL = 0;
 export const NFA_SPARSE = 1;
 
-// Match results; BAIL is string mode giving up on a non-ASCII segment.
-export const NO = 0;
-export const YES = 1;
-export const BAIL = 2;
-
 // Can the element take some segment?
 // The `minLen` of a segment no path segment can fill: one with an
 // escaped `\` on Windows, where a segment never holds a separator.

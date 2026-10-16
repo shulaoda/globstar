@@ -179,7 +179,7 @@ class SegNfaSmall {
     this.initDotBlocked = dot ? this.init : closeSmall(b, 1 << entry, true);
     this.acceptMask = 1 << (n - 1);
     this.wildLed = wildLed(b, this.initDotBlocked, (a, s) => (a & (1 << s)) !== 0);
-    this.needsAsciiSeg = b.needsAsciiSeg;
+    this.countsBytes = b.countsBytes;
     this.satisfiable = satisfiable(b, entry);
     // Does the NFA accept every non-empty segment through its S_ANY
     // states alone? (`matchDir` all-below.)
@@ -283,7 +283,7 @@ class SegNfaWide {
     this.initDotBlocked = dot ? this.init : entrySet(true);
     this.accept = n - 1;
     this.wildLed = wildLed(b, this.initDotBlocked, bitTest);
-    this.needsAsciiSeg = b.needsAsciiSeg;
+    this.countsBytes = b.countsBytes;
     this.satisfiable = satisfiable(b, entry);
     this.anySeg = anySegWide(this);
   }
@@ -371,10 +371,11 @@ class SegBuilder {
     this.clsRefs = [];
     this.tails = [];
     this.ci = ci;
-    // String-mode bail requirement: only unit-COUNTING constructs (`?`,
-    // negated classes) differ between UTF-16 and byte matching. Star
+    // Only constructs that count (`?`, negated classes) see a
+    // difference between a path string's UTF-16 units and its UTF-8
+    // bytes, so only then a non-ASCII segment runs on its bytes. Star
     // bodies consume unbounded runs, so they never count.
-    this.needsAsciiSeg = false;
+    this.countsBytes = false;
   }
 
   alloc(kind, byteVal, next, splitB = UNSET, cls = null) {
@@ -425,12 +426,12 @@ class SegBuilder {
         return [entry, [prev]];
       }
       case OP_ANYCHAR: {
-        this.needsAsciiSeg = true;
+        this.countsBytes = true;
         const s = this.alloc(S_ANY, 0, UNSET);
         return [s, [s]];
       }
       case OP_CLASS: {
-        if (op.cls.neg) this.needsAsciiSeg = true;
+        if (op.cls.neg) this.countsBytes = true;
         const s = this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(op.cls));
         return [s, [s]];
       }

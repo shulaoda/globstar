@@ -3,8 +3,8 @@
 # the engine routing, where a slower path would still answer right; both
 # runtimes read this file (Glob::shape, SegmentMatcher.shape).
 # Format: SHAPE<TAB>PATTERN[<TAB>PATTERN...] (several patterns: one union).
-# Keep NFA rows under 32 states or past 170: JS keeps 31 in an int32 and steps
-# the rest sparsely; Rust keeps 64 in a u64 and 170 in dense rows (4 KiB).
+# Keep NFA rows within 32 states or past 170: JS keeps 32 in an int32 and
+# steps the rest sparsely; Rust keeps 64 in a u64 and 170 in dense rows (4 KiB).
 literal	src/main.rs
 L W:affix | chains 1 | nfa none	src/*.ts
 L G0 W:affix | chains 1 | nfa none	src/**/*.ts

@@ -542,7 +542,7 @@ class Builder {
 
 // Every path through the graph as a chain, in pattern order, or none
 // when there are more than MAX_CHAINS or a chain with several
-// globstars has more than 31 states (the NFA takes those).
+// globstars has more than 32 states (the NFA takes those).
 function chains(graph) {
   if (graph.linear) {
     const chain = makeChain(graph, null);
@@ -603,7 +603,7 @@ function makeChain(graph, nodes) {
   // a linear pattern is the graph, whose NFA serves.
   let nfa = null;
   if (globstar === MANY_G) {
-    if (nodes === null || n + 1 > 31) return null;
+    if (nodes === null || n + 1 > 32) return null;
     nfa = nfaSmall(graph, nodes);
   }
   // What a path must end with, read off the last element: a cheap
@@ -635,13 +635,12 @@ function layout(graph, nodes) {
   };
 }
 
-// One int32 of states up to 31, sparse beyond.
+// One int32 of states up to 32, sparse beyond.
 function anyNfa(graph, ci) {
-  return graph.elems.length + 1 <= 31 ? nfaSmall(graph, null) : nfaSparse(graph, ci);
+  return graph.elems.length + 1 <= 32 ? nfaSmall(graph, null) : nfaSparse(graph, ci);
 }
 
-// Int32 active set: at most 31 states (bit 31 is the string-mode bail
-// sentinel). The table holds per state the closure entered after
+// Int32 active set: at most 32 states. The table holds per state the closure entered after
 // consuming a segment there (a globstar's includes itself) at `2s` and
 // the state's node at `2s + 1`.
 function nfaSmall(graph, nodes) {

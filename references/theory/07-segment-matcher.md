@@ -63,13 +63,14 @@ matcher keeps no NFA at all. Only a matcher whose chains cannot serve
 - **Several Gs / a union's `match_dir` / > 64 paths**: an NFA over the
   graph, one state per node, stepped once per _segment_. The active
   set is one u64 (int32 in JS) while the graph has at most 64 states
-  (31 in JS), and per state the closure entered after consuming a
+  (32 in JS), and per state the closure entered after consuming a
   segment is precomputed; in Rust a word slice does the same while
   those rows fit 4 KiB (about 170 states) and no position leads to
   more than 48 literals, each of which a dense step would test on its
-  own. Past that (past 31 states in JS) the NFA is stepped sparsely: each position keeps its successors, the literal
-  ones sorted, and the active set lists states and whole positions
-  ("every successor of p entered"), so a step costs what it tests (one
+  own. Past that (past 32 states in JS) the NFA is stepped sparsely:
+  each position keeps its successors, the literal ones sorted, and
+  the active set lists states and whole positions ("every successor
+  of p entered"), so a step costs what it tests (one
   binary search for a position's literals) and the tables are linear
   in the graph. `match_dir`'s prefix bit is `active ∩ reach1`, where
   `reach1[s]` ⇔ some ≥ 1-segment continuation from s reaches accept

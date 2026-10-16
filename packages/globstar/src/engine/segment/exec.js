@@ -1,7 +1,7 @@
 // Matching over the segment graph. JS twin of `crates/globstar/src/
 // engine/segment/exec.rs`: anchored chains for a path with at most one
 // globstar, and the NFA over the graph otherwise (int32 active set up
-// to 31 states, Int32Array words beyond).
+// to 32 states, sparse beyond).
 
 import {
   EL_LIT,
@@ -11,9 +11,6 @@ import {
   WK_AFFIX,
   WK_AFFIX_SET,
   WK_AFFIX_INDEX,
-  NO,
-  YES,
-  BAIL,
   NO_G,
   MANY_G,
   elemSatisfiable,
@@ -44,10 +41,7 @@ function lastSepBefore(str, end) {
   return i > j ? i : j;
 }
 
-// `consumeAt` results below zero: the element rejects the segment, or
-// string mode must bail.
-const MISS = -1;
-const BAILED = -2;
+import { utf8Latin1 } from "../../utf8.js";
 
 // The wildcard-only segments `coversBelow` feeds before it gives up: a
 // pattern needs about one more than its longest run of them, and "not
@@ -58,70 +52,64 @@ const MAX_COVER_SEGMENTS = 64;
 // answers what is safe ("may match below", "not all below"). Tails of
 // up to 90 elements stay exact.
 const MAX_TAIL_CHECKS = 4096;
-const fail = (end) => (end === BAILED ? BAIL : NO);
 
 // Does the chain match the whole path?
-export function chainMatches(m, chain, str, bail) {
+export function chainMatches(m, chain, str) {
   const ids = chain.nodes;
   switch (chain.globstar) {
     case NO_G:
-      return fixedRun(m, ids, 0, chainLen(m.elems, ids), str, 0, bail);
+      return fixedRun(m, ids, 0, chainLen(m.elems, ids), str, 0);
     case MANY_G: {
       // The NFA over this chain alone.
       const g = chain.nfa;
-      const active = nfaRun(m, g, str, bail);
-      if (active === -1) return BAIL;
-      return (active & (1 << g.accept)) !== 0 ? YES : NO;
+      return (nfaRun(m, g, str) & (1 << g.accept)) !== 0;
     }
     default: {
-      const midStart = head(m, ids, chain.globstar, str, bail);
-      if (midStart < 0) return fail(midStart);
-      return tailAndGlobstar(m, ids, chain.globstar, str, midStart, bail);
+      const midStart = head(m, ids, chain.globstar, str);
+      return midStart >= 0 && tailAndGlobstar(m, ids, chain.globstar, str, midStart);
     }
   }
 }
 
 // Element `e` on the segment at `pos`, the path's last one iff `last`:
-// the index just past it. The segment is bounded first, so a path of
+// the index just past it, or -1. The segment is bounded first, so a path of
 // the wrong depth is rejected before any wildcard runs; a literal is
 // then compared in place.
-function consumeAt(m, e, str, pos, last, bail) {
+function consumeAt(m, e, str, pos, last) {
   if (e.kind === EL_LIT) {
     const end = pos + e.litStr.length;
     const bounded = last ? end === str.length : end < str.length && isPathSep(str.charCodeAt(end));
-    return bounded && affixEq(e.litStr, str, pos, m.ci) === YES ? end : MISS;
+    return bounded && affixEq(e.litStr, str, pos, m.ci) ? end : -1;
   }
-  if (e.kind !== EL_WILD) return MISS;
+  if (e.kind !== EL_WILD) return -1;
   let end = nextSep(str, pos);
   if (end === -1) end = str.length;
-  if ((end === str.length) !== last) return MISS;
-  const r = wildConsumes(e.wild, str, pos, end, m.ci, bail);
-  return r === YES ? end : r === NO ? MISS : BAILED;
+  if ((end === str.length) !== last) return -1;
+  return wildConsumes(m, e.wild, str, pos, end) ? end : -1;
 }
 
 // Do the elements `from..to` take the segments from `pos` to the end,
 // one each?
-function fixedRun(m, ids, from, to, str, pos, bail) {
+function fixedRun(m, ids, from, to, str, pos) {
   const elems = m.elems;
   for (let i = from; i < to - 1; i++) {
-    const end = consumeAt(m, elemAt(elems, ids, i), str, pos, false, bail);
-    if (end < 0) return fail(end);
+    const end = consumeAt(m, elemAt(elems, ids, i), str, pos, false);
+    if (end < 0) return false;
     pos = end + 1;
   }
-  const end = consumeAt(m, elemAt(elems, ids, to - 1), str, pos, true, bail);
-  return end < 0 ? fail(end) : YES;
+  return consumeAt(m, elemAt(elems, ids, to - 1), str, pos, true) >= 0;
 }
 
 // The head (the elements before the globstar `g`), one segment each:
-// where the segment after it starts, or MISS/BAILED. Every globstar
+// where the segment after it starts, or -1. Every globstar
 // wants that segment (G1 absorbs one, G0 is followed by its tail), so
 // a path that ends in the head fails.
-function head(m, ids, g, str, bail) {
+function head(m, ids, g, str) {
   const elems = m.elems;
   let pos = 0;
   for (let i = 0; i < g; i++) {
-    const end = consumeAt(m, elemAt(elems, ids, i), str, pos, false, bail);
-    if (end < 0) return end;
+    const end = consumeAt(m, elemAt(elems, ids, i), str, pos, false);
+    if (end < 0) return -1;
     pos = end + 1;
   }
   return pos;
@@ -129,7 +117,7 @@ function head(m, ids, g, str, bail) {
 
 // With the head consumed up to `midStart`: the tail on the last
 // segments, found backward, and the globstar on what lies between.
-function tailAndGlobstar(m, ids, g, str, midStart, bail) {
+function tailAndGlobstar(m, ids, g, str, midStart) {
   const elems = m.elems;
   const n = chainLen(elems, ids);
   // Where the tail starts; past the end when there is none.
@@ -137,16 +125,14 @@ function tailAndGlobstar(m, ids, g, str, midStart, bail) {
   let end = str.length;
   for (let j = n - 1; j > g; j--) {
     const s = lastSepBefore(str, end) + 1;
-    if (s < midStart) return NO;
-    const r = elemConsumes(elemAt(elems, ids, j), str, s, end, m.ci, bail);
-    if (r !== YES) return r;
+    if (s < midStart || !elemConsumes(m, elemAt(elems, ids, j), str, s, end)) return false;
     split = s;
     if (j > g + 1) {
-      if (s === 0) return NO;
+      if (s === 0) return false;
       end = s - 1;
     }
   }
-  return absorbs(m, elemAt(elems, ids, g).kind, str, midStart, split) ? YES : NO;
+  return absorbs(m, elemAt(elems, ids, g).kind, str, midStart, split);
 }
 
 // Can the globstar `kind` take the segments between the head (ending
@@ -185,13 +171,13 @@ function dotFree(m, str, from, to) {
   }
 }
 
-// `matchDir` through the lone chain of a matcher that keeps no NFA:
-// the DirMatch, or -1 on a string-mode bail. The tokens the NFA would
+// `matchDir` through the lone chain of a matcher that keeps no NFA.
+// The tokens the NFA would
 // hold after `str`, read off the chain: a head position when the
 // directory ends inside the head, the globstar when it has taken
 // everything after the head, and a tail position when the tail's
 // first elements take the last segments.
-export function chainDir(m, str, bail) {
+export function chainDir(m, str) {
   const elems = m.elems;
   const chain = m.chains[0];
   const ids = chain.nodes;
@@ -215,12 +201,10 @@ export function chainDir(m, str, bail) {
   let midStart = 0;
   for (let i = 0; i < g; i++) {
     const e = elemAt(elems, ids, i);
-    let end = consumeAt(m, e, str, midStart, false, bail);
-    if (end === BAILED) return -1;
-    if (end === MISS) {
-      end = consumeAt(m, e, str, midStart, true, bail);
-      if (end === BAILED) return -1;
-      if (end === MISS) return PRUNED;
+    let end = consumeAt(m, e, str, midStart, false);
+    if (end < 0) {
+      end = consumeAt(m, e, str, midStart, true);
+      if (end < 0) return PRUNED;
       // `str` is the chain's first `k` segments. A globstar reached with
       // nothing absorbed covers all below iff its tail is at most one
       // any-segment.
@@ -233,8 +217,7 @@ export function chainDir(m, str, bail) {
   // A fixed chain, and the directory is deeper.
   if (g === n) return PRUNED;
   const kind = elemAt(elems, ids, g).kind;
-  const exact = tailAndGlobstar(m, ids, g, str, midStart, bail);
-  if (exact === BAIL) return -1;
+  const exact = tailAndGlobstar(m, ids, g, str, midStart);
   // The globstar took everything after the head.
   const gAlive = absorbs(m, kind, str, midStart, str.length + 1);
   let prefix = gAlive && open(g + 1);
@@ -258,12 +241,9 @@ export function chainDir(m, str, bail) {
       }
       checks -= j;
       const start = lastSepBefore(str, end) + 1;
-      let alive = absorbs(m, kind, str, midStart, start, dotAt);
-      if (alive) {
-        const r = fixedRun(m, ids, g + 1, g + 1 + j, str, start, bail);
-        if (r === BAIL) return -1;
-        alive = r === YES;
-      }
+      const alive =
+        absorbs(m, kind, str, midStart, start, dotAt) &&
+        fixedRun(m, ids, g + 1, g + 1 + j, str, start);
       prefix ||= alive && g + 1 + j >= openFrom;
       all &&= alive;
       if (start === midStart) {
@@ -275,14 +255,13 @@ export function chainDir(m, str, bail) {
       end = start - 1;
     }
   }
-  return DirMatch.from(exact === YES, prefix, all);
+  return DirMatch.from(exact, prefix, all);
 }
 
 // ── graph NFA, int32 active set ─────────────────────────────────────
 
-// The active set after every segment of `str`, or -1 on a string-mode
-// bail.
-export function nfaRun(m, g, str, bail) {
+// The active set after every segment of `str`.
+export function nfaRun(m, g, str) {
   let active = g.init;
   let pos = 0;
   for (;;) {
@@ -290,14 +269,13 @@ export function nfaRun(m, g, str, bail) {
     let end = nextSep(str, pos);
     const last = end === -1;
     if (last) end = str.length;
-    active = nfaStep(m, g, active, str, pos, end, bail);
-    if (active === -1) return -1;
+    active = nfaStep(m, g, active, str, pos, end);
     if (last) return active;
     pos = end + 1;
   }
 }
 
-function nfaStep(m, g, active, str, s0, e0, bail) {
+function nfaStep(m, g, active, str, s0, e0) {
   const elems = m.elems;
   const tab = g.tab;
   const ci = m.ci;
@@ -313,14 +291,11 @@ function nfaStep(m, g, active, str, s0, e0, bail) {
     let consumes;
     switch (e.kind) {
       case EL_LIT:
-        consumes = litEq(e.litStr, str, s0, e0, ci) === YES;
+        consumes = litEq(e.litStr, str, s0, e0, ci);
         break;
-      case EL_WILD: {
-        const r = wildConsumes(e.wild, str, s0, e0, ci, bail);
-        if (r === BAIL) return -1;
-        consumes = r === YES;
+      case EL_WILD:
+        consumes = wildConsumes(m, e.wild, str, s0, e0);
         break;
-      }
       default:
         consumes = absorbOk;
     }
@@ -445,9 +420,8 @@ function cmpKey(key, str, s, t, ci) {
   return key.length - (t - s);
 }
 
-// The active set after every segment of `str`, or null on a string-mode
-// bail.
-export function nfaRunSparse(m, str, bail) {
+// The active set after every segment of `str`.
+export function nfaRunSparse(m, str) {
   const g = m.nfa;
   const scratch = sparseScratch(g);
   let active = initSparse(g);
@@ -458,7 +432,7 @@ export function nfaRunSparse(m, str, bail) {
     let end = nextSep(str, pos);
     const last = end === -1;
     if (last) end = str.length;
-    if (!stepSparse(m, g, active, next, scratch.todo, str, pos, end, bail)) return null;
+    stepSparse(m, g, active, next, scratch.todo, str, pos, end);
     const t = active;
     active = next;
     next = t;
@@ -467,7 +441,7 @@ export function nfaRunSparse(m, str, bail) {
   }
 }
 
-function stepSparse(m, g, active, next, todo, str, s0, e0, bail) {
+function stepSparse(m, g, active, next, todo, str, s0, e0) {
   clearSet(next);
   const ci = m.ci;
   const base = g.n + 1;
@@ -475,9 +449,7 @@ function stepSparse(m, g, active, next, todo, str, s0, e0, bail) {
   for (const item of active.items) {
     if (item < base) {
       if (item === g.accept) continue;
-      const r = sparseConsumes(m, g, item, str, s0, e0, absorbOk, bail);
-      if (r === BAIL) return false;
-      if (r === YES) fireSparse(m, g, item, next, todo);
+      if (sparseConsumes(m, item, str, s0, e0, absorbOk)) fireSparse(m, g, item, next, todo);
       continue;
     }
     const p = item - base;
@@ -495,24 +467,21 @@ function stepSparse(m, g, active, next, todo, str, s0, e0, bail) {
     }
     for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {
       const s = g.others[k];
-      const r = sparseConsumes(m, g, s, str, s0, e0, absorbOk, bail);
-      if (r === BAIL) return false;
-      if (r === YES) fireSparse(m, g, s, next, todo);
+      if (sparseConsumes(m, s, str, s0, e0, absorbOk)) fireSparse(m, g, s, next, todo);
     }
   }
-  return true;
 }
 
-// YES / NO / BAIL for state `s` on segment `str[s0..e0]`.
-function sparseConsumes(m, g, s, str, s0, e0, absorbOk, bail) {
+// Does state `s` take the segment `str[s0..e0]`?
+function sparseConsumes(m, s, str, s0, e0, absorbOk) {
   const e = m.elems[s];
   switch (e.kind) {
     case EL_LIT:
       return litEq(e.litStr, str, s0, e0, m.ci);
     case EL_WILD:
-      return wildConsumes(e.wild, str, s0, e0, m.ci, bail);
+      return wildConsumes(m, e.wild, str, s0, e0);
     default:
-      return absorbOk ? YES : NO;
+      return absorbOk;
   }
 }
 
@@ -563,27 +532,27 @@ export function coversBelowSparse(m, active) {
 
 // ── element predicates ──────────────────────────────────────────────
 
-function elemConsumes(e, str, s, t, ci, bail) {
-  if (e.kind === EL_LIT) return litEq(e.litStr, str, s, t, ci);
-  if (e.kind === EL_WILD) return wildConsumes(e.wild, str, s, t, ci, bail);
-  return NO;
+function elemConsumes(m, e, str, s, t) {
+  if (e.kind === EL_LIT) return litEq(e.litStr, str, s, t, m.ci);
+  if (e.kind === EL_WILD) return wildConsumes(m, e.wild, str, s, t);
+  return false;
 }
 
 function litEq(lit, str, s, t, ci) {
-  if (t - s !== lit.length) return NO;
-  if (!ci) return str.startsWith(lit, s) ? YES : NO;
+  if (t - s !== lit.length) return false;
+  if (!ci) return str.startsWith(lit, s);
   for (let i = 0; i < lit.length; i++) {
-    if (!eqByteCi(lit.charCodeAt(i), str.charCodeAt(s + i))) return NO;
+    if (!eqByteCi(lit.charCodeAt(i), str.charCodeAt(s + i))) return false;
   }
-  return YES;
+  return true;
 }
 
 function affixEq(part, str, at, ci) {
-  if (!ci) return str.startsWith(part, at) ? YES : NO;
+  if (!ci) return str.startsWith(part, at);
   for (let i = 0; i < part.length; i++) {
-    if (!eqByteCi(part.charCodeAt(i), str.charCodeAt(at + i))) return NO;
+    if (!eqByteCi(part.charCodeAt(i), str.charCodeAt(at + i))) return false;
   }
-  return YES;
+  return true;
 }
 
 function segHasNonAscii(str, s, t) {
@@ -591,6 +560,27 @@ function segHasNonAscii(str, s, t) {
     if (str.charCodeAt(i) > 0x7f) return true;
   }
   return false;
+}
+
+// The UTF-8 length of `str[s, t)`: what `?` counts. A lone surrogate
+// encodes as U+FFFD, three bytes.
+function segBytes(str, s, t) {
+  let n = t - s;
+  for (let i = s; i < t; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 0x80) continue;
+    if (c < 0x800) n += 1;
+    else if (
+      c >= 0xd800 &&
+      c < 0xdc00 &&
+      (str.charCodeAt(i + 1) & 0xfc00) === 0xdc00 &&
+      i + 1 < t
+    ) {
+      n += 2;
+      i++;
+    } else n += 2;
+  }
+  return n;
 }
 
 // Binary search of `set[lo, hi)` (sorted, one length) for the segment
@@ -616,53 +606,59 @@ function cmpTail(suf, str, at, len, ci) {
   return 0;
 }
 
-function wildConsumes(w, str, s, t, ci, bail) {
-  if (w.dotProtect && t > s && str.charCodeAt(s) === 0x2e) return NO;
-  const len = t - s;
+// On a path string (not `m.byteOnly`: the pattern is ASCII) the
+// literal parts compare as they are; `?` counts UTF-8 bytes, so the
+// length rules read the segment's UTF-8 length, and an in-segment NFA
+// that counts runs on the segment's bytes.
+function wildConsumes(m, w, str, s, t) {
+  if (w.dotProtect && t > s && str.charCodeAt(s) === 0x2e) return false;
+  const ci = m.ci;
+  // The in-segment NFA has none: it counts on its own.
+  const len = w.anychars > 0 && !m.byteOnly ? segBytes(str, s, t) : t - s;
   switch (w.kind) {
     case WK_AFFIX: {
-      if (bail && w.anychars > 0 && segHasNonAscii(str, s, t)) return BAIL;
       const need = w.minLen;
-      if (len < need || (!w.variable && len !== need)) return NO;
-      if (w.prefixStr.length > 0 && affixEq(w.prefixStr, str, s, ci) === NO) return NO;
-      if (w.suffixStr.length > 0 && affixEq(w.suffixStr, str, t - w.suffixStr.length, ci) === NO) {
-        return NO;
+      if (len < need || (!w.variable && len !== need)) return false;
+      if (w.prefixStr.length > 0 && !affixEq(w.prefixStr, str, s, ci)) return false;
+      if (w.suffixStr.length > 0 && !affixEq(w.suffixStr, str, t - w.suffixStr.length, ci)) {
+        return false;
       }
-      return YES;
+      return true;
     }
     case WK_AFFIX_SET: {
-      if (bail && w.anychars > 0 && segHasNonAscii(str, s, t)) return BAIL;
       const p = w.prefixStr;
-      if (len < p.length || (p.length > 0 && affixEq(p, str, s, ci) === NO)) return NO;
+      if (len < p.length || (p.length > 0 && !affixEq(p, str, s, ci))) return false;
       const set = w.suffixSetStr;
       for (let i = 0; i < set.length; i++) {
         const suf = set[i];
         const need = w.minLen + suf.length;
         if (len < need || (!w.variable && len !== need)) continue;
-        if (suf.length === 0 || affixEq(suf, str, t - suf.length, ci) !== NO) return YES;
+        if (suf.length === 0 || affixEq(suf, str, t - suf.length, ci)) return true;
       }
-      return NO;
+      return false;
     }
     case WK_AFFIX_INDEX: {
-      if (bail && w.anychars > 0 && segHasNonAscii(str, s, t)) return BAIL;
       const p = w.prefixStr;
-      if (len < p.length || (p.length > 0 && affixEq(p, str, s, ci) === NO)) return NO;
+      if (len < p.length || (p.length > 0 && !affixEq(p, str, s, ci))) return false;
       const set = w.suffixSetStr;
       const runs = w.runs;
       const room = len - w.minLen;
-      if (room < 0) return NO;
+      if (room < 0) return false;
       for (let r = 0; r < runs.length; r++) {
         const run = runs[r];
         if (run.len > room) break;
         if (!w.variable && run.len !== room) continue;
-        if (setHas(set, run.start, run.end, str, t - run.len, run.len, ci)) return YES;
+        if (setHas(set, run.start, run.end, str, t - run.len, run.len, ci)) return true;
       }
-      return NO;
+      return false;
     }
     default: {
       const nfa = w.nfa;
-      if (bail && nfa.needsAsciiSeg && segHasNonAscii(str, s, t)) return BAIL;
-      return nfa.matches(str, s, t) ? YES : NO;
+      if (nfa.countsBytes && !m.byteOnly && segHasNonAscii(str, s, t)) {
+        const b = utf8Latin1(str.slice(s, t));
+        return nfa.matches(b, 0, b.length);
+      }
+      return nfa.matches(str, s, t);
     }
   }
 }

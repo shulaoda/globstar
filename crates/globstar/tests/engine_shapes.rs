@@ -28,7 +28,7 @@ fn patterns_compile_to_their_shapes() {
     assert!(rows >= 20, "only {rows} rows");
 }
 
-// Rust only: JS steps every NFA past 31 states sparsely. Past 64 states
+// Rust only: JS steps every NFA past 32 states sparsely. Past 64 states
 // the graph NFA keeps dense rows while they fit 4 KiB (168 states; 171
 // do not) and no position leads to more than 48 literals; either form
 // answers as the members do one by one.

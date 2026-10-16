@@ -22,9 +22,6 @@ import {
   coversBelowSparse,
 } from "./exec.js";
 import {
-  NO,
-  YES,
-  BAIL,
   NFA_SMALL,
   NFA_SPARSE,
   EL_LIT,
@@ -95,49 +92,35 @@ export class SegmentMatcher {
     return this.prefixes.map(latin1Bytes);
   }
 
+  // An ASCII pattern matches the path string itself (a wildcard that
+  // counts reads a segment's UTF-8 bytes, see `wildConsumes`); one with
+  // other bytes matches the path's UTF-8 bytes, one char per byte.
   isMatch(input) {
-    if (!this.byteOnly) {
-      const r = this._isMatch(input, true);
-      if (r !== BAIL) return r === YES;
-    }
-    return this._isMatch(utf8Latin1(input), false) === YES;
+    return this._isMatch(this.byteOnly ? utf8Latin1(input) : input);
   }
 
   matchDir(input) {
-    if (!this.byteOnly) {
-      const r = this._matchDir(input, true);
-      if (r !== -1) return r;
-    }
-    return this._matchDir(utf8Latin1(input), false);
+    return this._matchDir(this.byteOnly ? utf8Latin1(input) : input);
   }
 
-  _isMatch(str, bail) {
-    if (!this._factsAccept(str)) return NO;
+  _isMatch(str) {
+    if (!this._factsAccept(str)) return false;
     const chainList = this.chains;
-    if (chainList.length === 0) return this._nfaMatch(str, bail);
-    if (chainList.length === 1) return chainMatches(this, chainList[0], str, bail);
+    if (chainList.length === 0) return this._nfaMatch(str);
+    if (chainList.length === 1) return chainMatches(this, chainList[0], str);
     // `endsWith` is exact, so the quick suffix is skipped case-insensitively.
     const quick = !this.ci;
-    let bailed = false;
     for (const chain of chainList) {
       if (quick && chain.quickSuffixStr.length > 0 && !str.endsWith(chain.quickSuffixStr)) continue;
-      const r = chainMatches(this, chain, str, bail);
-      if (r === YES) return YES;
-      if (r === BAIL) bailed = true;
+      if (chainMatches(this, chain, str)) return true;
     }
-    return bailed ? BAIL : NO;
+    return false;
   }
 
-  _nfaMatch(str, bail) {
+  _nfaMatch(str) {
     const g = this.nfa;
-    if (g.kind === NFA_SPARSE) {
-      const active = nfaRunSparse(this, str, bail);
-      if (active === null) return BAIL;
-      return sparseHas(active, g.accept) ? YES : NO;
-    }
-    const active = nfaRun(this, g, str, bail);
-    if (active === -1) return BAIL;
-    return (active & (1 << g.accept)) !== 0 ? YES : NO;
+    if (g.kind === NFA_SPARSE) return sparseHas(nfaRunSparse(this, str), g.accept);
+    return (nfaRun(this, g, str) & (1 << g.accept)) !== 0;
   }
 
   _factsAccept(str) {
@@ -150,9 +133,9 @@ export class SegmentMatcher {
     return false;
   }
 
-  _matchDir(str, bail) {
+  _matchDir(str) {
     const g = this.nfa;
-    if (g === null) return chainDir(this, str, bail);
+    if (g === null) return chainDir(this, str);
     if (str.length === 0) {
       // The empty dir is the walk root: nothing consumed yet.
       let all = false;
@@ -166,14 +149,12 @@ export class SegmentMatcher {
     let prefix;
     let all;
     if (g.kind === NFA_SPARSE) {
-      const active = nfaRunSparse(this, str, bail);
-      if (active === null) return -1;
+      const active = nfaRunSparse(this, str);
       exact = sparseHas(active, g.accept);
       prefix = sparseReach1(g, active);
       all = this.dot && prefix && coversBelowSparse(this, active);
     } else {
-      const active = nfaRun(this, g, str, bail);
-      if (active === -1) return -1;
+      const active = nfaRun(this, g, str);
       exact = (active & (1 << g.accept)) !== 0;
       prefix = (active & g.reach1) !== 0;
       // `dot=false` never covers a subtree: no wildcard matches the
