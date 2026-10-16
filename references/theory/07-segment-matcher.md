@@ -70,12 +70,16 @@ In-segment `Wild` matchers are classified at compile time:
 `Affix` (prefix/suffix literals + `*`/`?` runs → length bounds + two
 anchored compares), `AffixSet` (trailing all-literal alternation →
 suffix product of at most 8, scanned in pattern order), `AffixIndex`
-(the same past 8 and up to a product of 1024 — a factored union of
-names — sorted by (length, bytes) and binary-searched per length),
-and `Generic` — a Thompson-lite NFA over the in-segment ops (u64/int32
-active set up to 64/32 states, a word slice beyond; memoized
-ε-closures, offset-0 dot gates realizing the DotGuard semantics
-exactly).
+(the same past 8 — a list of any length, such as a factored union of
+names, or a product of up to 1024 suffixes, within 64 KiB or four
+times its ops — sorted by (length, bytes) and binary-searched per
+length), and `Generic` — a Thompson-lite NFA over the in-segment ops
+(u64/int32 active set up to 64/32 states, a word slice beyond;
+offset-0 dot gates realizing the DotGuard semantics exactly). Every
+ε-edge points to a later state, so one ascending sweep closes a set.
+Per-state closures are kept while they fit 1 MiB in Rust and 128 KiB
+in JS, about where the sweep becomes the faster step; past that each
+step closes its set as it goes, so memory stays linear.
 
 ## Compile
 
@@ -86,8 +90,8 @@ hash map, in the Rust builder only, lets a brace branch reuse a
 node another branch already made. Every pattern the parser accepts
 compiles; the only limits are the parser's — 64 KiB of pattern, 32
 levels of brace nesting, the brace-expansion budget — and the
-64-chain / 8-suffix / 1024-product thresholds pick a
-representation, never reject one.
+64-chain, 8-suffix, suffix-product and closure-budget thresholds pick
+a representation, never reject one.
 
 ## Complexity and safety
 

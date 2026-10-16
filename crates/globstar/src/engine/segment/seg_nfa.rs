@@ -2,6 +2,12 @@
 //! NFA over the in-segment ops, simulated with a bit set: a `u64`
 //! for up to 64 states, a word slice beyond, so no in-segment pattern
 //! is too large.
+//!
+//! Every ε-edge points to a later state (see `compile_op`), so one
+//! ascending sweep closes a set (`close`). A step ORs per-state closures
+//! while they fit `MAX_CLOSURE_BYTES`; past that (a dense set per state
+//! is quadratic in the states) it closes its set as it goes, so memory
+//! stays linear in the pattern.
 
 use crate::ast::CharClass;
 use crate::engine::ops::Op;
@@ -9,6 +15,11 @@ use crate::engine::ops::Op;
 use super::bits::{Bits, Wide};
 
 const UNSET: u32 = u32::MAX;
+
+/// The most the per-state closures may take, about 2,900 states. Up to
+/// there ORing dense closures is the faster step; past it, closing the
+/// set as the step goes wins and keeps memory linear.
+const MAX_CLOSURE_BYTES: usize = 1 << 20;
 
 #[derive(Debug, Clone)]
 pub(super) struct SegNfa {
@@ -37,7 +48,7 @@ impl SegNfa {
             tails: Vec::new(),
             ci,
         };
-        let entry = b.compile_ops(ops.iter().copied());
+        let entry = b.compile_ops(ops.iter().copied()) as usize;
         let accept = b.alloc(SegState::Match);
         for t in std::mem::take(&mut b.tails) {
             b.patch(t, accept);
@@ -52,23 +63,27 @@ impl SegNfa {
 
     fn build<B: Bits>(
         states: Box<[SegState]>,
-        entry: u32,
+        entry: usize,
         dot: bool,
         kind: fn(SegNfaImpl<B>) -> Kind,
     ) -> Self {
         let n = states.len();
         let words = B::words(n);
-        let accept = n - 1;
-
-        let closures = closures::<B>(&states, words);
-        let init = closures[entry as usize].clone();
+        let closures = if n * words * 8 <= MAX_CLOSURE_BYTES {
+            closures(&states, words)
+        } else {
+            Box::default()
+        };
+        let entry_set = |block| {
+            let mut set = B::zero(words);
+            set.set(entry);
+            close(&states, &mut set, block);
+            set
+        };
+        let init = entry_set(false);
         // Under `dot` a leading `.` needs no protection, so the blocked
         // closure is just `init` (DotGuards behave like Jumps).
-        let init_dot_blocked = if dot {
-            init.clone()
-        } else {
-            blocked_closure(&states, entry as usize, words)
-        };
+        let init_dot_blocked = if dot { init.clone() } else { entry_set(true) };
 
         // Can any state of the protected entry set consume a leading
         // `.`? If not, a dot-led segment can never match under
@@ -80,20 +95,20 @@ impl SegNfa {
             _ => {}
         });
 
-        let satisfiable = satisfiable(&states, &closures, &init, accept, words);
-        let any_seg = any_seg(&states, &closures, &init, accept, words);
+        let satisfiable = satisfiable::<B>(&states, entry, words);
+        let nfa = SegNfaImpl {
+            states,
+            init,
+            init_dot_blocked,
+            closures,
+            accept: n - 1,
+            words,
+        };
         SegNfa {
-            kind: kind(SegNfaImpl {
-                states,
-                init,
-                init_dot_blocked,
-                closures,
-                accept,
-                words,
-            }),
             satisfiable,
             wild_led: !can_lit_dot,
-            any_seg,
+            any_seg: nfa.any_seg(),
+            kind: kind(nfa),
         }
     }
 
@@ -114,8 +129,9 @@ struct SegNfaImpl<B: Bits> {
     /// Entry ε-closure for a protected leading `.`: DotGuards blocked
     /// and dot-protected consumers (`Any`, negated classes) dropped.
     init_dot_blocked: B,
-    /// Per-state successor ε-closure (guards pass — positions ≥ 1 are
-    /// never segment starts).
+    /// Per-state ε-closure (guards pass — positions ≥ 1 are never
+    /// segment starts); empty past `MAX_CLOSURE_BYTES`, where a step
+    /// closes its set itself.
     closures: Box<[B]>,
     accept: usize,
     words: usize,
@@ -148,6 +164,18 @@ impl<B: Bits> SegNfaImpl<B> {
             self.init.clone()
         };
         let mut next = B::zero(self.words);
+        if self.closures.is_empty() {
+            for &c in seg {
+                if active.is_zero() {
+                    return false;
+                }
+                self.step_closing(&active, &mut next, Some(c));
+                std::mem::swap(&mut active, &mut next);
+            }
+            return active.test(self.accept);
+        }
+        // The common case, written out: one OR of a kept closure per
+        // consumer that fires (through `step_closing` it costs up to 50%).
         for &c in seg {
             if active.is_zero() {
                 return false;
@@ -171,11 +199,117 @@ impl<B: Bits> SegNfaImpl<B> {
         }
         active.test(self.accept)
     }
+
+    /// `next` = what `active` reaches over byte `c` (`None`: a byte only
+    /// `Any` takes), without the kept closures: the consumers move, then
+    /// `close` adds what their targets reach.
+    fn step_closing(&self, active: &B, next: &mut B, c: Option<u8>) {
+        next.clear();
+        active.for_each(|s| match &self.states[s] {
+            SegState::Byte(b, nx) if c == Some(*b) => next.set(*nx as usize),
+            SegState::Class(cls, nx) if c.is_some_and(|c| cls.matches(c)) => next.set(*nx as usize),
+            SegState::Any(nx) => next.set(*nx as usize),
+            _ => {}
+        });
+        close(&self.states, next, false);
+    }
+
+    /// Step the entry set through `Any` states only, one byte at a time,
+    /// until it settles; every length from 1 up must accept.
+    fn any_seg(&self) -> bool {
+        let mut active = self.init.clone();
+        let mut next = B::zero(self.words);
+        // Every loop is a star's one-byte self-loop, so the set settles
+        // within `states.len()` steps.
+        for _ in 0..=self.states.len() {
+            self.step_closing(&active, &mut next, None);
+            if !next.test(self.accept) {
+                return false;
+            }
+            if next == active {
+                return true;
+            }
+            std::mem::swap(&mut active, &mut next);
+        }
+        false
+    }
 }
 
-/// Each state's ε-closure, guards passing. Every ε-edge points to a
-/// later state (see `compile_op`), so one backward pass folds each
-/// closure from its children's.
+/// Can the entry reach `Match` through consumers some byte fires? Every
+/// edge but a star's loop back to its own split points to a later
+/// state, so one ascending sweep finds all the entry reaches.
+fn satisfiable<B: Bits>(states: &[SegState], entry: usize, words: usize) -> bool {
+    let mut reach = B::zero(words);
+    reach.set(entry);
+    for (s, state) in states.iter().enumerate().skip(entry) {
+        if !reach.test(s) {
+            continue;
+        }
+        match state {
+            SegState::Match => return true,
+            SegState::Split(a, b) => {
+                reach.set(*a as usize);
+                reach.set(*b as usize);
+            }
+            SegState::Class(cls, nx) => {
+                if (0u16..=255).any(|b| cls.matches(b as u8)) {
+                    reach.set(*nx as usize);
+                }
+            }
+            SegState::Byte(_, nx)
+            | SegState::Any(nx)
+            | SegState::Jump(nx)
+            | SegState::DotGuard(nx) => reach.set(*nx as usize),
+        }
+    }
+    false
+}
+
+/// Close `set` under ε-edges, keeping only consumers and `Match`. Every
+/// ε-edge points to a later state, so one ascending sweep sees each
+/// state after all that reach it; the word being swept stays in a
+/// register, where most edges land. `block` builds the entry set of a
+/// protected leading `.`: DotGuards are cut, and the consumers that
+/// refuse that `.` (`Any`, negated classes) are dropped.
+fn close<B: Bits>(states: &[SegState], set: &mut B, block: bool) {
+    let words = set.words_mut();
+    for w in 0..words.len() {
+        let mut word = words[w];
+        let mut todo = word;
+        while todo != 0 {
+            let bit = todo.isolate_lowest_one();
+            todo ^= bit;
+            let s = w * 64 + bit.trailing_zeros() as usize;
+            let (a, b) = match &states[s] {
+                SegState::Split(a, b) => (*a, *b),
+                SegState::Jump(t) => (*t, UNSET),
+                SegState::DotGuard(t) => (if block { UNSET } else { *t }, UNSET),
+                SegState::Any(_) if block => (UNSET, UNSET),
+                SegState::Class(cls, _) if block && cls.negated => (UNSET, UNSET),
+                SegState::Byte(..) | SegState::Class(..) | SegState::Any(_) | SegState::Match => {
+                    continue;
+                }
+            };
+            word ^= bit;
+            for t in [a, b] {
+                if t == UNSET {
+                    continue;
+                }
+                let tb = 1u64 << (t & 63);
+                if t as usize >> 6 == w {
+                    word |= tb;
+                    todo |= tb;
+                } else {
+                    words[t as usize >> 6] |= tb;
+                }
+            }
+        }
+        words[w] = word;
+    }
+}
+
+/// Each state's ε-closure, in one backward pass: every ε-edge points to
+/// a later state, whose closure is done.
 fn closures<B: Bits>(states: &[SegState], words: usize) -> Box<[B]> {
     let n = states.len();
     // Filled back to front: state `t` sits at `n - 1 - t` until the
@@ -200,108 +334,6 @@ fn closures<B: Bits>(states: &[SegState], words: usize) -> Box<[B]> {
     }
     out.reverse();
     out.into_boxed_slice()
-}
-
-/// The entry set for a segment that starts with a protected `.`:
-/// DotGuards are cut, and the consumers that refuse that `.` (`Any`,
-/// negated classes) are dropped. ε-edges point forward, so one sweep
-/// from the entry finds every state it reaches.
-fn blocked_closure<B: Bits>(states: &[SegState], entry: usize, words: usize) -> B {
-    let mut reach = B::zero(words);
-    let mut out = B::zero(words);
-    reach.set(entry);
-    for (s, state) in states.iter().enumerate().skip(entry) {
-        if !reach.test(s) {
-            continue;
-        }
-        match state {
-            SegState::Split(a, b) => {
-                reach.set(*a as usize);
-                reach.set(*b as usize);
-            }
-            SegState::Jump(t) => reach.set(*t as usize),
-            SegState::DotGuard(_) | SegState::Any(_) => {}
-            SegState::Class(cls, _) if cls.negated => {}
-            SegState::Byte(..) | SegState::Class(..) | SegState::Match => out.set(s),
-        }
-    }
-    out
-}
-
-/// Can the entry set reach accept? States some byte fires are
-/// followed through their successor closures until nothing new
-/// appears.
-fn satisfiable<B: Bits>(
-    states: &[SegState],
-    closures: &[B],
-    init: &B,
-    accept: usize,
-    words: usize,
-) -> bool {
-    let mut fires = B::zero(words);
-    for (s, st) in states.iter().enumerate() {
-        let some_byte = match st {
-            SegState::Byte(..) | SegState::Any(_) => true,
-            SegState::Class(cls, _) => (0u16..=255).any(|b| cls.matches(b as u8)),
-            _ => false,
-        };
-        if some_byte {
-            fires.set(s);
-        }
-    }
-    let next_of = |s: usize| match &states[s] {
-        SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Any(n) => *n as usize,
-        _ => unreachable!(),
-    };
-    let mut reach = init.clone();
-    let mut work: Vec<usize> = Vec::new();
-    init.for_each(|s| {
-        if fires.test(s) {
-            work.push(s);
-        }
-    });
-    while let Some(s) = work.pop() {
-        closures[next_of(s)].for_each(|t| {
-            if !reach.test(t) {
-                reach.set(t);
-                if fires.test(t) {
-                    work.push(t);
-                }
-            }
-        });
-    }
-    reach.test(accept)
-}
-
-/// Step the entry set through `Any` states only, one byte at a time,
-/// until it settles; every length from 1 up must accept.
-fn any_seg<B: Bits>(
-    states: &[SegState],
-    closures: &[B],
-    init: &B,
-    accept: usize,
-    words: usize,
-) -> bool {
-    let mut active = init.clone();
-    let mut next = B::zero(words);
-    // Every loop is a star's one-byte self-loop, so the set settles
-    // within `states.len()` steps.
-    for _ in 0..=states.len() {
-        next.clear();
-        active.for_each(|s| {
-            if let SegState::Any(nx) = &states[s] {
-                next.or_with(&closures[*nx as usize]);
-            }
-        });
-        if !next.test(accept) {
-            return false;
-        }
-        if next == active {
-            return true;
-        }
-        std::mem::swap(&mut active, &mut next);
-    }
-    false
 }
 
 struct SegBuilder {
@@ -387,7 +419,7 @@ impl SegBuilder {
             Op::Alternation(branches) => {
                 debug_assert!(!branches.is_empty());
                 // The splits come before the branches, so every ε-edge
-                // points to a later state (`closures` relies on it).
+                // points to a later state (`close` and `closures` rely on it).
                 let first = self.states.len();
                 for _ in 1..branches.len() {
                     self.alloc(SegState::Split(UNSET, UNSET));

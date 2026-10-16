@@ -859,18 +859,32 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
 }
 
 /// Literal suffix alternatives one segment enumerates (`*.{a,b,…}`, a
-/// factored union of names); a bigger product stays an NFA, which
-/// holds the alternation without multiplying it out.
+/// factored union of names). A product of alternatives (`{a,b}{c,d}…`)
+/// past this many suffixes stays an NFA, which holds it without
+/// multiplying it out; a single list is no product and is enumerated
+/// whatever its length.
 const MAX_SUFFIX_PRODUCT: usize = 1024;
+/// The enumerated suffixes, one byte more each, may not take more than
+/// this or four times their ops: a long literal next to a product would
+/// be copied into every suffix.
+const MAX_SUFFIX_BYTES: usize = 64 * 1024;
 
 fn suffix_product(ops: &[&Op]) -> Option<Vec<Vec<u8>>> {
     if let [Op::Lit(bytes)] = ops {
         return Some(vec![bytes.clone()]);
     }
     let mut parts: Vec<Vec<u8>> = vec![Vec::new()];
+    // Σ (part + 1) bytes, and what the ops themselves hold.
+    let (mut size, mut source) = (1usize, 1usize);
+    let fits = |size: usize, source: usize| size <= MAX_SUFFIX_BYTES.max(source.saturating_mul(4));
     for op in ops {
         match op {
             Op::Lit(bytes) => {
+                size = size.saturating_add(parts.len().saturating_mul(bytes.len()));
+                source += bytes.len();
+                if !fits(size, source) {
+                    return None;
+                }
                 for p in parts.iter_mut() {
                     p.extend_from_slice(bytes);
                 }
@@ -884,7 +898,15 @@ fn suffix_product(ops: &[&Op]) -> Option<Vec<Vec<u8>>> {
                         _ => return None,
                     }
                 }
-                if parts.len() * lits.len() > MAX_SUFFIX_PRODUCT {
+                if parts.len() > 1 && parts.len() * lits.len() > MAX_SUFFIX_PRODUCT {
+                    return None;
+                }
+                let branch_bytes: usize = lits.iter().map(|l| l.len() + 1).sum();
+                // Σ (|p| + |l| + 1) over every pair.
+                size = (lits.len().saturating_mul(size - parts.len()))
+                    .saturating_add(parts.len().saturating_mul(branch_bytes));
+                source += branch_bytes;
+                if !fits(size, source) {
                     return None;
                 }
                 let mut next = Vec::with_capacity(parts.len() * lits.len());

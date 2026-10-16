@@ -669,29 +669,48 @@ function compileWild(ops, dot, ci) {
 }
 
 // Literal suffix alternatives one segment enumerates (`*.{a,b,…}`, a
-// factored union of names); a bigger product stays an NFA, which holds
-// the alternation without multiplying it out.
+// factored union of names). A product of alternatives (`{a,b}{c,d}…`)
+// past this many suffixes stays an NFA, which holds it without
+// multiplying it out; a single list is no product and is enumerated
+// whatever its length.
 const MAX_SUFFIX_PRODUCT = 1024;
+// The enumerated suffixes, one byte more each, may not take more than
+// this or four times their ops: a long literal next to a product would
+// be copied into every suffix.
+const MAX_SUFFIX_BYTES = 64 * 1024;
 
 function suffixProduct(ops, from) {
   if (from + 1 === ops.length && ops[from].kind === OP_LIT) {
     return [ops[from].bytes];
   }
   let parts = [[]];
+  // Σ (part + 1) bytes, and what the ops themselves hold.
+  let size = 1;
+  let source = 1;
+  const fits = () => size <= Math.max(MAX_SUFFIX_BYTES, source * 4);
   for (let i = from; i < ops.length; i++) {
     const op = ops[i];
     if (op.kind === OP_LIT) {
+      size += parts.length * op.bytes.length;
+      source += op.bytes.length;
+      if (!fits()) return null;
       for (const p of parts) {
         for (let j = 0; j < op.bytes.length; j++) p.push(op.bytes[j]);
       }
     } else if (op.kind === OP_ALTERNATION) {
       const lits = [];
+      let branchBytes = 0;
       for (const b of op.branches) {
         if (b.length === 0) lits.push(EMPTY_BYTES);
         else if (b.length === 1 && b[0].kind === OP_LIT) lits.push(b[0].bytes);
         else return null;
+        branchBytes += lits[lits.length - 1].length + 1;
       }
-      if (parts.length * lits.length > MAX_SUFFIX_PRODUCT) return null;
+      if (parts.length > 1 && parts.length * lits.length > MAX_SUFFIX_PRODUCT) return null;
+      // Σ (|p| + |l| + 1) over every pair.
+      size = lits.length * (size - parts.length) + parts.length * branchBytes;
+      source += branchBytes;
+      if (!fits()) return null;
       const next = [];
       for (const p of parts) {
         for (const l of lits) {

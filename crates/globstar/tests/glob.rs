@@ -71,6 +71,26 @@ fn long_segments_compile_on_a_small_stack() {
 }
 
 #[test]
+fn huge_segments_match_without_kept_closures() {
+    // About 4,200 in-segment states: past the closure budget, each step
+    // closes its set as it goes.
+    let list: Vec<String> = (0..600).map(|i| format!("*x{i}")).collect();
+    let list = format!("{{{}}}", list.join(","));
+    for (dot, path, want) in [
+        (true, "abx123", true),
+        (true, "x599", true),
+        (true, "x600", false),
+        (true, "ax5b", false),
+        (true, ".x5", true),
+        (false, ".x5", false),
+        (false, "a.x5", true),
+    ] {
+        let g = Glob::new_with(&list, CompileOptions::default().dot(dot)).unwrap();
+        assert_eq!(g.is_match(path.as_bytes()), want, "{path} dot={dot}");
+    }
+}
+
+#[test]
 fn classify_brace_routes_to_globstar_tier() {
     let g = Glob::new("*.{ts,tsx}").unwrap();
     // A brace counts as `Tier::Globstar`; the tier is syntax only.

@@ -17,6 +17,8 @@ pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     fn intersects(&self, other: &Self) -> bool;
     /// Visit every set bit, ascending.
     fn for_each(&self, f: impl FnMut(usize));
+    /// The words, lowest bits first.
+    fn words_mut(&mut self) -> &mut [u64];
 }
 
 impl Bits for u64 {
@@ -63,6 +65,10 @@ impl Bits for u64 {
             f(bits.trailing_zeros() as usize);
             bits &= bits - 1;
         }
+    }
+    #[inline]
+    fn words_mut(&mut self) -> &mut [u64] {
+        std::slice::from_mut(self)
     }
 }
 
@@ -111,5 +117,9 @@ impl Bits for Wide {
                 bits &= bits - 1;
             }
         }
+    }
+    #[inline]
+    fn words_mut(&mut self) -> &mut [u64] {
+        &mut self.0
     }
 }

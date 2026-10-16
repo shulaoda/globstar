@@ -3,6 +3,12 @@
 // Thompson NFA over the in-segment ops, simulated with an int32 bit set
 // for up to 32 states and Int32Array words beyond, so no in-segment
 // pattern is too large.
+//
+// Every ε-edge points to a later state (see `compileOp`), so one
+// ascending sweep closes a set. A step ORs per-state closures while they
+// fit MAX_CLOSURE_BYTES; past that (a dense set per state is quadratic in
+// the states) it closes its set as it goes, so memory stays linear in
+// the pattern.
 
 import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION } from "../ops.js";
 import { classMatches, ciLetter } from "../../ast.js";
@@ -18,6 +24,12 @@ const S_DOT_GUARD = 5;
 const S_MATCH = 6;
 
 const UNSET = -1;
+
+// The most the per-state closures may take, about 1,000 states. Up to there
+// ORing dense closures is the faster step; past it, closing the set as
+// the step goes wins and keeps memory linear. (Rust's ORs are faster, so
+// its budget is bigger.)
+const MAX_CLOSURE_BYTES = 128 * 1024;
 
 export function compileSegNfa(ops, dot, ci) {
   const b = new SegBuilder(ci);
@@ -39,29 +51,95 @@ function wildLed(b, initDotBlocked, test) {
   return true;
 }
 
-// Per-state "some byte fires this consumer", computed once (a 256-scan
-// per class state inside the fixpoint was the dominant compile cost
-// for class patterns).
-function fireNext(b) {
+// Can the entry reach S_MATCH through consumers some byte fires? Every
+// edge but a star's loop back to its own split points to a later state,
+// so one ascending sweep finds all the entry reaches.
+function satisfiable(b, entry) {
   const n = b.kinds.length;
-  const out = [];
-  for (let s = 0; s < n; s++) out.push(-1);
-  for (let s = 0; s < n; s++) {
+  const reach = [];
+  for (let s = 0; s < n; s++) reach.push(s === entry);
+  for (let s = entry; s < n; s++) {
+    if (!reach[s]) continue;
     const k = b.kinds[s];
-    if (k === S_BYTE || k === S_ANY) out[s] = b.nexts[s];
-    else if (k === S_CLASS) {
-      const cls = b.clsRefs[s];
-      for (let c = 0; c <= 255; c++) {
-        if (classMatches(cls, c)) {
-          out[s] = b.nexts[s];
-          break;
-        }
-      }
-    }
+    if (k === S_MATCH) return true;
+    if (k === S_SPLIT) reach[b.splitBs[s]] = true;
+    if (k !== S_CLASS || classFires(b.clsRefs[s])) reach[b.nexts[s]] = true;
   }
-  return out;
+  return false;
 }
 
+function classFires(cls) {
+  for (let c = 0; c <= 255; c++) if (classMatches(cls, c)) return true;
+  return false;
+}
+
+// What closing a set does with state `s`: -2 keeps it (a consumer or
+// S_MATCH); otherwise it leaves the set for its first ε-successor, -1
+// for none (a Split adds its second one too). Under `block` S_DOT_GUARD
+// is cut, and S_ANY and negated classes refuse a protected leading `.`.
+function epsA(nfa, s, block) {
+  const k = nfa.kinds[s];
+  if (k === S_SPLIT || k === S_JUMP) return nfa.nexts[s];
+  if (k === S_DOT_GUARD) return block ? -1 : nfa.nexts[s];
+  if (block && (k === S_ANY || (k === S_CLASS && nfa.clsRefs[s].neg))) return -1;
+  return -2;
+}
+
+// Close `set` under ε-edges, keeping only consumers and S_MATCH. Every
+// ε-edge points to a later state (see `compileOp`), so one ascending
+// sweep sees each state after all that reach it; the word being swept
+// stays in a local, where most edges land.
+function closeSmall(nfa, set, block) {
+  let todo = set;
+  while (todo !== 0) {
+    const bit = todo & -todo;
+    todo ^= bit;
+    const s = ctz32(bit);
+    const a = epsA(nfa, s, block);
+    if (a === -2) continue;
+    set ^= bit;
+    if (a !== -1) {
+      set |= 1 << a;
+      todo |= 1 << a;
+    }
+    if (nfa.kinds[s] === S_SPLIT) {
+      set |= 1 << nfa.splitBs[s];
+      todo |= 1 << nfa.splitBs[s];
+    }
+  }
+  return set;
+}
+
+function closeWide(nfa, set, block) {
+  for (let w = 0; w < set.length; w++) {
+    let word = set[w];
+    let todo = word;
+    while (todo !== 0) {
+      const bit = todo & -todo;
+      todo ^= bit;
+      const s = w * 32 + ctz32(bit);
+      const a = epsA(nfa, s, block);
+      if (a === -2) continue;
+      word ^= bit;
+      if (a !== -1) {
+        if (a >>> 5 === w) {
+          word |= 1 << (a & 31);
+          todo |= 1 << (a & 31);
+        } else set[a >>> 5] |= 1 << (a & 31);
+      }
+      if (nfa.kinds[s] === S_SPLIT) {
+        const b = nfa.splitBs[s];
+        if (b >>> 5 === w) {
+          word |= 1 << (b & 31);
+          todo |= 1 << (b & 31);
+        } else set[b >>> 5] |= 1 << (b & 31);
+      }
+    }
+    set[w] = word;
+  }
+}
+
+// Up to 32 states each state's closure is kept, so a step ORs them.
 class SegNfaSmall {
   constructor(b, entry, dot) {
     this.kinds = b.kinds;
@@ -70,9 +148,8 @@ class SegNfaSmall {
     this.clsRefs = b.clsRefs;
     const n = b.kinds.length;
 
-    // Guard-passing closures. Every ε-edge points to a later state (see
-    // `compileOp`), so one backward pass folds each closure from its
-    // children's.
+    // Guard-passing closures, in one backward pass: every ε-edge points
+    // to a later state, whose closure is done.
     const closures = [];
     for (let s = 0; s < n; s++) closures.push(0);
     for (let s = n - 1; s >= 0; s--) {
@@ -85,11 +162,11 @@ class SegNfaSmall {
     this.init = closures[entry];
     // Under `dot` a leading `.` needs no protection, so the blocked
     // closure is just `init` (DotGuards behave like Jumps).
-    this.initDotBlocked = dot ? this.init : blockedSmall(b, entry);
+    this.initDotBlocked = dot ? this.init : closeSmall(b, 1 << entry, true);
     this.acceptMask = 1 << (n - 1);
     this.wildLed = wildLed(b, this.initDotBlocked, (a, s) => (a & (1 << s)) !== 0);
     this.needsAsciiSeg = b.needsAsciiSeg;
-    this.satisfiable = satisfiableSmall(this, fireNext(b));
+    this.satisfiable = satisfiable(b, entry);
     // Does the NFA accept every non-empty segment through its S_ANY
     // states alone? (`matchDir` all-below.)
     this.anySeg = anySegSmall(this);
@@ -128,51 +205,6 @@ class SegNfaSmall {
   }
 }
 
-// Does a state stay in the entry set of a protected leading `.`? A cut
-// S_DOT_GUARD and the consumers that refuse that `.` (S_ANY, negated
-// classes) do not; Split/Jump are not leaves.
-function blockedLeaf(b, s) {
-  const k = b.kinds[s];
-  return k === S_BYTE || k === S_MATCH || (k === S_CLASS && !b.clsRefs[s].neg);
-}
-
-// The entry set for a protected leading `.`. ε-edges point forward, so
-// one sweep from the entry finds every state it reaches.
-function blockedSmall(b, entry) {
-  let reach = 1 << entry;
-  let out = 0;
-  for (let s = entry; s < b.kinds.length; s++) {
-    if ((reach & (1 << s)) === 0) continue;
-    const k = b.kinds[s];
-    if (k === S_SPLIT) reach |= (1 << b.nexts[s]) | (1 << b.splitBs[s]);
-    else if (k === S_JUMP) reach |= 1 << b.nexts[s];
-    else if (blockedLeaf(b, s)) out |= 1 << s;
-  }
-  return out;
-}
-
-function satisfiableSmall(nfa, fire) {
-  let reach = nfa.init;
-  let work = 0;
-  for (let s = 0; s < fire.length; s++) if (fire[s] !== -1) work |= 1 << s;
-  work &= reach;
-  while (work !== 0) {
-    const s = ctz32(work);
-    work &= work - 1;
-    const grown = nfa.closures[fire[s]] & ~reach;
-    if (grown !== 0) {
-      reach |= grown;
-      let g = grown;
-      while (g !== 0) {
-        const t = ctz32(g);
-        g &= g - 1;
-        if (fire[t] !== -1) work |= 1 << t;
-      }
-    }
-  }
-  return (reach & nfa.acceptMask) !== 0;
-}
-
 // Step the entry set through S_ANY states only, one byte at a time, until
 // it settles; every length from 1 up must accept.
 function anySegSmall(nfa) {
@@ -201,33 +233,44 @@ class SegNfaWide {
     this.kinds = b.kinds;
     this.byteVals = b.byteVals;
     this.nexts = b.nexts;
+    this.splitBs = b.splitBs;
     this.clsRefs = b.clsRefs;
     const n = b.kinds.length;
     const words = wordsFor(n);
     this.words = words;
-    const closures = [];
-    for (let s = 0; s < n; s++) closures.push(null);
-    for (let s = n - 1; s >= 0; s--) {
-      const k = b.kinds[s];
-      if (k === S_SPLIT) {
-        const c = closures[b.nexts[s]].slice();
-        bitsOr(c, closures[b.splitBs[s]]);
-        closures[s] = c;
-      } else if (k === S_JUMP || k === S_DOT_GUARD) {
-        closures[s] = closures[b.nexts[s]];
-      } else {
-        const c = new Int32Array(words);
-        bitSet(c, s);
-        closures[s] = c;
+    // Per-state closures within MAX_CLOSURE_BYTES, else none (null).
+    let closures = null;
+    if (n * words * 4 <= MAX_CLOSURE_BYTES) {
+      closures = [];
+      for (let s = 0; s < n; s++) closures.push(null);
+      for (let s = n - 1; s >= 0; s--) {
+        const k = b.kinds[s];
+        if (k === S_SPLIT) {
+          const c = closures[b.nexts[s]].slice();
+          bitsOr(c, closures[b.splitBs[s]]);
+          closures[s] = c;
+        } else if (k === S_JUMP || k === S_DOT_GUARD) {
+          closures[s] = closures[b.nexts[s]];
+        } else {
+          const c = new Int32Array(words);
+          bitSet(c, s);
+          closures[s] = c;
+        }
       }
     }
     this.closures = closures;
-    this.init = closures[entry];
-    this.initDotBlocked = dot ? this.init : blockedWide(b, entry, words);
+    const entrySet = (block) => {
+      const set = new Int32Array(this.words);
+      bitSet(set, entry);
+      closeWide(this, set, block);
+      return set;
+    };
+    this.init = entrySet(false);
+    this.initDotBlocked = dot ? this.init : entrySet(true);
     this.accept = n - 1;
     this.wildLed = wildLed(b, this.initDotBlocked, bitTest);
     this.needsAsciiSeg = b.needsAsciiSeg;
-    this.satisfiable = satisfiableWide(this, fireNext(b));
+    this.satisfiable = satisfiable(b, entry);
     this.anySeg = anySegWide(this);
   }
 
@@ -235,6 +278,16 @@ class SegNfaWide {
     const protectedStart = e0 > s0 && str.charCodeAt(s0) === 0x2e;
     let active = (protectedStart ? this.initDotBlocked : this.init).slice();
     let next = new Int32Array(this.words);
+    if (this.closures === null) {
+      for (let i = s0; i < e0; i++) {
+        if (bitsIsZero(active)) return false;
+        stepClosing(this, active, next, str.charCodeAt(i));
+        const t = active;
+        active = next;
+        next = t;
+      }
+      return bitTest(active, this.accept);
+    }
     const kinds = this.kinds;
     const byteVals = this.byteVals;
     const nexts = this.nexts;
@@ -262,38 +315,22 @@ class SegNfaWide {
   }
 }
 
-function blockedWide(b, entry, words) {
-  const reach = new Int32Array(words);
-  const out = new Int32Array(words);
-  bitSet(reach, entry);
-  for (let s = entry; s < b.kinds.length; s++) {
-    if (!bitTest(reach, s)) continue;
-    const k = b.kinds[s];
-    if (k === S_SPLIT) {
-      bitSet(reach, b.nexts[s]);
-      bitSet(reach, b.splitBs[s]);
-    } else if (k === S_JUMP) bitSet(reach, b.nexts[s]);
-    else if (blockedLeaf(b, s)) bitSet(out, s);
-  }
-  return out;
-}
-
-function satisfiableWide(nfa, fire) {
-  const reach = nfa.init.slice();
-  const work = [];
-  bitsForEach(nfa.init, (s) => {
-    if (fire[s] !== -1) work.push(s);
+// `next` = what `active` reaches over code unit `c` (-1: one only S_ANY
+// takes), without kept closures: the consumers move, then closeWide adds
+// what their targets reach.
+function stepClosing(nfa, active, next, c) {
+  next.fill(0);
+  bitsForEach(active, (s) => {
+    const k = nfa.kinds[s];
+    if (
+      k === S_ANY ||
+      (k === S_BYTE && nfa.byteVals[s] === c) ||
+      (k === S_CLASS && c !== -1 && classMatches(nfa.clsRefs[s], c))
+    ) {
+      bitSet(next, nfa.nexts[s]);
+    }
   });
-  while (work.length > 0) {
-    const s = work.pop();
-    bitsForEach(nfa.closures[fire[s]], (t) => {
-      if (!bitTest(reach, t)) {
-        bitSet(reach, t);
-        if (fire[t] !== -1) work.push(t);
-      }
-    });
-  }
-  return bitTest(reach, nfa.accept);
+  closeWide(nfa, next, false);
 }
 
 function anySegWide(nfa) {
@@ -301,10 +338,7 @@ function anySegWide(nfa) {
   let active = nfa.init.slice();
   let next = new Int32Array(nfa.words);
   for (let step = 0; step <= kinds.length; step++) {
-    next.fill(0);
-    bitsForEach(active, (s) => {
-      if (kinds[s] === S_ANY) bitsOr(next, nfa.closures[nfa.nexts[s]]);
-    });
+    stepClosing(nfa, active, next, -1);
     if (!bitTest(next, nfa.accept)) return false;
     if (bitsEqual(next, active)) return true;
     const t = active;
