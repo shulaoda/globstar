@@ -188,16 +188,23 @@ for (const { name, patterns, path, matches, maxKept } of [
 // slots, not the room V8 leaves after `push` (half again plus 16 slots;
 // it was a 1 KB step at 18 segment states). Each range stays in one NFA
 // form, whose switch is a real step.
-async function perMatcher(pattern) {
+// The heap one matcher keeps, counted over 4,000. Each count is a call
+// of its own: the matchers of one must be gone before the next begins.
+async function heapPer(pattern) {
   gc();
   await new Promise((resolve) => setImmediate(resolve));
   gc();
   const before = used();
-  const kept = Array.from({ length: 1000 }, () => compileMatcher(pattern));
+  const kept = Array.from({ length: 4000 }, () => compileMatcher(pattern));
   gc();
-  const bytes = (used() - before) / kept.length;
   assert.equal(kept[0].match(""), false);
-  return bytes;
+  return (used() - before) / kept.length;
+}
+// The smaller of two counts: a count only gains from what else the heap
+// holds at the time.
+async function perMatcher(pattern) {
+  const first = await heapPer(pattern);
+  return Math.min(first, await heapPer(pattern));
 }
 /** @param {string} name @param {(k: number) => string} shape */
 async function evenSteps(name, shape, from, to) {
