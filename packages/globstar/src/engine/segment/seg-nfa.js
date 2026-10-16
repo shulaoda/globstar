@@ -70,24 +70,22 @@ class SegNfaSmall {
     this.clsRefs = b.clsRefs;
     const n = b.kinds.length;
 
-    // Memoized guard-passing closures: the ε-graph (Split/Jump/Guard
-    // edges) is acyclic — every pattern loop passes through a
-    // consumer — so each state's closure folds from its children
-    // exactly once.
+    // Guard-passing closures. Every ε-edge points to a later state (see
+    // `compileOp`), so one backward pass folds each closure from its
+    // children's.
     const closures = [];
-    for (let s = 0; s < n; s++) closures.push(-1);
-    for (let s = 0; s < n; s++) memoClosure(b, closures, s, false);
+    for (let s = 0; s < n; s++) closures.push(0);
+    for (let s = n - 1; s >= 0; s--) {
+      const k = b.kinds[s];
+      if (k === S_SPLIT) closures[s] = closures[b.nexts[s]] | closures[b.splitBs[s]];
+      else if (k === S_JUMP || k === S_DOT_GUARD) closures[s] = closures[b.nexts[s]];
+      else closures[s] = 1 << s;
+    }
     this.closures = closures;
     this.init = closures[entry];
     // Under `dot` a leading `.` needs no protection, so the blocked
     // closure is just `init` (DotGuards behave like Jumps).
-    let blocked = this.init;
-    if (!dot) {
-      const memo = [];
-      for (let s = 0; s < n; s++) memo.push(-1);
-      blocked = memoClosure(b, memo, entry, true);
-    }
-    this.initDotBlocked = blocked;
+    this.initDotBlocked = dot ? this.init : blockedSmall(b, entry);
     this.acceptMask = 1 << (n - 1);
     this.wildLed = wildLed(b, this.initDotBlocked, (a, s) => (a & (1 << s)) !== 0);
     this.needsAsciiSeg = b.needsAsciiSeg;
@@ -130,28 +128,26 @@ class SegNfaSmall {
   }
 }
 
-// Memoized ε-closure. `block` builds the entry set for a protected
-// leading `.`, cutting S_DOT_GUARD edges and dropping the consumers
-// that refuse that `.` (S_ANY, negated classes); otherwise guards pass
-// and every consumer is a leaf. `memo[s] === -1` means uncomputed; the
-// ε-graph is acyclic so plain recursion terminates.
-function memoClosure(b, memo, s, block) {
-  const cached = memo[s];
-  if (cached !== -1) return cached;
+// Does a state stay in the entry set of a protected leading `.`? A cut
+// S_DOT_GUARD and the consumers that refuse that `.` (S_ANY, negated
+// classes) do not; Split/Jump are not leaves.
+function blockedLeaf(b, s) {
   const k = b.kinds[s];
-  let out;
-  if (k === S_SPLIT) {
-    out = memoClosure(b, memo, b.nexts[s], block) | memoClosure(b, memo, b.splitBs[s], block);
-  } else if (k === S_JUMP) {
-    out = memoClosure(b, memo, b.nexts[s], block);
-  } else if (k === S_DOT_GUARD) {
-    out = block ? 0 : memoClosure(b, memo, b.nexts[s], block);
-  } else if (block && (k === S_ANY || (k === S_CLASS && b.clsRefs[s].neg))) {
-    out = 0;
-  } else {
-    out = 1 << s;
+  return k === S_BYTE || k === S_MATCH || (k === S_CLASS && !b.clsRefs[s].neg);
+}
+
+// The entry set for a protected leading `.`. ε-edges point forward, so
+// one sweep from the entry finds every state it reaches.
+function blockedSmall(b, entry) {
+  let reach = 1 << entry;
+  let out = 0;
+  for (let s = entry; s < b.kinds.length; s++) {
+    if ((reach & (1 << s)) === 0) continue;
+    const k = b.kinds[s];
+    if (k === S_SPLIT) reach |= (1 << b.nexts[s]) | (1 << b.splitBs[s]);
+    else if (k === S_JUMP) reach |= 1 << b.nexts[s];
+    else if (blockedLeaf(b, s)) out |= 1 << s;
   }
-  memo[s] = out;
   return out;
 }
 
@@ -207,19 +203,27 @@ class SegNfaWide {
     this.nexts = b.nexts;
     this.clsRefs = b.clsRefs;
     const n = b.kinds.length;
-    this.words = wordsFor(n);
+    const words = wordsFor(n);
+    this.words = words;
     const closures = [];
     for (let s = 0; s < n; s++) closures.push(null);
-    for (let s = 0; s < n; s++) memoClosureWide(b, closures, s, false, this.words);
+    for (let s = n - 1; s >= 0; s--) {
+      const k = b.kinds[s];
+      if (k === S_SPLIT) {
+        const c = closures[b.nexts[s]].slice();
+        bitsOr(c, closures[b.splitBs[s]]);
+        closures[s] = c;
+      } else if (k === S_JUMP || k === S_DOT_GUARD) {
+        closures[s] = closures[b.nexts[s]];
+      } else {
+        const c = new Int32Array(words);
+        bitSet(c, s);
+        closures[s] = c;
+      }
+    }
     this.closures = closures;
     this.init = closures[entry];
-    let blocked = this.init;
-    if (!dot) {
-      const memo = [];
-      for (let s = 0; s < n; s++) memo.push(null);
-      blocked = memoClosureWide(b, memo, entry, true, this.words);
-    }
-    this.initDotBlocked = blocked;
+    this.initDotBlocked = dot ? this.init : blockedWide(b, entry, words);
     this.accept = n - 1;
     this.wildLed = wildLed(b, this.initDotBlocked, bitTest);
     this.needsAsciiSeg = b.needsAsciiSeg;
@@ -258,25 +262,19 @@ class SegNfaWide {
   }
 }
 
-function memoClosureWide(b, memo, s, block, words) {
-  const cached = memo[s];
-  if (cached !== null) return cached;
-  const k = b.kinds[s];
-  let out;
-  if (k === S_SPLIT) {
-    out = memoClosureWide(b, memo, b.nexts[s], block, words).slice();
-    bitsOr(out, memoClosureWide(b, memo, b.splitBs[s], block, words));
-  } else if (k === S_JUMP) {
-    out = memoClosureWide(b, memo, b.nexts[s], block, words);
-  } else if (k === S_DOT_GUARD) {
-    out = block ? new Int32Array(words) : memoClosureWide(b, memo, b.nexts[s], block, words);
-  } else if (block && (k === S_ANY || (k === S_CLASS && b.clsRefs[s].neg))) {
-    out = new Int32Array(words);
-  } else {
-    out = new Int32Array(words);
-    bitSet(out, s);
+function blockedWide(b, entry, words) {
+  const reach = new Int32Array(words);
+  const out = new Int32Array(words);
+  bitSet(reach, entry);
+  for (let s = entry; s < b.kinds.length; s++) {
+    if (!bitTest(reach, s)) continue;
+    const k = b.kinds[s];
+    if (k === S_SPLIT) {
+      bitSet(reach, b.nexts[s]);
+      bitSet(reach, b.splitBs[s]);
+    } else if (k === S_JUMP) bitSet(reach, b.nexts[s]);
+    else if (blockedLeaf(b, s)) bitSet(out, s);
   }
-  memo[s] = out;
   return out;
 }
 
@@ -399,20 +397,27 @@ class SegBuilder {
         return [entry, [exit]];
       }
       case OP_ALTERNATION: {
+        // The splits come before the branches, so every ε-edge points to
+        // a later state (the closure passes rely on it).
+        const first = this.kinds.length;
+        for (let i = 1; i < op.branches.length; i++) this.alloc(S_SPLIT, 0, UNSET);
         // `this.tails` is empty here (every caller drains it), so the
         // branch tails can be collected straight out of it.
         const entries = [];
-        let tails = [];
+        const tails = [];
         for (const branch of op.branches) {
           entries.push(this.compileOps(branch));
-          tails = tails.concat(this.tails);
+          for (const t of this.tails) tails.push(t);
           this.tails = [];
         }
-        let chain = entries[entries.length - 1];
-        for (let i = op.branches.length - 2; i >= 0; i--) {
-          chain = this.alloc(S_SPLIT, 0, entries[i], chain);
+        // Split `i` picks branch `i` or the rest: the next split, or the
+        // last branch.
+        const last = entries.length - 1;
+        for (let i = 0; i < last; i++) {
+          this.nexts[first + i] = entries[i];
+          this.splitBs[first + i] = i + 1 < last ? first + i + 1 : entries[last];
         }
-        return [chain, tails];
+        return [last === 0 ? entries[0] : first, tails];
       }
       default:
         throw new Error("separator-crossing op inside a segment");

@@ -1,6 +1,6 @@
 //! Integration tests for the Glob type.
 
-use globstar::{Glob, Tier};
+use globstar::{CompileOptions, Glob, Tier};
 
 #[test]
 fn classify_literal() {
@@ -52,6 +52,22 @@ fn large_shapes_stay_on_segment_engine() {
             .unwrap()
             .is_match(b"a/b/a/b/a/b/a/b/a/b/a/c/x")
     );
+}
+
+#[test]
+fn long_segments_compile_on_a_small_stack() {
+    // The in-segment closures are built without recursion, so a long
+    // segment, or a long list under dot=false, fits a small stack.
+    let compile = || {
+        let seg = format!("a{}b", "*{,}".repeat(500));
+        assert!(Glob::new(&seg).unwrap().is_match(b"axb"));
+        let list: Vec<String> = (0..1000).map(|i| format!("*x{i}")).collect();
+        let list = format!("{{{}}}", list.join(","));
+        let g = Glob::new_with(&list, CompileOptions::default().dot(false)).unwrap();
+        assert!(g.is_match(b"ax999") && !g.is_match(b".x999"));
+    };
+    let small = std::thread::Builder::new().stack_size(256 << 10);
+    small.spawn(compile).unwrap().join().unwrap();
 }
 
 #[test]

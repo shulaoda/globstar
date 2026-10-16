@@ -43,43 +43,31 @@ impl SegNfa {
             b.patch(t, accept);
         }
         let states = b.states.into_boxed_slice();
-        let n = states.len();
-        // The closure memo lives on the stack for the common sizes.
-        if n <= 64 {
-            Self::build(states, entry, dot, &mut [None; 64][..n], Kind::Small)
+        if states.len() <= 64 {
+            Self::build(states, entry, dot, Kind::Small)
         } else {
-            Self::build(states, entry, dot, &mut vec![None; n], Kind::Wide)
+            Self::build(states, entry, dot, Kind::Wide)
         }
     }
 
-    /// `memo` is compile-time scratch of `states.len()` slots.
     fn build<B: Bits>(
         states: Box<[SegState]>,
         entry: u32,
         dot: bool,
-        memo: &mut [Option<B>],
         kind: fn(SegNfaImpl<B>) -> Kind,
     ) -> Self {
         let n = states.len();
         let words = B::words(n);
         let accept = n - 1;
 
-        // Memoized guard-passing closures: the ε-graph (Split/Jump/
-        // Guard edges) is acyclic — every pattern loop passes through
-        // a consumer — so each state's closure folds from its
-        // children exactly once.
-        for s in 0..n {
-            memo_closure(&states, memo, s, false, words);
-        }
-        let closures: Box<[B]> = memo.iter_mut().map(|c| c.take().unwrap()).collect();
+        let closures = closures::<B>(&states, words);
         let init = closures[entry as usize].clone();
         // Under `dot` a leading `.` needs no protection, so the blocked
-        // closure is just `init` (DotGuards behave like Jumps). The
-        // memo is empty again and serves the blocked walk.
+        // closure is just `init` (DotGuards behave like Jumps).
         let init_dot_blocked = if dot {
             init.clone()
         } else {
-            memo_closure(&states, memo, entry as usize, true, words)
+            blocked_closure(&states, entry as usize, words)
         };
 
         // Can any state of the protected entry set consume a leading
@@ -185,34 +173,58 @@ impl<B: Bits> SegNfaImpl<B> {
     }
 }
 
-fn memo_closure<B: Bits>(
-    states: &[SegState],
-    memo: &mut [Option<B>],
-    s: usize,
-    block: bool,
-    words: usize,
-) -> B {
-    if let Some(done) = &memo[s] {
-        return done.clone();
+/// Each state's ε-closure, guards passing. Every ε-edge points to a
+/// later state (see `compile_op`), so one backward pass folds each
+/// closure from its children's.
+fn closures<B: Bits>(states: &[SegState], words: usize) -> Box<[B]> {
+    let n = states.len();
+    // Filled back to front: state `t` sits at `n - 1 - t` until the
+    // final reverse.
+    let mut out: Vec<B> = Vec::with_capacity(n);
+    for s in (0..n).rev() {
+        let done = |t: u32| &out[n - 1 - t as usize];
+        let c = match &states[s] {
+            SegState::Split(a, b) => {
+                let mut c = done(*a).clone();
+                c.or_with(done(*b));
+                c
+            }
+            SegState::Jump(t) | SegState::DotGuard(t) => done(*t).clone(),
+            _ => {
+                let mut c = B::zero(words);
+                c.set(s);
+                c
+            }
+        };
+        out.push(c);
     }
-    let out = match &states[s] {
-        SegState::Split(a, b) => {
-            let mut out = memo_closure(states, memo, *a as usize, block, words);
-            out.or_with(&memo_closure(states, memo, *b as usize, block, words));
-            out
+    out.reverse();
+    out.into_boxed_slice()
+}
+
+/// The entry set for a segment that starts with a protected `.`:
+/// DotGuards are cut, and the consumers that refuse that `.` (`Any`,
+/// negated classes) are dropped. ε-edges point forward, so one sweep
+/// from the entry finds every state it reaches.
+fn blocked_closure<B: Bits>(states: &[SegState], entry: usize, words: usize) -> B {
+    let mut reach = B::zero(words);
+    let mut out = B::zero(words);
+    reach.set(entry);
+    for (s, state) in states.iter().enumerate().skip(entry) {
+        if !reach.test(s) {
+            continue;
         }
-        SegState::Jump(n) => memo_closure(states, memo, *n as usize, block, words),
-        SegState::DotGuard(n) if !block => memo_closure(states, memo, *n as usize, block, words),
-        SegState::DotGuard(_) => B::zero(words),
-        SegState::Any(_) if block => B::zero(words),
-        SegState::Class(cls, _) if block && cls.negated => B::zero(words),
-        _ => {
-            let mut out = B::zero(words);
-            out.set(s);
-            out
+        match state {
+            SegState::Split(a, b) => {
+                reach.set(*a as usize);
+                reach.set(*b as usize);
+            }
+            SegState::Jump(t) => reach.set(*t as usize),
+            SegState::DotGuard(_) | SegState::Any(_) => {}
+            SegState::Class(cls, _) if cls.negated => {}
+            SegState::Byte(..) | SegState::Class(..) | SegState::Match => out.set(s),
         }
-    };
-    memo[s] = Some(out.clone());
+    }
     out
 }
 
@@ -374,6 +386,12 @@ impl SegBuilder {
             }
             Op::Alternation(branches) => {
                 debug_assert!(!branches.is_empty());
+                // The splits come before the branches, so every ε-edge
+                // points to a later state (`closures` relies on it).
+                let first = self.states.len();
+                for _ in 1..branches.len() {
+                    self.alloc(SegState::Split(UNSET, UNSET));
+                }
                 // `self.tails` is empty here (every caller drains it),
                 // so the branch tails can be collected straight out of it.
                 let mut entries = Vec::with_capacity(branches.len());
@@ -382,11 +400,18 @@ impl SegBuilder {
                     entries.push(self.compile_ops(branch.iter()));
                     tails.append(&mut self.tails);
                 }
-                let mut chain = entries[branches.len() - 1];
-                for i in (0..branches.len() - 1).rev() {
-                    chain = self.alloc(SegState::Split(entries[i], chain));
+                // Split `i` picks branch `i` or the rest: the next split,
+                // or the last branch.
+                let last = entries.len() - 1;
+                for i in 0..last {
+                    let rest = if i + 1 < last {
+                        (first + i + 1) as u32
+                    } else {
+                        entries[last]
+                    };
+                    self.states[first + i] = SegState::Split(entries[i], rest);
                 }
-                (chain, tails)
+                (if last == 0 { entries[0] } else { first as u32 }, tails)
             }
             // Separator-crossing ops never appear inside a segment.
             _ => unreachable!("separator-crossing op inside a segment"),
