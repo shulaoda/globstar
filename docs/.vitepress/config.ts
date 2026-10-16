@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitepress";
+import { defineConfig, type Plugin } from "vitepress";
 
 const SPEC = "https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md";
 
@@ -69,6 +69,7 @@ export default defineConfig({
   },
 
   vite: {
+    plugins: [leanChunks()],
     resolve: {
       alias: {
         // The playground runs the real matcher: the package source,
@@ -81,3 +82,28 @@ export default defineConfig({
     },
   },
 });
+
+// VitePress makes each page's lean chunk (the page without its static
+// HTML, which the server-rendered page already holds) by adding it to
+// the bundle in `generateBundle`. Rolldown, under vite-plus, ignores that
+// assignment, so every page asked for a `.lean.js` file that was never
+// written. This emits them the way VitePress builds them, before its own
+// hook removes the markers. Drop it once VitePress emits them itself.
+function leanChunks(): Plugin {
+  const staticStrip = /['"`]__VP_STATIC_START__[^]*?__VP_STATIC_END__['"`]/g;
+  return {
+    name: "globstar:lean-chunks",
+    enforce: "pre",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type !== "chunk" || !chunk.isEntry || !chunk.facadeModuleId?.endsWith(".md")) {
+          continue;
+        }
+        const fileName = chunk.fileName.replace(/\.js$/, ".lean.js");
+        if (fileName in bundle) continue;
+        this.emitFile({ type: "asset", fileName, source: chunk.code.replace(staticStrip, '""') });
+      }
+    },
+  };
+}

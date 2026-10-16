@@ -56,8 +56,8 @@ test:
     node packages/globstar/tests/large.mjs
     node packages/globstar-walk/tests/walk.mjs
 
-# Wipe build artifacts (Rust target + JS workspace node_modules + bench output).
+# Wipe build artifacts (Rust target + JS workspace node_modules). BENCHMARKS.md
+# is tracked and stays.
 clean:
     cargo clean
     rm -rf node_modules packages/*/node_modules
-    rm -f BENCHMARKS.md

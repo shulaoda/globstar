@@ -63,13 +63,14 @@ const N = PATHS.length;
 function buildPerPattern(compileSingle) {
   return (patterns) => patterns.map(compileSingle);
 }
+// Stops at the first hit, as a user's loop would (and as the Rust
+// baselines' `.any()` does).
 function runPerPattern(matchOne) {
   return (arr, s) => {
-    let any = false;
     for (let i = 0; i < arr.length; i++) {
-      if (matchOne(arr[i], s)) any = true;
+      if (matchOne(arr[i], s)) return true;
     }
-    return any;
+    return false;
   };
 }
 

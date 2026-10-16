@@ -404,15 +404,16 @@ Output paths preserve the symlink path as discovered through `readdir`. `fs.real
 | --------------------------------- | ----------------------------------- | ----------------------------- | ---------------------------- | ---------------------------- | ------------ |
 | Concurrent async readdir          | ✅ (own impl)                       | ✅ (`@nodelib/fs.walk` async) | ✅ (`fdir`)                  | ✅ (uses fast-glob)          | n/a          |
 | `onlyFiles` default               | hardwired `true`                    | configurable, default `true`  | configurable, default `true` | configurable, default `true` | configurable |
-| IO errors throw                   | ✅ (default, no opt-out)            | ❌ (silent)                   | ❌ (silent, via `fdir`)      | ❌ (silent)                  | configurable |
-| Bad-cwd throws                    | ✅ (validated upfront)              | ❌ (returns empty)            | ❌ (returns empty)           | ❌                           | varies       |
-| `!`-prefix splits to ignore       | ✅ (parity-aware)                   | ✅ (one-`!` only)             | ✅ (one-`!`)                 | ✅                           | ✅           |
-| Static-prefix seeding             | ✅ (per-pattern)                    | ✅                            | ✅                           | ✅                           | ❌           |
-| `withFileTypes` option            | ❌ (drop entirely)                  | ✅                            | ✅                           | ✅                           | ✅           |
-| `onError` callback                | ❌ (errors throw)                   | ❌                            | ❌                           | ❌                           | ✅           |
-| `followSymlinks` default          | `true`                              | `false`                       | `true`                       | `false`                      | `false`      |
-| Symlink cycle detection           | ✅ (`realpath` + ancestor chain)    | varies                        | ✅ (`fdir`'s `isRecursive`)  | varies                       | varies       |
+| IO errors throw                   | ✅ (default, no opt-out)            | ✅ (an unreadable folder throws `EACCES`) | ❌ (silent, via `fdir`)      | ✅ (as fast-glob)            | configurable |
+| Bad-cwd throws                    | ✅ (validated upfront)              | a file `cwd` throws           | ❌ (returns empty)           | a file `cwd` throws          | varies       |
+| `!`-prefix splits to ignore       | ✅ (by `!` parity: `!!x` is `x`)    | ✅ (one `!`)                  | ✅ (one `!`)                 | ✅ (`!!x` ignores `x`; an all-`!` list expands to `**/*` first) | ❌           |
+| Static-prefix seeding             | ✅ (per-pattern)                    | ✅                            | ✅                           | ✅                           | ✅           |
+| `withFileTypes` option            | ❌ (drop entirely)                  | ✅                            | ❌                           | ✅                           | ✅           |
+| `onError` callback                | ❌ (errors throw)                   | ❌                            | ❌                           | ❌                           | ❌           |
+| `followSymlinks` default          | `true`                              | `true`                        | `true`                       | `true`                       | `true`       |
+| Symlink cycle detection           | ✅ (`realpath` + ancestor chain)    | ❌                            | ✅ (`fdir`'s `isRecursive`)  | ❌                           | ❌           |
 | `followSymlinks: false` semantics | drop entirely (no emit, no descend) | emit-as-file                  | drop entirely                | emit-as-file                 | varies       |
+| Dangling symlink                  | emitted as a file when it matches   | dropped                       | dropped                      | dropped                      | not measured |
 
 The walker is opinionated about errors: any failure throws by default. Combined with hard-wired files-only output, hard-wired absolute output, and a 5-option surface, this trades configurability for predictability — fewer modes means fewer surprises.
 
@@ -422,6 +423,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 
 - **v0.3.3** (2026-10-16): options are checked (§3.1: own keys only, no unknown keys, booleans for the flags; `glob` rejects); an ignore entry that starts with `!` is refused (§3.2); every `!` run normalization exposes counts in the split (§4.2).
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
+- **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §7.7); seed stat failures probe `lstat` (§9.4).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.
 - **v0.3.0** (2026-05-04, draft):
   - `followSymlinks` semantics aligned with `tinyglobby` / `fdir`:

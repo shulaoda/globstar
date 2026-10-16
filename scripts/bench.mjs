@@ -214,11 +214,28 @@ if (!SKIP_RUST) {
     ]),
   );
   rust.singleMem = parseTable(
-    step("rust single memory", "./target/release/matcher-single-memory", []),
+    // Through cargo, so a CARGO_TARGET_DIR build is the one that runs.
+    step("rust single memory", "cargo", [
+      "run",
+      "--release",
+      "--quiet",
+      "-p",
+      "memory-check",
+      "--bin",
+      "matcher-single-memory",
+    ]),
     "Pattern",
   );
   rust.multiMem = parseTable(
-    step("rust multi memory", "./target/release/matcher-multi-memory", []),
+    step("rust multi memory", "cargo", [
+      "run",
+      "--release",
+      "--quiet",
+      "-p",
+      "memory-check",
+      "--bin",
+      "matcher-multi-memory",
+    ]),
     "Pattern set",
   );
 }

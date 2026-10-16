@@ -33,15 +33,21 @@ if (/^\d+\.\d+\.\d+$/.test(arg)) {
   else if (arg === "major") next = `${ma + 1}.0.0`;
   else throw new Error(`expected patch | minor | major | X.Y.Z, got "${arg}"`);
 }
-if (next === current) throw new Error(`already at ${current}`);
+const order = (v) => v.split(".").map(Number);
+const [a, b] = [order(next), order(current)];
+const newer = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+if (newer <= 0) throw new Error(`${next} is not newer than ${current}`);
 
-writeFileSync(CARGO, cargo.replaceAll(`version = "${current}"`, `version = "${next}"`));
-for (const f of PKGS) {
+// Read and check every manifest before writing any, so an error leaves
+// the tree as it was.
+const line = `"version": "${current}"`;
+const pkgs = PKGS.map((f) => {
   const s = readFileSync(f, "utf8");
-  const line = `"version": "${current}"`;
   if (!s.includes(line)) throw new Error(`${f} is at a different version than Cargo.toml`);
-  writeFileSync(f, s.replace(line, `"version": "${next}"`));
-}
+  return [f, s];
+});
+writeFileSync(CARGO, cargo.replaceAll(`version = "${current}"`, `version = "${next}"`));
+for (const [f, s] of pkgs) writeFileSync(f, s.replace(line, `"version": "${next}"`));
 execSync("cargo update --workspace --quiet"); // refresh Cargo.lock
 
 console.log(`${current} -> ${next} (Cargo.toml, Cargo.lock, ${PKGS.join(", ")})`);

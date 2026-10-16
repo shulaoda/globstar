@@ -41,7 +41,8 @@ export interface GlobOptions {
  * threadpool — the right choice for any non-trivial corpus.
  *
  * Multi-pattern combines via OR. `!`-prefixed patterns auto-split into
- * the ignore set (globby-style):
+ * the ignore set by the parity of their leading `!`s (`!x` is ignored,
+ * `!!x` is `x` again — globby reads `!!x` as an ignore too):
  *
  * ```ts
  * await glob("src/**", { cwd: projectRoot });
