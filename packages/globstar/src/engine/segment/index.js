@@ -14,22 +14,18 @@ import {
   chainMatches,
   chainDir,
   nfaRun,
-  nfaRunWide,
   nfaRunSparse,
   initSparse,
   sparseHas,
   sparseReach1,
   coversBelow,
-  coversBelowWide,
   coversBelowSparse,
 } from "./exec.js";
-import { bitTest, bitsIntersect } from "./bits.js";
 import {
   NO,
   YES,
   BAIL,
   NFA_SMALL,
-  NFA_WIDE,
   NFA_SPARSE,
   EL_LIT,
   EL_WILD,
@@ -81,14 +77,7 @@ export class SegmentMatcher {
       i += n;
     }
     const g = this.nfa;
-    const nfa =
-      g === null
-        ? "none"
-        : g.kind === NFA_SMALL
-          ? "small"
-          : g.kind === NFA_WIDE
-            ? "wide"
-            : "sparse";
+    const nfa = g === null ? "none" : g.kind === NFA_SMALL ? "small" : "sparse";
     return `${runs.join(" ")} | chains ${this.chains.length} | nfa ${nfa}`;
   }
 
@@ -146,11 +135,6 @@ export class SegmentMatcher {
       if (active === null) return BAIL;
       return sparseHas(active, g.accept) ? YES : NO;
     }
-    if (g.kind === NFA_WIDE) {
-      const active = nfaRunWide(this, str, bail);
-      if (active === null) return BAIL;
-      return bitTest(active, g.accept) ? YES : NO;
-    }
     const active = nfaRun(this, g, str, bail);
     if (active === -1) return BAIL;
     return (active & (1 << g.accept)) !== 0 ? YES : NO;
@@ -174,7 +158,6 @@ export class SegmentMatcher {
       let all = false;
       if (this.dot) {
         if (g.kind === NFA_SPARSE) all = coversBelowSparse(this, initSparse(g));
-        else if (g.kind === NFA_WIDE) all = coversBelowWide(this, g.init.slice());
         else all = coversBelow(this, g.init);
       }
       return DirMatch.from(this.isMatch(str), true, all);
@@ -188,19 +171,13 @@ export class SegmentMatcher {
       exact = sparseHas(active, g.accept);
       prefix = sparseReach1(g, active);
       all = this.dot && prefix && coversBelowSparse(this, active);
-    } else if (g.kind === NFA_WIDE) {
-      const active = nfaRunWide(this, str, bail);
-      if (active === null) return -1;
-      exact = bitTest(active, g.accept);
-      prefix = bitsIntersect(active, g.reach1);
-      // `dot=false` never covers a subtree: no wildcard matches the
-      // dot-led names below.
-      all = this.dot && prefix && coversBelowWide(this, active);
     } else {
       const active = nfaRun(this, g, str, bail);
       if (active === -1) return -1;
       exact = (active & (1 << g.accept)) !== 0;
       prefix = (active & g.reach1) !== 0;
+      // `dot=false` never covers a subtree: no wildcard matches the
+      // dot-led names below.
       all = this.dot && prefix && coversBelow(this, active);
     }
     return DirMatch.from(exact, prefix, all);

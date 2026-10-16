@@ -37,14 +37,12 @@ import {
   NO_G,
   MANY_G,
   NFA_SMALL,
-  NFA_WIDE,
   NFA_SPARSE,
   elemSatisfiable,
   NEVER_LEN,
 } from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
 import { GlobError } from "../../error.js";
-import { wordsFor, bitSet, bitsOr, bitTest, bitsIntersect } from "./bits.js";
 
 // Successor marker for "the pattern ends here".
 const ACCEPT = -1;
@@ -53,24 +51,19 @@ const START = -2;
 
 // What the last op left behind for the next element.
 const B_START = 0; // pattern start
-const B_AFTER_G = 1; // right after a globstar element
-const B_STRICT = 2; // just consumed a `Sep`
-const B_LENIENT = 3; // just consumed a `SepRun` or `LeadingSeps`
-const B_OPEN = 4; // a bare `**` absorbs the rest of the path
+const B_SEP = 1; // after a separator or a `**/`
+const B_OPEN = 2; // a bare `**` absorbs the rest of the path
 
 const EMPTY_BYTES = new Uint8Array(0);
 
 export function compileSegment(ops, dot, ci, forceNfa) {
   const graph = buildGraph(ops, dot, ci);
-  const chainList = chains(graph);
-  // A lone chain with at most one globstar serves `matchDir` too;
-  // anything else needs the NFA (the test hook always does).
-  let nfa = null;
-  if (forceNfa || chainList.length !== 1 || chainList[0].globstar === MANY_G) {
-    let nStates = 1;
-    for (const e of graph.elems) nStates += elemStates(e);
-    nfa = anyNfa(graph, nStates, ci);
-  }
+  let chainList = chains(graph);
+  // A lone chain with several globstars is the graph: its NFA serves.
+  if (chainList.length === 1 && chainList[0].globstar === MANY_G) chainList = [];
+  // A lone chain serves `matchDir` too; anything else needs the NFA
+  // (the test hook always does).
+  const nfa = forceNfa || chainList.length !== 1 ? anyNfa(graph, ci) : null;
   return { elems: exact(graph.elems), chains: exact(chainList), nfa };
 }
 
@@ -81,9 +74,6 @@ function makeElem(kind, litBytes, wild) {
 const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
 // Absorbs zero segments too.
 const nullable = (e) => e.kind === EL_G0;
-// NFA states the element owns: G1 has a body state right
-// after their entry.
-const elemStates = (e) => (e.kind === EL_G1 ? 2 : 1);
 
 // The ops with each crossing brace's in-segment branches as one choice:
 // `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches give
@@ -444,23 +434,17 @@ class Builder {
           break;
         }
         case OP_SEP:
-          this.closeAll(groups, B_STRICT);
-          break;
         case OP_SEP_RUN:
-          this.closeAll(groups, B_LENIENT);
+          this.closeAll(groups, B_SEP);
           break;
         case OP_LEADING_SEPS:
-          // `/*`: a strict boundary becomes lenient for the `**/` that
-          // follows; after a `**/` it adds nothing.
-          for (const g of groups) {
-            if (g.state === B_STRICT && !g.pendingOss) g.state = B_LENIENT;
-          }
+          // `/*`: it only keeps a pending `**/` pending.
           break;
         case OP_OPT_SEGMENTS_SLASH:
           for (const g of groups) if (g.state !== B_OPEN) g.pendingOss = true;
           break;
         case OP_SLASH_ANYTHING:
-          this.closeAll(groups, B_STRICT);
+          this.closeAll(groups, B_SEP);
           this.globstarAll(groups, () => EL_G1);
           break;
         case OP_GLOBSTAR_ANY:
@@ -493,7 +477,7 @@ class Builder {
   // globstar before it, so none is left behind a strict boundary.
   settle(g) {
     if (!g.pendingOss || g.state === B_OPEN) return;
-    rebase(g, this.emit(makeElem(EL_G0, null, null), g.tails), B_AFTER_G);
+    rebase(g, this.emit(makeElem(EL_G0, null, null), g.tails), B_SEP);
   }
 
   // Close every group's segment into one node per group; they all
@@ -615,13 +599,11 @@ function makeChain(graph, nodes) {
     globstar = i;
   }
 
-  // Several globstars: the NFA over this path alone, unless the path
-  // is the whole graph (then the matcher's own serves).
+  // Several globstars: the NFA over this path alone; the lone path of
+  // a linear pattern is the graph, whose NFA serves.
   let nfa = null;
-  if (globstar === MANY_G && nodes !== null) {
-    let nStates = 1;
-    for (let i = 0; i < n; i++) nStates += elemStates(elem(i));
-    if (nStates > 31) return null;
+  if (globstar === MANY_G) {
+    if (nodes === null || n + 1 > 31) return null;
     nfa = nfaSmall(graph, nodes);
   }
   // What a path must end with, read off the last element: a cheap
@@ -653,15 +635,9 @@ function layout(graph, nodes) {
   };
 }
 
-// The most the dense rows of a graph NFA may take, about 500 states: past
-// that the sparse NFA is as fast, and its tables are linear.
-const MAX_ROW_BYTES = 32 * 1024;
-
-// Dense rows in an int32 or within MAX_ROW_BYTES, sparse beyond.
-function anyNfa(graph, nStates, ci) {
-  if (nStates <= 31) return nfaSmall(graph, null);
-  if (nStates * wordsFor(nStates) * 4 <= MAX_ROW_BYTES) return nfaWide(graph, null);
-  return nfaSparse(graph, ci);
+// One int32 of states up to 31, sparse beyond.
+function anyNfa(graph, ci) {
+  return graph.elems.length + 1 <= 31 ? nfaSmall(graph, null) : nfaSparse(graph, ci);
 }
 
 // Int32 active set: at most 31 states (bit 31 is the string-mode bail
@@ -670,122 +646,36 @@ function anyNfa(graph, nStates, ci) {
 // the state's node at `2s + 1`.
 function nfaSmall(graph, nodes) {
   const { elems, n, nodeAt, succs, start } = layout(graph, nodes);
-  const entries = [];
-  let nStates = 0;
-  for (let i = 0; i < n; i++) {
-    entries.push(nStates);
-    nStates += elemStates(elems[nodeAt(i)]);
-  }
-  const accept = nStates;
-  nStates += 1;
+  const accept = n;
   const tab = [];
-  for (let s = 0; s < nStates; s++) tab.push(0, 0);
+  for (let s = 0; s <= n; s++) tab.push(0, 0);
   let reach1 = 0;
   // The closure a target adds, from the last position back: successors
   // always lie ahead, so each is complete when needed, and a nullable
-  // successor contributes its own successors — its `after` minus its
-  // own states.
+  // successor contributes its own successors.
   const addTarget = (c, t) => {
     if (t === ACCEPT) return c | (1 << accept);
-    const e = entries[t];
-    const te = elems[nodeAt(t)];
-    if (nullable(te)) {
-      c |= tab[e << 1];
-      if (elemStates(te) === 2) c &= ~(1 << (e + 1));
-    }
-    return c | (1 << e);
+    if (nullable(elems[nodeAt(t)])) c |= tab[t << 1];
+    return c | (1 << t);
   };
   for (let i = n - 1; i >= 0; i--) {
-    const e = entries[i];
     const el = elems[nodeAt(i)];
-    tab[(e << 1) | 1] = nodeAt(i);
+    tab[(i << 1) | 1] = nodeAt(i);
     let c = 0;
     if (succs === null) c = addTarget(c, i + 1 < n ? i + 1 : ACCEPT);
     else for (const t of succs[i]) c = addTarget(c, t);
     // A state reaches accept through ≥ 1 segment iff its element can
     // consume one and what follows reaches accept.
-    if (elemSatisfiable(el) && ((c & (1 << accept)) !== 0 || (c & reach1) !== 0)) {
-      reach1 |= 1 << e;
-      if (elemStates(el) === 2) reach1 |= 1 << (e + 1);
-    }
-    if (el.kind === EL_G0) tab[e << 1] = c | (1 << e);
-    else if (elemStates(el) === 2) {
-      tab[((e + 1) << 1) | 1] = nodeAt(i);
-      tab[e << 1] = c | (1 << (e + 1));
-      tab[(e + 1) << 1] = tab[e << 1];
-    } else tab[e << 1] = c;
+    if (elemSatisfiable(el) && ((c & (1 << accept)) !== 0 || (c & reach1) !== 0)) reach1 |= 1 << i;
+    // A globstar stays after taking a segment.
+    tab[i << 1] = isGlobstar(el) ? c | (1 << i) : c;
   }
   let init = 0;
   for (const t of start) init = addTarget(init, t);
   return { kind: NFA_SMALL, tab: exact(tab), init, accept, reach1 };
 }
 
-// The same over Int32Array words: more than 31 states.
-function nfaWide(graph, nodes) {
-  const { elems, n, nodeAt, succs, start } = layout(graph, nodes);
-  const entries = [];
-  let nStates = 0;
-  for (let i = 0; i < n; i++) {
-    entries.push(nStates);
-    nStates += elemStates(elems[nodeAt(i)]);
-  }
-  const accept = nStates;
-  nStates += 1;
-  const words = wordsFor(nStates);
-  const after = [];
-  const nodeOf = [];
-  for (let s = 0; s < nStates; s++) {
-    after.push(null);
-    nodeOf.push(0);
-  }
-  const reach1 = new Int32Array(words);
-  const addTarget = (c, t) => {
-    if (t === ACCEPT) {
-      bitSet(c, accept);
-      return;
-    }
-    const e = entries[t];
-    const te = elems[nodeAt(t)];
-    if (nullable(te)) {
-      bitsOr(c, after[e]);
-      if (elemStates(te) === 2) c[(e + 1) >>> 5] &= ~(1 << ((e + 1) & 31));
-    }
-    bitSet(c, e);
-  };
-  for (let i = n - 1; i >= 0; i--) {
-    const e = entries[i];
-    const el = elems[nodeAt(i)];
-    nodeOf[e] = nodeAt(i);
-    const c = new Int32Array(words);
-    if (succs === null) addTarget(c, i + 1 < n ? i + 1 : ACCEPT);
-    else for (const t of succs[i]) addTarget(c, t);
-    if (elemSatisfiable(el) && (bitTest(c, accept) || bitsIntersect(c, reach1))) {
-      bitSet(reach1, e);
-      if (elemStates(el) === 2) bitSet(reach1, e + 1);
-    }
-    if (el.kind === EL_G0) bitSet(c, e);
-    else if (elemStates(el) === 2) {
-      nodeOf[e + 1] = nodeAt(i);
-      bitSet(c, e + 1);
-      after[e + 1] = c;
-    }
-    after[e] = c;
-  }
-  after[accept] = new Int32Array(words);
-  const init = new Int32Array(words);
-  for (const t of start) addTarget(init, t);
-  return {
-    kind: NFA_WIDE,
-    after: exact(after),
-    nodeOf: exact(nodeOf),
-    init,
-    accept,
-    reach1,
-    words,
-  };
-}
-
-// Past MAX_ROW_BYTES the graph NFA is stepped sparsely. A position keeps
+// Past 31 states the graph NFA is stepped sparsely. A position keeps
 // its successors, not a closure row (the start is the last position):
 // the literal ones' entry states sorted by literal (`litKeys` folded
 // when insensitive), the other positions, and the nullable ones (`**/`)
@@ -800,14 +690,8 @@ function nfaSparse(graph, ci) {
     if (list === null) f(p + 1 < n ? p + 1 : ACCEPT);
     else for (const t of list) f(t);
   };
-  const entries = [];
-  const pos = [];
-  for (let i = 0; i < n; i++) {
-    entries.push(pos.length);
-    for (let k = elemStates(elems[i]); k > 0; k--) pos.push(i);
-  }
-  const accept = pos.length;
-  pos.push(-1);
+  // State `p` is position `p`; the accept state is `n`.
+  const accept = n;
 
   // A position reaches accept through ≥ 1 segment iff its element can
   // consume one and what it enters reaches accept: from the last
@@ -826,8 +710,7 @@ function nfaSparse(graph, ci) {
     ok[i] = o;
     r1[i] = o && elemSatisfiable(elems[i]);
   }
-  const reach1 = [];
-  for (let s = 0; s < pos.length; s++) reach1.push(s !== accept && r1[pos[s]]);
+  const reach1 = r1.concat([false]);
 
   const key = (t) => (ci ? asciiLower(elems[t].litStr) : elems[t].litStr);
   const litAt = [];
@@ -862,7 +745,7 @@ function nfaSparse(graph, ci) {
     const order = litPos.map((_, i) => i);
     order.sort((a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : litPos[a] - litPos[b]));
     for (const i of order) {
-      lits.push(entries[litPos[i]]);
+      lits.push(litPos[i]);
       litKeys.push(keys[i]);
     }
     ends.push(end);
@@ -873,8 +756,7 @@ function nfaSparse(graph, ci) {
   nullAt.push(nulls.length);
   return {
     kind: NFA_SPARSE,
-    pos: exact(pos),
-    entries: exact(entries),
+    n,
     litAt: exact(litAt),
     lits: exact(lits),
     litKeys: exact(litKeys),

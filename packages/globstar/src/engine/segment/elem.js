@@ -25,10 +25,9 @@ export const WK_AFFIX_INDEX = 3;
 export const NO_G = -1;
 export const MANY_G = -2;
 
-// Graph NFA kinds: dense int32 rows, dense Int32Array rows, sparse.
+// Graph NFA kinds: dense int32 rows, sparse.
 export const NFA_SMALL = 0;
-export const NFA_WIDE = 1;
-export const NFA_SPARSE = 2;
+export const NFA_SPARSE = 1;
 
 // Match results; BAIL is string mode giving up on a non-ASCII segment.
 export const NO = 0;

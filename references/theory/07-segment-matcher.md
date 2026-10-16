@@ -40,8 +40,10 @@ weight, so such a shape fails with `TooComplex` instead of growing
 
 Let m = element count, n = segment count. `is_match` enumerates the
 paths through the graph as _chains_ while there are at most 64 of
-them (one for a brace-free pattern); each is matched on its own, in
-pattern order, with a quick last-segment suffix check between them.
+them (one for a brace-free pattern, none when that one has several
+globstars: it is the graph, whose NFA does the same work); each is
+matched on its own, in pattern order, with a quick last-segment
+suffix check between them.
 Past 64 paths the NFA over the whole graph runs instead. `match_dir`
 goes the same way: one chain with at most one globstar — the common
 case — answers it by the same anchored compares, reading the tokens
@@ -59,22 +61,22 @@ matcher keeps no NFA at all. Only a matcher whose chains cannot serve
   arithmetic, and the `dot=false` rule is one scan of the absorbed
   byte range for `(^|/)\.`. O(n), no search, no backtracking.
 - **Several Gs / a union's `match_dir` / > 64 paths**: an NFA over the
-  graph,
-  one state per node (two for `G1`), stepped once per
-  _segment_. The active set is one u64 (int32 in JS) while the graph
-  has at most 64 states (31 in JS), and per state the closure entered
-  after consuming a segment is precomputed; a word slice does the same
-  while those rows fit 32 KiB (about 500 states). Past that the NFA is
-  stepped sparsely: each position keeps its successors, the literal
+  graph, one state per node, stepped once per _segment_. The active
+  set is one u64 (int32 in JS) while the graph has at most 64 states
+  (31 in JS), and per state the closure entered after consuming a
+  segment is precomputed; in Rust a word slice does the same while
+  those rows fit 4 KiB (about 170 states) and no position leads to
+  more than 48 literals, each of which a dense step would test on its
+  own. Past that (past 31 states in JS) the NFA is stepped sparsely: each position keeps its successors, the literal
   ones sorted, and the active set lists states and whole positions
   ("every successor of p entered"), so a step costs what it tests (one
   binary search for a position's literals) and the tables are linear
   in the graph. `match_dir`'s prefix bit is `active ∩ reach1`, where
   `reach1[s]` ⇔ some ≥ 1-segment continuation from s reaches accept
   (suffix satisfiability, precomputed). O(n · active), active ≤ 3 in
-  practice for one pattern. A chain with several
-  globstars carries its own small NFA (its nodes alone) so a union
-  member like `**/node_modules/**` costs what it would alone.
+  practice for one pattern. A union member with several globstars
+  carries its own small NFA (its nodes alone), so `**/node_modules/**`
+  in a union costs what it would alone.
   `match_dir`'s all-below bit steps the graph NFA over wildcard-only
   segments until the set settles (§06 §2.5).
 

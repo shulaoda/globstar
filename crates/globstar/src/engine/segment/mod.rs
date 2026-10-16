@@ -120,13 +120,6 @@ impl Elem {
         }
     }
 
-    /// NFA states the element owns: `G1` has a body state right after
-    /// its entry.
-    #[inline]
-    fn states(&self) -> usize {
-        if matches!(self, Elem::G1) { 2 } else { 1 }
-    }
-
     /// Can the element consume some segment?
     #[inline]
     fn satisfiable(&self) -> bool {
@@ -248,14 +241,13 @@ enum Shape {
     /// One, at this index: the head and the tail are anchored around
     /// it.
     Single(u32),
-    /// Several: the NFA over this chain alone, or the matcher's own
-    /// when the chain is the whole graph.
-    Many(Option<Box<Nfa<u64>>>),
+    /// Several: the NFA over this chain alone (a union member; a lone
+    /// chain with several globstars is the graph, whose NFA serves).
+    Many(Box<Nfa<u64>>),
 }
 
-/// An NFA over graph nodes: one state per node (two for `G1`, the body
-/// state right after the entry) plus the accept state, which is the
-/// last.
+/// An NFA over graph positions: one state per position plus the
+/// accept state, which is the last.
 #[derive(Debug, Clone)]
 struct Nfa<B: Bits> {
     states: Box<[State<B>]>,
@@ -264,8 +256,6 @@ struct Nfa<B: Bits> {
     /// States that can still consume ≥ 1 segment on a path to
     /// accept; drives `match_dir`'s prefix bit.
     reach1: B,
-    /// Literal siblings looked up together (unions only).
-    lit_sets: Option<Box<LitSets<B>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -277,23 +267,6 @@ struct State<B: Bits> {
     node: u32,
 }
 
-#[derive(Debug, Clone)]
-struct LitSets<B: Bits> {
-    sets: Box<[LitSet<B>]>,
-    /// Union of the sets' states; left out of the per-state step.
-    states: B,
-}
-
-/// Literal nodes with the same predecessors: all active together, so
-/// one search of the segment among their literals stands in for
-/// testing each. The states, sorted by their node's literal
-/// (case-folded when insensitive).
-#[derive(Debug, Clone)]
-struct LitSet<B: Bits> {
-    states: B,
-    sorted: Box<[u32]>,
-}
-
 /// The same automaton past `MAX_ROW_BYTES` of rows, stepped sparsely. A position
 /// keeps its successors, not a closure row, and the active set holds
 /// states and whole positions: "every successor of `p` is entered" is
@@ -302,13 +275,11 @@ struct LitSet<B: Bits> {
 /// square.
 #[derive(Debug, Clone)]
 struct SparseNfa {
-    /// Per state, its position; the accept state, last, has none.
-    pos: Box<[u32]>,
-    /// Per position, its node and its entry state.
+    /// Per position (= its state; the accept state is `nodes.len()`),
+    /// its node.
     nodes: Box<[u32]>,
-    entries: Box<[u32]>,
     /// Per position (the start last), its successors: the literal
-    /// ones' entry states sorted by literal (case-folded when
+    /// ones sorted by literal (case-folded when
     /// insensitive), the other positions, and the nullable ones (`**/`)
     /// among those, at `xs[x_at[p]..x_at[p + 1]]`.
     lit_at: Box<[u32]>,

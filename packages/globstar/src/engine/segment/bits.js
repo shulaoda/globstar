@@ -26,11 +26,6 @@ export function bitsEqual(a, b) {
   return true;
 }
 
-export function bitsIntersect(a, b) {
-  for (let w = 0; w < a.length; w++) if ((a[w] & b[w]) !== 0) return true;
-  return false;
-}
-
 // Visit every set bit, ascending.
 export function bitsForEach(a, f) {
   for (let w = 0; w < a.length; w++) {

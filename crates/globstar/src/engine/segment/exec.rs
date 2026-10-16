@@ -15,8 +15,8 @@ use super::bits::Bits;
 use super::bits::Wide;
 use super::compile::lit_cmp;
 use super::{
-    AffixIndex, ByteSketch, Chain, Elem, LitSet, Nfa, SegmentMatcher, Shape, SparseNfa, SuffixRun,
-    Wild, WildKind,
+    AffixIndex, ByteSketch, Chain, Elem, Nfa, SegmentMatcher, Shape, SparseNfa, SuffixRun, Wild,
+    WildKind,
 };
 
 /// The wildcard-only segments `covers_below` feeds before it gives up:
@@ -162,13 +162,7 @@ impl SegmentMatcher {
                 self.head(elems, g, path)
                     .is_some_and(|mid_start| self.tail_and_globstar(elems, g, path, mid_start))
             }
-            Shape::Many(Some(nfa)) => nfa.is_match(self, path),
-            // The lone path of a linear pattern: the matcher's NFA is
-            // its own.
-            Shape::Many(None) => self
-                .nfa
-                .as_ref()
-                .is_some_and(|nfa| nfa.is_match(self, path)),
+            Shape::Many(nfa) => nfa.is_match(self, path),
         }
     }
 
@@ -607,18 +601,8 @@ impl<B: Bits> Nfa<B> {
         next.clear();
         let accept = self.accept();
         let absorb_ok = m.dot || seg.first() != Some(&b'.');
-        // Literal siblings: one search per set instead of one compare
-        // per state; their states are skipped below.
-        let grouped = self.lit_sets.as_deref().map(|lit_sets| {
-            for set in lit_sets.sets.iter() {
-                if active.intersects(&set.states) {
-                    self.fire_lit_set(m, set, active, seg, next);
-                }
-            }
-            &lit_sets.states
-        });
         active.for_each(|s| {
-            if s == accept || grouped.is_some_and(|g| g.test(s)) {
+            if s == accept {
                 return;
             }
             let state = &self.states[s];
@@ -632,33 +616,6 @@ impl<B: Bits> Nfa<B> {
                 next.or_with(&state.after);
             }
         });
-    }
-
-    /// Fire the set's active states whose literal is `seg`: equal
-    /// literals sit together in `sorted`, one binary search away.
-    fn fire_lit_set(
-        &self,
-        m: &SegmentMatcher,
-        set: &LitSet<B>,
-        active: &B,
-        seg: &[u8],
-        next: &mut B,
-    ) {
-        let equal = |s: u32| {
-            let lit = m.elems[self.states[s as usize].node as usize].as_lit();
-            lit_cmp(lit, seg, m.case_insensitive)
-        };
-        let Ok(mut k) = set.sorted.binary_search_by(|&s| equal(s)) else {
-            return;
-        };
-        while k > 0 && equal(set.sorted[k - 1]).is_eq() {
-            k -= 1;
-        }
-        for &s in set.sorted[k..].iter().take_while(|&&s| equal(s).is_eq()) {
-            if active.test(s as usize) {
-                next.or_with(&self.states[s as usize].after);
-            }
-        }
     }
 
     /// `step` over a non-empty segment that only wildcards consume:
@@ -716,7 +673,7 @@ const POS: u32 = 1 << 31;
 
 impl Active {
     fn new(nfa: &SparseNfa) -> Self {
-        let pos_base = nfa.pos.len();
+        let pos_base = nfa.nodes.len() + 1;
         Active {
             items: Vec::new(),
             has: Wide::zero(Wide::words(pos_base + nfa.nodes.len() + 1)),
@@ -766,7 +723,7 @@ impl Active {
 impl SparseNfa {
     #[inline]
     fn accept(&self) -> u32 {
-        self.pos.len() as u32 - 1
+        self.nodes.len() as u32
     }
 
     fn lits(&self, p: usize) -> &[u32] {
@@ -837,13 +794,10 @@ impl SparseNfa {
     ) {
         next.clear();
         let absorb_ok = m.dot || seg.first() != Some(&b'.');
-        let consumes = |s: u32| {
-            let p = self.pos[s as usize] as usize;
-            match &m.elems[self.nodes[p] as usize] {
-                Elem::Lit(lit) => m.lit_eq(lit, seg),
-                Elem::Wild(w) => m.wild_consumes(w, seg),
-                Elem::G0 | Elem::G1 => absorb_ok,
-            }
+        let consumes = |s: u32| match &m.elems[self.nodes[s as usize] as usize] {
+            Elem::Lit(lit) => m.lit_eq(lit, seg),
+            Elem::Wild(w) => m.wild_consumes(w, seg),
+            Elem::G0 | Elem::G1 => absorb_ok,
         };
         for &item in &active.items {
             if item & POS == 0 {
@@ -860,8 +814,7 @@ impl SparseNfa {
             for &s in lits[first..].iter().take_while(|&&s| order(s).is_eq()) {
                 self.fire(m, s, next, todo);
             }
-            for &t in self.others(p) {
-                let s = self.entries[t as usize];
+            for &s in self.others(p) {
                 if consumes(s) {
                     self.fire(m, s, next, todo);
                 }
@@ -870,23 +823,16 @@ impl SparseNfa {
     }
 
     fn lit_of<'m>(&self, m: &'m SegmentMatcher, s: u32) -> &'m [u8] {
-        m.elems[self.nodes[self.pos[s as usize] as usize] as usize].as_lit()
+        m.elems[self.nodes[s as usize] as usize].as_lit()
     }
 
     /// State `s` took a segment: a globstar stays, and its position's
     /// successors are entered.
     fn fire(&self, m: &SegmentMatcher, s: u32, next: &mut Active, todo: &mut Vec<u32>) {
-        let p = self.pos[s as usize] as usize;
-        match &m.elems[self.nodes[p] as usize] {
-            Elem::G0 => {
-                next.add(s);
-            }
-            Elem::G1 => {
-                next.add(self.entries[p] + 1);
-            }
-            Elem::Lit(_) | Elem::Wild(_) => {}
+        if m.elems[self.nodes[s as usize] as usize].is_globstar() {
+            next.add(s);
         }
-        self.enter(p, next, todo);
+        self.enter(s as usize, next, todo);
     }
 
     /// Enter every successor of position `p`: the position itself
@@ -918,9 +864,8 @@ impl SparseNfa {
         let mut next = Active::new(self);
         let mut todo = Vec::new();
         let accept = self.accept();
-        let any_seg =
-            |s: u32| m.elems[self.nodes[self.pos[s as usize] as usize] as usize].any_seg();
-        for _ in 0..=self.pos.len().min(MAX_COVER_SEGMENTS) {
+        let any_seg = |s: u32| m.elems[self.nodes[s as usize] as usize].any_seg();
+        for _ in 0..=(self.nodes.len() + 1).min(MAX_COVER_SEGMENTS) {
             next.clear();
             for &item in &active.items {
                 if item & POS == 0 {
@@ -930,8 +875,7 @@ impl SparseNfa {
                     continue;
                 }
                 // Literals never take a wildcard-only segment.
-                for &t in self.others((item & !POS) as usize) {
-                    let s = self.entries[t as usize];
+                for &s in self.others((item & !POS) as usize) {
                     if any_seg(s) {
                         self.fire(m, s, &mut next, &mut todo);
                     }
