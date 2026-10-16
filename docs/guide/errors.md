@@ -28,7 +28,7 @@ The JS `GlobError` has a `.kind` string. The Rust `GlobError` is an enum with a 
 
 | Kind                     | When it happens                                                                              | Example pattern                     | Extra fields        |
 | ------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------- |
-| `Empty`                  | The pattern is the empty string.                                                             | `""`                                | –                   |
+| `Empty`                  | The pattern is empty, or has nothing after its leading `!`s.                                 | `""`, `!`, `!!`                     | –                   |
 | `TooLong`                | The pattern is longer than 65,536 bytes.                                                     | `"a".repeat(65537)`                 | `len`, `max`        |
 | `UnterminatedClass`      | A `[` has no `]` before the next `/` or the end. `[]`, `[!]` and `[/]` are cases of this.    | `src/[a-z.ts`, `[]`, `[/]`          | `at`                |
 | `UnterminatedBrace`      | A `{` has no matching `}`.                                                                   | `src/{a,b.ts`                       | `at`                |

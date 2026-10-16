@@ -32,6 +32,10 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
         negation_count += 1;
         p.pos += 1;
     }
+    // `!` and `!!` negate nothing (§4.5).
+    if p.pos == input.len() {
+        return Err(GlobError::Empty);
+    }
 
     let mut body = p.parse_sequence(false)?;
     if p.pending {
@@ -198,20 +202,19 @@ impl<'a> Parser<'a> {
 
         let mut items: Vec<ClassItem> = Vec::with_capacity(4);
 
-        if self.peek() == Some(b']') {
-            items.push(ClassItem::Byte(b']'));
-            self.pos += 1;
-        }
-
+        // A `]` first is a member (§6.5), and like any member it can start
+        // a range: `[]-a]` is `]..=a`.
+        let mut first = true;
         loop {
             let b = match self.peek() {
                 Some(b) => b,
                 None => return Err(GlobError::UnterminatedClass { at: start_pos }),
             };
-            if b == b']' {
+            if b == b']' && !first {
                 self.pos += 1;
                 return Ok(CharClass { negated, items });
             }
+            first = false;
             let range_at = self.pos;
             let low = self.parse_class_byte(start_pos)?;
             if self.peek() == Some(b'-') && self.peek_at(1) != Some(b']') {

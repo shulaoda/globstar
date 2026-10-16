@@ -7,11 +7,17 @@
 
 ## empty
 	Empty
+# §4.5: `!` and `!!` negate nothing.
+!	Empty
+!!	Empty
+!!!	Empty
 
 ## trailing.backslash
 foo\	TrailingBackslash
 \	TrailingBackslash
 a/b/c\	TrailingBackslash
+# §3: the pattern ends inside a class's escape.
+[a\	TrailingBackslash
 
 ## unterminated.class
 [	UnterminatedClass
@@ -63,6 +69,8 @@ foo{a,b	UnterminatedBrace
 ## invalid.range
 [z-a]	InvalidRange
 [9-0]	InvalidRange
+# A first-position `]` starts a range too (§6.5), and `!` is below `]`.
+[]-!]	InvalidRange
 
 ## too.deep.nesting
 # Brace nesting > 32 levels

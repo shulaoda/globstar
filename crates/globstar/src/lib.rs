@@ -326,11 +326,16 @@ impl Glob {
 
     /// What the pattern says about a directory (see [`DirMatch`]).
     ///
-    /// A negated pattern is always [`DirMatch::Descend`]: what it
-    /// excludes below a directory cannot be told from the directory.
+    /// A negated pattern says whether the directory itself matches, and
+    /// that something below may: [`DirMatch::DescendAndMatch`] or
+    /// [`DirMatch::Descend`], never a covering verdict. Ask about a
+    /// directory without a trailing separator (`a`, not `a/`; GLOB_SPEC
+    /// §13.2).
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
+        // Anything below may match a negated pattern; whether `dir_path`
+        // itself does is exact (§13.4).
         if self.negated {
-            return DirMatch::Descend;
+            return DirMatch::new(self.is_match(dir_path), true, false);
         }
         match &self.engine {
             Engine::Literal(m) => m.match_dir(dir_path),

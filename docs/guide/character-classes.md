@@ -141,11 +141,14 @@ A `]` that comes first in a class (right after `[`, `[!`, or `[^`) is a plain me
 | `[]]`        | matches `]`                                                                  |
 | `[!]]`       | matches any one character except `]`                                         |
 | `[]-]`       | matches `]` or `-`                                                           |
+| `[]-a]`      | a range from `]` to `a`: matches `]`, `^`, `_`, `` ` `` or `a`               |
 | `[]`         | `UnterminatedClass` error: the `]` is a member, and nothing closes the class |
 | `[!]`, `[^]` | `UnterminatedClass` error, for the same reason                               |
 | `[`          | `UnterminatedClass` error                                                    |
 
-The same rule is why `[!]foo` fails to compile. Write `[\!]foo` or `\!foo` instead.
+The first `]` is a member like any other, so it can start a range, as POSIX reads it. The same rule is why `[!]foo` fails to compile. Write `[\!]foo` or `\!foo` instead.
+
+A class takes one byte. A non-ASCII character in a class stands for its UTF-8 bytes, each a member of its own, so `[é]` never matches `é` (two bytes). To match one of several characters, use a brace: `{é,è}`.
 
 Spec: [GLOB_SPEC §6.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -180,4 +183,4 @@ Named classes such as `[[:alpha:]]` and `[[:digit:]]` are not supported and not 
 | `[[:alpha:]]` | `[a-zA-Z]`    |
 | `[[:alnum:]]` | `[a-zA-Z0-9]` |
 
-Spec: [GLOB_SPEC §6.6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §6.7](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

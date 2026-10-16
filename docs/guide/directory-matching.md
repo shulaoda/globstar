@@ -108,11 +108,11 @@ Spec: [GLOB_SPEC §13.6](https://github.com/shulaoda/globstar/blob/main/referenc
 
 ## Negated patterns
 
-A pattern with a leading `!` matches every path its body does not match. What it excludes below a directory cannot be told from the directory itself, so its verdict is always `Descend`.
+A pattern with a leading `!` matches every path its body does not match. What it excludes below a directory cannot be told from the directory itself, so something below may always match; whether the directory itself matches is exact. The verdict is `DescendAndMatch` or `Descend`, never a covering one.
 
 ```js
-compileMatcher("!**/*.ts").matchDir("src"); // DirMatch.Descend
-compileMatcher("!**/*.ts").matchDir("node_modules"); // DirMatch.Descend
+compileMatcher("!**/*.ts").matchDir("src"); // DirMatch.DescendAndMatch: `src` is not a `.ts` path
+compileMatcher("!**/*.ts").matchDir("a.ts"); // DirMatch.Descend
 ```
 
 Spec: [GLOB_SPEC §13.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
@@ -129,7 +129,7 @@ For a matcher built from several patterns, the verdict is computed on the union,
 
 ## How a path is queried
 
-Walkers get directory names from `readdir` without a trailing separator, and that is the canonical form to ask about: `matchDir("src")`, not `matchDir("src/")`. The directory path is not normalized; a trailing `/` asks about that exact byte string. The empty string is the root of the walk.
+Walkers get directory names from `readdir` without a trailing separator, and that is the canonical form to ask about: `matchDir("src")`, not `matchDir("src/")`, and `matchDir("C:")` for a drive. The directory path is not normalized; a trailing `/` asks about that exact byte string, whose children are `src//…`. The empty string is the root of the walk. The filesystem root `/` has no slashless form, and `matchDir("/")` asks about paths below `//` (`/p/**` gives `Pruned` there): ask about `""` for it, whose answers hold for every path below.
 
 ## Static prefixes
 

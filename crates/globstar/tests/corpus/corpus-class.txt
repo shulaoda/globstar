@@ -92,6 +92,25 @@
 []-]	]	match
 []-]	-	match
 []-]	a	no-match
+# The first `]` is a member like any other, so it can start a range
+# (§6.5, as POSIX reads it): `[]-a]` is `]..=a`, `^`, `_` and `` ` `` in it.
+[]-a]	]	match
+[]-a]	^	match
+[]-a]	_	match
+[]-a]	a	match
+[]-a]	-	no-match
+[]-a]	b	no-match
+[!]-a]	^	no-match
+[!]-a]	b	match
+[\]-a]	^	match
+
+## class.grammar.rules
+# §3: a range end can be escaped; a `-` right after a range is a member.
+[\a-c]	b	match
+[a-\c]	b	match
+[a-c-e]	-	match
+[a-c-e]	e	match
+[a-c-e]	d	no-match
 
 ## class.empty_or_negation_only_invalid
 # After POSIX first-`]` rule, `[]` / `[!]` / `[^]` decay to "literal `]`

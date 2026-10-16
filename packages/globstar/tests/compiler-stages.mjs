@@ -271,11 +271,10 @@ console.log("✓ errors and API surface");
   compileMatcher("é".repeat(MAX_PATTERN_LEN / 2));
   assert.throws(() => compileMatcher("é".repeat(MAX_PATTERN_LEN / 2) + "a"), { kind: "TooLong" });
   // A string longer than the limit is refused before it is encoded, and
-  // `len` still counts its UTF-8 bytes (a lone surrogate is U+FFFD).
+  // `len` still counts its UTF-8 bytes.
   for (const [unit, bytes] of [
     ["é", 2],
     ["😀", 4],
-    ["\ud800", 3],
   ]) {
     const pattern = unit.repeat(MAX_PATTERN_LEN);
     const len = (pattern.length / unit.length) * bytes;
@@ -287,6 +286,24 @@ console.log("✓ errors and API surface");
   assert.throws(() => compileMatcher(big), { kind: "TooLong", len: 16 << 20 });
   const grew = process.memoryUsage().arrayBuffers - before;
   assert.ok(grew < 1 << 20, `refusing a 16 MB pattern allocated ${grew} bytes`);
+}
+// A lone surrogate has no UTF-8 form (§2.1): such a pattern is a
+// TypeError that says where, alone or in a list; a well-formed pair is fine.
+for (const [pattern, at] of [
+  ["\ud800", 0],
+  ["a\udc00", 1],
+  ["😀\ud83d", 2],
+]) {
+  assert.throws(() => compileMatcher(pattern), {
+    name: "TypeError",
+    message: `pattern must be well-formed UTF-16, got a lone surrogate at index ${at}`,
+  });
+  assert.throws(() => compileMatcher(["a", pattern]), TypeError);
+}
+assert.equal(compileMatcher("😀*").match("😀x"), true);
+// `!` and `!!` negate nothing (§4.5): `Empty`, like `""`.
+for (const pattern of ["!", "!!", "!!!"]) {
+  assert.throws(() => compileMatcher(pattern), { kind: "Empty" });
 }
 console.log("✓ limits");
 

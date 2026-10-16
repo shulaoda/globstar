@@ -1762,3 +1762,25 @@ fn a_seed_finds_a_name_only_as_listed() {
     assert_eq!(walk(&format!("{nfd}.txt")).len(), 1);
     assert_eq!(walk(&format!("{nfd}/*.ts")).len(), 1);
 }
+
+// `!` and `!!` negate nothing: an empty pattern (GLOB_SPEC §4.5), named as
+// written. Twin of the check in walk.mjs.
+#[test]
+fn a_lone_bang_is_an_empty_pattern() {
+    let t = TmpTree::new("lone-bang");
+    t.touch("a.js");
+    for lone in ["!", "!!"] {
+        let err = Walk::from_patterns(["**", lone], t.root()).unwrap_err();
+        match &err {
+            WalkError::InvalidPattern {
+                pattern,
+                source: Some(source),
+                ..
+            } => {
+                assert_eq!(pattern, lone);
+                assert!(matches!(source, globstar::GlobError::Empty), "{source:?}");
+            }
+            _ => panic!("expected InvalidPattern, got {err:?}"),
+        }
+    }
+}

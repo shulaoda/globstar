@@ -519,6 +519,21 @@ await check("an entry that vanishes during a typed read is skipped", async () =>
 });
 
 for (const fn of cleanups) fn();
+// ── A lone `!` is an empty pattern ──────────────────────────────────────
+await check("a lone bang is an empty pattern, named as written", async () => {
+  const root = tmpTree("lone-bang", ["a.js"]);
+  for (const lone of ["!", "!!"]) {
+    assert.throws(
+      () => globSync(["**", lone], { cwd: root }),
+      (e) =>
+        e instanceof WalkError &&
+        e.kind === "InvalidPattern" &&
+        e.pattern === lone &&
+        e.cause?.kind === "Empty",
+    );
+  }
+});
+
 // ── A seed finds a name only as its folder lists it ─────────────────────
 await check("a seed finds a name only as listed", async () => {
   // APFS opens an NFC spelling of a name stored NFD, which a root walk,

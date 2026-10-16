@@ -2,7 +2,7 @@
 
 **Status.** This document is the normative definition of the glob dialect implemented by the `globstar` Rust crate (`crates/globstar`) and the `@globstar/core` JS package (`packages/globstar`). When code, tests or other documents disagree with it, the code changes.
 
-**Version.** 0.2.10, draft. The document is not frozen; Appendix A (§17) lists every change.
+**Version.** 0.2.11, draft. The document is not frozen; Appendix A (§17) lists every change.
 
 **Baseline.** The dialect follows `picomatch` and `fast-glob` mainline behavior with the rigor of `doublestar`. Bit-exact parity with any single tool is not a goal; §16 lists every deliberate difference.
 
@@ -45,7 +45,7 @@ Filesystem traversal is the subject of [WALKER_SPEC.md](./WALKER_SPEC.md): cwd h
 ### 1.2 Out of scope
 
 - **Bash extglobs** `@()`, `?()`, `*()`, `+()`, `!(...)`: the parentheses are literal bytes (§5).
-- **POSIX character classes** `[[:alpha:]]`, collating elements `[[.a.]]`, equivalence classes `[[=a=]]` (§6.6).
+- **POSIX character classes** `[[:alpha:]]`, collating elements `[[.a.]]`, equivalence classes `[[=a=]]` (§6.7).
 - **Bash brace ranges** `{1..10}`, `{a..z}`.
 - **Regex features:** backreferences, groups, lookaround.
 - **Gitignore re-include** ("a later rule cancels an earlier one"): a walker-layer concern.
@@ -64,7 +64,7 @@ The closest reference is `picomatch`. Every deliberate divergence is listed in �
 
 Matching is defined over bytes.
 
-- **Patterns** are Unicode strings (`&str` in Rust, JS strings), read as their UTF-8 bytes. Non-UTF-8 pattern bytes are not accepted.
+- **Patterns** are Unicode strings (`&str` in Rust, JS strings), read as their UTF-8 bytes. Non-UTF-8 pattern bytes are not accepted: a JS pattern with a lone surrogate, which has no UTF-8 form, throws a `TypeError` (a Rust `&str` cannot hold one).
 - **Paths** are arbitrary bytes in Rust (`is_match(&[u8])`), so non-UTF-8 file names match byte for byte. In JS a path is a string, encoded to UTF-8 internally; a lone surrogate encodes as U+FFFD. A non-string JS input throws a `TypeError`.
 - Only ASCII bytes can carry a meta meaning. Every byte outside ASCII is literal.
 - Code point boundaries play no part: comparison is byte for byte (§12.5).
@@ -111,6 +111,7 @@ The consequences are detailed in §12.3.
 
 ```bnf
 Pattern      ::= [Negation] Sequence
+                                   ; the Sequence is not empty (§4.5)
 Negation     ::= "!"+              ; leading run; its parity decides (§9.3)
 Sequence     ::= Atom*
 Atom         ::= Literal | Separator | AnyChar | Star | Globstar
@@ -119,12 +120,17 @@ Atom         ::= Literal | Separator | AnyChar | Star | Globstar
 Literal      ::= a byte with no meta role at this position
 Separator    ::= "/"
 AnyChar      ::= "?"
-Star         ::= "*"               ; when not part of a Globstar
-Globstar     ::= "**"              ; only where it owns a path segment (§8.1)
+Star         ::= "*"               ; when not part of a Globstar; a run of
+                                   ; stars is one Star (`***` ≡ `*`, §8.1)
+Globstar     ::= "**"              ; exactly two, and only where they own a
+                                   ; path segment (§8.1)
 
 CharClass    ::= "[" ("^" | "!")? CharClassItem+ "]"
 CharClassItem::= Literal | Range | Escaped
-Range        ::= Literal "-" Literal
+Range        ::= RangeEnd "-" RangeEnd
+                                   ; a first-position `]` can start one (§6.5);
+                                   ; a `-` right after a Range is a member
+RangeEnd     ::= Literal | Escaped ; `[\a-c]` ≡ `[a-c]`
 
 Brace        ::= "{" Sequence ("," Sequence)+ "}"
                                    ; a `{...}` with no comma is literal (§7.4)
@@ -165,7 +171,7 @@ Specified in §8.
 
 ### 4.5 Empty pattern `""`
 
-Parse error `Empty`.
+Parse error `Empty`. So is a pattern whose body after the leading `!` run is empty (`!`, `!!`): negation applies to a pattern, and there is none.
 
 > **Rationale.** The empty pattern has no obvious meaning, so it is rejected rather than given one.
 
@@ -204,7 +210,7 @@ At match time a class never matches a member of `Seps`, whatever its polarity. `
 | Byte                                   | Role            | When                                                     |
 | -------------------------------------- | --------------- | -------------------------------------------------------- |
 | `]`                                    | closer          | not in first position (first position: §6.5)             |
-| `-`                                    | range separator | between two member bytes; literal next to `[` or `]`     |
+| `-`                                    | range separator | between two members, a first-position `]` included; a member next to `[` or the closer, or right after a range |
 | `!`, `^`                               | negation marker | immediately after `[`                                    |
 | `\`                                    | escape prefix   | always; the next byte becomes a literal member           |
 | `/`                                    | illegal         | any position: `UnterminatedClass` (§6.2)                 |
@@ -218,6 +224,9 @@ Escapes inside a class follow §2.4: `\X` is the member `X`, whatever `X` is. Th
 | `[?*!(]`           | class `{?, *, !, (}`    | meta bytes are plain members inside                  |
 | `[a-z]`            | range `a..=z`           | `-` between two members                              |
 | `[a\-z]`           | class `{a, -, z}`       | the escaped `-` is a member, not a range             |
+| `[\a-c]`, `[a-\c]` | range `a..=c`           | an escaped byte can end a range                      |
+| `[a-c-e]`          | class `{a..=c, -, e}`   | a `-` right after a range is a member                |
+| `[]-a]`            | range `]..=a`           | a first-position `]` can start a range (§6.5)        |
 | `[-abc]`, `[abc-]` | class with `-`          | `-` next to a bracket is literal                     |
 | `[!abc]`           | negated `{a, b, c}`     | `!` in first position                                |
 | `[\!abc]`          | positive `{!, a, b, c}` | the escape overrides the negation                    |
@@ -225,6 +234,7 @@ Escapes inside a class follow §2.4: `\X` is the member `X`, whatever `X` is. Th
 | `[!]]`             | negated `{]}`           | first-`]` after the negation marker                  |
 | `[\]]`             | class `{]}`             | escaped form                                         |
 | `[\]`              | `UnterminatedClass`     | the escape consumes the only `]`                     |
+| `[a\`              | `TrailingBackslash`     | the pattern ends inside the escape                   |
 | `[]`               | `UnterminatedClass`     | first `]` is a member; no closer follows             |
 | `[/]`, `[\/]`      | `UnterminatedClass`     | separator in a class (§6.2)                          |
 | `[\\]`             | class `{\}`             | matches `\` on Unix; never matches on Windows (§6.2) |
@@ -238,11 +248,16 @@ Under `dot = false`, a negated class at a segment start does not match `.`; unde
 A `]` immediately after `[`, `[!` or `[^` is a member, not the closer, as in bash, fnmatch, picomatch, globset and fast-glob. Consequences:
 
 - `[]]` matches `]`; `[!]]` matches any byte except `]`; `[]-]` matches `]` or `-`.
+- The first `]` is a member like any other, so it can start a range: `[]-a]` is the range `]..=a` (with `^`, `_` and `` ` `` in it), as in POSIX, bash and picomatch.
 - `[]`, `[!]` and `[^]` are `UnterminatedClass`: the `]` was a member, and no closer follows.
 - `[` alone is `UnterminatedClass`.
 - `[a-]` is the class `{a, -}`: a trailing `-` is a member (§10, lenient cases).
 
-### 6.6 POSIX character classes
+### 6.6 A class takes one byte
+
+Like every construct here (§12.5), a class matches one byte. A non-ASCII character in it stands for its UTF-8 bytes, each a member of its own, and a range with a non-ASCII end ranges over bytes: `[é]` is the class {`0xC3`, `0xA9`} and never matches `é`, which is two bytes. To match one of several characters, use a brace: `{é,è}`.
+
+### 6.7 POSIX character classes
 
 Not supported, and not recognized. `[[:alpha:]]` parses as the class `[[:alpha:]` (members `[`, `:`, `a`, `l`, `p`, `h`) followed by a literal `]`. It matches `a]` and never a letter on its own.
 
@@ -486,7 +501,7 @@ The parser MUST reject the following inputs:
 
 | Error                    | Example                    | Reason                                                      |
 | ------------------------ | -------------------------- | ----------------------------------------------------------- |
-| `Empty`                  | `""`                       | no defined meaning (§4.5)                                   |
+| `Empty`                  | `""`, `!`, `!!`            | no defined meaning (§4.5)                                   |
 | `TooLong`                | more than 65,536 bytes     | resource guard                                              |
 | `UnterminatedClass`      | `[abc`, `[]`, `[/]`        | an opener needs its closer (§6.2, §6.5)                     |
 | `UnterminatedBrace`      | `{a,b`                     | an opener needs its closer (§7.5)                           |
@@ -658,7 +673,7 @@ Under `dot = false`, a path position `i` is dot-protected when `path[i] == '.'` 
 
 ### 12.5 Multi-byte characters
 
-Matching is byte-wise. `?` consumes one byte, not one code point: to match one three-byte CJK character, write `???`. This is an acknowledged non-goal.
+Matching is byte-wise. `?` consumes one byte, not one code point: to match one three-byte CJK character, write `???`. A class also takes one byte (§6.6). This is an acknowledged non-goal.
 
 ---
 
@@ -705,7 +720,7 @@ match_dir(P, d) :=
 
 Both flags about "below" are one-sided (§13.6). A `false` may-below is a guarantee that nothing below matches; `true` MAY be conservative. The reference implementations report may-below at the root for every pattern, since nothing has been consumed there.
 
-`d` is taken as given and never canonicalized. `match_dir("src", "src")` is `Match`. A trailing slash asks about that exact byte string: `match_dir("a/**", "a/")` is `DescendAndMatch` under `dot = false` (`a/` ∈ L and `a//x` ∈ L, but `a//.x` ∉ L; under `dot = true` every path below matches, so it is `DescendAllAndMatch`), while `match_dir("a/b", "a/")` is `Pruned` (nothing in `{a/b}` starts with `a//`). Walkers get directory paths from `readdir` without a trailing separator, so the slashless form is the canonical query.
+`d` is taken as given and never canonicalized. `match_dir("src", "src")` is `Match`. A trailing slash asks about that exact byte string: `match_dir("a/**", "a/")` is `DescendAndMatch` under `dot = false` (`a/` ∈ L and `a//x` ∈ L, but `a//.x` ∉ L; under `dot = true` every path below matches, so it is `DescendAllAndMatch`), while `match_dir("a/b", "a/")` is `Pruned` (nothing in `{a/b}` starts with `a//`). Walkers get directory paths from `readdir` without a trailing separator, so the slashless form is the canonical query: ask about `a`, not `a/`, and about a drive as `C:`, not `C:/`. The filesystem root has no slashless form, and `/` asks about the paths below `//`, so `match_dir("/p/**", "/")` is `Pruned`; ask about `""` (the walk root) for it instead, whose answers hold for every path below (may-below is always reported there, and all-below only when every path matches).
 
 ### 13.3 Examples
 
@@ -728,7 +743,7 @@ These are the `dot = false` results. Under `dot = true` the rows whose pattern e
 
 ### 13.4 Leading `!` and `match_dir`
 
-A negated pattern SHOULD return `Descend` for every `d`, and never a covering result (§13.6). The reference implementations always do. In a union (§14.3) a negated member contributes exactly this `Descend`.
+A negated pattern returns `DescendAndMatch` when `d` itself matches and `Descend` otherwise, and never a covering result (§13.6): `matches` stays exact (§13.2) while the below flags say only "something may". In a union (§14.3) `matches` is the union's own answer for `d`, and a negated member contributes may-below.
 
 > **Rationale.** Inverting the body's result would tell a walker almost nothing: `!P` normally means "everything except P", and the walker must visit the whole tree to find it.
 
@@ -1052,6 +1067,7 @@ Every cell was measured on 2026-10-16: Bash 5.2.37 (filename expansion with `glo
 - **v0.2.8** (2026-10-16): §10: `InvalidRange.at` is where the range starts; an error one member of a pattern list raises names the member (`InMember` in Rust, `index` in JS).
 - **v0.2.9** (2026-10-16): §16 measured cell by cell against each tool (versions under the table), with fast-glob's npm walker and Rust crate in columns of their own, and a row for `.` and `..` under `dot = true` (§11.1 says to normalize paths from outside); the other-tool claims in §6.5, §7.4, §8.3 and §11.1 follow the measurements. §13.2's examples take the `match_dir(P, d)` order and name their `dot`. §13.6 states the all-below rule per segment with its `dot` gate, and says union members merge while a user's braces do not. §7.0 cites §8.1 for star collapse.
 - **v0.2.10** (2026-10-16): §13.5: on Windows an expansion through an escaped `\` gives no static prefix, and its segment is one `match_dir` prunes at.
+- **v0.2.11** (2026-10-16): §4.5, §10: an empty body after the leading `!` run (`!`, `!!`) is `Empty`. §6.3, §6.5: a first-position `]` can start a range (`[]-a]` is `]..=a`, as POSIX reads it). §2.1: a JS pattern with a lone surrogate is a `TypeError`. §13.4: a negated pattern's `matches` is exact (`DescendAndMatch` when `d` matches). §6.6 (new; POSIX classes move to §6.7): a class takes one byte, so `[é]` never matches `é`. §3 writes down the grammar rules that lived only in code: a run of stars is one star, a range end can be escaped, a `-` after a range is a member, and `[a\` is `TrailingBackslash`. §13.2: ask about a directory without its trailing separator, and about the filesystem root as `""`.
 - **v0.2.7** (2026-10-16): §12.4 states dot protection as the implementations apply it, per segment start: a `*` there matches nothing, not even the empty string (`*.txt` does not match `.txt`); §15.8 shows it.
 - Awaiting owner approval before freezing as v1.0.
 

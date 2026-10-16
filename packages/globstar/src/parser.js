@@ -54,6 +54,8 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
     negationCount++;
     state.pos++;
   }
+  // `!` and `!!` negate nothing (§4.5).
+  if (state.pos === bytes.length) throw new GlobError("Empty");
 
   let body = parseSequence(state, false);
   if (state.pending) body = resolveGlobstars(body, budget);
@@ -165,18 +167,17 @@ function parseClass(state) {
   }
 
   const items = [];
-  if (input[state.pos] === RBRACK) {
-    items.push(classItemByte(RBRACK));
-    state.pos++;
-  }
-
+  // A `]` first is a member (§6.5), and like any member it can start a
+  // range: `[]-a]` is `]..=a`.
+  let first = true;
   while (true) {
     if (state.pos >= input.length) throw new GlobError("UnterminatedClass", { at: startPos });
     const b = input[state.pos];
-    if (b === RBRACK) {
+    if (b === RBRACK && !first) {
       state.pos++;
       return klass(negated, items);
     }
+    first = false;
     const rangeAt = state.pos;
     const lo = parseClassByte(state, startPos);
     if (input[state.pos] === DASH && input[state.pos + 1] !== RBRACK) {

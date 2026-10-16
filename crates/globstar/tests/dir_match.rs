@@ -71,9 +71,15 @@ fn dot_false_never_covers_a_subtree() {
     assert_eq!(g.match_dir(b"node_modules"), DirMatch::Descend);
 }
 
+// A negated pattern is always worth walking, and says exactly whether the
+// directory itself matches (§13.4). Twin of the check in dir-match.mjs.
 #[test]
 fn a_negated_pattern_is_always_worth_walking() {
     let g = Glob::new("!**/*.ts").unwrap();
-    assert_eq!(g.match_dir(b"src"), DirMatch::Descend);
-    assert_eq!(g.match_dir(b"node_modules"), DirMatch::Descend);
+    assert_eq!(g.match_dir(b"src"), DirMatch::DescendAndMatch);
+    assert_eq!(g.match_dir(b"node_modules"), DirMatch::DescendAndMatch);
+    assert_eq!(g.match_dir(b"a.ts"), DirMatch::Descend);
+    for d in [&b"src"[..], b"a.ts", b"x/y.ts", b""] {
+        assert_eq!(g.match_dir(d).matches(), g.is_match(d), "{d:?}");
+    }
 }

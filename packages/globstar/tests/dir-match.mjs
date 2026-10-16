@@ -52,8 +52,19 @@ assert.equal(
   DirMatch.Descend,
 );
 
-// A negated pattern is always worth walking.
-assert.equal(compileMatcher("!**/*.ts").matchDir("src"), DirMatch.Descend);
+// A negated pattern is always worth walking, and says exactly whether the
+// directory itself matches (§13.4), alone or in a list.
+assert.equal(compileMatcher("!**/*.ts").matchDir("src"), DirMatch.DescendAndMatch);
+assert.equal(compileMatcher("!**/*.ts").matchDir("a.ts"), DirMatch.Descend);
+for (const [d, matches] of [
+  ["lib", true],
+  ["src", true],
+  ["lib/a.test.ts", false],
+]) {
+  const m = compileMatcher(["src/**", "!**/*.test.ts"]);
+  assert.equal(DirMatch.matches(m.matchDir(d)), matches, d);
+  assert.equal(DirMatch.matches(m.matchDir(d)), m.match(d), d);
+}
 
 // The three facts name the verdict, and all-below implies may-below.
 for (const v of [0, 1, 2, 3, 4, 5]) {

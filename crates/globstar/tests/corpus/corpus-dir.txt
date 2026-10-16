@@ -101,10 +101,13 @@ src/*	src/visible	match
 src/*	src/.hidden	match	dot=true
 
 ## negation.prefix.cannot.prune
-!foo/**	anywhere	descend
-!foo/**	foo	descend
-!src/**	src	descend
-!src/**	lib	descend
+# Anything below may match; `matches` is exact (§13.4): none of these
+# dirs is in `foo/**` or `src/**`, so each matches the negation.
+!foo/**	anywhere	descend-match
+!foo/**	foo	descend-match
+!src/**	src	descend-match
+!src/**	lib	descend-match
+!src/**	src/a	descend
 
 ## leading_seps_with_match_dir
 # LeadingSeps (§8.4) must not break match_dir's "could descendant match"
@@ -187,10 +190,12 @@ x/{**,a}/**	xy	pruned	dot=true
 {**/a}	{a}	descend	dot=true
 
 ## H3.negated-pattern-match_dir-conservatively-descends (§13.4)
-!src/**	docs	descend	dot=true
-!src/**	src	descend	dot=true
+# Never a covering verdict; `matches` is the negation's own answer.
+!src/**	docs	descend-match	dot=true
+!src/**	src	descend-match	dot=true
+!src/**	src/x	descend	dot=true
 !a	a	descend	dot=true
-!a	b	descend	dot=true
+!a	b	descend-match	dot=true
 
 ## dot matrix — a dotfile directory at a segment start prunes under
 ## dot=false but matches, subtree included, under dot=true (the `**`/`*`
@@ -417,7 +422,7 @@ src/**		descend	dot=true
 /p/dist/**/{a*,[!a]*}	/p/dist	descend	dot=true
 
 ## all-below.negated.pattern.stays.conservative
-!/p/src/**	/p/dist	descend	dot=true
+!/p/src/**	/p/dist	descend-match	dot=true
 
 ## all-below.long.tail
 # Three wildcard segments after `**`: `a/x/y` is below `a/x` and does

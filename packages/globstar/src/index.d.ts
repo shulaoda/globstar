@@ -43,7 +43,7 @@ export interface GlobstarOptions {
  * ```
  *
  * Throws a {@link GlobError} if any pattern fails to compile, and a
- * `TypeError` if a pattern is not a string.
+ * `TypeError` if a pattern is not a string or holds a lone surrogate.
  */
 export function globstar(
   patterns: string | Iterable<string>,
@@ -111,6 +111,9 @@ export interface Matcher {
   match(input: string): boolean;
   /**
    * Directory-level verdict for walker pruning (see {@link DirMatch}).
+   * Ask about a directory without a trailing separator (`src`, not
+   * `src/`; `""` for the root). A negated member makes it say only
+   * whether the directory itself matches, and that something below may.
    * Throws a `TypeError` on non-string input.
    */
   matchDir(input: string): DirMatchValue;
@@ -134,7 +137,7 @@ export interface Matcher {
  * predicate. `@globstar/walk` is built on this.
  *
  * Throws a {@link GlobError} if any pattern fails to compile, and a
- * `TypeError` if a pattern is not a string.
+ * `TypeError` if a pattern is not a string or holds a lone surrogate.
  */
 export function compileMatcher(
   patterns: string | Iterable<string>,

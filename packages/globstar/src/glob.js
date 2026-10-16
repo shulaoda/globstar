@@ -35,6 +35,12 @@ export function compileMatcher(patterns, options) {
         `pattern must be a string, got ${pattern === null ? "null" : typeof pattern}`,
       );
     }
+    // A lone surrogate has no UTF-8 form (§2.1).
+    if (!pattern.isWellFormed()) {
+      throw new TypeError(
+        `pattern must be well-formed UTF-16, got a lone surrogate at index ${loneSurrogateAt(pattern)}`,
+      );
+    }
     if (seen !== null) {
       if (seen.has(pattern)) continue;
       seen.add(pattern);
@@ -110,6 +116,19 @@ export function buildEngine(asts, opts) {
   });
 }
 
+function loneSurrogateAt(s) {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xdc00 && c < 0xe000) return i;
+    if (c >= 0xd800 && c < 0xdc00) {
+      const next = s.charCodeAt(i + 1);
+      if (!(next >= 0xdc00 && next < 0xe000)) return i;
+      i++;
+    }
+  }
+  return -1;
+}
+
 function requireStringInput(input) {
   if (typeof input !== "string") {
     throw new TypeError(`path must be a string, got ${input === null ? "null" : typeof input}`);
@@ -130,12 +149,11 @@ function makeMatcher(positiveEngine, negativeEngines) {
 
   const matchDir = (input) => {
     requireStringInput(input);
-    if (positiveEngine === null) return DirMatch.Descend;
-    const dm = positiveEngine.matchDir(input);
-    if (hasNegatives) {
-      return DirMatch.from(DirMatch.matches(dm), true, DirMatch.matchesAllBelow(dm));
-    }
-    return dm;
+    if (!hasNegatives) return positiveEngine.matchDir(input);
+    // Anything below may match a negated member; whether `input` itself
+    // matches is exact (§13.4).
+    const below = positiveEngine === null ? DirMatch.Descend : positiveEngine.matchDir(input);
+    return DirMatch.from(match(input), true, DirMatch.matchesAllBelow(below));
   };
 
   const staticPrefixes = () =>
