@@ -4,15 +4,18 @@
 //! one-for-one with the JS column.
 //!
 //! Counting `GlobalAlloc` wrapper tracks net bytes-allocated, and we
-//! measure (after − before) right around each engine's `build`. Inline
-//! + heap = total per matcher.
+//! measure (after − before) around each engine's `build` and its
+//! matches on the bench paths. Inline + heap = total per matcher.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::hint::black_box;
 use std::mem::size_of_val;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use globset::GlobBuilder;
 use globstar::{CompileOptions, Glob};
+use wax::Pattern as _;
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
@@ -31,6 +34,23 @@ unsafe impl GlobalAlloc for Counter {
 
 #[global_allocator]
 static A: Counter = Counter;
+
+/// The 11 paths the match benches use: every matcher answers them all
+/// before it is counted, since regex-backed ones build their search
+/// cache on first use.
+const PATHS: &[&str] = &[
+    "src/main.ts",
+    "src/cli/commands/build.ts",
+    "src/cli/commands/run.rs",
+    "src/main.rs",
+    "tests/smoke.ts",
+    "dist/bundle.js",
+    "node_modules/foo/index.js",
+    "package.json",
+    ".env",
+    "target/debug/build/foo",
+    "src/a/bigger/path/to/the/crazy/needle.txt",
+];
 
 /// Public-API build of `globstar`. `dot=true` mirrors the
 /// JS default.
@@ -90,15 +110,33 @@ fn main() {
     let trials = 9;
     for &(label, pattern) in patterns {
         let public_total = median_total(trials, || {
-            let (_v, inline, heap) = measure(|| build_public(pattern));
+            let (_v, inline, heap) = measure(|| {
+                let g = build_public(pattern);
+                for p in PATHS {
+                    black_box(g.is_match(p.as_bytes()));
+                }
+                g
+            });
             inline + heap
         });
         let gs_total = median_total(trials, || {
-            let (_v, inline, heap) = measure(|| build_globset(pattern));
+            let (_v, inline, heap) = measure(|| {
+                let g = build_globset(pattern);
+                for p in PATHS {
+                    black_box(g.is_match(Path::new(p)));
+                }
+                g
+            });
             inline + heap
         });
         let wax_total = median_total(trials, || {
-            let (_v, inline, heap) = measure(|| build_wax(pattern));
+            let (_v, inline, heap) = measure(|| {
+                let g = build_wax(pattern);
+                for p in PATHS {
+                    black_box(g.is_match(*p));
+                }
+                g
+            });
             inline + heap
         });
 

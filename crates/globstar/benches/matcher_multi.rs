@@ -91,16 +91,24 @@ fn build_wax(patterns: &[&str]) -> Vec<wax::Glob<'static>> {
 }
 
 // ---------- COMPILE bench ----------
+/// A build and its first match: regex-backed matchers build their
+/// search cache on first use, so the build alone undercounts them.
 fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
+    let first = PATHS[0];
     let mut group = c.benchmark_group(format!("compile_{label}"));
     group.bench_function("globstar", |b| {
-        b.iter(|| black_box(build_globstar(black_box(patterns))));
+        b.iter(|| black_box(build_globstar(black_box(patterns)).is_match(first.as_bytes())));
     });
     group.bench_function("globset", |b| {
-        b.iter(|| black_box(build_globset(black_box(patterns))));
+        b.iter(|| black_box(build_globset(black_box(patterns)).is_match(Path::new(first))));
     });
     group.bench_function("wax_or", |b| {
-        b.iter(|| black_box(build_wax(black_box(patterns))));
+        b.iter(|| {
+            let any = build_wax(black_box(patterns))
+                .iter()
+                .any(|g| g.is_match(first));
+            black_box(any)
+        });
     });
     group.finish();
 }
@@ -147,7 +155,30 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.finish();
 }
 
+/// Every library must give globstar's answer on every (set, path) pair,
+/// so the rows time the same answers. Runs once before timing.
+fn assert_all_agree() {
+    for (label, patterns) in pattern_sets() {
+        let union = build_globstar(&patterns);
+        let gset = build_globset(&patterns);
+        let wax_g = build_wax(&patterns);
+        for &path in PATHS {
+            let want = union.is_match(path.as_bytes());
+            for (name, got) in [
+                ("globset", gset.is_match(Path::new(path))),
+                ("wax", wax_g.iter().any(|g| g.is_match(path))),
+            ] {
+                assert_eq!(
+                    want, got,
+                    "globstar vs {name} disagree on `{label}` / `{path}`"
+                );
+            }
+        }
+    }
+}
+
 fn bench_all(c: &mut Criterion) {
+    assert_all_agree();
     for (label, patterns) in pattern_sets() {
         bench_compile(c, label, &patterns);
         bench_match(c, label, &patterns);

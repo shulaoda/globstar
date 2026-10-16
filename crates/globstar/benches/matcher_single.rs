@@ -4,7 +4,9 @@
 //!
 //! Each pattern reports two timings:
 //!
-//! - `compile` — build a fresh matcher per call (stateless model).
+//! - `compile` — build a fresh matcher per call and run its first
+//!   match: regex-backed matchers build their search cache on first
+//!   use, so the build alone undercounts them.
 //! - `match`   — precompiled matcher, batch-matched against every
 //!   entry in [`PATHS`] per iteration (walker model).
 //!
@@ -56,18 +58,25 @@ fn build_public(pattern: &str) -> Glob {
     Glob::new_with(pattern, CompileOptions::default().dot(DOT)).expect("compile")
 }
 
-/// Sanity check: production and fast_glob must agree on every
-/// (pattern, path) pair. Runs once before timing starts.
+/// Every library must give globstar's answer on every (pattern, path)
+/// pair, so the rows time the same answers. Runs once before timing.
 fn assert_all_agree() {
     for &(label, pattern) in PATTERNS {
         let public = build_public(pattern);
+        let gs = strict_globset(pattern);
+        let wax_g = wax::Glob::new(pattern).expect("wax parse");
         for &path in PATHS {
-            let g = public.is_match(path.as_bytes());
-            let f = fg_glob_match(pattern, path);
-            assert_eq!(
-                g, f,
-                "globstar vs fast_glob disagree on `{label}` `{pattern}` / `{path}`"
-            );
+            let want = public.is_match(path.as_bytes());
+            for (name, got) in [
+                ("globset", gs.is_match(Path::new(path))),
+                ("wax", wax_g.is_match(path)),
+                ("fast_glob", fg_glob_match(pattern, path)),
+            ] {
+                assert_eq!(
+                    want, got,
+                    "globstar vs {name} disagree on `{label}` `{pattern}` / `{path}`"
+                );
+            }
         }
     }
 }
@@ -81,20 +90,20 @@ fn strict_globset(pattern: &str) -> globset::GlobMatcher {
 }
 
 fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
+    let first = PATHS[0];
     let mut group = c.benchmark_group(format!("compile_{label}"));
     group.bench_function("globstar", |b| {
-        b.iter(|| black_box(build_public(black_box(pattern))));
+        b.iter(|| black_box(build_public(black_box(pattern)).is_match(first.as_bytes())));
     });
     group.bench_function("globset", |b| {
-        b.iter(|| black_box(strict_globset(black_box(pattern))));
+        b.iter(|| black_box(strict_globset(black_box(pattern)).is_match(Path::new(first))));
     });
     group.bench_function("wax", |b| {
         b.iter(|| {
-            black_box(
-                wax::Glob::new(black_box(pattern))
-                    .expect("wax parse")
-                    .into_owned(),
-            )
+            let g = wax::Glob::new(black_box(pattern))
+                .expect("wax parse")
+                .into_owned();
+            black_box(g.is_match(first))
         });
     });
     // fast_glob has no separate compile step; we measure it inside

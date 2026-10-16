@@ -4,15 +4,19 @@
 //! matchers). Mirrors the JS-side `matcher_multi.js`.
 //!
 //! Same counting-allocator trick as `matcher_single_memory.rs`: we measure
-//! the net byte-count delta around each builder. For per-pattern
+//! the net byte-count delta around each builder and its matches on the
+//! bench paths. For per-pattern
 //! modes we sum the allocations of all N matchers — that's the
 //! actual memory cost a caller pays.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::hint::black_box;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use globset::GlobBuilder;
 use globstar::Glob;
+use wax::Pattern as _;
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
@@ -44,6 +48,23 @@ fn measure_heap<T>(f: impl FnOnce() -> T) -> (T, usize) {
     let heap = (after as isize - before as isize).max(0) as usize;
     (val, heap)
 }
+
+/// The 11 paths the match benches use: every matcher answers them all
+/// before it is counted, since regex-backed ones build their search
+/// cache on first use.
+const PATHS: &[&str] = &[
+    "src/main.ts",
+    "src/cli/commands/build.ts",
+    "src/cli/commands/run.rs",
+    "src/main.rs",
+    "tests/smoke.ts",
+    "dist/bundle.js",
+    "node_modules/foo/index.js",
+    "package.json",
+    ".env",
+    "target/debug/build/foo",
+    "src/a/bigger/path/to/the/crazy/needle.txt",
+];
 
 /// Median-of-9 to dampen allocator noise around the boundary alloc.
 fn median(samples: &mut [usize]) -> usize {
@@ -111,7 +132,13 @@ fn main() {
         // globstar union — one merged Glob.
         let mut samples: Vec<usize> = (0..trials)
             .map(|_| {
-                let (_v, heap) = measure_heap(|| Glob::union(patterns.iter().copied()).unwrap());
+                let (_v, heap) = measure_heap(|| {
+                    let g = Glob::union(patterns.iter().copied()).unwrap();
+                    for p in PATHS {
+                        black_box(g.is_match(p.as_bytes()));
+                    }
+                    g
+                });
                 heap
             })
             .collect();
@@ -122,10 +149,14 @@ fn main() {
         let mut samples: Vec<usize> = (0..trials)
             .map(|_| {
                 let (_v, heap) = measure_heap(|| {
-                    patterns
+                    let gs = patterns
                         .iter()
                         .map(|p| Glob::new(p).unwrap())
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>();
+                    for p in PATHS {
+                        black_box(gs.iter().any(|g| g.is_match(p.as_bytes())));
+                    }
+                    gs
                 });
                 heap
             })
@@ -135,7 +166,13 @@ fn main() {
         // globset — N regexes + Aho-Corasick prefilter, all merged.
         let mut samples: Vec<usize> = (0..trials)
             .map(|_| {
-                let (_v, heap) = measure_heap(|| build_globset(patterns));
+                let (_v, heap) = measure_heap(|| {
+                    let g = build_globset(patterns);
+                    for p in PATHS {
+                        black_box(g.is_match(Path::new(p)));
+                    }
+                    g
+                });
                 heap
             })
             .collect();
@@ -145,10 +182,14 @@ fn main() {
         let mut samples: Vec<usize> = (0..trials)
             .map(|_| {
                 let (_v, heap) = measure_heap(|| {
-                    patterns
+                    let gs = patterns
                         .iter()
                         .map(|p| wax::Glob::new(p).unwrap().into_owned())
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>();
+                    for p in PATHS {
+                        black_box(gs.iter().any(|g| g.is_match(*p)));
+                    }
+                    gs
                 });
                 heap
             })

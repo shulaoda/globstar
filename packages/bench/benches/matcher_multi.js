@@ -7,6 +7,7 @@ import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { globstar } from "@globstar/core";
+import { assertAgree, freshSet } from "./shared.js";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
@@ -74,19 +75,30 @@ function runPerPattern(matchOne) {
   };
 }
 
+// Every library answers with dot files matched, as globstar does by
+// default and as the Rust bench sets for all.
+const DOT = { dot: true };
 const LIBS = [
   ["globstar", (patterns) => globstar(patterns), (fn, s) => fn(s)],
-  ["picomatch", buildPerPattern((b) => pico(b)), runPerPattern((m, s) => m(s))],
-  ["minimatch", buildPerPattern((b) => new Minimatch(b)), runPerPattern((m, s) => m.match(s))],
-  ["micromatch", buildPerPattern((b) => micro.matcher(b)), runPerPattern((m, s) => m(s))],
+  ["picomatch", buildPerPattern((b) => pico(b, DOT)), runPerPattern((m, s) => m(s))],
+  ["minimatch", buildPerPattern((b) => new Minimatch(b, DOT)), runPerPattern((m, s) => m.match(s))],
+  ["micromatch", buildPerPattern((b) => micro.matcher(b, DOT)), runPerPattern((m, s) => m(s))],
 ];
 
+assertAgree(
+  LIBS,
+  PATTERN_SETS.map(([, patterns]) => patterns),
+  PATHS,
+);
+
+// Matchers for patterns not seen before, and a first match: what a new
+// pattern set costs before it answers.
 console.log("===== PHASE 1: COMPILE =====\n");
 for (const [label, patterns] of PATTERN_SETS) {
   group(`compile: ${label}`, () => {
     summary(() => {
-      for (const [name, build] of LIBS) {
-        bench(name, () => do_not_optimize(build(patterns)));
+      for (const [name, build, runFn] of LIBS) {
+        bench(name, () => do_not_optimize(runFn(build(freshSet(patterns)), PATHS[0])));
       }
     });
   });
@@ -119,12 +131,17 @@ function snapHeap() {
 }
 const N_TRIAL = 1000;
 const TRIALS = 5;
-function trialMem(build, p) {
-  for (let i = 0; i < 100; i++) build(p);
+// What N_TRIAL matchers for distinct pattern sets keep once each has
+// matched every bench path.
+function trialMem(build, runFn, p) {
+  for (let i = 0; i < 100; i++) runFn(build(freshSet(p)), PATHS[0]);
   gcSweep();
   const before = snapHeap();
   const arr = Array.from({ length: N_TRIAL });
-  for (let i = 0; i < N_TRIAL; i++) arr[i] = build(p);
+  for (let i = 0; i < N_TRIAL; i++) {
+    arr[i] = build(freshSet(p));
+    for (const path of PATHS) runFn(arr[i], path);
+  }
   const after = snapHeap();
   if (arr[0] === undefined) console.log("!");
   return Math.max(0, (after - before) / N_TRIAL);
@@ -143,9 +160,9 @@ console.log("-".repeat(header.length));
 for (const [label, patterns] of PATTERN_SETS) {
   const cells = [label.padEnd(widths[0])];
   let i = 1;
-  for (const [, build] of LIBS) {
+  for (const [, build, runFn] of LIBS) {
     const xs = [];
-    for (let t = 0; t < TRIALS; t++) xs.push(trialMem(build, patterns));
+    for (let t = 0; t < TRIALS; t++) xs.push(trialMem(build, runFn, patterns));
     cells.push(`${Math.round(median(xs))} B`.padStart(widths[i] || 12));
     i++;
   }
