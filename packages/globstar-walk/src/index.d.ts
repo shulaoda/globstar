@@ -3,25 +3,36 @@
 // Filesystem walker built on the `@globstar/core` matcher: traverse
 // a directory tree and return the file paths matching a glob set.
 
+/**
+ * Walker options. A key set to `undefined` keeps its default; an
+ * unknown key, or a value of the wrong type, is a `TypeError`. Only own
+ * keys are read.
+ */
 export interface GlobOptions {
-  /** Working directory the patterns and ignore globs resolve against. Default `"."`. */
-  cwd?: string;
+  /**
+   * Working directory the patterns and ignore globs resolve against,
+   * resolved as `path.resolve` does (`""` is the current directory).
+   * Default `"."`.
+   */
+  cwd?: string | undefined;
   /** Match dot-files (paths starting with `.`). Default `false`. */
-  dot?: boolean;
+  dot?: boolean | undefined;
   /** ASCII-case-insensitive byte comparison. Default `false`. */
-  caseInsensitive?: boolean;
+  caseInsensitive?: boolean | undefined;
   /**
    * Follow symlinks when walking directories. Cycles are detected via
-   * `fs.realpathSync` on the symlink target and skipped. When `false`,
-   * symlinks are dropped entirely (neither emitted nor descended).
-   * Default `true` — matches tinyglobby's `followSymbolicLinks`.
+   * `fs.realpathSync.native` on the symlink target and skipped. When
+   * `false`, symlinks are dropped entirely (neither emitted nor
+   * descended). Default `true` — matches tinyglobby's `followSymbolicLinks`.
    */
-  followSymlinks?: boolean;
+  followSymlinks?: boolean | undefined;
   /**
    * Extra patterns to exclude (in addition to any `!`-prefixed
-   * entries). A bare string means a one-element list.
+   * entries). A bare string means a one-element list. An entry may not
+   * start with `!` (it would ignore everything else): that is an
+   * `InvalidPattern` error.
    */
-  ignore?: string | readonly string[];
+  ignore?: string | readonly string[] | undefined;
 }
 
 /**
@@ -41,8 +52,8 @@ export interface GlobOptions {
  * Output is always **absolute file paths** rooted at the resolved
  * `cwd`. Directory matches aren't emitted. Callers wanting paths
  * relative to `cwd` should `path.relative(cwd, p)` at their boundary.
- * Errors throw a {@link WalkError} (the returned Promise rejects;
- * never silent); wrongly-typed patterns or options throw a
+ * Errors reject the returned Promise with a {@link WalkError} (never
+ * silent); wrongly-typed patterns or options reject it with a
  * `TypeError`. An option key explicitly set to `undefined` keeps its
  * default.
  */
@@ -57,7 +68,8 @@ export function glob(
  * hundred files or fewer). For everything else prefer {@link glob}.
  *
  * Same options, same `!`-split behavior, same file-only output.
- * Errors throw a {@link WalkError} synchronously.
+ * Errors throw a {@link WalkError} synchronously; wrongly-typed
+ * patterns or options throw a `TypeError`.
  *
  * ```ts
  * for (const p of globSync("src/**", { cwd: projectRoot })) {
@@ -106,4 +118,13 @@ export class WalkError extends Error {
   /** Underlying error: the Node error for `"Io"`, the `GlobError` for `"InvalidPattern"`. */
   readonly cause?: Error;
   constructor(kind: "InvalidPattern" | "Io", info?: Record<string, unknown>);
+  /** The fields worth logging: `name`, `kind`, `message` and the set ones of `pattern`, `reason`, `path` (not `cause`). */
+  toJSON(): {
+    name: "WalkError";
+    kind: "InvalidPattern" | "Io";
+    message: string;
+    pattern?: string;
+    reason?: string;
+    path?: string;
+  };
 }

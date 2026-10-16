@@ -8,16 +8,34 @@ const DEFAULTS = {
   ignore: [],
 };
 
+// The options bag with every default filled in. Only own keys count
+// (a key on `Object.prototype` changes nothing), a key set to
+// `undefined` keeps its default, an unknown key or a non-boolean flag is
+// a TypeError; `cwd` and `ignore` are checked where they are used.
 export function normalizeOptions(input) {
-  // Only an absent or `undefined` value means "default" — `null` and
-  // wrong types fall through to the walker's type checks.
-  const o = input ?? {};
-  const opt = (key) => (o[key] === undefined ? DEFAULTS[key] : o[key]);
+  if (input === undefined || input === null) return { ...DEFAULTS };
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new TypeError(
+      `options must be an object, got ${Array.isArray(input) ? "an array" : typeof input}`,
+    );
+  }
+  for (const key of Object.keys(input)) {
+    if (!Object.hasOwn(DEFAULTS, key)) throw new TypeError(`unknown option "${key}"`);
+  }
+  const opt = (key) =>
+    Object.hasOwn(input, key) && input[key] !== undefined ? input[key] : DEFAULTS[key];
+  const flag = (key) => {
+    const v = opt(key);
+    if (typeof v !== "boolean") {
+      throw new TypeError(`${key} must be a boolean, got ${v === null ? "null" : typeof v}`);
+    }
+    return v;
+  };
   return {
     cwd: opt("cwd"),
-    dot: opt("dot"),
-    caseInsensitive: opt("caseInsensitive"),
-    followSymlinks: opt("followSymlinks"),
+    dot: flag("dot"),
+    caseInsensitive: flag("caseInsensitive"),
+    followSymlinks: flag("followSymlinks"),
     ignore: opt("ignore"),
   };
 }

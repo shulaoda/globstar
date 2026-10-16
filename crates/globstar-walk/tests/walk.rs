@@ -509,7 +509,9 @@ fn walker_invalid_member_of_a_list_is_named() {
     // could read as one valid pattern (`a/{b,c/**}`).
     let err = Walk::from_patterns(["src/**/*.{ts,tsx}", "lib/[abc"], t.root()).unwrap_err();
     match &err {
-        WalkError::InvalidPattern { pattern, reason } => {
+        WalkError::InvalidPattern {
+            pattern, reason, ..
+        } => {
             assert_eq!(pattern, "lib/[abc");
             assert!(
                 reason.contains("unterminated character class at byte 4"),
@@ -1501,7 +1503,10 @@ fn walker_empty_base_is_the_current_folder() {
 #[test]
 fn walker_error_names_the_pattern_as_written() {
     let err = Walk::from_patterns(["src/**", "!src/[z-a]"], ".").unwrap_err();
-    let WalkError::InvalidPattern { pattern, reason } = &err else {
+    let WalkError::InvalidPattern {
+        pattern, reason, ..
+    } = &err
+    else {
         panic!("{err:?}");
     };
     assert_eq!(pattern, "!src/[z-a]");
@@ -1557,6 +1562,53 @@ fn walker_skips_a_subtree_the_ignore_covers() {
     }
     let paths: Vec<_> = pruned.into_iter().map(|r| r.unwrap().into_path()).collect();
     assert_eq!(paths, [t.root().join("src/a.js")]);
+}
+
+#[test]
+fn walker_bangs_exposed_by_normalization_count_too() {
+    // `!/!x` ≡ `!!x` ≡ `x`: a `/` between two `!` runs hides neither.
+    let t = TmpTree::new("bang_fold");
+    t.touch("x");
+    t.touch("y");
+    t.touch("d/z");
+    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+    let walk = |ps: &[&str]| collect_rel(Walk::from_patterns(ps, t.root()).unwrap(), t.root());
+    assert_eq!(walk(&["!/!x"]), set(&["x"]));
+    assert_eq!(walk(&["**", "!!/!x"]), set(&["y", "d", "d/z"]));
+    assert_eq!(walk(&["**", "!/!/!x"]), set(&["y", "d", "d/z"]));
+}
+
+#[test]
+fn walker_refuses_an_ignore_entry_that_starts_with_bang() {
+    // `!src/**` as an ignore entry would ignore everything else; it used
+    // to do that alone and fail as a list member.
+    for ignore in [vec!["!src/**"], vec!["!src/**", "node_modules"]] {
+        let opts = WalkOptions {
+            ignore: ignore.iter().map(|s| s.to_string()).collect(),
+            ..WalkOptions::default()
+        };
+        let err = Walk::new("**", opts).unwrap_err();
+        let WalkError::InvalidPattern {
+            pattern, source, ..
+        } = &err
+        else {
+            panic!("{err:?}");
+        };
+        assert_eq!(pattern, "!src/**");
+        assert!(source.is_none());
+        assert!(err.to_string().contains("cannot start with `!`"), "{err}");
+    }
+}
+
+#[test]
+fn walker_pattern_error_keeps_its_glob_error() {
+    use std::error::Error;
+    let err = Walk::new("[z-a]", ".").unwrap_err();
+    let source = err.source().expect("a source");
+    assert!(matches!(
+        source.downcast_ref::<globstar::GlobError>(),
+        Some(globstar::GlobError::InvalidRange { .. })
+    ));
 }
 
 #[test]

@@ -9,6 +9,9 @@ globstar = { path = "../../crates/globstar" }
 globset = "0.4"
 wax = "0.6"
 
+[dev-dependencies]
+globstar-walk = { path = "../../crates/globstar-walk" }
+
 # Single-pattern memory: globstar vs globset / wax,
 # matching the 7-pattern corpus in
 # `packages/bench/benches/matcher_single.js`.

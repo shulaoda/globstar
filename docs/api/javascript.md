@@ -41,7 +41,7 @@ interface GlobstarOptions {
 - `dot`: when `false`, wildcards (`*`, `?`, negated classes, `**`) cannot match a leading `.` in a segment. The matcher defaults to `true`; the walker `@globstar/walk` defaults to `false`.
 - `caseInsensitive`: ASCII-only case folding. Non-ASCII bytes compare exactly.
 
-These are the only two options. The dialect has no toggles for `**` behavior, brace expansion or extglobs; see [How a path is matched](../guide/matching.md).
+These are the only two options. The dialect has no toggles for `**` behavior, brace expansion or extglobs; see [How a path is matched](../guide/matching.md). A key set to `undefined` keeps its default. An unknown key (`nocase`), or a value that is not a boolean (`"false"`), throws a `TypeError` instead of being read loosely, and only the object's own keys count.
 
 ## `DirMatch`
 
@@ -102,7 +102,7 @@ The full list of kinds, with an example for each, is in [Errors and limits](../g
 
 ## Walker
 
-The filesystem walker is a separate package, `@globstar/walk`, built on `compileMatcher`. It seeds the walk from `staticPrefixes()`, prunes with `matchDir`, breaks symlink cycles, and splits `!`-patterns into its ignore set.
+The filesystem walker is a separate package, `@globstar/walk`, built on `compileMatcher`. It seeds the walk from `staticPrefixes()`, prunes with `matchDir`, breaks symlink cycles, and splits `!`-patterns into its ignore set. Its options are checked the same way (`cwd`, `dot`, `caseInsensitive`, `followSymlinks`, `ignore`); `globSync` throws, and `glob` rejects its Promise. An `ignore` entry may not start with `!`.
 
 ```js
 import { glob } from "@globstar/walk";

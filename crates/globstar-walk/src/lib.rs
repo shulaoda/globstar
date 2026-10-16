@@ -112,12 +112,27 @@ pub struct Walk {
     /// they see the same tree the walk does.
     seeded: bool,
 
-    /// LIFO stack of directories seen but not yet expanded.
+    /// LIFO stack of directories seen but not yet read.
     stack: Vec<Frame>,
 
-    /// Buffer of entries from the most recently expanded directory that
-    /// are ready to yield. Drained before the next frame is expanded.
+    /// The folder being read, one entry per `next()`.
+    reading: Option<Reading>,
+
+    /// The seeds' entries and errors, yielded before any folder is
+    /// read (popped, so stored in reverse).
     ready: Vec<Result<DirEntry, WalkError>>,
+}
+
+/// A folder being read: its entries stream out as `read_dir` yields
+/// them, and its child folders wait until it is done, so the walk stays
+/// depth-first with each folder's own entries first. Memory follows the
+/// folders found, not the entries read.
+#[derive(Debug)]
+struct Reading {
+    frame: Frame,
+    entries: fs::ReadDir,
+    /// Child folders to walk, in reading order.
+    children: Vec<Frame>,
 }
 
 #[derive(Debug)]
@@ -138,7 +153,8 @@ struct Frame {
     /// reach this frame. A new symlink-to-dir descent canonicalizes its
     /// target and skips the descent if the target is already in this
     /// chain — that's our cycle break (matches `fdir`'s `isRecursive`).
-    /// Empty for non-symlink descents.
+    /// Inherited unchanged by a non-symlink descent; a seed starts with
+    /// the links on its prefix.
     symlink_ancestors: Vec<PathBuf>,
 }
 
@@ -185,23 +201,9 @@ impl Walk {
         let mut negatives: Vec<(String, String)> = Vec::new();
         for p in patterns {
             let raw = p.as_ref();
-            // Normalize before the `!`-parity split (§4.3 before §4.2,
-            // so `/!x` ≡ `!x`), then re-normalize the body (`!/x`
-            // exposes a fresh `/`).
-            let n1 = normalize_pattern(raw);
-            if n1.is_empty() && !raw.is_empty() {
-                continue; // `.`, `//` — selects nothing
-            }
-            let bangs = n1.bytes().take_while(|&b| b == b'!').count();
-            let tail = &n1[bangs..];
-            let body = if bangs == 0 {
-                tail.to_string()
-            } else {
-                normalize_pattern(tail)
+            let Some((bangs, body)) = split_bangs(raw) else {
+                continue; // `.`, `//`, `!.` — selects or ignores nothing
             };
-            if body.is_empty() && !tail.is_empty() {
-                continue; // `!.` — ignores nothing
-            }
             let entry = (raw.to_string(), body);
             if bangs & 1 == 1 {
                 negatives.push(entry);
@@ -212,12 +214,23 @@ impl Walk {
 
         let matcher = compile_union(&positives, compile_opts)?;
         // `opts.ignore` entries are normalized but never `!`-split
-        // (§3.2); auto-split negatives append to them.
+        // (§3.2); auto-split negatives append to them. A leading `!`
+        // there would ignore everything else, and is refused.
         let mut ignore_patterns: Vec<(String, String)> = Vec::new();
         for s in &opts.ignore {
             let n = normalize_pattern(s);
             if n.is_empty() && !s.is_empty() {
                 continue;
+            }
+            if n.starts_with('!') {
+                return Err(WalkError::InvalidPattern {
+                    pattern: s.clone(),
+                    reason: "an ignore entry cannot start with `!` (it would ignore \
+                             everything else); list what to ignore, and write `\\!` \
+                             for a name that starts with `!`"
+                        .to_string(),
+                    source: None,
+                });
             }
             ignore_patterns.push((s.clone(), n));
         }
@@ -248,6 +261,7 @@ impl Walk {
             prune_ignored: opts.dot,
             seeded: false,
             stack: Vec::new(),
+            reading: None,
             ready: Vec::new(),
         })
     }
@@ -461,167 +475,172 @@ impl Walk {
         }
     }
 
-    fn expand_next_frame(&mut self) {
-        let frame = match self.stack.pop() {
-            Some(f) => f,
-            None => return,
-        };
-
-        let entries = match fs::read_dir(&frame.absolute) {
-            Ok(e) => e,
-            Err(source) => {
-                self.ready.push(Err(WalkError::Io {
-                    path: frame.absolute,
-                    source,
-                }));
-                return;
-            }
-        };
-
-        let child_depth = frame.depth + 1;
-        // Push straight onto the walker's own buffers and fix the order on
-        // the appended tails below. `ready` is provably empty here (next()
-        // only expands after draining it), so the tail marks are cheap.
-        let ready_mark = self.ready.len();
-        let stack_mark = self.stack.len();
-
-        // Hoist matcher / ignore deref out of the per-entry loop. Frames
-        // never reach here when `matcher` is `None` (init_from_prefixes
-        // returns early in that case), so the unwrap is invariant.
+    /// The next item of the folder being read; `None` once it is done,
+    /// when its child folders go on the stack, first child on top.
+    fn read_next(&mut self) -> Option<Result<DirEntry, WalkError>> {
+        let reading = self.reading.as_mut()?;
+        // Frames exist only when `matcher` is `Some` (`init_from_prefixes`
+        // returns early otherwise).
         let matcher = self
             .matcher
             .as_ref()
-            .expect("matcher present when stack non-empty");
+            .expect("matcher present while reading");
         let ignore = self.ignore.as_ref();
-
-        for entry_result in entries {
-            let entry = match entry_result {
-                Ok(e) => e,
-                Err(source) => {
-                    self.ready.push(Err(WalkError::Io {
-                        path: frame.absolute.clone(),
-                        source,
-                    }));
-                    continue;
-                }
-            };
-
-            let file_type = match entry.file_type() {
-                Ok(t) => t,
-                Err(source) => {
-                    self.ready.push(Err(WalkError::Io {
-                        path: entry.path(),
-                        source,
-                    }));
-                    continue;
-                }
-            };
-
-            // `follow_links: false` → symlinks are dropped entirely
-            // (matches `tinyglobby`'s `excludeSymlinks` semantics, NOT
-            // walkdir's "treat as file"). Skip before any further work.
-            if file_type.is_symlink() && !self.follow_links {
-                continue;
-            }
-
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            let name_bytes = name_str.as_bytes();
-
-            let mut child_rel = Vec::with_capacity(frame.relative.len() + 1 + name_bytes.len());
-            child_rel.extend_from_slice(&frame.relative);
-            if !frame.relative.is_empty() {
-                child_rel.push(b'/');
-            }
-            child_rel.extend_from_slice(name_bytes);
-
-            // Ignore-filter before any stat, so an ignored symlink never
-            // costs a metadata resolution (WALKER_SPEC §7.1 order).
-            if let Some(ig) = ignore
-                && ig.is_match(&child_rel)
-            {
-                continue;
-            }
-
-            // On Windows, `std::fs::DirEntry::metadata` is free — the data
-            // was already pulled from `FindFirstFileW` during readdir.
-            // Cache it so `DirEntry::metadata` is also syscall-free later.
-            // On Unix we skip this (metadata would cost one stat syscall
-            // per entry even if the user never asks for it) and fall back
-            // to lazy `symlink_metadata` on demand.
-            #[cfg(windows)]
-            let cached_metadata = match entry.metadata() {
-                Ok(m) => m,
-                Err(source) => {
-                    self.ready.push(Err(WalkError::Io {
-                        path: entry.path(),
-                        source,
-                    }));
-                    continue;
-                }
-            };
-
-            let is_dir = if file_type.is_symlink() {
-                fs::metadata(entry.path())
-                    .map(|m| m.is_dir())
-                    .unwrap_or(false)
-            } else {
-                file_type.is_dir()
-            };
-
-            let make_entry = |path: PathBuf| DirEntry {
-                path,
-                file_type,
-                depth: child_depth,
-                #[cfg(windows)]
-                metadata: cached_metadata.clone(),
-            };
-
-            if is_dir {
-                let dm = matcher.match_dir(&child_rel);
-                if dm.matches() {
-                    self.ready.push(Ok(make_entry(entry.path())));
-                }
-                // An ignore that covers everything below skips the
-                // subtree (`**/node_modules/**` and `node_modules`).
-                let covered = self.prune_ignored
-                    && ignore.is_some_and(|ig| ig.match_dir(&child_rel).matches_all_below());
-                if dm.may_match_below() && !covered {
-                    // Cycle break: when descending through a symlink
-                    // target, canonicalize and check against the
-                    // ancestor chain. Already-seen target → skip
-                    // descent (still emitted above if it matched).
-                    let new_ancestors = if file_type.is_symlink() {
-                        let resolved = match fs::canonicalize(entry.path()) {
-                            Ok(r) => r,
-                            Err(_) => continue, // broken / inaccessible
-                        };
-                        if frame.symlink_ancestors.contains(&resolved) {
-                            continue; // cycle
-                        }
-                        let mut chain = frame.symlink_ancestors.clone();
-                        chain.push(resolved);
-                        chain
-                    } else {
-                        frame.symlink_ancestors.clone()
-                    };
-                    self.stack.push(Frame {
-                        absolute: entry.path(),
-                        relative: child_rel,
-                        depth: child_depth,
-                        symlink_ancestors: new_ancestors,
-                    });
-                }
-            } else if matcher.is_match(&child_rel) {
-                self.ready.push(Ok(make_entry(entry.path())));
+        let rules = Rules {
+            matcher,
+            ignore,
+            follow_links: self.follow_links,
+            prune_ignored: self.prune_ignored,
+        };
+        for entry in reading.entries.by_ref() {
+            if let Some(item) = rules.visit(entry, &reading.frame, &mut reading.children) {
+                return Some(item);
             }
         }
+        let done = self.reading.take()?;
+        self.stack.extend(done.children.into_iter().rev());
+        None
+    }
+}
 
-        // Both buffers drain via pop (reverse), so flip the appended tails
-        // to keep forward emission order and DFS with forward order per
-        // level.
-        self.ready[ready_mark..].reverse();
-        self.stack[stack_mark..].reverse();
+/// What decides each entry of a folder.
+struct Rules<'a> {
+    matcher: &'a Glob,
+    ignore: Option<&'a Glob>,
+    follow_links: bool,
+    prune_ignored: bool,
+}
+
+impl Rules<'_> {
+    /// One entry of the folder `frame`: the item it yields, if any. A
+    /// folder to walk goes to `children`.
+    fn visit(
+        &self,
+        entry: io::Result<fs::DirEntry>,
+        frame: &Frame,
+        children: &mut Vec<Frame>,
+    ) -> Option<Result<DirEntry, WalkError>> {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(source) => {
+                return Some(Err(WalkError::Io {
+                    path: frame.absolute.clone(),
+                    source,
+                }));
+            }
+        };
+
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(source) => {
+                return Some(Err(WalkError::Io {
+                    path: entry.path(),
+                    source,
+                }));
+            }
+        };
+
+        // `follow_links: false` → symlinks are dropped entirely
+        // (matches `tinyglobby`'s `excludeSymlinks` semantics, NOT
+        // walkdir's "treat as file"). Skip before any further work.
+        if file_type.is_symlink() && !self.follow_links {
+            return None;
+        }
+
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let name_bytes = name_str.as_bytes();
+
+        let mut child_rel = Vec::with_capacity(frame.relative.len() + 1 + name_bytes.len());
+        child_rel.extend_from_slice(&frame.relative);
+        if !frame.relative.is_empty() {
+            child_rel.push(b'/');
+        }
+        child_rel.extend_from_slice(name_bytes);
+
+        // Ignore-filter before any stat, so an ignored symlink never
+        // costs a metadata resolution (WALKER_SPEC §7.1 order).
+        if let Some(ig) = self.ignore
+            && ig.is_match(&child_rel)
+        {
+            return None;
+        }
+
+        // On Windows, `std::fs::DirEntry::metadata` is free — the data
+        // was already pulled from `FindFirstFileW` during readdir.
+        // Cache it so `DirEntry::metadata` is also syscall-free later.
+        // On Unix we skip this (metadata would cost one stat syscall
+        // per entry even if the user never asks for it) and fall back
+        // to lazy `symlink_metadata` on demand.
+        #[cfg(windows)]
+        let cached_metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(source) => {
+                return Some(Err(WalkError::Io {
+                    path: entry.path(),
+                    source,
+                }));
+            }
+        };
+
+        let is_dir = if file_type.is_symlink() {
+            fs::metadata(entry.path())
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+        } else {
+            file_type.is_dir()
+        };
+
+        let child_depth = frame.depth + 1;
+        let make_entry = |path: PathBuf| DirEntry {
+            path,
+            file_type,
+            depth: child_depth,
+            #[cfg(windows)]
+            metadata: cached_metadata.clone(),
+        };
+
+        if !is_dir {
+            return self
+                .matcher
+                .is_match(&child_rel)
+                .then(|| Ok(make_entry(entry.path())));
+        }
+        let dm = self.matcher.match_dir(&child_rel);
+        let emitted = dm.matches().then(|| Ok(make_entry(entry.path())));
+        // An ignore that covers everything below skips the subtree
+        // (`**/node_modules/**` and `node_modules`).
+        let covered = self.prune_ignored
+            && self
+                .ignore
+                .is_some_and(|ig| ig.match_dir(&child_rel).matches_all_below());
+        if !dm.may_match_below() || covered {
+            return emitted;
+        }
+        // Cycle break: when descending through a symlink target,
+        // canonicalize and check against the ancestor chain. An
+        // already-seen target, or a broken or unreadable link, skips the
+        // descent (still emitted if it matched).
+        let symlink_ancestors = if file_type.is_symlink() {
+            let Ok(resolved) = fs::canonicalize(entry.path()) else {
+                return emitted;
+            };
+            if frame.symlink_ancestors.contains(&resolved) {
+                return emitted;
+            }
+            let mut chain = frame.symlink_ancestors.clone();
+            chain.push(resolved);
+            chain
+        } else {
+            frame.symlink_ancestors.clone()
+        };
+        children.push(Frame {
+            absolute: entry.path(),
+            relative: child_rel,
+            depth: child_depth,
+            symlink_ancestors,
+        });
+        emitted
     }
 }
 
@@ -637,10 +656,28 @@ impl Iterator for Walk {
             if let Some(item) = self.ready.pop() {
                 return Some(item);
             }
-            if self.stack.is_empty() {
-                return None;
+            if self.reading.is_some() {
+                if let Some(item) = self.read_next() {
+                    return Some(item);
+                }
+                continue;
             }
-            self.expand_next_frame();
+            let frame = self.stack.pop()?;
+            match fs::read_dir(&frame.absolute) {
+                Ok(entries) => {
+                    self.reading = Some(Reading {
+                        frame,
+                        entries,
+                        children: Vec::new(),
+                    });
+                }
+                Err(source) => {
+                    return Some(Err(WalkError::Io {
+                        path: frame.absolute,
+                        source,
+                    }));
+                }
+            }
         }
     }
 }
@@ -742,14 +779,44 @@ fn compile_union(
             } else {
                 format!("{e} (in '{body}', as the walker reads it)")
             };
-            Some((raw.clone(), reason))
+            Some((raw.clone(), reason, e))
         });
-        let (pattern, reason) = failed.unwrap_or_else(|| {
+        let (pattern, reason, source) = failed.unwrap_or_else(|| {
             let raws: Vec<&String> = patterns.iter().map(|(raw, _)| raw).collect();
-            (format!("{raws:?}"), e.to_string())
+            (format!("{raws:?}"), e.to_string(), e)
         });
-        WalkError::InvalidPattern { pattern, reason }
+        WalkError::InvalidPattern {
+            pattern,
+            reason,
+            source: Some(source),
+        }
     })
+}
+
+/// WALKER_SPEC §4.2: the `!` count and the body of a written pattern;
+/// `None` when it selects or ignores nothing (`.`, `//`, `!.`).
+/// Normalization runs before the split (§4.3 first, so `/!x` ≡ `!x`)
+/// and again after each `!` run, which can expose a `/` and then
+/// another run: `!/!x` ≡ `!!x`, the body `x` with two `!`.
+fn split_bangs(raw: &str) -> Option<(usize, String)> {
+    let mut body = normalize_pattern(raw);
+    if body.is_empty() && !raw.is_empty() {
+        return None;
+    }
+    let mut bangs = 0;
+    loop {
+        let run = body.bytes().take_while(|&b| b == b'!').count();
+        if run == 0 {
+            return Some((bangs, body));
+        }
+        bangs += run;
+        let tail = &body[run..];
+        let next = normalize_pattern(tail);
+        if next.is_empty() && !tail.is_empty() {
+            return None;
+        }
+        body = next;
+    }
 }
 
 /// `p` with `.` and `..` parts taken out as text (`..` at the root

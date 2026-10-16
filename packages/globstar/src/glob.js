@@ -12,15 +12,7 @@ export function globstar(patterns, options) {
 }
 
 export function compileMatcher(patterns, options) {
-  // Only an absent or `undefined` value means "default".
-  const o = options ?? {};
-  const opts = {
-    dot: o.dot === undefined ? true : o.dot,
-    caseInsensitive: o.caseInsensitive === undefined ? false : o.caseInsensitive,
-    // Internal test hook (`"nfa"`: no anchored chains; `"bytes"`: no
-    // string mode); own-property read defeats prototype pollution.
-    __engine: Object.hasOwn(o, "__engine") ? o.__engine : undefined,
-  };
+  const opts = matcherOptions(options);
   // The same pattern twice adds nothing to the union: it is parsed once
   // and counts once against the expansion budget.
   const list = Array.isArray(patterns) ? [...new Set(patterns)] : [patterns];
@@ -45,6 +37,37 @@ export function compileMatcher(patterns, options) {
   const negativeEngines = negativeAsts.map((ast) => buildEngine([ast], opts));
 
   return makeMatcher(positiveEngine, negativeEngines);
+}
+
+// The options bag with its defaults: only own keys count (a key on
+// `Object.prototype` changes nothing), `undefined` keeps the default, an
+// unknown key or a non-boolean flag is a TypeError. `__engine` is an
+// internal test hook (`"nfa"`: no anchored chains; `"bytes"`: no string
+// mode).
+const MATCHER_DEFAULTS = { dot: true, caseInsensitive: false, __engine: undefined };
+function matcherOptions(input) {
+  if (input === undefined || input === null) return { ...MATCHER_DEFAULTS };
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new TypeError(
+      `options must be an object, got ${Array.isArray(input) ? "an array" : typeof input}`,
+    );
+  }
+  for (const key of Object.keys(input)) {
+    if (!Object.hasOwn(MATCHER_DEFAULTS, key)) throw new TypeError(`unknown option "${key}"`);
+  }
+  const flag = (key) => {
+    const v =
+      Object.hasOwn(input, key) && input[key] !== undefined ? input[key] : MATCHER_DEFAULTS[key];
+    if (typeof v !== "boolean") {
+      throw new TypeError(`${key} must be a boolean, got ${v === null ? "null" : typeof v}`);
+    }
+    return v;
+  };
+  return {
+    dot: flag("dot"),
+    caseInsensitive: flag("caseInsensitive"),
+    __engine: Object.hasOwn(input, "__engine") ? input.__engine : undefined,
+  };
 }
 
 function buildEngine(asts, opts) {

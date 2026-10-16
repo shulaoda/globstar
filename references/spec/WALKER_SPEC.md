@@ -1,6 +1,6 @@
 # WALKER_SPEC — Filesystem Walker Built on the Glob Matcher
 
-> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.2 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
+> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.3 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
 
 ## Table of Contents
 
@@ -78,7 +78,12 @@ interface GlobOptions {
 }
 ```
 
-An option key explicitly present with the value `undefined` means "use the default" (TypeScript optional-property semantics) — it MUST NOT clobber the default the way a naive object spread would. Wrongly-typed option values (a numeric `cwd`, a non-string ignore member) throw a `TypeError` with a clear message.
+An option key explicitly present with the value `undefined` means "use the default" (TypeScript optional-property semantics) — it MUST NOT clobber the default the way a naive object spread would. Only own keys are read, so a key on `Object.prototype` changes nothing. A `TypeError` with a clear message is thrown by `globSync`, and rejects the Promise of `glob`, when:
+
+- the options value is not an object (`null` and `undefined` mean "all defaults");
+- a key is not one of the five above (a typo, or another tool's name such as `caseSensitiveMatch`);
+- `dot`, `caseInsensitive` or `followSymlinks` is not a boolean (`"false"` would read as true);
+- `cwd` is not a string, or `ignore` is neither a string nor an array of strings.
 
 ### 3.2 Per-option semantics
 
@@ -112,7 +117,7 @@ An additional set of glob patterns. A path matches the walker's final predicate 
 final_match(path) := positive.match(path) AND NOT ignore.match(path)
 ```
 
-`ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. Each `ignore` entry is itself a strictly positive pattern (the array is NOT subject to the §4.2 `!`-split rule; the `!` prefix would just be treated as the matcher's whole-pattern negation per GLOB_SPEC.md §9.3).
+`ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. Each `ignore` entry is itself a strictly positive pattern: the array is NOT subject to the §4.2 `!`-split rule, and an entry that starts with `!` (after §4.3 normalization) is refused with `WalkError("InvalidPattern")`. As the matcher's whole-pattern negation (GLOB_SPEC.md §9.3) it would ignore everything except what it names, which is never what a caller writing `!src/**` into an ignore list means; escape a name that starts with `!` as `\!`.
 
 ### 3.3 Toggles deliberately NOT provided
 
@@ -140,7 +145,7 @@ For each pattern in the input array — AFTER the §4.3 normalization, so a lead
 - count is odd → strip ALL `!`s, push the body into the ignore set;
 - count is even → strip ALL `!`s, push the body into the positive set.
 
-The body is normalized again after the strip (`!/x` exposes a fresh leading `/`).
+The body is normalized again after the strip (`!/x` exposes a fresh leading `/`), and a `!` run that this exposes counts too, so the count covers every `!` the leading `/`s, `.` segments and `!`s hide: `!/!x` ≡ `!!x` is the positive `x`. (Splitting once left the body `!x`, which the matcher read as "everything but `x`".)
 
 Examples:
 
@@ -150,6 +155,7 @@ Examples:
 | `!**/*.test.ts` | 1         | `**/*.test.ts` | ignore    |
 | `!!**/*.ts`     | 2         | `**/*.ts`      | positive  |
 | `!!!**/*.ts`    | 3         | `**/*.ts`      | ignore    |
+| `!/!x`          | 2         | `x`            | positive  |
 
 This is the recommended way to express include/exclude:
 
@@ -413,6 +419,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 
 ## 12. Appendix A: Version History
 
+- **v0.3.3** (2026-10-16): options are checked (§3.1: own keys only, no unknown keys, booleans for the flags; `glob` rejects); an ignore entry that starts with `!` is refused (§3.2); every `!` run normalization exposes counts in the split (§4.2).
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.
 - **v0.3.0** (2026-05-04, draft):

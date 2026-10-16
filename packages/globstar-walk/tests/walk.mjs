@@ -183,6 +183,52 @@ await check("option misuse throws clear TypeErrors", async () => {
   assert.throws(() => globSync(["a.txt"], { cwd: root, ignore: null }), TypeError);
   assert.throws(() => globSync([null], { cwd: root }), TypeError);
   assert.throws(() => globSync(42, { cwd: root }), TypeError);
+  // Flags must be booleans: `"false"` turned dotfiles on, `null` dropped
+  // symlinks. A string as options walked `process.cwd()`; an unknown key
+  // (a typo, or another tool's name for an option) was ignored.
+  for (const bad of [
+    { cwd: root, dot: "false" },
+    { cwd: root, caseInsensitive: 1 },
+    { cwd: root, followSymlinks: null },
+    { cwd: root, caseSensitiveMatch: false },
+    "src",
+    [root],
+  ]) {
+    assert.throws(() => globSync(["a.txt"], bad), TypeError, JSON.stringify(bad));
+    await assert.rejects(glob(["a.txt"], bad), TypeError, JSON.stringify(bad));
+  }
+  // An explicit `undefined` keeps the default.
+  await expectBoth(root, ["*.txt"], { dot: undefined, ignore: undefined }, ["a.txt"], "undefined");
+  // Only own keys count.
+  Object.prototype.dot = "yes";
+  Object.prototype.cwd = "/";
+  try {
+    await expectBoth(root, ["*.txt"], {}, ["a.txt"], "inherited keys");
+  } finally {
+    delete Object.prototype.dot;
+    delete Object.prototype.cwd;
+  }
+});
+
+await check("bangs exposed by normalization count too", async () => {
+  // `!/!x` ≡ `!!x` ≡ `x`: a `/` between two `!` runs hides neither.
+  // Twin of `walker_bangs_exposed_by_normalization_count_too`.
+  const root = tmpTree("bangfold", ["x", "y", "d/z"]);
+  await expectBoth(root, ["!/!x"], {}, ["x"], "!/!x");
+  await expectBoth(root, ["**", "!!/!x"], {}, ["d/z", "y"], "!!/!x");
+  await expectBoth(root, ["**", "!/!/!x"], {}, ["d/z", "y"], "!/!/!x");
+});
+
+await check("an ignore entry that starts with `!` is refused", async () => {
+  // It would ignore everything else. Twin of
+  // `walker_refuses_an_ignore_entry_that_starts_with_bang`.
+  const root = tmpTree("bangignore", ["src/a.ts"]);
+  for (const ignore of [["!src/**"], ["!src/**", "node_modules"]]) {
+    const refused = (e) =>
+      e instanceof WalkError && e.kind === "InvalidPattern" && e.pattern === "!src/**";
+    assert.throws(() => globSync(["**"], { cwd: root, ignore }), refused);
+    await assert.rejects(glob(["**"], { cwd: root, ignore }), refused);
+  }
 });
 
 // ── bad cwd fails loudly even with an empty positive set ────────────────

@@ -24,6 +24,11 @@ pub enum WalkError {
         /// gone, `//` or `.` taken out), it ends with the text its byte
         /// offsets count in: `(in 'src/[z-a]', as the walker reads it)`.
         reason: String,
+        /// The compile error, to branch on its kind (also
+        /// [`Error::source`](std::error::Error::source)). `None` for an
+        /// entry the walker refuses itself: an ignore entry that starts
+        /// with `!`.
+        source: Option<globstar::GlobError>,
     },
 
     /// An I/O error while reading a directory entry.
@@ -38,7 +43,9 @@ pub enum WalkError {
 impl std::fmt::Display for WalkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidPattern { pattern, reason } => {
+            Self::InvalidPattern {
+                pattern, reason, ..
+            } => {
                 write!(f, "invalid pattern '{pattern}': {reason}")
             }
             Self::Io { path, source } => {
@@ -51,7 +58,9 @@ impl std::fmt::Display for WalkError {
 impl std::error::Error for WalkError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::InvalidPattern { .. } => None,
+            Self::InvalidPattern { source, .. } => source
+                .as_ref()
+                .map(|e| e as &(dyn std::error::Error + 'static)),
             Self::Io { source, .. } => Some(source),
         }
     }

@@ -4,11 +4,16 @@
 // filesystem access, no `node:` imports; runs in any JS runtime.
 // The filesystem walker lives in `@globstar/walk`.
 
+/**
+ * Matcher options. A key set to `undefined` keeps its default; an
+ * unknown key, or a flag that is not a boolean, throws a `TypeError`.
+ * Only own keys are read.
+ */
 export interface GlobstarOptions {
   /** Match dot-files. Default `true` at the matcher layer. */
-  dot?: boolean;
+  dot?: boolean | undefined;
   /** ASCII-case-insensitive byte comparison. Default `false`. */
-  caseInsensitive?: boolean;
+  caseInsensitive?: boolean | undefined;
 }
 
 /**

@@ -180,3 +180,17 @@ for (const [a, b] of [
 const folded = parse("\\a").body;
 assert.deepEqual(factorBranches([folded, parse("a").body]), folded);
 console.log("✓ members spelled differently fold into one");
+
+// Options: booleans only, own keys only, no unknown keys; `undefined`
+// keeps the default. `"false"` turned case folding on.
+for (const bad of [{ caseInsensitive: "false" }, { dot: 0 }, { nocase: true }, "x", [true]]) {
+  assert.throws(() => compileMatcher("*.txt", bad), TypeError, JSON.stringify(bad));
+}
+assert.equal(compileMatcher("*.TXT", { caseInsensitive: undefined }).match("a.txt"), false);
+Object.prototype.dot = false;
+try {
+  assert.equal(compileMatcher("**").match("a/.env"), true, "an inherited key changes nothing");
+} finally {
+  delete Object.prototype.dot;
+}
+console.log("✓ matcher options are checked");

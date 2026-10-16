@@ -99,7 +99,10 @@ const PATTERNS_HUGE = [
   "**/*.md",
 ];
 
+// The others take `onlyFiles` to return files only, which globstar
+// always does; it refuses options it does not have.
 const opts = (root) => ({ cwd: root, dot: true, onlyFiles: true });
+const ownOpts = (root) => ({ cwd: root, dot: true });
 
 const trees = TREES.map((s) => ({ name: s.name, root: buildTree(s) }));
 
@@ -112,7 +115,7 @@ for (const { name, root } of trees) {
   for (const [label, patterns] of sets) {
     group(`walk_${name}_${label}`, () => {
       summary(() => {
-        bench("globstar", async () => do_not_optimize(await glob(patterns, opts(root))));
+        bench("globstar", async () => do_not_optimize(await glob(patterns, ownOpts(root))));
         bench("fast-glob", async () => do_not_optimize(await fastGlob(patterns, opts(root))));
         bench("globby", async () => do_not_optimize(await globby(patterns, opts(root))));
         bench("tinyglobby", async () => do_not_optimize(await tinyGlob(patterns, opts(root))));

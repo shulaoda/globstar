@@ -128,17 +128,10 @@ function prepare(patterns, optsInput) {
     if (typeof raw !== "string") {
       throw new TypeError(`pattern must be a string, got ${raw === null ? "null" : typeof raw}`);
     }
-    // Normalize before the `!`-parity split (§4.3 before §4.2, so `/!x`
-    // ≡ `!x`), then re-normalize the body (`!/x` exposes a fresh `/`).
     // To match a literal leading `!`, escape it: `\!foo`.
-    const n1 = normalizePattern(raw);
-    if (n1 === "" && raw !== "") continue; // `.`, `//` — selects nothing
-    let bangs = 0;
-    while (bangs < n1.length && n1.charCodeAt(bangs) === 0x21 /* ! */) bangs++;
-    const tail = bangs === 0 ? n1 : n1.slice(bangs);
-    const body = bangs === 0 ? tail : normalizePattern(tail);
-    if (body === "" && tail !== "") continue; // `!.` — ignores nothing
-    (bangs & 1 ? negatives : positives).push({ raw, body });
+    const split = splitBangs(raw);
+    if (split === null) continue; // `.`, `//`, `!.` — selects or ignores nothing
+    (split.bangs & 1 ? negatives : positives).push({ raw, body: split.body });
   }
 
   // Positives first (error-precedence parity with Rust); ignore still
@@ -159,9 +152,18 @@ function prepare(patterns, optsInput) {
         `ignore pattern must be a string, got ${raw === null ? "null" : typeof raw}`,
       );
     }
-    // §3.2: ignore entries are never `!`-split, only normalized.
+    // §3.2: ignore entries are never `!`-split, only normalized. A
+    // leading `!` there would ignore everything else, and is refused.
     const n = normalizePattern(raw);
     if (n === "" && raw !== "") continue;
+    if (n.startsWith("!")) {
+      throw new WalkError("InvalidPattern", {
+        pattern: raw,
+        reason:
+          "an ignore entry cannot start with `!` (it would ignore everything else); " +
+          "list what to ignore, and write `\\!` for a name that starts with `!`",
+      });
+    }
     ignorePatterns.push({ raw, body: n });
   }
   for (const n of negatives) ignorePatterns.push(n);
@@ -416,6 +418,26 @@ function normalizePattern(s) {
   const trailingSlash = s.endsWith("/") || s.endsWith("/.");
   const segs = s.split("/").filter((seg) => seg !== "" && seg !== ".");
   return segs.length === 0 ? "" : segs.join("/") + (trailingSlash ? "/" : "");
+}
+
+// WALKER_SPEC §4.2: the `!` count and the body of a written pattern;
+// `null` when it selects or ignores nothing (`.`, `//`, `!.`).
+// Normalization runs before the split (§4.3 first, so `/!x` ≡ `!x`) and
+// again after each `!` run, which can expose a `/` and then another
+// run: `!/!x` ≡ `!!x`, the body `x` with two `!`.
+function splitBangs(raw) {
+  let body = normalizePattern(raw);
+  if (body === "" && raw !== "") return null;
+  let bangs = 0;
+  for (;;) {
+    let run = 0;
+    while (run < body.length && body.charCodeAt(run) === 0x21 /* ! */) run++;
+    if (run === 0) return { bangs, body };
+    bangs += run;
+    const tail = body.slice(run);
+    body = normalizePattern(tail);
+    if (body === "" && tail !== "") return null;
+  }
 }
 
 // Compiles `{ raw, body }` pairs (`body` normalized: leading `/`
