@@ -16,8 +16,11 @@
 //! | line                                  | op                | output tokens                                   |
 //! |---------------------------------------|-------------------|-------------------------------------------------|
 //! | `m <flags> <pattern> <path>`          | `Glob::is_match`  | `match` / `no-match` / `err:<Kind>`             |
+//! | `n <flags> <pattern> <path>`          | `Glob::is_match_nfa` (the NFA, chains bypassed) | as `m`          |
 //! | `d <flags> <pattern> <dir>`           | `Glob::match_dir` | `pruned` / `descend` / `match` / `descend-match` / `descend-all` / `descend-all-match` / `err:<Kind>` |
-//! | `u <flags> <path> <pat1> [pat2 ...]`  | `Glob::union`     | `match` / `no-match` / `err:<Kind>`             |
+//! | `u <flags> <path> <pat1> [pat2 ...]`  | `Glob::union` + `is_match` | as `m`                                 |
+//! | `un <flags> <path> <pat1> [pat2 ...]` | `Glob::union` + `is_match_nfa` | as `m`                             |
+//! | `ud <flags> <dir> <pat1> [pat2 ...]`  | `Glob::union` + `match_dir` | as `d`                                |
 //! | `s <flags> <pat1> [pat2 ...]`         | `Glob::static_prefixes` (union when >1) | `px:<escaped,sorted>` / `err:<Kind>` |
 //!
 //! ## Byte escaping
@@ -64,34 +67,23 @@ fn handle(line: &str) -> String {
     };
 
     match cmd {
-        // m <flags> <pattern> <path>
-        "m" => {
-            let (pat, path) = match (decode_pattern(cols[2]), cols.get(3)) {
+        // m|n|d <flags> <pattern> <path>
+        "m" | "n" | "d" => {
+            let (pat, input) = match (decode_pattern(cols[2]), cols.get(3)) {
                 (Ok(p), Some(f)) => (p, unescape(f)),
                 _ => return "err:BadRequest".to_string(),
             };
             match Glob::new_with(&pat, opts) {
-                Ok(g) => is_match_token(g.is_match(&path)),
+                Ok(g) => answer(cmd, &g, &input),
                 Err(e) => err_token(&e),
             }
         }
-        // d <flags> <pattern> <dir>
-        "d" => {
-            let (pat, dir) = match (decode_pattern(cols[2]), cols.get(3)) {
-                (Ok(p), Some(f)) => (p, unescape(f)),
-                _ => return "err:BadRequest".to_string(),
-            };
-            match Glob::new_with(&pat, opts) {
-                Ok(g) => dir_token(g.match_dir(&dir)),
-                Err(e) => err_token(&e),
-            }
-        }
-        // u <flags> <path> <pat1> [pat2 ...]
-        "u" => {
+        // u|un|ud <flags> <path> <pat1> [pat2 ...]
+        "u" | "un" | "ud" => {
             if cols.len() < 4 {
                 return "err:BadRequest".to_string();
             }
-            let path = unescape(cols[2]);
+            let input = unescape(cols[2]);
             let mut patterns: Vec<String> = Vec::with_capacity(cols.len() - 3);
             for raw in &cols[3..] {
                 match decode_pattern(raw) {
@@ -100,7 +92,14 @@ fn handle(line: &str) -> String {
                 }
             }
             match Glob::union_with(&patterns, opts) {
-                Ok(g) => is_match_token(g.is_match(&path)),
+                Ok(g) => {
+                    let query = match cmd {
+                        "u" => "m",
+                        "un" => "n",
+                        _ => "d",
+                    };
+                    answer(query, &g, &input)
+                }
                 Err(e) => err_token(&e),
             }
         }
@@ -129,6 +128,15 @@ fn handle(line: &str) -> String {
             }
         }
         _ => "err:BadRequest".to_string(),
+    }
+}
+
+/// The answer to query `m`, `n` or `d` on `input`.
+fn answer(query: &str, g: &Glob, input: &[u8]) -> String {
+    match query {
+        "m" => is_match_token(g.is_match(input)),
+        "n" => is_match_token(g.is_match_nfa(input)),
+        _ => dir_token(g.match_dir(input)),
     }
 }
 

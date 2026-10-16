@@ -12,12 +12,20 @@
 //   node scripts/fuzz.mjs                         # 50k mixed cases, seed 1
 //   node scripts/fuzz.mjs --seed 99 --count 200000
 //   node scripts/fuzz.mjs --mode m                # only is_match (incl. negation)
+//   node scripts/fuzz.mjs --mode n                # only is_match on the NFA (chains bypassed)
 //   node scripts/fuzz.mjs --mode d                # only match_dir (6-valued, incl. negation)
 //   node scripts/fuzz.mjs --mode u                # only multi-pattern union
+//   node scripts/fuzz.mjs --mode un               # only union is_match on the NFA
+//   node scripts/fuzz.mjs --mode ud               # only union match_dir
 //   node scripts/fuzz.mjs --mode s                # only static_prefixes
 //   node scripts/fuzz.mjs --seeds 1-20 --count 50000   # sweep seeds (nightly)
 //
-// Wire format and escaping mirror tools/difftest/src/main.rs exactly.
+// Wire format and escaping mirror tools/difftest/src/main.rs exactly. The
+// Rust side runs the `fuzz` profile: release speed with `debug_assert!`
+// and overflow checks on.
+//
+// About 5% of the cases are long (four times the tokens), for the cost
+// guards and the large-graph paths.
 
 import { spawnSync } from "node:child_process";
 import { dirname } from "node:path";
@@ -34,7 +42,7 @@ function argVal(name, def) {
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : def;
 }
 const COUNT = Number(argVal("--count", "50000"));
-const MODE = argVal("--mode", "all"); // all | m | d | u | s
+const MODE = argVal("--mode", "all"); // all | m | n | d | u | un | ud | s
 const MAX_SAMPLES = Number(argVal("--max-samples", "30"));
 // `--seed N` for one run, or `--seeds A-B` to sweep a range.
 const SEEDS = (() => {
@@ -109,6 +117,14 @@ const PAT_TOKENS = [
   "{a,}",
   "{ab,{c,d}}",
   "{a,b}{c,d}",
+  // Braces that cross a separator: regrouping, pending `**/`, the
+  // work budget.
+  "{**,a}/",
+  "{/,a,}",
+  "{a/,a//}",
+  "{,/}",
+  "{a,/}",
+  "{a/,}",
   "\\*",
   "\\?",
   "\\[",
@@ -214,21 +230,23 @@ const DIR_TOKEN = [
   "descend-all-match",
 ];
 
+// Single-pattern queries take `c.pat`, union ones `c.patterns`; `m`, `u`
+// and their NFA twins `n`, `un` match `c.input`, `d` and `ud` take it as
+// a directory.
+const UNION = new Set(["u", "un", "ud"]);
+const NFA = new Set(["n", "un"]);
+const DIR = new Set(["d", "ud"]);
+
 function jsResult(c) {
-  const opts = { dot: c.dot, caseInsensitive: c.ci };
+  const opts = { dot: c.dot, caseInsensitive: c.ci, __engine: NFA.has(c.cmd) ? "nfa" : undefined };
   try {
-    if (c.cmd === "m") {
-      return compileMatcher(c.pat, opts).match(c.path) ? "match" : "no-match";
-    }
-    if (c.cmd === "d") {
-      return DIR_TOKEN[compileMatcher(c.pat, opts).matchDir(c.dir)];
-    }
     if (c.cmd === "s") {
       const px = compileMatcher(c.patterns, opts).staticPrefixes().map(escapeBytes).sort();
       return "px:" + px.join(",");
     }
-    // union
-    return compileMatcher(c.patterns, opts).match(c.path) ? "match" : "no-match";
+    const m = compileMatcher(UNION.has(c.cmd) ? c.patterns : c.pat, opts);
+    if (DIR.has(c.cmd)) return DIR_TOKEN[m.matchDir(c.input)];
+    return m.match(c.input) ? "match" : "no-match";
   } catch (e) {
     return e instanceof GlobError ? "err:" + e.kind : "err:UNKNOWN(" + (e && e.message) + ")";
   }
@@ -236,11 +254,12 @@ function jsResult(c) {
 
 function wireLine(c) {
   const f = `${c.dot ? 1 : 0}${c.ci ? 1 : 0}`;
-  if (c.cmd === "m") return `m\t${f}\t${patternWire(c.pat)}\t${pathWire(c.path)}`;
-  if (c.cmd === "d") return `d\t${f}\t${patternWire(c.pat)}\t${pathWire(c.dir)}`;
   if (c.cmd === "s") return `s\t${f}\t${c.patterns.map(patternWire).join("\t")}`;
-  // union: u <flags> <path> <pat...>
-  return `u\t${f}\t${pathWire(c.path)}\t${c.patterns.map(patternWire).join("\t")}`;
+  // union: <cmd> <flags> <input> <pat...>
+  if (UNION.has(c.cmd)) {
+    return `${c.cmd}\t${f}\t${pathWire(c.input)}\t${c.patterns.map(patternWire).join("\t")}`;
+  }
+  return `${c.cmd}\t${f}\t${patternWire(c.pat)}\t${pathWire(c.input)}`;
 }
 
 // ── generators ───────────────────────────────────────────────────────
@@ -269,11 +288,10 @@ function makeGen(seed) {
   };
 
   return () => {
-    const cmd = MODE === "all" ? pick(["m", "m", "m", "d", "u", "s"]) : MODE;
+    const cmd = MODE === "all" ? pick(["m", "m", "m", "n", "d", "d", "u", "un", "ud", "s"]) : MODE;
     const dot = chance(0.5);
     const ci = chance(0.5);
-    if (cmd === "m") return { cmd, dot, ci, pat: genPattern(10), path: genPath(8) };
-    if (cmd === "d") return { cmd, dot, ci, pat: genPattern(10), dir: genPath(8) };
+    const scale = chance(0.05) ? 4 : 1;
     if (cmd === "s") {
       // Single patterns keep negation; unions strip it (Rust rejects it).
       const k = chance(0.5) ? 1 : randint(2, 5);
@@ -281,13 +299,15 @@ function makeGen(seed) {
         k === 1 ? [genPattern(10)] : Array.from({ length: k }, () => stripBang(genPattern(6)));
       return { cmd, dot, ci, patterns };
     }
+    const input = genPath(8 * scale);
+    if (!UNION.has(cmd)) return { cmd, dot, ci, pat: genPattern(10 * scale), input };
     // union: 2..10 patterns stripped of `!` — negated members are the one
     // documented API divergence (Rust rejects NegatedInUnion, JS accepts;
     // GLOB_SPEC §10), so raw equality can't compare them.
     const k = randint(2, 10);
     const patterns = [];
-    for (let i = 0; i < k; i++) patterns.push(stripBang(genPattern(6)));
-    return { cmd, dot, ci, path: genPath(8), patterns };
+    for (let i = 0; i < k; i++) patterns.push(stripBang(genPattern(6 * scale)));
+    return { cmd, dot, ci, input, patterns };
   };
 }
 
@@ -299,7 +319,7 @@ function runSeed(seed) {
   const jsResults = cases.map(jsResult);
   const input = cases.map(wireLine).join("\n") + "\n";
 
-  const r = spawnSync("cargo", ["run", "--quiet", "--release", "-p", "difftest"], {
+  const r = spawnSync("cargo", ["run", "--quiet", "--profile", "fuzz", "-p", "difftest"], {
     input,
     encoding: "utf8",
     maxBuffer: 1 << 30,
@@ -350,14 +370,9 @@ const dt = ((Date.now() - t0) / 1000).toFixed(1);
 if (totalDiff > 0) {
   console.log(`\n--- divergence samples (first ${MAX_SAMPLES}) ---`);
   for (const { c, js, rust } of allSamples) {
-    const desc =
-      c.cmd === "u"
-        ? `patterns=${JSON.stringify(c.patterns)} path=${JSON.stringify(c.path)}`
-        : c.cmd === "s"
-          ? `patterns=${JSON.stringify(c.patterns)}`
-          : c.cmd === "d"
-            ? `pattern=${JSON.stringify(c.pat)} dir=${JSON.stringify(c.dir)}`
-            : `pattern=${JSON.stringify(c.pat)} path=${JSON.stringify(c.path)}`;
+    const what =
+      c.cmd === "s" ? "" : ` ${DIR.has(c.cmd) ? "dir" : "path"}=${JSON.stringify(c.input)}`;
+    const desc = `${c.patterns ? `patterns=${JSON.stringify(c.patterns)}` : `pattern=${JSON.stringify(c.pat)}`}${what}`;
     console.log(`  [${c.cmd}] ${desc} dot=${c.dot} ci=${c.ci}  js=${js}  rust=${rust}`);
   }
   console.log(`\n✗ ${totalDiff}/${totalN} JS↔Rust divergences in ${dt}s`);

@@ -757,3 +757,37 @@ a/{{**/c,x}d,y}	a/b/cd	match
 {a,/**}/{**/x,b}	a//b	no-match
 {a,/**}/{**/x,b}	/p/q/x	match
 {a,/**}/{**/x,b}	/p/b	match
+
+## engine.paths
+# Paths only these rows reach (mutation testing, 2026-10 audit): a list
+# of nine suffixes (an index past eight), with its prefix, its length
+# check and case folding; short suffix lists after `?`; a brace whose
+# empty branch leaves the bare segment.
+*.{a,b,c,d,e,f,g,h,i}	x.a	match
+*.{a,b,c,d,e,f,g,h,i}	x.j	no-match
+*.{a,b,c,d,e,f,g,h,i}	X.A	match	case_insensitive=true
+p*.{a,b,c,d,e,f,g,h,i}	x.a	no-match
+p*.{a,b,c,d,e,f,g,h,i}	px.i	match
+p?{a,b,c,d,e,f,g,h,ii}	pxxa	no-match
+p?{a,b,c,d,e,f,g,h,ii}	pxii	match
+?.{ts,js}	a.ts	match
+?.{ts,js}	ab.ts	no-match
+a?{b,c}	axb	match
+a?{b,c}	ab	no-match
+{,**/}x	a/x	match
+{,**/}x	x	match
+{,**/}x	a/y	no-match
+
+## dot.protection.first.element (§12.4)
+# Under dot=false a segment that starts with `.` needs a first element
+# that takes the `.` itself; a `*` there matches nothing, not even the
+# empty string.
+*.txt	.txt	no-match	dot=false
+*.*	.a	no-match	dot=false
+*{.a,b}	.a	no-match	dot=false
+{*,.}a	.a	match	dot=false
+[.]a	.a	match	dot=false
+[,-.]a	.a	match	dot=false
+[!a]a	.a	no-match	dot=false
+a/*.txt	a/.txt	no-match	dot=false
+*.txt	.txt	match	dot=true

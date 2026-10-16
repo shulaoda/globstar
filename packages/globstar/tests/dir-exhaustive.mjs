@@ -45,7 +45,7 @@ const PSEG = ["a", "b", "ab", "c", ".a"];
 
 function enumerate(segs, depth) {
   const out = [];
-  const idx = new Array(depth).fill(0);
+  const idx = Array.from({ length: depth }, () => 0);
   for (;;) {
     out.push(idx.map((i) => segs[i]).join("/"));
     let d = depth;
@@ -66,12 +66,13 @@ const universe = [...enumerate(PSEG, 1), ...enumerate(PSEG, 2), ...enumerate(PSE
 const suffixes = [...enumerate(PSEG, 1), ...enumerate(PSEG, 2), ...enumerate(PSEG, 3)];
 
 // Does every `dir + "/" + suffix` match?
-const allBelow = (matcher, dir) => suffixes.every((s) => matcher.match(`${dir}/${s}`));
+const allBelow = (matcher, dir, set = suffixes) => set.every((s) => matcher.match(`${dir}/${s}`));
 
 const isBelow = (child, dir) =>
   child.length > dir.length && child[dir.length] === "/" && child.startsWith(dir);
 
-function check(pats, paths, dot, ci) {
+// `set` is the suffixes all-below is judged on.
+function check(pats, paths, dot, ci, set = suffixes) {
   const below = paths.map((d) => {
     const out = [];
     for (let j = 0; j < paths.length; j++) if (isBelow(paths[j], d)) out.push(j);
@@ -106,7 +107,7 @@ function check(pats, paths, dot, ci) {
 
       assert.equal(
         DirMatch.matchesAllBelow(dm),
-        allBelow(def, dir),
+        allBelow(def, dir, set),
         `all-below flag != every descendant matches: ${ctx} dm=${dm}`,
       );
       cases++;
@@ -173,6 +174,21 @@ for (const a of UNION_CORE)
   for (const b of UNION_CORE) for (const c of UNION_CORE) unionSets.push([a, b, c]);
 total += checkUnion(unionSets, universe, false, false);
 total += checkUnion(unionSets, universe, true, false);
+
+// A globstar, then three elements: the chain's tail tokens take one or
+// two of them, which no shorter pattern reaches. Paths go four deep, and
+// all-below is judged three levels down, as deep as the tail. Twin of
+// `dir_exhaustive_long_tails`.
+{
+  const SEG = ["a", "b", ".a"];
+  const pats = ["", "a/", "*/"].flatMap((h) =>
+    enumerate(["*", "a", "?", ".a"], 3).map((t) => `${h}**/${t}`),
+  );
+  const paths = [1, 2, 3, 4].flatMap((d) => enumerate(SEG, d));
+  const below = [1, 2, 3].flatMap((d) => enumerate(SEG, d));
+  total += check(pats, paths, false, false, below);
+  total += check(pats, paths, true, false, below);
+}
 
 const CI_SEGMENTS = ["A", "b", "A*", "*A", "[A-B]", "{A,b}"];
 const CI_PSEG = ["a", "A", "b", "ab"];

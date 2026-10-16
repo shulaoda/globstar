@@ -415,3 +415,11 @@ src/**		descend	dot=true
 
 ## all-below.negated.pattern.stays.conservative
 !/p/src/**	/p/dist	descend	dot=true
+
+## all-below.long.tail
+# Three wildcard segments after `**`: `a/x/y` is below `a/x` and does
+# not match, so `a/x` is not covered; below `a/x/y` every path has the
+# four segments, though `a/x/y` itself does not.
+a/**/*/*/*	a/x	descend	dot=true
+a/**/*/*/*	a/x/y	descend-all	dot=true
+a/**/*/*/*	a/x/y/z	descend-all-match	dot=true

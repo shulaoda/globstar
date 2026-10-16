@@ -106,8 +106,12 @@ fn below_map(paths: &[String]) -> Vec<Vec<usize>> {
 }
 
 fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
+    check_below(patterns, paths, &suffixes(), dot, ci);
+}
+
+/// `check`, with all-below judged on `dir/s` for each of `suffixes`.
+fn check_below(patterns: &[String], paths: &[String], suffixes: &[String], dot: bool, ci: bool) {
     let below = below_map(paths);
-    let suffixes = suffixes();
 
     for pattern in patterns {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
@@ -152,7 +156,7 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
 
             assert_eq!(
                 dm.matches_all_below(),
-                all_below(|p| default.is_match(p), dir, &suffixes),
+                all_below(|p| default.is_match(p), dir, suffixes),
                 "all-below flag != every descendant matches: pattern={pattern:?} dir={dir:?} \
                  dot={dot} ci={ci} dm={dm:?}"
             );
@@ -246,6 +250,28 @@ fn dir_exhaustive_unions() {
     let paths = universe();
     check_union(&sets, &paths, false, false);
     check_union(&sets, &paths, true, false);
+}
+
+/// A globstar, then three elements: the chain's tail tokens take one or
+/// two of them, which no shorter pattern reaches. Paths go four deep,
+/// and all-below is judged three levels down, as deep as the tail.
+#[test]
+fn dir_exhaustive_long_tails() {
+    const HEADS: &[&str] = &["", "a/", "*/"];
+    const TAIL: &[&str] = &["*", "a", "?", ".a"];
+    const SEG: &[&str] = &["a", "b", ".a"];
+    let pats: Vec<String> = HEADS
+        .iter()
+        .flat_map(|h| {
+            enumerate(TAIL, 3)
+                .into_iter()
+                .map(move |t| format!("{h}**/{t}"))
+        })
+        .collect();
+    let paths: Vec<String> = (1..=4).flat_map(|d| enumerate(SEG, d)).collect();
+    let suffixes: Vec<String> = (1..=3).flat_map(|d| enumerate(SEG, d)).collect();
+    check_below(&pats, &paths, &suffixes, false, false);
+    check_below(&pats, &paths, &suffixes, true, false);
 }
 
 #[test]

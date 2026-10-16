@@ -11,13 +11,18 @@
 //! `match_dir` rows in `tests/corpus/corpus-dir.txt`; multi-pattern rows
 //! in `tests/corpus/corpus-multi.txt`. Parse-error rows live in
 //! `tests/corpus/corpus-err.txt` and only exercise the public API
-//! (engines see only well-formed programs).
+//! (engines see only well-formed programs); a single-pattern row may
+//! also expect `err:Kind`.
 //!
-//! Output lines like `corpus=single engine=globstar pass=N fail=N skip=N`
-//! are picked up by the `scripts/verify.mjs` orchestrator when this file
-//! is invoked via `cargo test --test corpus -- --nocapture`.
+//! Nothing is skipped: a compile error where a row expects an answer is
+//! a failure, and a row the loader cannot read stops the run.
+//!
+//! Output lines like `corpus=single engine=globstar pass=N fail=N` are
+//! picked up by the `scripts/verify.mjs` orchestrator when this file is
+//! invoked via `cargo test --test corpus -- --nocapture`.
 
-use globstar::{CompileOptions, DirMatch, Glob};
+use globstar::{CompileOptions, DirMatch, Glob, GlobError};
+use std::fmt::Debug;
 use std::path::PathBuf;
 
 const CORPUS_DIR: &str = "tests/corpus";
@@ -43,59 +48,77 @@ fn corpus_path(name: &str) -> PathBuf {
     PathBuf::from(manifest).join(CORPUS_DIR).join(name)
 }
 
+/// What a row expects: an answer, or a compile error of this kind.
 #[derive(Debug)]
-struct SingleRow {
-    file: &'static str,
-    line_no: usize,
-    pattern: String,
-    path: Vec<u8>,
-    expected: bool,
-    dot: bool,
-    case_insensitive: bool,
+enum Want<T> {
+    Value(T),
+    Err(String),
 }
 
-#[derive(Debug)]
-struct MultiRow {
-    line_no: usize,
-    patterns: Vec<String>,
-    path: Vec<u8>,
-    expected: bool,
-    dot: bool,
-    case_insensitive: bool,
+/// The `GlobError` variant's name, as the corpus files spell it.
+fn error_kind(e: &GlobError) -> String {
+    let debug = format!("{e:?}");
+    debug
+        .split([' ', '{', '('])
+        .next()
+        .unwrap_or(&debug)
+        .to_string()
 }
 
-#[derive(Debug)]
-struct DirRow {
-    line_no: usize,
-    pattern: String,
-    path: Vec<u8>,
-    expected: DirMatch,
-    /// Per-spec / Walker convention, `corpus-dir.txt` rows default to
-    /// `dot=false` (Bash-style dot-protection — the walker default),
-    /// not `CompileOptions::default()`'s `dot=true`. Rows that need
-    /// the other half of the matrix carry an explicit `dot=true` flag.
-    dot: bool,
-    case_insensitive: bool,
+/// `Ok` when `got` is what `want` asks for, else what went wrong.
+fn judge<T: PartialEq + Debug>(got: Result<T, GlobError>, want: &Want<T>) -> Result<(), String> {
+    match (got, want) {
+        (Ok(v), Want::Value(w)) if v == *w => Ok(()),
+        (Err(e), Want::Err(k)) if error_kind(&e) == *k => Ok(()),
+        (Ok(v), _) => Err(format!("got {v:?}, expected {want:?}")),
+        (Err(e), _) => Err(format!(
+            "got error {} ({e}), expected {want:?}",
+            error_kind(&e)
+        )),
+    }
 }
 
 #[derive(Default)]
 struct Stats {
     pass: u32,
     fail: u32,
-    skip: u32,
     failures: Vec<String>,
 }
 
 impl Stats {
-    fn record(&mut self, ok: bool, msg_on_fail: impl FnOnce() -> String) {
-        if ok {
-            self.pass += 1;
-        } else {
-            self.fail += 1;
-            if self.failures.len() < 10 {
-                self.failures.push(msg_on_fail());
+    fn record(&mut self, verdict: Result<(), String>, row: impl FnOnce() -> String) {
+        match verdict {
+            Ok(()) => self.pass += 1,
+            Err(why) => {
+                self.fail += 1;
+                if self.failures.len() < 10 {
+                    self.failures.push(format!("{}: {why}", row()));
+                }
             }
         }
+    }
+
+    fn print(&self, corpus: &str, engine: &str) {
+        println!(
+            "corpus={corpus:<6} engine={engine:<11} pass={} fail={}",
+            self.pass, self.fail
+        );
+    }
+}
+
+/// Print every engine's line, then fail with their samples.
+fn finish(corpus: &str, stats: &[(&str, &Stats)]) {
+    for (engine, s) in stats {
+        s.print(corpus, engine);
+    }
+    let total: u32 = stats.iter().map(|(_, s)| s.fail).sum();
+    if total > 0 {
+        for (_, s) in stats {
+            for f in &s.failures {
+                eprintln!("  FAIL: {f}");
+            }
+        }
+        panic!("{total} {corpus} corpus assertion(s) failed");
     }
 }
 
@@ -123,67 +146,134 @@ fn unescape(s: &str) -> Vec<u8> {
     out
 }
 
-fn parse_flags_default(s: &str, default_dot: bool) -> (bool, bool) {
+/// The flags column: `dot=` and `case_insensitive=`, each `true` or
+/// `false`; anything else is a typo and stops the run.
+fn parse_flags(s: &str, default_dot: bool, at: &str) -> (bool, bool) {
     let mut dot = default_dot;
     let mut ci = false;
     for kv in s.split(',') {
-        if let Some((k, v)) = kv.split_once('=') {
-            match k.trim() {
-                "dot" => dot = v.trim() == "true",
-                "case_insensitive" => ci = v.trim() == "true",
-                _ => {}
-            }
+        let (k, v) = kv
+            .split_once('=')
+            .unwrap_or_else(|| panic!("{at}: bad flag `{kv}`"));
+        let v = match v.trim() {
+            "true" => true,
+            "false" => false,
+            other => panic!("{at}: bad flag value `{other}`"),
+        };
+        match k.trim() {
+            "dot" => dot = v,
+            "case_insensitive" => ci = v,
+            other => panic!("{at}: unknown flag `{other}`"),
         }
     }
     (dot, ci)
 }
 
-fn parse_flags(s: &str) -> (bool, bool) {
-    parse_flags_default(s, true)
+/// A row's columns: pattern, path, expected, and the flags (with the
+/// default `dot`).
+struct Cols {
+    at: String,
+    pattern: String,
+    path: Vec<u8>,
+    expected: String,
+    dot: bool,
+    case_insensitive: bool,
 }
 
-fn load_single_corpus() -> Vec<SingleRow> {
+/// The data rows of `file`; a short row stops the run.
+fn rows_of(file: &str, default_dot: bool) -> Vec<Cols> {
+    let path = corpus_path(file);
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
     let mut rows = Vec::new();
-    for &file in SINGLE_FILES {
-        let path = corpus_path(file);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
-        for (idx, line) in text.lines().enumerate() {
-            let line_no = idx + 1;
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let cols: Vec<&str> = line.split('\t').collect();
-            if cols.len() < 3 {
-                continue;
-            }
-            let pattern = match std::str::from_utf8(&unescape(cols[0])) {
-                Ok(s) => s.to_owned(),
-                Err(_) => continue,
-            };
-            let path = unescape(cols[1]);
-            let expected = match cols[2] {
-                "match" => true,
-                "no-match" => false,
-                _ => continue,
-            };
-            let (dot, ci) = if cols.len() >= 4 {
-                parse_flags(cols[3])
-            } else {
-                (true, false)
-            };
-            rows.push(SingleRow {
-                file,
-                line_no,
-                pattern,
-                path,
-                expected,
-                dot,
-                case_insensitive: ci,
-            });
+    for (idx, line) in text.lines().enumerate() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
         }
+        let at = format!("{file}:{}", idx + 1);
+        let cols: Vec<&str> = line.split('\t').collect();
+        assert!(
+            cols.len() >= 3,
+            "{at}: a row needs PATTERN, PATH and EXPECTED"
+        );
+        let (dot, case_insensitive) = match cols.get(3) {
+            Some(flags) => parse_flags(flags, default_dot, &at),
+            None => (default_dot, false),
+        };
+        rows.push(Cols {
+            pattern: cols[0].to_string(),
+            path: unescape(cols[1]),
+            expected: cols[2].to_string(),
+            dot,
+            case_insensitive,
+            at,
+        });
     }
     rows
+}
+
+impl Cols {
+    /// The pattern column as text.
+    fn pattern(&self) -> String {
+        String::from_utf8(unescape(&self.pattern))
+            .unwrap_or_else(|_| panic!("{}: pattern is not UTF-8", self.at))
+    }
+
+    /// The patterns column of a multi-pattern file.
+    fn patterns(&self) -> Vec<String> {
+        match parse_json_string_array(&self.pattern) {
+            Some(v) if !v.is_empty() => v,
+            _ => panic!("{}: bad PATTERNS_JSON `{}`", self.at, self.pattern),
+        }
+    }
+
+    /// The expected column: `err:Kind`, or an answer `value` reads.
+    fn want<T>(&self, value: impl Fn(&str) -> Option<T>) -> Want<T> {
+        match self.expected.strip_prefix("err:") {
+            Some(kind) => Want::Err(kind.to_string()),
+            None => Want::Value(
+                value(&self.expected)
+                    .unwrap_or_else(|| panic!("{}: unknown expected `{}`", self.at, self.expected)),
+            ),
+        }
+    }
+
+    fn opts(&self) -> CompileOptions {
+        CompileOptions::default()
+            .dot(self.dot)
+            .case_insensitive(self.case_insensitive)
+    }
+
+    /// The row as a failure message names it.
+    fn describe(&self, pattern: &dyn Debug, engine: &str) -> String {
+        format!(
+            "{}: pattern={pattern:?} path={:?} dot={} ci={}: {engine}",
+            self.at,
+            String::from_utf8_lossy(&self.path),
+            self.dot,
+            self.case_insensitive,
+        )
+    }
+}
+
+fn parse_match(s: &str) -> Option<bool> {
+    match s {
+        "match" => Some(true),
+        "no-match" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_dir(s: &str) -> Option<DirMatch> {
+    match s {
+        "pruned" => Some(DirMatch::Pruned),
+        "descend" => Some(DirMatch::Descend),
+        "match" => Some(DirMatch::Match),
+        "descend-match" => Some(DirMatch::DescendAndMatch),
+        "descend-all" => Some(DirMatch::DescendAll),
+        "descend-all-match" => Some(DirMatch::DescendAllAndMatch),
+        _ => None,
+    }
 }
 
 /// Minimal JSON-array decoder for `corpus-multi.txt`'s patterns column —
@@ -236,485 +326,117 @@ fn parse_json_string_array(s: &str) -> Option<Vec<String>> {
     Some(out)
 }
 
-fn parse_dir_expected(s: &str) -> Option<DirMatch> {
-    match s {
-        "pruned" => Some(DirMatch::Pruned),
-        "descend" => Some(DirMatch::Descend),
-        "match" => Some(DirMatch::Match),
-        "descend-match" => Some(DirMatch::DescendAndMatch),
-        "descend-all" => Some(DirMatch::DescendAll),
-        "descend-all-match" => Some(DirMatch::DescendAllAndMatch),
-        _ => None,
-    }
-}
-
-fn load_dir_corpus() -> Vec<DirRow> {
-    let path = corpus_path("corpus-dir.txt");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
-    let mut rows = Vec::new();
-    for (idx, line) in text.lines().enumerate() {
-        let line_no = idx + 1;
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let cols: Vec<&str> = line.split('\t').collect();
-        if cols.len() < 3 {
-            continue;
-        }
-        let pattern = match std::str::from_utf8(&unescape(cols[0])) {
-            Ok(s) => s.to_owned(),
-            Err(_) => continue,
-        };
-        let path = unescape(cols[1]);
-        let expected = match parse_dir_expected(cols[2]) {
-            Some(d) => d,
-            None => panic!("corpus-dir.txt:{line_no}: unknown DirMatch `{}`", cols[2]),
-        };
-        let (dot, ci) = if cols.len() >= 4 {
-            parse_flags_default(cols[3], false)
-        } else {
-            (false, false)
-        };
-        rows.push(DirRow {
-            line_no,
-            pattern,
-            path,
-            expected,
-            dot,
-            case_insensitive: ci,
-        });
-    }
-    rows
-}
-
-fn load_multi_corpus() -> Vec<MultiRow> {
-    let path = corpus_path("corpus-multi.txt");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
-    let mut rows = Vec::new();
-    for (idx, line) in text.lines().enumerate() {
-        let line_no = idx + 1;
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let cols: Vec<&str> = line.split('\t').collect();
-        if cols.len() < 3 {
-            continue;
-        }
-        let patterns = match parse_json_string_array(cols[0]) {
-            Some(v) if !v.is_empty() => v,
-            _ => panic!(
-                "corpus-multi.txt:{line_no}: bad PATTERNS_JSON `{}`",
-                cols[0]
-            ),
-        };
-        let path = unescape(cols[1]);
-        let expected = match cols[2] {
-            "match" => true,
-            "no-match" => false,
-            other => panic!("corpus-multi.txt:{line_no}: unknown expected `{other}`"),
-        };
-        let (dot, ci) = if cols.len() >= 4 {
-            parse_flags(cols[3])
-        } else {
-            (true, false)
-        };
-        rows.push(MultiRow {
-            line_no,
-            patterns,
-            path,
-            expected,
-            dot,
-            case_insensitive: ci,
-        });
-    }
-    rows
-}
-
-// ── single-pattern engine runners ─────────────────────────────────────
-
-fn run_globstar_single(row: &SingleRow) -> Option<bool> {
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = Glob::new_with(&row.pattern, opts).ok()?;
-    Some(g.is_match(&row.path))
-}
-
-fn run_nfa_single(row: &SingleRow) -> Option<bool> {
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = Glob::new_with(&row.pattern, opts).ok()?;
-    Some(g.is_match_nfa(&row.path))
-}
-
-fn fail_msg_single(row: &SingleRow, engine: &str, got: bool) -> String {
-    format!(
-        "{}:{}: pattern={:?} path={:?} dot={} ci={}: {} got {}, expected {}",
-        row.file,
-        row.line_no,
-        row.pattern,
-        String::from_utf8_lossy(&row.path),
-        row.dot,
-        row.case_insensitive,
-        engine,
-        got,
-        row.expected
-    )
-}
-
-// ── multi-pattern engine runners ──────────────────────────────────────
-
-fn run_globstar_multi(row: &MultiRow) -> Option<bool> {
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = Glob::union_with(row.patterns.iter().map(|s| s.as_str()), opts).ok()?;
-    Some(g.is_match(&row.path))
-}
-
-fn run_nfa_multi(row: &MultiRow) -> Option<bool> {
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = Glob::union_with(row.patterns.iter().map(|s| s.as_str()), opts).ok()?;
-    Some(g.is_match_nfa(&row.path))
-}
-
-// ── match_dir engine runners ──────────────────────────────────────────
-
-/// Public-API runner. `Glob::match_dir` honors leading-`!` negation
-/// (conservatively `Descend`, GLOB_SPEC §13.4), so negated rows ARE
-/// exercised here.
-fn run_globstar_dir(row: &DirRow) -> Option<DirMatch> {
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = Glob::new_with(&row.pattern, opts).ok()?;
-    Some(g.match_dir(&row.path))
-}
-
-fn fail_msg_dir(row: &DirRow, engine: &str, got: DirMatch) -> String {
-    format!(
-        "corpus-dir.txt:{}: pattern={:?} path={:?} dot={} ci={}: {} got {:?}, expected {:?}",
-        row.line_no,
-        row.pattern,
-        String::from_utf8_lossy(&row.path),
-        row.dot,
-        row.case_insensitive,
-        engine,
-        got,
-        row.expected
-    )
-}
-
-fn fail_msg_multi(row: &MultiRow, engine: &str, got: bool) -> String {
-    format!(
-        "corpus-multi.txt:{}: patterns={:?} path={:?} dot={} ci={}: {} got {}, expected {}",
-        row.line_no,
-        row.patterns,
-        String::from_utf8_lossy(&row.path),
-        row.dot,
-        row.case_insensitive,
-        engine,
-        got,
-        row.expected
-    )
-}
-
 // ── tests ─────────────────────────────────────────────────────────────
 
 #[test]
 fn corpus_single_engines_vs_truth() {
-    let rows = load_single_corpus();
-    assert!(!rows.is_empty(), "no single-pattern corpus rows loaded");
-
-    let mut globstar_stats = Stats::default();
-    let mut nfa_stats = Stats::default();
-
-    for row in &rows {
-        match run_globstar_single(row) {
-            Some(got) => globstar_stats.record(got == row.expected, || {
-                fail_msg_single(row, "globstar", got)
-            }),
-            None => globstar_stats.skip += 1,
-        }
-        match run_nfa_single(row) {
-            Some(got) => nfa_stats.record(got == row.expected, || fail_msg_single(row, "nfa", got)),
-            None => nfa_stats.skip += 1,
+    let mut globstar = Stats::default();
+    let mut nfa = Stats::default();
+    let mut rows = 0;
+    for file in SINGLE_FILES {
+        for row in rows_of(file, true) {
+            rows += 1;
+            let pattern = row.pattern();
+            let want = row.want(parse_match);
+            let g = Glob::new_with(&pattern, row.opts());
+            globstar.record(
+                judge(
+                    g.as_ref()
+                        .map(|g| g.is_match(&row.path))
+                        .map_err(Clone::clone),
+                    &want,
+                ),
+                || row.describe(&pattern, "globstar"),
+            );
+            nfa.record(judge(g.map(|g| g.is_match_nfa(&row.path)), &want), || {
+                row.describe(&pattern, "nfa")
+            });
         }
     }
-
-    println!(
-        "corpus=single engine=globstar    pass={} fail={} skip={}",
-        globstar_stats.pass, globstar_stats.fail, globstar_stats.skip
-    );
-    println!(
-        "corpus=single engine=nfa         pass={} fail={} skip={}",
-        nfa_stats.pass, nfa_stats.fail, nfa_stats.skip
-    );
-
-    let total_fail = globstar_stats.fail + nfa_stats.fail;
-    if total_fail > 0 {
-        for f in globstar_stats
-            .failures
-            .iter()
-            .chain(nfa_stats.failures.iter())
-        {
-            eprintln!("  FAIL: {f}");
-        }
-        panic!("{total_fail} single-pattern corpus assertion(s) failed");
-    }
+    assert!(rows > 0, "no single-pattern corpus rows loaded");
+    finish("single", &[("globstar", &globstar), ("nfa", &nfa)]);
 }
 
 #[test]
 fn corpus_multi_engines_vs_truth() {
-    let rows = load_multi_corpus();
+    let mut globstar = Stats::default();
+    let mut nfa = Stats::default();
+    let rows = rows_of("corpus-multi.txt", true);
     assert!(!rows.is_empty(), "no multi-pattern corpus rows loaded");
-
-    let mut globstar_stats = Stats::default();
-    let mut nfa_stats = Stats::default();
-
     for row in &rows {
-        match run_globstar_multi(row) {
-            Some(got) => {
-                globstar_stats.record(got == row.expected, || fail_msg_multi(row, "globstar", got))
-            }
-            None => globstar_stats.skip += 1,
-        }
-        match run_nfa_multi(row) {
-            Some(got) => nfa_stats.record(got == row.expected, || fail_msg_multi(row, "nfa", got)),
-            None => nfa_stats.skip += 1,
-        }
-    }
-
-    println!(
-        "corpus=multi  engine=globstar    pass={} fail={} skip={}",
-        globstar_stats.pass, globstar_stats.fail, globstar_stats.skip
-    );
-    println!(
-        "corpus=multi  engine=nfa         pass={} fail={} skip={}",
-        nfa_stats.pass, nfa_stats.fail, nfa_stats.skip
-    );
-
-    let total_fail = globstar_stats.fail + nfa_stats.fail;
-    if total_fail > 0 {
-        for f in globstar_stats
-            .failures
-            .iter()
-            .chain(nfa_stats.failures.iter())
-        {
-            eprintln!("  FAIL: {f}");
-        }
-        panic!("{total_fail} multi-pattern corpus assertion(s) failed");
-    }
-}
-
-#[test]
-fn corpus_dir_engines_vs_truth() {
-    let rows = load_dir_corpus();
-    assert!(!rows.is_empty(), "no dir corpus rows loaded");
-
-    let mut globstar_stats = Stats::default();
-
-    for row in &rows {
-        match run_globstar_dir(row) {
-            Some(got) => {
-                globstar_stats.record(got == row.expected, || fail_msg_dir(row, "globstar", got))
-            }
-            None => globstar_stats.skip += 1,
-        }
-    }
-
-    println!(
-        "corpus=dir    engine=globstar    pass={} fail={} skip={}",
-        globstar_stats.pass, globstar_stats.fail, globstar_stats.skip
-    );
-
-    let total_fail = globstar_stats.fail;
-    if total_fail > 0 {
-        for f in globstar_stats.failures.iter() {
-            eprintln!("  FAIL: {f}");
-        }
-        panic!("{total_fail} dir-corpus assertion(s) failed");
-    }
-}
-
-// ── multi-pattern match_dir corpus ────────────────────────────────────
-
-#[derive(Debug)]
-struct MultiDirRow {
-    line_no: usize,
-    patterns: Vec<String>,
-    path: Vec<u8>,
-    expected: DirMatch,
-    dot: bool,
-    case_insensitive: bool,
-}
-
-fn load_multi_dir_corpus() -> Vec<MultiDirRow> {
-    let path = corpus_path("corpus-multi-dir.txt");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
-    let mut rows = Vec::new();
-    for (idx, line) in text.lines().enumerate() {
-        let line_no = idx + 1;
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let cols: Vec<&str> = line.split('\t').collect();
-        if cols.len() < 3 {
-            continue;
-        }
-        let patterns = match parse_json_string_array(cols[0]) {
-            Some(p) if !p.is_empty() => p,
-            _ => panic!(
-                "corpus-multi-dir.txt:{line_no}: bad PATTERNS_JSON `{}`",
-                cols[0]
+        let patterns = row.patterns();
+        let want = row.want(parse_match);
+        let g = Glob::union_with(&patterns, row.opts());
+        globstar.record(
+            judge(
+                g.as_ref()
+                    .map(|g| g.is_match(&row.path))
+                    .map_err(Clone::clone),
+                &want,
             ),
-        };
-        let path = unescape(cols[1]);
-        let expected = match parse_dir_expected(cols[2]) {
-            Some(d) => d,
-            None => panic!(
-                "corpus-multi-dir.txt:{line_no}: unknown DirMatch `{}`",
-                cols[2]
-            ),
-        };
-        let (dot, ci) = if cols.len() >= 4 {
-            parse_flags_default(cols[3], false)
-        } else {
-            (false, false)
-        };
-        rows.push(MultiDirRow {
-            line_no,
-            patterns,
-            path,
-            expected,
-            dot,
-            case_insensitive: ci,
+            || row.describe(&patterns, "globstar"),
+        );
+        nfa.record(judge(g.map(|g| g.is_match_nfa(&row.path)), &want), || {
+            row.describe(&patterns, "nfa")
         });
     }
-    rows
+    finish("multi", &[("globstar", &globstar), ("nfa", &nfa)]);
 }
 
-fn run_globstar_multi_dir(row: &MultiDirRow) -> Option<DirMatch> {
-    let opts = CompileOptions::default()
-        .dot(row.dot)
-        .case_insensitive(row.case_insensitive);
-    let g = Glob::union_with(row.patterns.iter().map(|s| s.as_str()), opts).ok()?;
-    Some(g.match_dir(&row.path))
-}
-
-fn fail_msg_multi_dir(row: &MultiDirRow, engine: &str, got: DirMatch) -> String {
-    format!(
-        "corpus-multi-dir.txt:{}: patterns={:?} dir={:?} dot={} ci={}: {} got {:?}, expected {:?}",
-        row.line_no,
-        row.patterns,
-        String::from_utf8_lossy(&row.path),
-        row.dot,
-        row.case_insensitive,
-        engine,
-        got,
-        row.expected
-    )
+/// `corpus-dir.txt` rows default to `dot=false`, the walker convention;
+/// rows for the other half of the matrix say `dot=true`. Negated rows
+/// run too: `match_dir` answers `Descend` for them (GLOB_SPEC §13.4).
+#[test]
+fn corpus_dir_engines_vs_truth() {
+    let mut globstar = Stats::default();
+    let rows = rows_of("corpus-dir.txt", false);
+    assert!(!rows.is_empty(), "no dir corpus rows loaded");
+    for row in &rows {
+        let pattern = row.pattern();
+        let got = Glob::new_with(&pattern, row.opts()).map(|g| g.match_dir(&row.path));
+        globstar.record(judge(got, &row.want(parse_dir)), || {
+            row.describe(&pattern, "globstar")
+        });
+    }
+    finish("dir", &[("globstar", &globstar)]);
 }
 
 #[test]
 fn corpus_multi_dir_engines_vs_truth() {
-    let rows = load_multi_dir_corpus();
+    let mut globstar = Stats::default();
+    let rows = rows_of("corpus-multi-dir.txt", false);
     assert!(!rows.is_empty(), "no multi-dir corpus rows loaded");
-
-    let mut globstar_stats = Stats::default();
-
     for row in &rows {
-        match run_globstar_multi_dir(row) {
-            Some(got) => globstar_stats.record(got == row.expected, || {
-                fail_msg_multi_dir(row, "globstar", got)
-            }),
-            None => globstar_stats.skip += 1,
-        }
+        let patterns = row.patterns();
+        let got = Glob::union_with(&patterns, row.opts()).map(|g| g.match_dir(&row.path));
+        globstar.record(judge(got, &row.want(parse_dir)), || {
+            row.describe(&patterns, "globstar")
+        });
     }
-
-    println!(
-        "corpus=mdir   engine=globstar    pass={} fail={} skip={}",
-        globstar_stats.pass, globstar_stats.fail, globstar_stats.skip
-    );
-
-    let total_fail = globstar_stats.fail;
-    if total_fail > 0 {
-        for f in globstar_stats.failures.iter() {
-            eprintln!("  FAIL: {f}");
-        }
-        panic!("{total_fail} multi-dir corpus assertion(s) failed");
-    }
+    finish("mdir", &[("globstar", &globstar)]);
 }
 
+/// `corpus-err.txt`: PATTERN, then the error kind.
 #[test]
 fn corpus_err_parse_failures() {
     let path = corpus_path("corpus-err.txt");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
-
-    let mut pass = 0u32;
-    let mut fail = 0u32;
-    let mut failures: Vec<String> = Vec::new();
-
+    let mut stats = Stats::default();
     for (idx, line) in text.lines().enumerate() {
-        let line_no = idx + 1;
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 2 {
-            continue;
-        }
-        let pattern = unescape(fields[0]);
-        let expected_kind = fields[1];
-
-        let pattern_str = match std::str::from_utf8(&pattern) {
-            Ok(s) => s,
-            Err(_) => {
-                failures.push(format!("line {line_no}: pattern not utf8"));
-                fail += 1;
-                continue;
-            }
-        };
-
-        match Glob::new(pattern_str) {
-            Err(e) => {
-                let kind = format!("{:?}", e);
-                let variant_prefix = kind.split('{').next().unwrap_or(&kind).trim().to_string();
-                let variant = variant_prefix
-                    .split(' ')
-                    .next()
-                    .unwrap_or(&variant_prefix)
-                    .to_string();
-                if variant == expected_kind {
-                    pass += 1;
-                } else {
-                    fail += 1;
-                    failures.push(format!(
-                        "line {line_no}: pattern={pattern_str:?}: expected {expected_kind}, got {variant} ({e})"
-                    ));
-                }
-            }
-            Ok(_) => {
-                fail += 1;
-                failures.push(format!(
-                    "line {line_no}: pattern={pattern_str:?}: expected error {expected_kind}, but compiled successfully"
-                ));
-            }
-        }
+        let at = format!("corpus-err.txt:{}", idx + 1);
+        let (pattern, kind) = line
+            .split_once('\t')
+            .unwrap_or_else(|| panic!("{at}: a row needs PATTERN and ERROR_KIND"));
+        let pattern = String::from_utf8(unescape(pattern))
+            .unwrap_or_else(|_| panic!("{at}: pattern is not UTF-8"));
+        let got = Glob::new(&pattern).map(|_| ());
+        stats.record(judge(got, &Want::Err(kind.to_string())), || {
+            format!("{at}: pattern={pattern:?}")
+        });
     }
-
-    println!("corpus=err    engine=globstar    pass={pass} fail={fail} skip=0");
-    if fail > 0 {
-        for f in &failures {
-            eprintln!("  FAIL: {f}");
-        }
-        panic!("{fail} parse-error assertion(s) failed");
-    }
+    finish("err", &[("globstar", &stats)]);
 }

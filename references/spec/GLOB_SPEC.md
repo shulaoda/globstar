@@ -644,12 +644,12 @@ Each `/` in a pattern consumes exactly one separator byte: `a/b` does not match 
 
 ### 12.4 Precise dot-protection semantics
 
-Under `dot = false`, a path position `i` is dot-protected when `path[i] == '.'` and either `i == 0` or `path[i-1]` ∈ `Seps`. At such a position:
+Under `dot = false`, a path position `i` is dot-protected when `path[i] == '.'` and either `i == 0` or `path[i-1]` ∈ `Seps`: the `.` that starts a segment. A segment that starts there matches only a pattern segment whose first element takes the `.` itself:
 
-- `*` does not consume the `.` (it still matches zero bytes there);
-- `?` does not match the `.`;
-- a negated class does not match the `.`;
-- a literal `.`, or a positive class that lists `.`, matches normally;
+- a literal `.`, or a positive class that lists `.` (a range counts: `[,-.]`), takes it as usual;
+- a `*` there matches nothing, not even the empty string: `*.txt` does not match `.txt`, and `*.*` does not match `.a`;
+- `?` and a negated class do not match the `.`;
+- braces are judged per expansion (§7.0): `{*,.}a` matches `.a` through its expansion `.a`, and `*{.a,b}` does not;
 - `**` itself is unaffected, but every segment start it exposes is subject to the rule: `**` does not match `a/.b` or `.a/b`.
 
 ### 12.5 Multi-byte characters
@@ -944,6 +944,8 @@ foo\           ⇒ Err(TrailingBackslash)
 *              path=".hidden"   ⇒ true   (dot=true)
 **/*           path="a/.b"      ⇒ false  (dot=false)
 **/*           path="a/.b"      ⇒ true   (dot=true)
+*.txt          path=".txt"      ⇒ false  (dot=false)
+*.*            path=".a"        ⇒ false  (dot=false)
 ```
 
 ### 15.9 Directory matching (`match_dir`)
@@ -1042,6 +1044,7 @@ Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional, n/a not applicable.
   - Implementation-internal names left the normative text. RFC 2119 key words are reserved for requirements; rationale and implementation notes are marked as informative.
 - **v0.2.5** (2026-10-16): `TooComplex` (§10) bounds the compile work of braces whose segments multiply.
 - **v0.2.6** (2026-10-16): §13.6 states how the reference implementations bound the all-below proof (64 wildcard-only segments, 4096 tail compares); §7.2 and §7.7 point at `TooComplex`.
+- **v0.2.7** (2026-10-16): §12.4 states dot protection as the implementations apply it, per segment start: a `*` there matches nothing, not even the empty string (`*.txt` does not match `.txt`); §15.8 shows it.
 - Awaiting owner approval before freezing as v1.0.
 
 ---

@@ -24,9 +24,10 @@ release version="patch":
     node scripts/release.mjs {{version}}
 
 # Cross-runtime differential fuzzing (JS vs Rust on random inputs the
-# corpus can't reach). `just fuzz --seeds 1-20 --count 100000` for nightly.
+# corpus can't reach; Rust built with debug checks on). `just fuzz
+# --seeds 1-20 --count 100000` for nightly.
 fuzz *args:
-    cargo build --release -p difftest
+    cargo build --profile fuzz -p difftest
     node scripts/fuzz.mjs {{args}}
 
 # All static checks: JS format/lint + Rust fmt + clippy. CI-grade strict.

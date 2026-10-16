@@ -19,3 +19,10 @@ globstar = { path = "crates/globstar", version = "0.0.4" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# The fuzzer's build: release speed with the debug checks on, so it
+# also catches `debug_assert!` and overflow failures.
+[profile.fuzz]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true

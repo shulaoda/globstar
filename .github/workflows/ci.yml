@@ -29,8 +29,10 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - name: Docs site
         run: pnpm docs:build
+      # A new seed every run, printed in the log so a failure replays
+      # with `just fuzz --seed N`.
       - name: Fuzz (smoke)
-        run: just fuzz --count 20000
+        run: just fuzz --count 20000 --seed ${{ github.run_number }}
 
   # The Rust and JS suites plus the cross-runtime verify on every
   # platform; Windows is the only place `corpus-windows.txt` and the

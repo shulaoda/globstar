@@ -39,8 +39,16 @@ PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
   - `corpus.txt` / `corpus-*.txt`: `match` | `no-match`
   - `corpus-dir.txt` / `corpus-multi-dir.txt`: `pruned` | `descend` | `match` |
     `descend-match` | `descend-all` | `descend-all-match`
+  - any of these files: `err:Kind` — the pattern must fail to compile with
+    that `GlobError` kind (PATH is then usually `-`)
   - `corpus-err.txt`: a `GlobError` variant name (e.g. `UnterminatedClass`), in column 2 — error rows have no PATH
-- **FLAGS** (column 4, optional): `k=v[,k=v]`, e.g. `dot=true`.
+- **FLAGS** (column 4, optional): `k=v[,k=v]` with keys `dot` and
+  `case_insensitive`, values `true` or `false`, e.g. `dot=true`.
+
+Nothing is skipped. A row whose pattern fails to compile where it expects
+an answer is a failure, and a short row, an unknown EXPECTED word or an
+unknown flag stops the run, in both runners (`tests/corpus.rs`,
+`scripts/verify.mjs`).
 
 ### Escape rules
 

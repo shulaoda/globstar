@@ -135,3 +135,14 @@
 ["**/x","{a/,b/}**/x"]	//x	match
 ["**/x","{a/,b/}**/x"]	/x	match
 ["**/x","{a/,b/}**/x"]	x	match
+
+## engine.paths
+# A member that is another's tail, and a union too wide for dense NFA
+# rows (mutation testing, 2026-10 audit).
+["x","**/x"]	a/x	match
+["x","**/x"]	x	match
+["node_modules","**/node_modules"]	node_modules/node_modules	match
+["node_modules","**/node_modules"]	node_modules/x	no-match
+["d0/x0","d1/x1","d2/x2","d3/x3","d4/x4","d5/x5","d6/x6","d7/x7","d8/x8","d9/x9","d10/x10","d11/x11","d12/x12","d13/x13","d14/x14","d15/x15","d16/x16","d17/x17","d18/x18","d19/x19","d20/x20","d21/x21","d22/x22","d23/x23","d24/x24","d25/x25","d26/x26","d27/x27","d28/x28","d29/x29","d30/x30","d31/x31","d32/x32","d33/x33","d34/x34","d35/x35","d36/x36","d37/x37","d38/x38","d39/x39"]	d39/x39	match
+["d0/x0","d1/x1","d2/x2","d3/x3","d4/x4","d5/x5","d6/x6","d7/x7","d8/x8","d9/x9","d10/x10","d11/x11","d12/x12","d13/x13","d14/x14","d15/x15","d16/x16","d17/x17","d18/x18","d19/x19","d20/x20","d21/x21","d22/x22","d23/x23","d24/x24","d25/x25","d26/x26","d27/x27","d28/x28","d29/x29","d30/x30","d31/x31","d32/x32","d33/x33","d34/x34","d35/x35","d36/x36","d37/x37","d38/x38","d39/x39"]	d0/x0	match
+["d0/x0","d1/x1","d2/x2","d3/x3","d4/x4","d5/x5","d6/x6","d7/x7","d8/x8","d9/x9","d10/x10","d11/x11","d12/x12","d13/x13","d14/x14","d15/x15","d16/x16","d17/x17","d18/x18","d19/x19","d20/x20","d21/x21","d22/x22","d23/x23","d24/x24","d25/x25","d26/x26","d27/x27","d28/x28","d29/x29","d30/x30","d31/x31","d32/x32","d33/x33","d34/x34","d35/x35","d36/x36","d37/x37","d38/x38","d39/x39"]	d39/x0	no-match

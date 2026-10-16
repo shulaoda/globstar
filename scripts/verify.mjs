@@ -16,9 +16,14 @@
 //   - nfa          — the same matcher with the segment engine's anchored
 //                    chains bypassed, so its NFA is checked on every row
 //
+// Nothing is skipped: a compile error where a row expects an answer is
+// a failure (a single-pattern row may expect `err:Kind`), and a row the
+// loader cannot read, or an exception that is not a GlobError, stops
+// the run.
+//
 // Rust path runs `cargo test --test corpus -- --nocapture` and parses
-// the test's `corpus=… engine=… pass=N fail=N skip=N` output. JS path
-// is inlined below.
+// the test's `corpus=… engine=… pass=N fail=N` output. JS path is
+// inlined below.
 //
 //   node scripts/verify.mjs              # full
 //   node scripts/verify.mjs --skip-rust  # JS only
@@ -70,33 +75,28 @@ function unescape(s) {
   return out;
 }
 
-function parseFlags(s, defaultDot = true) {
-  let dot = defaultDot;
-  let caseInsensitive = false;
+// The flags column: `dot=` and `case_insensitive=`, each `true` or
+// `false`; anything else is a typo and stops the run.
+function parseFlags(s, defaultDot, at) {
+  const flags = { dot: defaultDot, caseInsensitive: false };
   for (const kv of s.split(",")) {
     const eq = kv.indexOf("=");
-    if (eq < 0) continue;
+    if (eq < 0) throw new Error(`${at}: bad flag "${kv}"`);
     const k = kv.slice(0, eq).trim();
     const v = kv.slice(eq + 1).trim();
-    if (k === "dot") dot = v === "true";
-    else if (k === "case_insensitive") caseInsensitive = v === "true";
+    if (v !== "true" && v !== "false") throw new Error(`${at}: bad flag value "${v}"`);
+    if (k === "dot") flags.dot = v === "true";
+    else if (k === "case_insensitive") flags.caseInsensitive = v === "true";
+    else throw new Error(`${at}: unknown flag "${k}"`);
   }
-  return { dot, caseInsensitive };
+  return flags;
 }
 
 function parseSummaryLines(text) {
   const out = [];
   for (const line of text.split("\n")) {
-    const m = line.match(/^corpus=(\S+)\s+engine=(\S+)\s+pass=(\d+)\s+fail=(\d+)\s+skip=(\d+)/);
-    if (m) {
-      out.push({
-        corpus: m[1],
-        engine: m[2],
-        pass: +m[3],
-        fail: +m[4],
-        skip: +m[5],
-      });
-    }
+    const m = line.match(/^corpus=(\S+)\s+engine=(\S+)\s+pass=(\d+)\s+fail=(\d+)/);
+    if (m) out.push({ corpus: m[1], engine: m[2], pass: +m[3], fail: +m[4] });
   }
   return out;
 }
@@ -117,164 +117,117 @@ function step(name, cmd, argv) {
   return { status: res.status, stdout: res.stdout || "", stderr: res.stderr || "" };
 }
 
-const makeStats = () => ({ pass: 0, fail: 0, skip: 0, failures: [] });
-function record(stats, ok, msgFn) {
-  if (ok) stats.pass++;
+const makeStats = () => ({ pass: 0, fail: 0, failures: /** @type {string[]} */ ([]) });
+// `why` is null when the row passed.
+function record(stats, why, describe) {
+  if (why === null) stats.pass++;
   else {
     stats.fail++;
-    if (stats.failures.length < 10) stats.failures.push(msgFn());
+    if (stats.failures.length < 10) stats.failures.push(`${describe()}: ${why}`);
   }
 }
+
+// The data rows of `file`: PATTERN, PATH, EXPECTED and the flags (with
+// the default `dot`). A short row stops the run.
+function rowsOf(file, defaultDot) {
+  const rows = [];
+  const lines = readFileSync(join(CORPUS_DIR, file), "utf8").split("\n");
+  lines.forEach((raw, i) => {
+    const line = raw.replace(/\r$/, "");
+    if (!line || line.startsWith("#")) return;
+    const at = `${file}:${i + 1}`;
+    const cols = line.split("\t");
+    if (cols.length < 3) throw new Error(`${at}: a row needs PATTERN, PATH and EXPECTED`);
+    const flags =
+      cols.length >= 4
+        ? parseFlags(cols[3], defaultDot, at)
+        : { dot: defaultDot, caseInsensitive: false };
+    rows.push({ at, raw: cols[0], path: unescape(cols[1]), expected: cols[2], ...flags });
+  });
+  return rows;
+}
+
+// The expected column: `{ err: kind }` for `err:Kind`, else the answer
+// `value` reads.
+function wantOf(row, value) {
+  if (row.expected.startsWith("err:")) return { err: row.expected.slice(4) };
+  const v = value(row.expected);
+  if (v === undefined) throw new Error(`${row.at}: unknown expected "${row.expected}"`);
+  return { value: v };
+}
+
+function patternsOf(row) {
+  let patterns;
+  try {
+    patterns = JSON.parse(row.raw);
+  } catch (e) {
+    throw new Error(`${row.at}: bad PATTERNS_JSON ${row.raw} (${e.message})`);
+  }
+  if (!Array.isArray(patterns) || patterns.length === 0) {
+    throw new Error(`${row.at}: PATTERNS_JSON must be a non-empty array`);
+  }
+  return patterns;
+}
+
+const describe = (row, pattern, engine) =>
+  `${row.at}: pattern=${JSON.stringify(pattern)} path=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine}`;
+
+const show = (want) => (want.err === undefined ? String(want.value) : `err:${want.err}`);
 
 // ── JS-side runners ─────────────────────────────────────────────────
 
 async function runJsVerify() {
-  const { globstar } = await import("../packages/globstar/src/index.js");
   const { compileMatcher } = await import("../packages/globstar/src/glob.js");
   const { GlobError } = await import("../packages/globstar/src/error.js");
 
-  // ── single-pattern corpus
-  function* singleRows() {
-    for (const f of SINGLE_FILES) {
-      const text = readFileSync(join(CORPUS_DIR, f), "utf8");
-      let lineNo = 0;
-      for (const raw of text.split("\n")) {
-        lineNo++;
-        const line = raw.replace(/\s+$/, "");
-        if (!line || line.startsWith("#")) continue;
-        const cols = line.split("\t");
-        if (cols.length < 3) continue;
-        const exp = cols[2];
-        if (exp !== "match" && exp !== "no-match") continue;
-        const flags =
-          cols.length >= 4 ? parseFlags(cols[3]) : { dot: true, caseInsensitive: false };
-        yield {
-          file: f,
-          lineNo,
-          pattern: unescape(cols[0]),
-          path: unescape(cols[1]),
-          expected: exp === "match",
-          ...flags,
-        };
+  // `{ value }`, or `{ err }` for a GlobError; anything else thrown is a
+  // bug and stops the run.
+  function attempt(f) {
+    try {
+      return { value: f() };
+    } catch (e) {
+      if (e instanceof GlobError) return { err: e.kind };
+      throw e;
+    }
+  }
+  function judge(got, want) {
+    if (got.err === undefined && want.err === undefined && got.value === want.value) return null;
+    if (got.err !== undefined && got.err === want.err) return null;
+    return `got ${show(got)}, expected ${show(want)}`;
+  }
+  const opts = (row, engine) => ({
+    dot: row.dot,
+    caseInsensitive: row.caseInsensitive,
+    __engine: engine,
+  });
+  const parseMatch = (s) => (s === "match" ? true : s === "no-match" ? false : undefined);
+
+  // ── single-pattern and multi-pattern corpora, two lanes each
+  const lanes = (rows, patternOf) => {
+    const stats = { globstar: makeStats(), nfa: makeStats() };
+    for (const row of rows) {
+      const pattern = patternOf(row);
+      const want = wantOf(row, parseMatch);
+      for (const engine of ["globstar", "nfa"]) {
+        const got = attempt(() =>
+          compileMatcher(pattern, opts(row, engine === "nfa" ? "nfa" : undefined)).match(row.path),
+        );
+        record(stats[engine], judge(got, want), () => describe(row, pattern, engine));
       }
     }
-  }
-
-  function runSinglePub(row) {
-    try {
-      return globstar(row.pattern, { dot: row.dot, caseInsensitive: row.caseInsensitive })(
-        row.path,
-      );
-    } catch {
-      return null;
-    }
-  }
-  function runSingleEngine(row, engineName) {
-    try {
-      return compileMatcher(row.pattern, {
-        dot: row.dot,
-        caseInsensitive: row.caseInsensitive,
-        __engine: engineName,
-      }).match(row.path);
-    } catch {
-      return null;
-    }
-  }
-  const singleFail = (row, engine, got) =>
-    `${row.file}:${row.lineNo}: pattern=${JSON.stringify(row.pattern)} path=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
-
-  const single = {
-    globstar: makeStats(),
-    nfa: makeStats(),
+    return stats;
   };
-  for (const row of singleRows()) {
-    const g = runSinglePub(row);
-    if (g === null) single.globstar.skip++;
-    else record(single.globstar, g === row.expected, () => singleFail(row, "globstar", g));
+  const single = lanes(
+    SINGLE_FILES.flatMap((f) => rowsOf(f, true)),
+    (row) => unescape(row.raw),
+  );
+  const multi = lanes(rowsOf("corpus-multi.txt", true), patternsOf);
 
-    const p = runSingleEngine(row, "nfa");
-    if (p === null) single.nfa.skip++;
-    else record(single.nfa, p === row.expected, () => singleFail(row, "nfa", p));
-  }
-
-  // ── multi-pattern corpus
-  function* multiRows() {
-    const path = join(CORPUS_DIR, "corpus-multi.txt");
-    const text = readFileSync(path, "utf8");
-    let lineNo = 0;
-    for (const raw of text.split("\n")) {
-      lineNo++;
-      const line = raw.replace(/\s+$/, "");
-      if (!line || line.startsWith("#")) continue;
-      const cols = line.split("\t");
-      if (cols.length < 3) continue;
-      let patterns;
-      try {
-        patterns = JSON.parse(cols[0]);
-      } catch (e) {
-        throw new Error(`corpus-multi.txt:${lineNo}: bad PATTERNS_JSON ${cols[0]} (${e.message})`);
-      }
-      if (!Array.isArray(patterns) || patterns.length === 0) {
-        throw new Error(`corpus-multi.txt:${lineNo}: PATTERNS_JSON must be non-empty array`);
-      }
-      const exp = cols[2];
-      if (exp !== "match" && exp !== "no-match") {
-        throw new Error(`corpus-multi.txt:${lineNo}: unknown expected "${exp}"`);
-      }
-      const flags = cols.length >= 4 ? parseFlags(cols[3]) : { dot: true, caseInsensitive: false };
-      yield {
-        lineNo,
-        patterns,
-        path: unescape(cols[1]),
-        expected: exp === "match",
-        ...flags,
-      };
-    }
-  }
-
-  function runMultiPub(row) {
-    try {
-      return globstar(row.patterns, { dot: row.dot, caseInsensitive: row.caseInsensitive })(
-        row.path,
-      );
-    } catch {
-      return null;
-    }
-  }
-  function runMultiEngine(row, engineName) {
-    try {
-      return compileMatcher(row.patterns, {
-        dot: row.dot,
-        caseInsensitive: row.caseInsensitive,
-        __engine: engineName,
-      }).match(row.path);
-    } catch {
-      return null;
-    }
-  }
-  const multiFail = (row, engine, got) =>
-    `corpus-multi.txt:${row.lineNo}: patterns=${JSON.stringify(row.patterns)} path=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
-
-  const multi = {
-    globstar: makeStats(),
-    nfa: makeStats(),
-  };
-  for (const row of multiRows()) {
-    const g = runMultiPub(row);
-    if (g === null) multi.globstar.skip++;
-    else record(multi.globstar, g === row.expected, () => multiFail(row, "globstar", g));
-
-    const p = runMultiEngine(row, "nfa");
-    if (p === null) multi.nfa.skip++;
-    else record(multi.nfa, p === row.expected, () => multiFail(row, "nfa", p));
-  }
-
-  // ── match_dir corpus — public API vs truth. Mirrors the Rust
-  // `corpus_dir_engines_vs_truth` test: rows default to `dot=false` (the
-  // walker convention); negated rows run too, a negated pattern answers
-  // `Descend` (§13.4).
-  // Indexed by JS `DirMatch` value (Match=0, Pruned=1, Descend=2, DescendAndMatch=3,
-  // DescendAll=4, DescendAllAndMatch=5).
+  // ── match_dir corpora — public API vs truth. Rows default to
+  // `dot=false` (the walker convention); negated rows run too, a negated
+  // pattern answers `Descend` (§13.4). Indexed by JS `DirMatch` value
+  // (Match=0, Pruned=1, Descend=2, DescendAndMatch=3, DescendAll=4,
+  // DescendAllAndMatch=5).
   const DIR_TOKEN = [
     "match",
     "pruned",
@@ -283,150 +236,46 @@ async function runJsVerify() {
     "descend-all",
     "descend-all-match",
   ];
-  function* dirRows() {
-    const text = readFileSync(join(CORPUS_DIR, "corpus-dir.txt"), "utf8");
-    let lineNo = 0;
-    for (const raw of text.split("\n")) {
-      lineNo++;
-      const line = raw.replace(/\s+$/, "");
-      if (!line || line.startsWith("#")) continue;
-      const cols = line.split("\t");
-      if (cols.length < 3) continue;
-      const expected = cols[2];
-      if (!DIR_TOKEN.includes(expected)) continue;
-      const flags =
-        cols.length >= 4 ? parseFlags(cols[3], false) : { dot: false, caseInsensitive: false };
-      yield {
-        lineNo,
-        pattern: unescape(cols[0]),
-        path: unescape(cols[1]),
-        expected,
-        ...flags,
-      };
+  const parseDir = (s) => (DIR_TOKEN.includes(s) ? s : undefined);
+  const dirLane = (rows, patternOf) => {
+    const stats = makeStats();
+    for (const row of rows) {
+      const pattern = patternOf(row);
+      const got = attempt(() => DIR_TOKEN[compileMatcher(pattern, opts(row)).matchDir(row.path)]);
+      record(stats, judge(got, wantOf(row, parseDir)), () => describe(row, pattern, "globstar"));
     }
-  }
-
-  function runDirEngine(row) {
-    // `matchDir` answers `Descend` for a negated pattern (§13.4), so no
-    // row is skipped.
-    try {
-      const dm = compileMatcher(row.pattern, {
-        dot: row.dot,
-        caseInsensitive: row.caseInsensitive,
-      }).matchDir(row.path);
-      return DIR_TOKEN[dm];
-    } catch {
-      return null;
-    }
-  }
-  const dirFail = (row, engine, got) =>
-    `corpus-dir.txt:${row.lineNo}: pattern=${JSON.stringify(row.pattern)} dir=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
-
-  const dir = {
-    globstar: makeStats(),
+    return stats;
   };
-  for (const row of dirRows()) {
-    const g = runDirEngine(row);
-    if (g === null) dir.globstar.skip++;
-    else record(dir.globstar, g === row.expected, () => dirFail(row, "globstar", g));
-  }
+  const dir = dirLane(rowsOf("corpus-dir.txt", false), (row) => unescape(row.raw));
+  const multiDir = dirLane(rowsOf("corpus-multi-dir.txt", false), patternsOf);
 
-  // ── multi-pattern match_dir corpus — union built the same way as the
-  // multi corpus, judged with the dir tokens. Rows default to dot=false
-  // (walker convention), mirroring `corpus_multi_dir_engines_vs_truth`.
-  function* multiDirRows() {
-    const text = readFileSync(join(CORPUS_DIR, "corpus-multi-dir.txt"), "utf8");
-    let lineNo = 0;
-    for (const raw of text.split("\n")) {
-      lineNo++;
-      const line = raw.replace(/\s+$/, "");
-      if (!line || line.startsWith("#")) continue;
-      const cols = line.split("\t");
-      if (cols.length < 3) continue;
-      let patterns;
-      try {
-        patterns = JSON.parse(cols[0]);
-      } catch (e) {
-        throw new Error(
-          `corpus-multi-dir.txt:${lineNo}: bad PATTERNS_JSON ${cols[0]} (${e.message})`,
-        );
-      }
-      const expected = cols[2];
-      if (!DIR_TOKEN.includes(expected)) {
-        throw new Error(`corpus-multi-dir.txt:${lineNo}: unknown DirMatch "${expected}"`);
-      }
-      const flags =
-        cols.length >= 4 ? parseFlags(cols[3], false) : { dot: false, caseInsensitive: false };
-      yield {
-        lineNo,
-        patterns,
-        path: unescape(cols[1]),
-        expected,
-        ...flags,
-      };
-    }
-  }
-
-  function runMultiDirEngine(row) {
-    try {
-      const dm = compileMatcher(row.patterns, {
-        dot: row.dot,
-        caseInsensitive: row.caseInsensitive,
-      }).matchDir(row.path);
-      return DIR_TOKEN[dm];
-    } catch {
-      return null;
-    }
-  }
-  const multiDirFail = (row, engine, got) =>
-    `corpus-multi-dir.txt:${row.lineNo}: patterns=${JSON.stringify(row.patterns)} dir=${JSON.stringify(row.path)} dot=${row.dot} ci=${row.caseInsensitive}: ${engine} got ${got}, expected ${row.expected}`;
-
-  const multiDir = {
-    globstar: makeStats(),
-  };
-  for (const row of multiDirRows()) {
-    const g = runMultiDirEngine(row);
-    if (g === null) multiDir.globstar.skip++;
-    else record(multiDir.globstar, g === row.expected, () => multiDirFail(row, "globstar", g));
-  }
-
-  // ── parse-error corpus — public API only (engines never see malformed input)
+  // ── parse-error corpus — public API only (engines never see malformed
+  // input): PATTERN, then the error kind.
   const errStats = makeStats();
-  {
-    const path = join(CORPUS_DIR, "corpus-err.txt");
-    const text = readFileSync(path, "utf8");
-    let lineNo = 0;
-    for (const raw of text.split("\n")) {
-      lineNo++;
-      const line = raw.replace(/\s+$/, "");
-      if (!line || line.startsWith("#")) continue;
-      const cols = line.split("\t");
-      if (cols.length < 2) continue;
-      const pattern = unescape(cols[0]);
-      const expectedKind = cols[1];
-
-      let kind = null;
-      try {
-        compileMatcher(pattern);
-      } catch (e) {
-        kind = e instanceof GlobError ? e.kind : null;
-      }
+  readFileSync(join(CORPUS_DIR, "corpus-err.txt"), "utf8")
+    .split("\n")
+    .forEach((raw, i) => {
+      const line = raw.replace(/\r$/, "");
+      if (!line || line.startsWith("#")) return;
+      const at = `corpus-err.txt:${i + 1}`;
+      const tab = line.indexOf("\t");
+      if (tab < 0) throw new Error(`${at}: a row needs PATTERN and ERROR_KIND`);
+      const pattern = unescape(line.slice(0, tab));
+      const got = attempt(() => (compileMatcher(pattern), true));
       record(
         errStats,
-        kind === expectedKind,
-        () =>
-          `corpus-err.txt:${lineNo}: pattern=${JSON.stringify(pattern)}: expected ${expectedKind}, got ${kind === null ? "(no error)" : kind}`,
+        judge(got, { err: line.slice(tab + 1) }),
+        () => `${at}: pattern=${JSON.stringify(pattern)}`,
       );
-    }
-  }
+    });
 
   return [
     { corpus: "single", engine: "globstar", ...single.globstar },
     { corpus: "single", engine: "nfa", ...single.nfa },
     { corpus: "multi", engine: "globstar", ...multi.globstar },
     { corpus: "multi", engine: "nfa", ...multi.nfa },
-    { corpus: "dir", engine: "globstar", ...dir.globstar },
-    { corpus: "mdir", engine: "globstar", ...multiDir.globstar },
+    { corpus: "dir", engine: "globstar", ...dir },
+    { corpus: "mdir", engine: "globstar", ...multiDir },
     { corpus: "err", engine: "globstar", ...errStats },
   ];
 }
@@ -470,9 +319,9 @@ const rpad = (s, n) => {
 
 console.log("\n=== verify-corpus summary ===");
 console.log(
-  `${pad("runtime", 8)} ${pad("corpus", 8)} ${pad("engine", 12)} ${rpad("pass", 6)} ${rpad("fail", 5)} ${rpad("skip", 5)}`,
+  `${pad("runtime", 8)} ${pad("corpus", 8)} ${pad("engine", 12)} ${rpad("pass", 6)} ${rpad("fail", 5)}`,
 );
-console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 5 + 5));
+console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 4));
 
 // Stable cross-runtime row order: single → multi → dir → mdir → err,
 // then globstar → nfa. Rust prints in cargo-test name
@@ -492,7 +341,7 @@ let totalFail = 0;
 for (const side of sides) {
   for (const r of side.rows) {
     console.log(
-      `${pad(side.runtime, 8)} ${pad(r.corpus, 8)} ${pad(r.engine, 12)} ${rpad(r.pass, 6)} ${rpad(r.fail, 5)} ${rpad(r.skip, 5)}`,
+      `${pad(side.runtime, 8)} ${pad(r.corpus, 8)} ${pad(r.engine, 12)} ${rpad(r.pass, 6)} ${rpad(r.fail, 5)}`,
     );
     totalFail += r.fail;
   }

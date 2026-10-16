@@ -10,6 +10,7 @@
 // Run: node packages/globstar/tests/string-mode.mjs [count]
 
 import { compileMatcher } from "../src/glob.js";
+import { GlobError } from "../src/error.js";
 
 const COUNT = Number(process.argv[2] ?? 200000);
 
@@ -100,13 +101,16 @@ for (let i = 0; i < COUNT; i++) {
   const pat = genPattern();
   const dot = rand() < 0.5;
   const ci = rand() < 0.25;
-  let seg, ref;
+  let seg;
   try {
     seg = compileMatcher(pat, { dot, caseInsensitive: ci });
-    ref = compileMatcher(pat, { dot, caseInsensitive: ci, __engine: "bytes" });
-  } catch {
-    continue; // parse error — fine
+  } catch (e) {
+    // A parse error is fine; anything else is a bug.
+    if (!(e instanceof GlobError)) throw e;
+    continue;
   }
+  // The same front end: if one mode compiles, so does the other.
+  const ref = compileMatcher(pat, { dot, caseInsensitive: ci, __engine: "bytes" });
   const path = genPath();
   tried++;
 
@@ -132,6 +136,12 @@ for (let i = 0; i < COUNT; i++) {
 
 if (bad > 0) {
   console.error(`✗ ${bad} divergences over ${tried} cases`);
+  process.exit(1);
+}
+// Most generated patterns compile; a run that loses many has stopped
+// testing anything.
+if (tried < COUNT * 0.9) {
+  console.error(`✗ only ${tried} of ${COUNT} cases ran`);
   process.exit(1);
 }
 console.log(`✓ string mode ≡ byte mode on ${tried} cases`);
