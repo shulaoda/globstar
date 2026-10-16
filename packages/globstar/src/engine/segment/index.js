@@ -24,17 +24,30 @@ import {
   coversBelowSparse,
 } from "./exec.js";
 import { bitTest, bitsIntersect } from "./bits.js";
-import { NO, YES, BAIL, NFA_WIDE, NFA_SPARSE } from "./elem.js";
+import {
+  NO,
+  YES,
+  BAIL,
+  NFA_SMALL,
+  NFA_WIDE,
+  NFA_SPARSE,
+  EL_LIT,
+  EL_WILD,
+  EL_G0,
+  WK_AFFIX,
+  WK_AFFIX_SET,
+  WK_AFFIX_INDEX,
+} from "./elem.js";
 
 export class SegmentMatcher {
   constructor(compiled, program, byteOnly, dot) {
-    this.nodes = compiled.elems;
+    this.elems = compiled.elems;
     // The paths through the graph, tried in order; none past MAX_CHAINS.
     this.chains = compiled.chains;
     // The NFA over the graph, kept only when the chains cannot serve:
     // none, several (`matchDir` runs them as one), or one with several
     // globstars.
-    this.graph = compiled.nfa;
+    this.nfa = compiled.nfa;
     this.ci = !!program.caseInsensitive;
     this.dot = dot;
     this.byteOnly = byteOnly;
@@ -42,6 +55,41 @@ export class SegmentMatcher {
     this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
     const suf = suffixes(program.ops);
     this.suffixes = suf.length > 0 ? exact(suf) : null;
+  }
+
+  // How compilation laid the pattern out (a test hook, twin of Rust's
+  // `Glob::shape`): the elements in order, the chains, the graph NFA's
+  // form. It pins the routing, where a slower path would still answer
+  // right.
+  shape() {
+    const elems = this.elems.map((e) => {
+      if (e.kind === EL_LIT) return "L";
+      if (e.kind === EL_WILD) {
+        const k = e.wild.kind;
+        if (k === WK_AFFIX) return "W:affix";
+        if (k === WK_AFFIX_SET) return "W:set";
+        return k === WK_AFFIX_INDEX ? "W:index" : "W:nfa";
+      }
+      return e.kind === EL_G0 ? "G0" : "G1";
+    });
+    // A run of one kind as `L(200)`.
+    const runs = [];
+    for (let i = 0; i < elems.length; ) {
+      let n = 1;
+      while (elems[i + n] === elems[i]) n++;
+      runs.push(n > 1 ? `${elems[i]}(${n})` : elems[i]);
+      i += n;
+    }
+    const g = this.nfa;
+    const nfa =
+      g === null
+        ? "none"
+        : g.kind === NFA_SMALL
+          ? "small"
+          : g.kind === NFA_WIDE
+            ? "wide"
+            : "sparse";
+    return `${runs.join(" ")} | chains ${this.chains.length} | nfa ${nfa}`;
   }
 
   // `opts.forceNfa` bypasses the chains, `opts.byteOnly` the string
@@ -92,7 +140,7 @@ export class SegmentMatcher {
   }
 
   _nfaMatch(str, bail) {
-    const g = this.graph;
+    const g = this.nfa;
     if (g.kind === NFA_SPARSE) {
       const active = nfaRunSparse(this, str, bail);
       if (active === null) return BAIL;
@@ -119,7 +167,7 @@ export class SegmentMatcher {
   }
 
   _matchDir(str, bail) {
-    const g = this.graph;
+    const g = this.nfa;
     if (g === null) return chainDir(this, str, bail);
     if (str.length === 0) {
       // The empty dir is the walk root: nothing consumed yet.

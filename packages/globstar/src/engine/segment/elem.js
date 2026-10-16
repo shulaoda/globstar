@@ -13,8 +13,7 @@ export const LINEAR_SUFFIXES = 8;
 export const EL_LIT = 0;
 export const EL_WILD = 1;
 export const EL_G0 = 2;
-export const EL_G0_STRICT = 3;
-export const EL_G1 = 4;
+export const EL_G1 = 3;
 
 // In-segment wildcard kinds.
 export const WK_AFFIX = 0;

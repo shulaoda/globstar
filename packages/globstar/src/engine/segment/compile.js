@@ -28,7 +28,6 @@ import {
   EL_LIT,
   EL_WILD,
   EL_G0,
-  EL_G0_STRICT,
   EL_G1,
   WK_AFFIX,
   WK_AFFIX_SET,
@@ -79,12 +78,12 @@ function makeElem(kind, litBytes, wild) {
   return { kind, litStr: litBytes !== null ? latin1(litBytes) : null, wild };
 }
 
-const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G0_STRICT || e.kind === EL_G1;
+const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
 // Absorbs zero segments too.
-const nullable = (e) => e.kind === EL_G0 || e.kind === EL_G0_STRICT;
-// NFA states the element owns: G0_STRICT/G1 have a body state right
+const nullable = (e) => e.kind === EL_G0;
+// NFA states the element owns: G1 has a body state right
 // after their entry.
-const elemStates = (e) => (e.kind === EL_G0_STRICT || e.kind === EL_G1 ? 2 : 1);
+const elemStates = (e) => (e.kind === EL_G1 ? 2 : 1);
 
 // The ops with each crossing brace's in-segment branches as one choice:
 // `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches give
@@ -491,11 +490,12 @@ class Builder {
     }
   }
 
-  // Emit a group's pending `**/`, its kind by the boundary before it.
+  // Emit a group's pending `**/`. It is always a G0: lowering gives the
+  // `/` before a `**/` a lenient `SepRun`, and folds a `**/` into the
+  // globstar before it, so none is left behind a strict boundary.
   settle(g) {
     if (!g.pendingOss || g.state === B_OPEN) return;
-    const kind = g.state === B_START || g.state === B_LENIENT ? EL_G0 : EL_G0_STRICT;
-    rebase(g, this.emit(makeElem(kind, null, null), g.tails), B_AFTER_G);
+    rebase(g, this.emit(makeElem(EL_G0, null, null), g.tails), B_AFTER_G);
   }
 
   // Close every group's segment into one node per group; they all

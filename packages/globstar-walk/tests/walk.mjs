@@ -272,15 +272,34 @@ await check("invalid member of a pattern list is named", async () => {
     (e) => e instanceof WalkError && e.pattern === "a/{b",
   );
   // Every member compiles alone; together they pass the expansion budget
-  // (GLOB_SPEC §7.7). Then the error lists them all.
+  // (GLOB_SPEC §7.7). The error names the member it ran out in.
   const member = "{,/}".repeat(10) + "**/f";
   const members = Array.from({ length: 10 }, (_, i) => `${member}${i}`);
   assert.throws(
     () => globSync(members, { cwd: root }),
     (e) =>
       e instanceof WalkError &&
-      e.pattern === "[" + members.map((m) => JSON.stringify(m)).join(", ") + "]" &&
+      e.pattern === members[1] &&
+      e.reason.includes("the patterns share this limit") &&
       e.cause?.kind === "BraceExpansionTooLarge",
+  );
+  // Found from the core's member index, not by compiling each member
+  // again: 5,000 of them took seconds and printed the whole list.
+  const many = Array.from({ length: 5000 }, (_, i) => "{**,a}{/,b}".repeat(4) + `{**,a}/f${i}`);
+  const start = performance.now();
+  assert.throws(
+    () => globSync(many, { cwd: root }),
+    (e) => e instanceof WalkError && e.message.length < 400,
+  );
+  assert.ok(performance.now() - start < 500, "5,000 members took too long to fail");
+  // An error no one member explains (the union's compile work) names the
+  // list, cut after three.
+  assert.throws(
+    () => globSync(["{a,/}{b,/}".repeat(300), "c{a,/}".repeat(300), "x", "y"], { cwd: root }),
+    (e) =>
+      e instanceof WalkError &&
+      e.pattern.endsWith('"x"] and 1 more') &&
+      e.cause?.kind === "TooComplex",
   );
 });
 

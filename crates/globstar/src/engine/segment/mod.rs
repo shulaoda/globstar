@@ -75,9 +75,6 @@ enum Elem {
     Wild(Wild),
     /// Globstar absorbing ≥ 0 segments, empty ones included.
     G0,
-    /// `G0` whose absorbed run may not begin with an empty segment
-    /// (a spliced `**/` behind a strict `Sep`, e.g. `a/{**/b,c}`).
-    G0Strict,
     /// Globstar absorbing ≥ 1 segment (trailing `/**`: `a/**`
     /// matches `a/` but not `a`).
     G1,
@@ -86,7 +83,7 @@ enum Elem {
 impl Elem {
     #[inline]
     fn is_globstar(&self) -> bool {
-        matches!(self, Elem::G0 | Elem::G0Strict | Elem::G1)
+        matches!(self, Elem::G0 | Elem::G1)
     }
 
     #[inline]
@@ -100,7 +97,7 @@ impl Elem {
     /// Absorbs zero segments too.
     #[inline]
     fn nullable(&self) -> bool {
-        matches!(self, Elem::G0 | Elem::G0Strict)
+        matches!(self, Elem::G0)
     }
 
     /// Takes every non-empty segment (`match_dir`'s all-below).
@@ -113,15 +110,11 @@ impl Elem {
         }
     }
 
-    /// NFA states the element owns: `G0Strict`/`G1` have a body state
-    /// right after their entry.
+    /// NFA states the element owns: `G1` has a body state right after
+    /// its entry.
     #[inline]
     fn states(&self) -> usize {
-        if matches!(self, Elem::G0Strict | Elem::G1) {
-            2
-        } else {
-            1
-        }
+        if matches!(self, Elem::G1) { 2 } else { 1 }
     }
 
     /// Can the element consume some segment?
@@ -249,9 +242,9 @@ enum Shape {
     Many(Option<Box<Nfa<u64>>>),
 }
 
-/// An NFA over graph nodes: one state per node (two for `G0Strict`
-/// and `G1`, the body state right after the entry) plus the accept
-/// state, which is the last.
+/// An NFA over graph nodes: one state per node (two for `G1`, the body
+/// state right after the entry) plus the accept state, which is the
+/// last.
 #[derive(Debug, Clone)]
 struct Nfa<B: Bits> {
     states: Box<[State<B>]>,
@@ -390,6 +383,48 @@ impl SegmentMatcher {
                 (0..chains.len()).any(|i| self.ends_like(i, path) && self.chain_matches(i, path))
             }
         }
+    }
+
+    /// See `Glob::shape` (test hook).
+    pub(crate) fn shape(&self) -> String {
+        let elems: Vec<&str> = self
+            .elems
+            .iter()
+            .map(|e| match e {
+                Elem::Lit(_) => "L",
+                Elem::Wild(w) => match w.kind {
+                    WildKind::Affix(_) => "W:affix",
+                    WildKind::AffixSet(_) => "W:set",
+                    WildKind::AffixIndex(_) => "W:index",
+                    WildKind::Generic(_) => "W:nfa",
+                },
+                Elem::G0 => "G0",
+                Elem::G1 => "G1",
+            })
+            .collect();
+        // A run of one kind as `L(200)`.
+        let mut runs: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < elems.len() {
+            let n = elems[i..].iter().take_while(|&&e| e == elems[i]).count();
+            runs.push(if n > 1 {
+                format!("{}({n})", elems[i])
+            } else {
+                elems[i].into()
+            });
+            i += n;
+        }
+        let nfa = match self.nfa.as_deref() {
+            None => "none",
+            Some(AnyNfa::Small(_)) => "small",
+            Some(AnyNfa::Wide(_)) => "wide",
+            Some(AnyNfa::Sparse(_)) => "sparse",
+        };
+        format!(
+            "{} | chains {} | nfa {nfa}",
+            runs.join(" "),
+            self.chains.len()
+        )
     }
 
     /// `is_match` through an NFA only (test hook): the matcher's own,

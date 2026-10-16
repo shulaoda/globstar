@@ -14,6 +14,11 @@ export class LiteralMatcher {
     this.exact = this.ascii && !caseInsensitive && !IS_WINDOWS_SEP;
   }
 
+  // See `SegmentMatcher.shape` (a test hook).
+  shape() {
+    return "literal";
+  }
+
   isMatch(path) {
     if (this.exact) return path === this.litStr;
     const str = this.ascii ? path : utf8Latin1(path);

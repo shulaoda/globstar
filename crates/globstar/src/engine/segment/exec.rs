@@ -285,12 +285,6 @@ impl SegmentMatcher {
         }
         // Up to the separator before the tail, or the end.
         let to = split - 1;
-        // `G0Strict` may not start with an empty segment.
-        if matches!(kind, Elem::G0Strict)
-            && (from == to || std::path::is_separator(path[from] as char))
-        {
-            return false;
-        }
         match dot_at {
             Some(at) => at >= to,
             None => self.dot_free(path, from, to),
@@ -633,12 +627,6 @@ impl<B: Bits> Nfa<B> {
                 Elem::Lit(lit) => m.lit_eq(lit, seg),
                 Elem::Wild(w) => m.wild_consumes(w, seg),
                 Elem::G0 | Elem::G1 => absorb_ok,
-                // The entry state is the first of the node's two and
-                // may not take an empty segment.
-                Elem::G0Strict => {
-                    let entry = s == 0 || self.states[s - 1].node as usize != node;
-                    absorb_ok && !(entry && seg.is_empty())
-                }
             };
             if consumes {
                 next.or_with(&state.after);
@@ -855,8 +843,6 @@ impl SparseNfa {
                 Elem::Lit(lit) => m.lit_eq(lit, seg),
                 Elem::Wild(w) => m.wild_consumes(w, seg),
                 Elem::G0 | Elem::G1 => absorb_ok,
-                // The entry state may not take an empty segment.
-                Elem::G0Strict => absorb_ok && !(s == self.entries[p] && seg.is_empty()),
             }
         };
         for &item in &active.items {
@@ -895,7 +881,7 @@ impl SparseNfa {
             Elem::G0 => {
                 next.add(s);
             }
-            Elem::G0Strict | Elem::G1 => {
+            Elem::G1 => {
                 next.add(self.entries[p] + 1);
             }
             Elem::Lit(_) | Elem::Wild(_) => {}

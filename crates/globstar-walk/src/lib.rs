@@ -85,7 +85,7 @@ use std::io;
 use std::path;
 use std::path::{Path, PathBuf};
 
-use globstar::{CompileOptions, Glob};
+use globstar::{CompileOptions, Glob, GlobError};
 
 /// An iterator over paths under a base directory that match one or more
 /// glob patterns.
@@ -751,10 +751,10 @@ fn seed_ignored(ignore: &Glob, prefix: &[u8]) -> bool {
 /// input list.
 ///
 /// A compile failure becomes [`WalkError::InvalidPattern`] naming the
-/// member that does not compile on its own, with the parser's message
-/// for that member. When every member compiles alone, the union as a
-/// whole failed (its members share one expansion budget, GLOB_SPEC
-/// §7.7), and the error lists them all.
+/// member the union failed in ([`GlobError::InMember`]), with the error
+/// for that member; when it ran past the expansion budget the members
+/// share (GLOB_SPEC §7.7), the reason says so. An error no one member
+/// explains (the union's compile work) names the list, cut after three.
 ///
 /// Patterns arrive as (written, normalized) pairs: the normalized body
 /// by [`normalize_pattern`] (leading `/` stripped, so
@@ -777,25 +777,44 @@ fn compile_union(
         _ => Glob::union_with(bodies(), opts),
     };
     glob.map(Some).map_err(|e| {
-        let failed = patterns.iter().find_map(|(raw, body)| {
-            let e = Glob::new_with(body, opts).err()?;
-            let reason = if raw == body {
-                e.to_string()
-            } else {
-                format!("{e} (in '{body}', as the walker reads it)")
+        // A union names the member it failed in, with that member's own
+        // error; an error no one member explains (the union's compile
+        // work) is about the list.
+        let (member, source) = match e {
+            GlobError::InMember { index, error } => (Some(&patterns[index]), *error),
+            e if patterns.len() == 1 => (Some(&patterns[0]), e),
+            e => (None, e),
+        };
+        let Some((raw, body)) = member else {
+            return WalkError::InvalidPattern {
+                pattern: name_list(patterns),
+                reason: source.to_string(),
+                source: Some(source),
             };
-            Some((raw.clone(), reason, e))
-        });
-        let (pattern, reason, source) = failed.unwrap_or_else(|| {
-            let raws: Vec<&String> = patterns.iter().map(|(raw, _)| raw).collect();
-            (format!("{raws:?}"), e.to_string(), e)
-        });
+        };
+        let mut reason = source.to_string();
+        if matches!(source, GlobError::BraceExpansionTooLarge { .. }) && patterns.len() > 1 {
+            reason.push_str(" (the patterns share this limit, and it ran out in this one)");
+        }
+        if raw != body {
+            reason = format!("{reason} (in '{body}', as the walker reads it)");
+        }
         WalkError::InvalidPattern {
-            pattern,
+            pattern: raw.clone(),
             reason,
             source: Some(source),
         }
     })
+}
+
+/// A list of patterns as one name, cut after the first few.
+fn name_list(patterns: &[(String, String)]) -> String {
+    const SHOWN: usize = 3;
+    let raws: Vec<&String> = patterns.iter().take(SHOWN).map(|(raw, _)| raw).collect();
+    match patterns.len() - raws.len() {
+        0 => format!("{raws:?}"),
+        more => format!("{raws:?} and {more} more"),
+    }
 }
 
 /// WALKER_SPEC §4.2: the `!` count and the body of a written pattern;

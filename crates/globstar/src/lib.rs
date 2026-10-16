@@ -294,6 +294,18 @@ impl Glob {
         raw ^ self.negated
     }
 
+    /// How compilation laid the pattern out: its elements in order, its
+    /// chains and the form of its graph NFA, or `literal`. A test hook
+    /// that pins the engine's routing (`fixtures/engine-shapes.tsv`),
+    /// where a slower path would still give the right answers.
+    #[doc(hidden)]
+    pub fn shape(&self) -> String {
+        match &self.engine {
+            Engine::Literal(_) => "literal".into(),
+            Engine::Segment(m) => m.shape(),
+        }
+    }
+
     /// Literal path prefixes a walker can seed traversal from: for each
     /// expansion of the pattern's braces, its literal head up to its last
     /// whole segment, with heads a shorter one covers removed

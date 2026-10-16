@@ -17,7 +17,7 @@ import {
 } from "./ast.js";
 import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } from "./error.js";
 import { resolveGlobstars } from "./resolve.js";
-import { toBytes } from "./utf8.js";
+import { toBytes, utf8Length } from "./utf8.js";
 
 const BACKSLASH = 0x5c;
 const SLASH = 0x2f;
@@ -35,6 +35,11 @@ const DASH = 0x2d;
 // `budget` is the expansion budget (§7.7): the patterns of one matcher share
 // it, so together they may copy `MAX_EXPANSION`, not each.
 export function parse(input, budget = { left: MAX_EXPANSION }) {
+  // UTF-8 is never shorter than the UTF-16 string, so a string past the
+  // limit is refused before it is copied.
+  if (input.length > MAX_PATTERN_LEN) {
+    throw new GlobError("TooLong", { len: utf8Length(input), max: MAX_PATTERN_LEN });
+  }
   const bytes = toBytes(input);
   if (bytes.length === 0) throw new GlobError("Empty");
   if (bytes.length > MAX_PATTERN_LEN) {

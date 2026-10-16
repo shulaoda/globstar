@@ -7,7 +7,6 @@ import {
   EL_LIT,
   EL_WILD,
   EL_G0,
-  EL_G0_STRICT,
   EL_G1,
   WK_AFFIX,
   WK_AFFIX_SET,
@@ -26,8 +25,8 @@ import { bitTest, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
 
 // A chain's element: `ids === null` is the identity (the lone path of
 // a brace-free pattern).
-const elemAt = (nodes, ids, i) => (ids === null ? nodes[i] : nodes[ids[i]]);
-const chainLen = (nodes, ids) => (ids === null ? nodes.length : ids.length);
+const elemAt = (elems, ids, i) => (ids === null ? elems[i] : elems[ids[i]]);
+const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 
 function nextSep(str, from) {
   const i = str.indexOf("/", from);
@@ -67,7 +66,7 @@ export function chainMatches(m, chain, str, bail) {
   const ids = chain.nodes;
   switch (chain.globstar) {
     case NO_G:
-      return fixedRun(m, ids, 0, chainLen(m.nodes, ids), str, 0, bail);
+      return fixedRun(m, ids, 0, chainLen(m.elems, ids), str, 0, bail);
     case MANY_G: {
       // The NFA over this chain alone, or the matcher's when the
       // pattern is that one chain.
@@ -106,13 +105,13 @@ function consumeAt(m, e, str, pos, last, bail) {
 // Do the elements `from..to` take the segments from `pos` to the end,
 // one each?
 function fixedRun(m, ids, from, to, str, pos, bail) {
-  const nodes = m.nodes;
+  const elems = m.elems;
   for (let i = from; i < to - 1; i++) {
-    const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, false, bail);
+    const end = consumeAt(m, elemAt(elems, ids, i), str, pos, false, bail);
     if (end < 0) return fail(end);
     pos = end + 1;
   }
-  const end = consumeAt(m, elemAt(nodes, ids, to - 1), str, pos, true, bail);
+  const end = consumeAt(m, elemAt(elems, ids, to - 1), str, pos, true, bail);
   return end < 0 ? fail(end) : YES;
 }
 
@@ -121,10 +120,10 @@ function fixedRun(m, ids, from, to, str, pos, bail) {
 // wants that segment (G1 absorbs one, G0 is followed by its tail), so
 // a path that ends in the head fails.
 function head(m, ids, g, str, bail) {
-  const nodes = m.nodes;
+  const elems = m.elems;
   let pos = 0;
   for (let i = 0; i < g; i++) {
-    const end = consumeAt(m, elemAt(nodes, ids, i), str, pos, false, bail);
+    const end = consumeAt(m, elemAt(elems, ids, i), str, pos, false, bail);
     if (end < 0) return end;
     pos = end + 1;
   }
@@ -134,15 +133,15 @@ function head(m, ids, g, str, bail) {
 // With the head consumed up to `midStart`: the tail on the last
 // segments, found backward, and the globstar on what lies between.
 function tailAndGlobstar(m, ids, g, str, midStart, bail) {
-  const nodes = m.nodes;
-  const n = chainLen(nodes, ids);
+  const elems = m.elems;
+  const n = chainLen(elems, ids);
   // Where the tail starts; past the end when there is none.
   let split = str.length + 1;
   let end = str.length;
   for (let j = n - 1; j > g; j--) {
     const s = lastSepBefore(str, end) + 1;
     if (s < midStart) return NO;
-    const r = elemConsumes(elemAt(nodes, ids, j), str, s, end, m.ci, bail);
+    const r = elemConsumes(elemAt(elems, ids, j), str, s, end, m.ci, bail);
     if (r !== YES) return r;
     split = s;
     if (j > g + 1) {
@@ -150,7 +149,7 @@ function tailAndGlobstar(m, ids, g, str, midStart, bail) {
       end = s - 1;
     }
   }
-  return absorbs(m, elemAt(nodes, ids, g).kind, str, midStart, split) ? YES : NO;
+  return absorbs(m, elemAt(elems, ids, g).kind, str, midStart, split) ? YES : NO;
 }
 
 // Can the globstar `kind` take the segments between the head (ending
@@ -158,11 +157,9 @@ function tailAndGlobstar(m, ids, g, str, midStart, bail) {
 // means no segment at all. `dotAt`, when given, is `firstDot(m, str,
 // from)`, which makes the dot check one compare.
 function absorbs(m, kind, str, from, split, dotAt) {
-  if (split === from) return kind === EL_G0 || kind === EL_G0_STRICT;
+  if (split === from) return kind === EL_G0;
   // Up to the separator before the tail, or the end.
   const to = split - 1;
-  // G0_STRICT may not start with an empty segment.
-  if (kind === EL_G0_STRICT && (from === to || isPathSep(str.charCodeAt(from)))) return false;
   return dotAt === undefined ? dotFree(m, str, from, to) : dotAt >= to;
 }
 
@@ -198,20 +195,20 @@ function dotFree(m, str, from, to) {
 // everything after the head, and a tail position when the tail's
 // first elements take the last segments.
 export function chainDir(m, str, bail) {
-  const nodes = m.nodes;
+  const elems = m.elems;
   const chain = m.chains[0];
   const ids = chain.nodes;
-  const n = chainLen(nodes, ids);
+  const n = chainLen(elems, ids);
   const g = chain.globstar === NO_G ? n : chain.globstar;
   const tl = g < n ? n - g - 1 : 0;
   // Every element from `i` on takes some segment: a token there still
   // reaches accept.
   const open = (i) => {
-    for (let j = i; j < n; j++) if (!elemSatisfiable(elemAt(nodes, ids, j))) return false;
+    for (let j = i; j < n; j++) if (!elemSatisfiable(elemAt(elems, ids, j))) return false;
     return true;
   };
   let tailAny = true;
-  for (let j = n - tl; j < n; j++) if (!elemAnySeg(elemAt(nodes, ids, j))) tailAny = false;
+  for (let j = n - tl; j < n; j++) if (!elemAnySeg(elemAt(elems, ids, j))) tailAny = false;
   if (str.length === 0) {
     // The walk root: nothing consumed yet. All below iff a leading
     // globstar is followed by at most one any-segment.
@@ -220,7 +217,7 @@ export function chainDir(m, str, bail) {
   }
   let midStart = 0;
   for (let i = 0; i < g; i++) {
-    const e = elemAt(nodes, ids, i);
+    const e = elemAt(elems, ids, i);
     let end = consumeAt(m, e, str, midStart, false, bail);
     if (end === BAILED) return -1;
     if (end === MISS) {
@@ -238,7 +235,7 @@ export function chainDir(m, str, bail) {
   }
   // A fixed chain, and the directory is deeper.
   if (g === n) return PRUNED;
-  const kind = elemAt(nodes, ids, g).kind;
+  const kind = elemAt(elems, ids, g).kind;
   const exact = tailAndGlobstar(m, ids, g, str, midStart, bail);
   if (exact === BAIL) return -1;
   // The globstar took everything after the head.
@@ -253,7 +250,7 @@ export function chainDir(m, str, bail) {
     const dotAt = firstDot(m, str, midStart);
     // `open(i)` for every `i` at once.
     let openFrom = n;
-    while (openFrom > g + 1 && elemSatisfiable(elemAt(nodes, ids, openFrom - 1))) openFrom--;
+    while (openFrom > g + 1 && elemSatisfiable(elemAt(elems, ids, openFrom - 1))) openFrom--;
     let checks = MAX_TAIL_CHECKS;
     let end = str.length;
     for (let j = 1; j < tl; j++) {
@@ -304,19 +301,18 @@ export function nfaRun(m, g, str, bail) {
 }
 
 function nfaStep(m, g, active, str, s0, e0, bail) {
-  const nodes = m.nodes;
+  const elems = m.elems;
   const tab = g.tab;
   const ci = m.ci;
   let next = 0;
-  const segEmpty = e0 === s0;
-  const segDotLed = !segEmpty && str.charCodeAt(s0) === 0x2e;
+  const segDotLed = e0 !== s0 && str.charCodeAt(s0) === 0x2e;
   const absorbOk = m.dot || !segDotLed;
   let bits = active & ~(1 << g.accept);
   while (bits !== 0) {
     const s = ctz32(bits);
     bits &= bits - 1;
     const ni = tab[(s << 1) | 1];
-    const e = nodes[ni];
+    const e = elems[ni];
     let consumes;
     switch (e.kind) {
       case EL_LIT:
@@ -328,11 +324,6 @@ function nfaStep(m, g, active, str, s0, e0, bail) {
         consumes = r === YES;
         break;
       }
-      case EL_G0_STRICT:
-        // The entry state is the first of the node's two and may not
-        // take an empty segment.
-        consumes = absorbOk && !(segEmpty && (s === 0 || tab[((s - 1) << 1) | 1] !== ni));
-        break;
       default:
         consumes = absorbOk;
     }
@@ -344,15 +335,15 @@ function nfaStep(m, g, active, str, s0, e0, bail) {
 // `nfaStep` over a non-empty segment that only wildcards consume: every
 // literal and class rejects it (`dot=true` only).
 function nfaStepWild(m, active) {
-  const g = m.graph;
-  const nodes = m.nodes;
+  const g = m.nfa;
+  const elems = m.elems;
   const tab = g.tab;
   let next = 0;
   let bits = active & ~(1 << g.accept);
   while (bits !== 0) {
     const s = ctz32(bits);
     bits &= bits - 1;
-    if (!elemAnySeg(nodes[tab[(s << 1) | 1]])) continue;
+    if (!elemAnySeg(elems[tab[(s << 1) | 1]])) continue;
     next |= tab[s << 1];
   }
   return next;
@@ -366,10 +357,10 @@ function nfaStepWild(m, active) {
 // wildcard-only one does, so `true` holds for all real paths; `false`
 // may only mean "not provable".
 export function coversBelow(m, active) {
-  const acceptBit = 1 << m.graph.accept;
+  const acceptBit = 1 << m.nfa.accept;
   // Tokens only move forward or sit on a globstar, so the set settles
   // within the number of states.
-  const limit = Math.min(m.graph.tab.length >> 1, MAX_COVER_SEGMENTS);
+  const limit = Math.min(m.nfa.tab.length >> 1, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
     const next = nfaStepWild(m, active);
     if ((next & acceptBit) === 0) return false;
@@ -384,7 +375,7 @@ export function coversBelow(m, active) {
 // The active set after every segment of `str`, or null on a string-mode
 // bail.
 export function nfaRunWide(m, str, bail) {
-  const g = m.graph;
+  const g = m.nfa;
   let active = g.init.slice();
   let next = new Int32Array(g.words);
   let pos = 0;
@@ -403,18 +394,17 @@ export function nfaRunWide(m, str, bail) {
 }
 
 function nfaStepWide(m, active, next, str, s0, e0, bail) {
-  const g = m.graph;
-  const nodes = m.nodes;
+  const g = m.nfa;
+  const elems = m.elems;
   const ci = m.ci;
   next.fill(0);
-  const segEmpty = e0 === s0;
-  const segDotLed = !segEmpty && str.charCodeAt(s0) === 0x2e;
+  const segDotLed = e0 !== s0 && str.charCodeAt(s0) === 0x2e;
   const absorbOk = m.dot || !segDotLed;
   let bailed = false;
   bitsForEach(active, (s) => {
     if (s === g.accept || bailed) return;
     const ni = g.nodeOf[s];
-    const e = nodes[ni];
+    const e = elems[ni];
     let consumes;
     switch (e.kind) {
       case EL_LIT:
@@ -429,9 +419,6 @@ function nfaStepWide(m, active, next, str, s0, e0, bail) {
         consumes = r === YES;
         break;
       }
-      case EL_G0_STRICT:
-        consumes = absorbOk && !(segEmpty && (s === 0 || g.nodeOf[s - 1] !== ni));
-        break;
       default:
         consumes = absorbOk;
     }
@@ -441,17 +428,17 @@ function nfaStepWide(m, active, next, str, s0, e0, bail) {
 }
 
 function nfaStepWildWide(m, active, next) {
-  const g = m.graph;
-  const nodes = m.nodes;
+  const g = m.nfa;
+  const elems = m.elems;
   next.fill(0);
   bitsForEach(active, (s) => {
-    if (s === g.accept || !elemAnySeg(nodes[g.nodeOf[s]])) return;
+    if (s === g.accept || !elemAnySeg(elems[g.nodeOf[s]])) return;
     bitsOr(next, g.after[s]);
   });
 }
 
 export function coversBelowWide(m, active) {
-  const g = m.graph;
+  const g = m.nfa;
   let next = new Int32Array(g.words);
   const limit = Math.min(g.after.length, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
@@ -518,9 +505,9 @@ function enterSparse(g, p, next, todo) {
 // successors are entered.
 function fireSparse(m, g, s, next, todo) {
   const p = g.pos[s];
-  const k = m.nodes[p].kind;
+  const k = m.elems[p].kind;
   if (k === EL_G0) addTo(next, s);
-  else if (k === EL_G0_STRICT || k === EL_G1) addTo(next, g.entries[p] + 1);
+  else if (k === EL_G1) addTo(next, g.entries[p] + 1);
   enterSparse(g, p, next, todo);
 }
 
@@ -548,7 +535,7 @@ function cmpKey(key, str, s, t, ci) {
 // The active set after every segment of `str`, or null on a string-mode
 // bail.
 export function nfaRunSparse(m, str, bail) {
-  const g = m.graph;
+  const g = m.nfa;
   const scratch = sparseScratch(g);
   let active = initSparse(g);
   let next = scratch.b;
@@ -606,15 +593,12 @@ function stepSparse(m, g, active, next, todo, str, s0, e0, bail) {
 // YES / NO / BAIL for state `s` on segment `str[s0..e0]`.
 function sparseConsumes(m, g, s, str, s0, e0, absorbOk, bail) {
   const p = g.pos[s];
-  const e = m.nodes[p];
+  const e = m.elems[p];
   switch (e.kind) {
     case EL_LIT:
       return litEq(e.litStr, str, s0, e0, m.ci);
     case EL_WILD:
       return wildConsumes(e.wild, str, s0, e0, m.ci, bail);
-    case EL_G0_STRICT:
-      // The entry state may not take an empty segment.
-      return absorbOk && !(e0 === s0 && s === g.entries[p]) ? YES : NO;
     default:
       return absorbOk ? YES : NO;
   }
@@ -631,11 +615,11 @@ export function sparseReach1(g, set) {
 
 // As `coversBelow`, over the set `nfaRunSparse` or `initSparse` left.
 export function coversBelowSparse(m, active) {
-  const g = m.graph;
+  const g = m.nfa;
   const scratch = sparseScratch(g);
   let next = active === scratch.a ? scratch.b : scratch.a;
   const base = g.pos.length;
-  const anySeg = (s) => elemAnySeg(m.nodes[g.pos[s]]);
+  const anySeg = (s) => elemAnySeg(m.elems[g.pos[s]]);
   const limit = Math.min(g.pos.length, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
     clearSet(next);

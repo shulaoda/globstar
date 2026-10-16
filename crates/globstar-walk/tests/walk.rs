@@ -533,12 +533,49 @@ fn walker_invalid_member_of_a_list_is_named() {
         _ => panic!("expected InvalidPattern, got {err:?}"),
     }
     // Every member compiles alone; together they pass the expansion
-    // budget (GLOB_SPEC §7.7). Then the error lists them all.
+    // budget (GLOB_SPEC §7.7). The error names the member it ran out in.
     let member = "{,/}".repeat(10) + "**/f";
     let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
     let err = Walk::from_patterns(&members, t.root()).unwrap_err();
     match &err {
-        WalkError::InvalidPattern { pattern, .. } => assert_eq!(pattern, &format!("{members:?}")),
+        WalkError::InvalidPattern {
+            pattern, reason, ..
+        } => {
+            assert_eq!(pattern, &members[1]);
+            assert!(reason.contains("the patterns share this limit"), "{reason}");
+        }
+        _ => panic!("expected InvalidPattern, got {err:?}"),
+    }
+    // Found from the core's member index, not by compiling each member
+    // again: 5,000 of them took seconds and printed the whole list.
+    let members: Vec<String> = (0..5000)
+        .map(|i| format!("{}{{**,a}}/f{i}", "{**,a}{/,b}".repeat(4)))
+        .collect();
+    let start = std::time::Instant::now();
+    let err = Walk::from_patterns(&members, t.root()).unwrap_err();
+    assert!(start.elapsed().as_millis() < 500, "{:?}", start.elapsed());
+    assert!(err.to_string().len() < 400, "{err}");
+    // An error no one member explains (the union's compile work) names
+    // the list, cut after three.
+    let members = [
+        "{a,/}{b,/}".repeat(300),
+        "c{a,/}".repeat(300),
+        "x".into(),
+        "y".into(),
+    ];
+    let err = Walk::from_patterns(&members, t.root()).unwrap_err();
+    match &err {
+        WalkError::InvalidPattern {
+            pattern,
+            source: Some(source),
+            ..
+        } => {
+            assert!(pattern.ends_with("\"x\"] and 1 more"), "{pattern}");
+            assert!(
+                matches!(source, globstar::GlobError::TooComplex { .. }),
+                "{source:?}"
+            );
+        }
         _ => panic!("expected InvalidPattern, got {err:?}"),
     }
 }

@@ -15,7 +15,7 @@ import {
   N_STAR,
 } from "../src/ast.js";
 import { parse } from "../src/parser.js";
-import { compileMatcher } from "../src/glob.js";
+import { buildEngine, compileMatcher } from "../src/glob.js";
 import { factorBranches } from "../src/factor.js";
 import {
   OP_ALTERNATION,
@@ -270,5 +270,43 @@ console.log("✓ errors and API surface");
   });
   compileMatcher("é".repeat(MAX_PATTERN_LEN / 2));
   assert.throws(() => compileMatcher("é".repeat(MAX_PATTERN_LEN / 2) + "a"), { kind: "TooLong" });
+  // A string longer than the limit is refused before it is encoded, and
+  // `len` still counts its UTF-8 bytes (a lone surrogate is U+FFFD).
+  for (const [unit, bytes] of [
+    ["é", 2],
+    ["😀", 4],
+    ["\ud800", 3],
+  ]) {
+    const pattern = unit.repeat(MAX_PATTERN_LEN);
+    const len = (pattern.length / unit.length) * bytes;
+    assert.throws(() => compileMatcher(pattern), { kind: "TooLong", len });
+  }
+  const big = "a".repeat(16 << 20);
+  big.charCodeAt(0);
+  const before = process.memoryUsage().arrayBuffers;
+  assert.throws(() => compileMatcher(big), { kind: "TooLong", len: 16 << 20 });
+  const grew = process.memoryUsage().arrayBuffers - before;
+  assert.ok(grew < 1 << 20, `refusing a 16 MB pattern allocated ${grew} bytes`);
 }
 console.log("✓ limits");
+
+// The engine's routing: what each pattern in fixtures/engine-shapes.tsv
+// compiles to. A slower path (everything sent to the NFA, no shared
+// nodes, no affix matchers) still answers right, so only this sees it.
+// Twin of crates/globstar/tests/engine_shapes.rs.
+{
+  const shapes = readFileSync(resolve(here, "../../../fixtures/engine-shapes.tsv"), "utf8");
+  let rows = 0;
+  for (const line of shapes.split("\n")) {
+    if (line === "" || line.startsWith("#")) continue;
+    const [want, ...patterns] = line.split("\t");
+    const engine = buildEngine(
+      patterns.map((p) => parse(p)),
+      { dot: true, caseInsensitive: false },
+    );
+    assert.equal(engine.shape(), want, patterns.join(" + ").slice(0, 60));
+    rows++;
+  }
+  assert.ok(rows >= 20, `only ${rows} rows`);
+}
+console.log("✓ engine shapes");

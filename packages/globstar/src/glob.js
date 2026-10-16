@@ -94,7 +94,8 @@ function matcherOptions(input) {
   };
 }
 
-function buildEngine(asts, opts) {
+// Exported for the tests, which read how a pattern compiled.
+export function buildEngine(asts, opts) {
   const ci = !!opts.caseInsensitive;
   const dot = !!opts.dot;
   // Members that only differ in spelling factor into one, which may be

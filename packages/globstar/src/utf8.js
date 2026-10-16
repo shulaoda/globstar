@@ -12,6 +12,22 @@ export function toBytes(input) {
   return out;
 }
 
+// How many bytes `toBytes(input)` would return, without making them. A
+// lone surrogate encodes as U+FFFD, three bytes.
+export function utf8Length(input) {
+  let n = 0;
+  for (let i = 0; i < input.length; i++) {
+    const c = input.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c < 0xdc00 && (input.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+
 // Bytes → a Latin-1 string (each byte becomes one char code). The inverse
 // of the ASCII/byte path above, used to hold short pattern literals as
 // strings for the string-mode matcher. `[]` yields `""`.

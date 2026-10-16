@@ -448,11 +448,11 @@ function splitBangs(raw) {
 
 // Compiles `{ raw, body }` pairs (`body` normalized: leading `/`
 // stripped etc.) into one matcher; `null` for an empty list. A failure
-// names the member, as written, that does not compile on its own; when
-// the written text differs, the reason says which text its byte offsets
-// count in. When every member compiles alone, the union as a whole
-// failed (its members share one expansion budget, GLOB_SPEC §7.7) and
-// the error lists them all.
+// names the member, as written, that the union failed in; when the
+// written text differs, the reason says which text its byte offsets
+// count in, and when it ran past the expansion budget the members share
+// (GLOB_SPEC §7.7), that they share it. An error no one member explains
+// (the union's compile work) names the list, cut after three.
 function compileUnion(patterns, opts) {
   if (patterns.length === 0) return null;
   try {
@@ -462,25 +462,32 @@ function compileUnion(patterns, opts) {
     );
   } catch (e) {
     if (!(e instanceof GlobError)) throw e;
-    let pattern = "[" + patterns.map((p) => JSON.stringify(p.raw)).join(", ") + "]";
-    let reason = e.message;
-    let cause = e;
-    for (const { raw, body } of patterns) {
-      try {
-        compileMatcher(body, opts);
-      } catch (member) {
-        if (!(member instanceof GlobError)) throw member;
-        pattern = raw;
-        reason =
-          raw === body
-            ? member.message
-            : `${member.message} (in '${body}', as the walker reads it)`;
-        cause = member;
-        break;
-      }
+    // The core names the member it failed in (`index`, with offsets into
+    // that member); an error no one member explains (the union's compile
+    // work) is about the list.
+    const at = e.index ?? (patterns.length === 1 ? 0 : null);
+    if (at === null) {
+      throw new WalkError("InvalidPattern", {
+        pattern: nameList(patterns),
+        reason: e.message,
+        cause: e,
+      });
     }
-    throw new WalkError("InvalidPattern", { pattern, reason, cause });
+    const { raw, body } = patterns[at];
+    let reason = e.message.replace(/^pattern \d+: /, "");
+    if (e.kind === "BraceExpansionTooLarge" && patterns.length > 1) {
+      reason += " (the patterns share this limit, and it ran out in this one)";
+    }
+    if (raw !== body) reason += ` (in '${body}', as the walker reads it)`;
+    throw new WalkError("InvalidPattern", { pattern: raw, reason, cause: e });
   }
+}
+
+// A list of patterns as one name, cut after the first few.
+function nameList(patterns) {
+  const shown = patterns.slice(0, 3).map((p) => JSON.stringify(p.raw));
+  const more = patterns.length - shown.length;
+  return `[${shown.join(", ")}]` + (more > 0 ? ` and ${more} more` : "");
 }
 
 // Does an entry exist at `p`?

@@ -303,7 +303,7 @@ fn nfa_over<B: Bits>(
                 c.set(e);
                 states[e].after = c;
             }
-            Elem::G0Strict | Elem::G1 => {
+            Elem::G1 => {
                 states[e + 1].node = node_at(i);
                 c.set(e + 1);
                 states[e].after = c.clone();
@@ -724,8 +724,7 @@ impl Builder {
                 h.write(lit);
             }
             Elem::G0 => h.write(&[1]),
-            Elem::G0Strict => h.write(&[2]),
-            Elem::G1 => h.write(&[3]),
+            Elem::G1 => h.write(&[2]),
             Elem::Wild(_) => return None,
         }
         for &t in tails {
@@ -742,7 +741,7 @@ impl Builder {
         }
         match (&self.elems[i], elem) {
             (Elem::Lit(a), Elem::Lit(b)) => a == b,
-            (Elem::G0, Elem::G0) | (Elem::G0Strict, Elem::G0Strict) | (Elem::G1, Elem::G1) => true,
+            (Elem::G0, Elem::G0) | (Elem::G1, Elem::G1) => true,
             _ => false,
         }
     }
@@ -846,16 +845,14 @@ impl Builder {
         groups
     }
 
-    /// Emit a group's pending `**/`, its kind by the boundary before it.
+    /// Emit a group's pending `**/`. It is always a `G0`: lowering gives
+    /// the `/` before a `**/` a lenient `SepRun`, and folds a `**/` into
+    /// the globstar before it, so none is left behind a strict boundary.
     fn settle(&mut self, g: &mut Group<'_>) {
         if !g.pending_oss || g.state == Boundary::Open {
             return;
         }
-        let kind = match g.state {
-            Boundary::Start | Boundary::Lenient => Elem::G0,
-            _ => Elem::G0Strict,
-        };
-        let id = self.emit(kind, &g.tails);
+        let id = self.emit(Elem::G0, &g.tails);
         g.rebase(id, Boundary::AfterG);
     }
 

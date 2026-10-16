@@ -14,12 +14,13 @@ segment-shaped elements — a line for a pattern without a
 separator-crossing brace, a branching graph otherwise:
 
 ```
-Element := Lit(bytes) | Wild(matcher) | G0 | G0Strict | G1
+Element := Lit(bytes) | Wild(matcher) | G0 | G1
 ```
 
-with `G0` absorbing ≥ 0 path segments, `G1` ≥ 1, and `G0Strict` a G0
-whose absorbed run may not begin with an empty segment (spliced
-strict-`Sep` + OSS boundaries). Empty path segments are first-class
+with `G0` absorbing ≥ 0 path segments and `G1` ≥ 1. (A `G0` that may not
+begin with an empty segment, for a `**/` behind a strict `Sep`, is never
+needed: lowering makes the `/` before a `**/` a lenient `SepRun`, and
+folds a `**/` into the globstar before it.) Empty path segments are first-class
 (`a//b` = `[a, "", b]`), which yields the strict-`Sep` semantics for
 free as element-count equality.
 
@@ -59,7 +60,7 @@ matcher keeps no NFA at all. Only a matcher whose chains cannot serve
   byte range for `(^|/)\.`. O(n), no search, no backtracking.
 - **Several Gs / a union's `match_dir` / > 64 paths**: an NFA over the
   graph,
-  one state per node (two for `G0Strict`/`G1`), stepped once per
+  one state per node (two for `G1`), stepped once per
   _segment_. The active set is one u64 (int32 in JS) while the graph
   has at most 64 states (31 in JS), and per state the closure entered
   after consuming a segment is precomputed; a word slice does the same
