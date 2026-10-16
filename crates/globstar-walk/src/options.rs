@@ -58,6 +58,9 @@ pub struct WalkOptions {
     /// (the offending descent is dropped, not the entire walk). When
     /// `false`, symlinks are dropped entirely — neither emitted nor
     /// descended (matches `tinyglobby` / `fdir`'s `excludeSymlinks`).
+    /// Each entry is judged when its folder is read: a folder replaced by
+    /// a symlink after that is read through the link, so `false` is no
+    /// guard against a tree that changes during the walk.
     /// Default: `true`.
     pub follow_links: bool,
 

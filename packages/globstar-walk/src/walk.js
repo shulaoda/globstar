@@ -239,6 +239,8 @@ function initFromPrefixes(ctx) {
     let joined = ctx.cwd;
     for (const seg of segs) joined = joinAbs(joined, seg);
 
+    if (!listedAsIs(ctx.cwd, segs)) continue;
+
     // The links a root walk would follow on the way down.
     const links = seedLinks(ctx, segs);
     if (links === null) continue;
@@ -523,6 +525,33 @@ function readEachEntry(dir) {
     out.push(entry);
   }
   return out;
+}
+
+// Does each non-ASCII part of a seed appear in its folder's listing as
+// written? A file system that ignores Unicode normalization (APFS) opens
+// an NFC spelling of a name stored NFD, which a root walk, comparing
+// names as listed, never matches. A folder that cannot be read leaves it
+// to the seed's own stat.
+function listedAsIs(cwd, segs) {
+  let dir = cwd;
+  for (const seg of segs) {
+    if (isNonAscii(seg)) {
+      let names;
+      try {
+        names = fs.readdirSync(dir);
+      } catch {
+        return true;
+      }
+      if (!names.includes(seg)) return false;
+    }
+    dir = joinAbs(dir, seg);
+  }
+  return true;
+}
+
+function isNonAscii(s) {
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 0x7f) return true;
+  return false;
 }
 
 // §7.4: `parent`, a separator, `child`, bypassing `path.join`'s

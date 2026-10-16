@@ -1734,3 +1734,31 @@ fn windows_seeds_reach_what_a_root_walk_lists() {
         assert!(walk(patterns, &["secret"]).is_empty(), "{patterns:?}");
     }
 }
+
+// A seed finds a name only in the spelling its folder lists it: APFS
+// opens an NFC spelling of a name stored NFD, which a root walk, comparing
+// names as listed, never matches. Twin of the check in walk.mjs.
+#[test]
+fn a_seed_finds_a_name_only_as_listed() {
+    let t = TmpTree::new("nfd");
+    let nfd = "e\u{301}";
+    // A file system that does not keep the name as given (wine's) has
+    // nothing to test.
+    let kept = std::panic::catch_unwind(|| {
+        t.touch(&format!("{nfd}.txt"));
+        t.touch(&format!("{nfd}/a.ts"));
+    })
+    .is_ok()
+        && fs::read_dir(t.root())
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name() == format!("{nfd}.txt").as_str());
+    if !kept {
+        return;
+    }
+    let walk = |pattern: &str| collect_rel(Walk::new(pattern, t.root()).unwrap(), t.root());
+    assert!(walk("\u{e9}.txt").is_empty());
+    assert!(walk("\u{e9}/*.ts").is_empty());
+    assert_eq!(walk(&format!("{nfd}.txt")).len(), 1);
+    assert_eq!(walk(&format!("{nfd}/*.ts")).len(), 1);
+}

@@ -5,7 +5,7 @@ outline: false
 
 # Playground
 
-Type patterns on the left and paths on the right. Every path is tested twice: as a file with `match()`, and as a directory with `matchDir()`, whose six verdicts are explained in [Directory matching](./guide/directory-matching.md). The page runs the real `@globstar/core` source in your browser, so what you see is what the library does. The URL updates as you type; copy it to share a case.
+Type patterns on the left and paths on the right. Every path is tested twice: as a file with `match()`, and as a directory with `matchDir()`, whose six verdicts are explained in [Directory matching](./guide/directory-matching.md). The page runs the real `@globstar/core` source in your browser, so what you see is what the library does, with one exception: a browser has no `process`, so `\` is never a separator here, while on Windows the library also splits paths at `\` (patterns use `/` everywhere). The URL updates as you type; copy it to share a case.
 
 <ClientOnly>
   <Playground />

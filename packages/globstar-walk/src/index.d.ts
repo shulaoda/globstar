@@ -23,7 +23,9 @@ export interface GlobOptions {
    * Follow symlinks when walking directories. Cycles are detected via
    * `fs.realpathSync.native` on the symlink target and skipped. When
    * `false`, symlinks are dropped entirely (neither emitted nor
-   * descended). Default `true` — matches tinyglobby's `followSymbolicLinks`.
+   * descended); each entry is judged when its folder is read, so a folder
+   * replaced by a symlink after that is read through the link. Default
+   * `true` — matches tinyglobby's `followSymbolicLinks`.
    */
   followSymlinks?: boolean | undefined;
   /**

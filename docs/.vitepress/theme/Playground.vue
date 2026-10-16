@@ -52,23 +52,35 @@ const dot = ref(true);
 const caseInsensitive = ref(false);
 const copied = ref(false);
 
-const lines = (text: string) => text.split("\n").filter((line) => line.length > 0);
-const patternList = computed(() => lines(patterns.value));
-const pathList = computed(() => lines(paths.value));
+// The non-empty lines, each with its line number.
+const lines = (text: string) =>
+  text
+    .split("\n")
+    .map((value, i) => ({ value, line: i + 1 }))
+    .filter((l) => l.value.length > 0);
+const patternLines = computed(() => lines(patterns.value));
+// A path line that is exactly `""` is the empty path: the walk root.
+const ROOT = '""';
+const pathList = computed(() => lines(paths.value).map((l) => (l.value === ROOT ? "" : l.value)));
 
 const compiled = computed(() => {
-  if (patternList.value.length === 0) {
+  const list = patternLines.value;
+  if (list.length === 0) {
     return { matcher: null, error: "Add at least one pattern." };
   }
   try {
-    const matcher = compileMatcher(patternList.value, {
-      dot: dot.value,
-      caseInsensitive: caseInsensitive.value,
-    });
+    const matcher = compileMatcher(
+      list.map((l) => l.value),
+      { dot: dot.value, caseInsensitive: caseInsensitive.value },
+    );
     return { matcher, error: null };
   } catch (e) {
-    const error = e instanceof GlobError ? `${e.kind}: ${e.message}` : String(e);
-    return { matcher: null, error };
+    if (!(e instanceof GlobError)) return { matcher: null, error: String(e) };
+    // A list's error names the member by its place in the list (`index`);
+    // show the line it is on instead.
+    const at = e.index === undefined ? "" : `line ${list[e.index].line}: `;
+    const message = e.message.replace(/^pattern \d+: /, "");
+    return { matcher: null, error: `${at}${e.kind}: ${message}` };
   }
 });
 
@@ -198,7 +210,11 @@ async function copyLink() {
       </label>
       <label class="pg-field">
         <span class="pg-title"
-          >Paths <small>one per line; each is tested as a file and as a directory</small></span
+          >Paths
+          <small
+            >one per line, <code>""</code> for the walk root; each is tested as a file and as a
+            directory</small
+          ></span
         >
         <textarea v-model="paths" rows="8" spellcheck="false" />
       </label>
@@ -229,7 +245,7 @@ async function copyLink() {
           <tbody>
             <tr v-for="(r, i) in rows" :key="i">
               <td>
-                <code>{{ r.path }}</code>
+                <code>{{ r.path === "" ? '"" (root)' : r.path }}</code>
               </td>
               <td :class="r.match ? 'pg-yes' : 'pg-no'">
                 {{ r.match ? "✓ match" : "✗ no match" }}

@@ -2,7 +2,7 @@
 
 This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling.
 
-**Version.** v0.3.6, draft. Appendix A (§12) lists every change.
+**Version.** v0.3.7, draft. Appendix A (§12) lists every change.
 
 **Status.** Active, not yet released.
 
@@ -240,6 +240,7 @@ The walker uses these to skip directories that no branch of the pattern can poss
 
 1. **Guards.** Skip the prefix outright when:
    - any of its segments is `..`, `.` or empty (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields none of them, so no root walk reaches such a path, and a joined `..` would escape `cwd`. A brace branch that starts with `/` gives one: `{a,/b}/x` has the prefixes `a` and `/b`, and `/b` is dropped;
+   - a part with a non-ASCII name is not in its folder's listing as written: a file system that ignores Unicode normalization (APFS) opens an NFC spelling of a name stored NFD, which a root walk, comparing names as listed, never matches (one `readdir` per such part);
    - the ignore set matches the prefix itself or ANY `/`-bounded ancestor of it (§7.1 step 3 prunes an ignored directory's whole subtree, so a root walk would never reach this seed);
    - a part of the prefix is a symlink the root walk would not follow: any symlink under `followSymlinks: false` (a root walk drops them entirely, §10), or one whose resolved target is already a target of an earlier part (a cycle, §10). A cycle at the prefix's last part only stops the descent (step 3).
 2. Computes its absolute form, joining its parts to `cwd` one by one with `joinAbs` (§7.4) as a root walk would, and calls `fs.statSync` on it.
@@ -405,7 +406,7 @@ Permissions are the one place a seed cannot see what a root walk would. A seed s
 
 Symbolic-link entries are surfaced by `readdir`'s `withFileTypes` result with `isSymbolicLink() === true` and `isDirectory() === false` — the dirent does not pre-resolve the link target. The walker's behavior depends on `followSymlinks`:
 
-- `followSymlinks: false`: the symlink is dropped entirely — NOT emitted as a file, NOT descended. Matches `fdir`'s `excludeSymlinks` mode.
+- `followSymlinks: false`: the symlink is dropped entirely — NOT emitted as a file, NOT descended. Matches `fdir`'s `excludeSymlinks` mode. Each entry is judged when its parent is read: a folder replaced by a symlink after that is read through the link (Node and Rust's `std` read a folder by path, with no `O_NOFOLLOW`), so this option is no guard against a tree that changes during the walk.
 - `followSymlinks: true` (default): the walker calls `fs.statSync` on the symlink (NOT `lstatSync`), which follows it. If the result is a directory, the walker treats the symlink as a directory entry and descends into the target's contents. If the stat fails (broken link, permission error), `isDir` is silently set to `false` and the entry continues as a non-directory. Stat failures here do NOT throw `WalkError("Io")` — broken symlinks are too common in real trees to make them fatal, even in the loud-error default.
 
 **Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles by resolving each symlink-target via `fs.realpathSync.native` (Rust: `fs::canonicalize`) and checking the resolved path against the chain of symlink-target ancestors that reached the current frame (see §7.1 step 6). If the resolved path is already in the chain, the descent is suppressed for that entry only; the link names a directory, so it is not emitted (§8.1), and the rest of the walk continues. `realpathSync` failures (broken / inaccessible) silently skip the descent without throwing. Algorithm parity: `fdir`'s `isRecursive` plus its `state.symlinks` map.
@@ -441,6 +442,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **v0.3.4** (2026-10-16): §3.2's ignore predicate names the folders above a path (an ignored folder hides its subtree); a symlink that closes a cycle is not emitted (§3.2, §10: the output is files only); §2.2 says async and sync each win somewhere, with measurements; §11 corrects the seeding cell and fills doublestar's `!` cell.
 - **v0.3.5** (2026-10-16): §4.4: a compile failure names the member the matcher reports, with no second compile; a whole-list error names the list cut after three.
 - **v0.3.6** (2026-10-16): §6 joins a seed part by part, as a root walk does; §7.4 and §8.2: on Windows a drive-root `cwd` gets no second separator and a verbatim `cwd` is joined with `\`.
+- **v0.3.7** (2026-10-16): §6: a seed part with a non-ASCII name must appear in its folder's listing as written (APFS opens an NFC spelling of an NFD name); §10: `followSymlinks: false` judges an entry when its parent is read, which a tree changing during the walk can get around.
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §7.7); seed stat failures probe `lstat` (§9.4).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.

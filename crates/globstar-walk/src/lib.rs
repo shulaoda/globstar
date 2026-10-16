@@ -361,6 +361,10 @@ impl Walk {
                 continue;
             }
 
+            if !listed_as_is(&self.base, &prefix) {
+                continue;
+            }
+
             let absolute = match std::str::from_utf8(&prefix) {
                 Ok(s) => {
                     // Part by part, so the path has the platform's
@@ -855,6 +859,33 @@ fn split_bangs(raw: &str) -> Option<(usize, String)> {
         }
         body = next;
     }
+}
+
+/// Does each non-ASCII part of `prefix` appear in its folder's listing as
+/// written? A file system that ignores Unicode normalization (APFS) opens
+/// an NFC spelling of a name stored NFD, which a root walk, comparing
+/// names as listed, never matches. A folder that cannot be read leaves it
+/// to the seed's own stat.
+fn listed_as_is(base: &Path, prefix: &[u8]) -> bool {
+    let mut dir = base.to_path_buf();
+    for seg in prefix.split(|&b| b == b'/') {
+        if !seg.is_ascii() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                return true;
+            };
+            if !entries
+                .flatten()
+                .any(|e| e.file_name().as_encoded_bytes() == seg)
+            {
+                return false;
+            }
+        }
+        match std::str::from_utf8(seg) {
+            Ok(name) => dir.push(name),
+            Err(_) => return true,
+        }
+    }
+    true
 }
 
 /// The seeds a Windows walk can stat. Win32 rewrites some names before

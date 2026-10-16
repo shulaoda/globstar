@@ -519,6 +519,29 @@ await check("an entry that vanishes during a typed read is skipped", async () =>
 });
 
 for (const fn of cleanups) fn();
+// ── A seed finds a name only as its folder lists it ─────────────────────
+await check("a seed finds a name only as listed", async () => {
+  // APFS opens an NFC spelling of a name stored NFD, which a root walk,
+  // comparing names as listed, never matches. Twin of the Rust check.
+  const nfd = "e\u0301";
+  let root;
+  try {
+    root = tmpTree("nfd", [`${nfd}.txt`, `${nfd}/a.ts`]);
+  } catch {
+    return; // a file system that does not keep the name as given (wine's)
+  }
+  if (!fs.readdirSync(root).includes(`${nfd}.txt`)) return;
+  for (const [pattern, count] of [
+    ["\u00e9.txt", 0],
+    ["\u00e9/*.ts", 0],
+    [`${nfd}.txt`, 1],
+    [`${nfd}/*.ts`, 1],
+  ]) {
+    assert.equal(globSync(pattern, { cwd: root }).length, count, pattern);
+    assert.equal((await glob(pattern, { cwd: root })).length, count, pattern);
+  }
+});
+
 // ── Windows: paths a Win32 API can open ─────────────────────────────────
 if (process.platform === "win32") {
   await check("a drive-root or verbatim cwd gives paths Win32 opens", async () => {
