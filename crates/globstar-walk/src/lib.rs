@@ -264,6 +264,23 @@ impl Walk {
     /// are yielded directly (no traversal). Other prefixes become stack
     /// frames under `base`. Missing prefixes silently skip.
     fn init_from_prefixes(&mut self) {
+        // A bad base fails loudly whatever the patterns are, never as a
+        // silently empty walk.
+        let base_error = match fs::metadata(&self.base) {
+            Ok(meta) if meta.is_dir() => None,
+            Ok(_) => Some(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "base is not a directory",
+            )),
+            Err(err) => Some(err),
+        };
+        if let Some(source) = base_error {
+            self.ready.push(Err(WalkError::Io {
+                path: self.base.clone(),
+                source,
+            }));
+            return;
+        }
         let matcher = match self.matcher.as_ref() {
             Some(m) => m,
             None => return, // empty pattern set: yield nothing
@@ -271,36 +288,23 @@ impl Walk {
         let prefixes = matcher.static_prefixes();
         for prefix in prefixes {
             if prefix.is_empty() {
-                // A bad base must fail loudly, not walk as silently empty.
-                match fs::metadata(&self.base) {
-                    Ok(meta) if meta.is_dir() => self.stack.push(Frame {
-                        absolute: self.base.clone(),
-                        relative: Vec::new(),
-                        depth: 0,
-                        symlink_ancestors: Vec::new(),
-                    }),
-                    Ok(_) => self.ready.push(Err(WalkError::Io {
-                        path: self.base.clone(),
-                        source: io::Error::new(
-                            io::ErrorKind::NotADirectory,
-                            "base is not a directory",
-                        ),
-                    })),
-                    Err(err) => self.ready.push(Err(WalkError::Io {
-                        path: self.base.clone(),
-                        source: err,
-                    })),
-                }
+                self.stack.push(Frame {
+                    absolute: self.base.clone(),
+                    relative: Vec::new(),
+                    depth: 0,
+                    symlink_ancestors: Vec::new(),
+                });
                 continue;
             }
 
-            // `..` escapes `base` when joined (the `strip_prefix` guard
-            // below is lexical) and `read_dir` yields neither `..` nor
-            // `.`. Split on every platform separator so a Windows
-            // `..\secret` can't slip past.
+            // A walked path never holds `..`, `.` or an empty segment
+            // (`read_dir` yields none of them), so a prefix with one
+            // (`{a,/b}` gives `/b`) is reached by no root walk; `..` would
+            // also escape `base`. Split on every platform separator so a
+            // Windows `..\secret` can't slip past.
             if prefix
                 .split(|&b| std::path::is_separator(b as char))
-                .any(|seg| seg == b".." || seg == b".")
+                .any(|seg| seg.is_empty() || seg == b".." || seg == b".")
             {
                 continue;
             }
@@ -327,14 +331,10 @@ impl Walk {
                 Err(_) => continue,
             };
 
-            // `follow_links: false` drops symlinks entirely (§10). A
-            // root walk would drop a symlink dirent and never reach a
-            // prefix that lies on or beyond it, so seeding must not
-            // jump through one either — otherwise the seed yields paths
-            // the root walk never would.
-            if !self.follow_links && self.seed_crosses_symlink(&absolute) {
+            // The links a root walk would follow on the way down.
+            let Some((symlink_ancestors, descend)) = self.seed_links(&absolute) else {
                 continue;
-            }
+            };
 
             // Depth of the prefix from the base: one per segment.
             let depth = 1 + prefix
@@ -352,12 +352,12 @@ impl Walk {
                                 .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
                         }
                     }
-                    if dm.may_match_below() {
+                    if descend && dm.may_match_below() {
                         self.stack.push(Frame {
                             absolute,
                             relative: prefix,
                             depth,
-                            symlink_ancestors: Vec::new(),
+                            symlink_ancestors,
                         });
                     }
                 }
@@ -379,14 +379,12 @@ impl Walk {
                                 .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
                         }
                     }
-                    Err(lerr) => match lerr.kind() {
-                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => {} // §9.4
-                        // EACCES etc.: a root walk fails loudly here.
-                        _ => self.ready.push(Err(WalkError::Io {
-                            path: absolute,
-                            source: lerr,
-                        })),
-                    },
+                    Err(lerr) if nothing_there(&lerr) => {} // §9.4
+                    // EACCES etc.: a root walk fails loudly here.
+                    Err(lerr) => self.ready.push(Err(WalkError::Io {
+                        path: absolute,
+                        source: lerr,
+                    })),
                 },
             }
         }
@@ -397,25 +395,39 @@ impl Walk {
         self.stack.reverse();
     }
 
-    /// Does any component of `joined` (from `base` down) resolve to a
-    /// symlink? Used under `follow_links: false` to keep static-prefix
-    /// seeding observationally equivalent to a root walk, which drops
-    /// symlinks entirely (§10).
-    fn seed_crosses_symlink(&self, joined: &Path) -> bool {
-        let Ok(rel) = joined.strip_prefix(&self.base) else {
-            return false;
-        };
+    /// What a root walk knows on reaching the seed `joined`: the
+    /// targets of the symlinks it followed on the way (the frame's
+    /// cycle chain, §10), and whether it would descend into the seed;
+    /// `None` when it never gets there — a symlink under `follow_links:
+    /// false`, which drops them entirely, or a link back to one already
+    /// followed. A missing or broken part ends the scan: the seed's own
+    /// stat decides.
+    fn seed_links(&self, joined: &Path) -> Option<(Vec<PathBuf>, bool)> {
+        let rel = joined.strip_prefix(&self.base).ok()?;
+        let parts = rel.components().count();
+        let mut chain = Vec::new();
         let mut cur = self.base.clone();
-        for comp in rel.components() {
+        for (i, comp) in rel.components().enumerate() {
             cur.push(comp);
-            if fs::symlink_metadata(&cur)
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false)
-            {
-                return true;
+            match fs::symlink_metadata(&cur) {
+                Ok(m) if m.file_type().is_symlink() => {}
+                Ok(_) => continue,
+                Err(_) => break,
             }
+            if !self.follow_links {
+                return None;
+            }
+            let Ok(target) = fs::canonicalize(&cur) else {
+                break;
+            };
+            if chain.contains(&target) {
+                // A cycle: the walk stops descending here, so it reaches
+                // the seed only when the seed is this link.
+                return (i + 1 == parts).then_some((chain, false));
+            }
+            chain.push(target);
         }
-        false
+        Some((chain, true))
     }
 
     /// Build a [`DirEntry`] from symlink-preserving metadata (the
@@ -632,6 +644,24 @@ fn normalize_pattern(s: &str) -> String {
         out.push('/');
     }
     out
+}
+
+/// A stat error that means no entry can be at the path, so a root walk
+/// would never list one (§9.4): it is missing, a part is not a folder,
+/// a link loops, the name is too long, or it holds a NUL.
+fn nothing_there(err: &io::Error) -> bool {
+    let kind = err.kind();
+    matches!(
+        kind,
+        io::ErrorKind::NotFound
+            | io::ErrorKind::NotADirectory
+            | io::ErrorKind::InvalidFilename
+            | io::ErrorKind::InvalidInput
+    )
+    // `ErrorKind::FilesystemLoop` cannot be named on stable Rust yet;
+    // std maps every platform's loop error to it, and Debug spells the
+    // variant.
+    || format!("{kind:?}") == "FilesystemLoop"
 }
 
 /// An ignored directory prunes its subtree (§7.1 step 3), so a seed is

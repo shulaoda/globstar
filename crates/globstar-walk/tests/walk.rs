@@ -1363,6 +1363,79 @@ fn walker_missing_base_yields_error() {
 }
 
 #[test]
+fn walker_bad_base_fails_for_every_pattern_shape() {
+    // A literal head used to stat only its seed, so a typo in the base
+    // gave a silent empty walk.
+    let t = TmpTree::new("bad_base");
+    t.touch("file.txt");
+    let file = t.root().join("file.txt");
+    for base in [Path::new("/nonexistent-globstar-base"), file.as_path()] {
+        for pattern in ["src/*.rs", "Cargo.toml", "**/*.rs"] {
+            let results: Vec<_> = Walk::new(pattern, base).unwrap().collect();
+            assert!(
+                matches!(results.as_slice(), [Err(WalkError::Io { .. })]),
+                "{pattern} under {}: {results:?}",
+                base.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn walker_seed_with_an_empty_segment_is_dropped() {
+    // `{a,/b}` gives the prefix `/b`: no walked path holds an empty
+    // segment, so a root walk never reaches it.
+    let t = TmpTree::new("empty_seg");
+    t.touch("a/x");
+    t.touch("a/b/x");
+    t.touch("b/x");
+    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+    let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
+    assert_eq!(walk("{a,/b}/x"), set(&["a/x"]));
+    assert_eq!(walk("{/a,/b}/x"), set(&[]));
+    // A written `//` is collapsed first (WALKER_SPEC §4.3).
+    assert_eq!(walk("{a//b,b}/x"), set(&["a/b/x", "b/x"]));
+}
+
+#[cfg(unix)]
+#[test]
+fn walker_seed_errors_follow_the_root_walk() {
+    // Nothing can be below a looping link, past a name too long for
+    // the filesystem, or at a name with a NUL: a root walk lists none of
+    // them, so a seed there is silent too.
+    let t = TmpTree::new("seed_errors");
+    t.touch("ok.txt");
+    std::os::unix::fs::symlink("loop", t.root().join("loop")).unwrap();
+    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+    let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
+    assert_eq!(walk("{ok.txt,loop/x.txt}"), set(&["ok.txt"]));
+    assert_eq!(walk(&("a".repeat(300) + "/*.txt")), set(&[]));
+    assert_eq!(walk("{ok.txt,a\0b/x.txt}"), set(&["ok.txt"]));
+}
+
+#[cfg(unix)]
+#[test]
+fn walker_seed_through_a_symlink_knows_its_cycle() {
+    // A root walk reaches `a/link` holding the link's target, so it does
+    // not go round `a/link/link`; a seed must start the same way.
+    let t = TmpTree::new("seed_cycle");
+    t.touch("a/x.txt");
+    std::os::unix::fs::symlink(".", t.root().join("a/link")).unwrap();
+    let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
+    for (seeded, root) in [
+        ("a/link/**/*.txt", "*/link/**/*.txt"),
+        ("a/link/link/**/*.txt", "*/link/link/**/*.txt"),
+        ("a/link/link/x.txt", "*/link/link/x.txt"),
+    ] {
+        assert_eq!(walk(seeded), walk(root), "{seeded}");
+    }
+    assert_eq!(
+        walk("a/link/**/*.txt"),
+        ["a/link/x.txt"].iter().map(|s| s.to_string()).collect()
+    );
+}
+
+#[test]
 fn walker_slash_only_pattern_is_dropped() {
     // A pattern that normalizes to nothing selects nothing — it must not
     // poison the sibling patterns.

@@ -266,6 +266,57 @@ await check("walk basics still hold", async () => {
   assert.deepEqual(got, ["real/back/x.txt", "real/x.txt"].sort(), "cycle terminates");
 });
 
+// ── seeds reach what a root walk reaches (2026-10 audit) ────────────────
+// Twins of the `walker_seed_*` tests in crates/globstar-walk/tests/walk.rs.
+await check("a seed with an empty segment is dropped", async () => {
+  // `{a,/b}` gives the prefix `/b`; `cwd + "/" + "/b"` used to be walked.
+  const root = tmpTree("emptyseg", ["a/x", "a/b/x", "b/x"]);
+  await expectBoth(root, ["{a,/b}/x"], {}, ["a/x"], "{a,/b}/x");
+  await expectBoth(root, ["{/a,/b}/x"], {}, [], "{/a,/b}/x");
+  // A written `//` is collapsed first (WALKER_SPEC §4.3).
+  await expectBoth(root, ["{a//b,b}/x"], {}, ["a/b/x", "b/x"], "{a//b,b}/x");
+  await expectBoth(root, ["{/src,x}/m.js", "a/x"], {}, ["a/x"], "no doubled seed");
+});
+
+await check("seed errors follow the root walk", async () => {
+  // Nothing can be below a looping link, past a name too long for the
+  // filesystem, or at a name with a NUL.
+  if (!symlinksOk) return;
+  const root = tmpTree("seederr", ["ok.txt"], { loop: "loop" });
+  await expectBoth(root, ["{ok.txt,loop/x.txt}"], {}, ["ok.txt"], "looping link");
+  await expectBoth(root, ["a".repeat(300) + "/*.txt"], {}, [], "name too long");
+  await expectBoth(root, ["{ok.txt,a\0b/x.txt}"], {}, ["ok.txt"], "NUL");
+});
+
+await check("a seed through a symlink knows its cycle", async () => {
+  // A root walk reaches `a/link` holding the link's target, so it does
+  // not go round `a/link/link`; a seed must start the same way.
+  if (!symlinksOk) return;
+  const root = tmpTree("seedcycle", ["a/x.txt"], { "a/link": "." });
+  for (const [seeded, rootWalk] of [
+    ["a/link/**/*.txt", "*/link/**/*.txt"],
+    ["a/link/link/**/*.txt", "*/link/link/**/*.txt"],
+    ["a/link/link/x.txt", "*/link/link/x.txt"],
+  ]) {
+    assert.deepEqual(
+      rel(root, globSync([seeded], { cwd: root })),
+      rel(root, globSync([rootWalk], { cwd: root })),
+      seeded,
+    );
+  }
+  await expectBoth(root, ["a/link/**/*.txt"], {}, ["a/link/x.txt"], "one level");
+});
+
+await check("cycles are found by the on-disk spelling", async () => {
+  // `realpathSync` keeps a link's spelling (`../A`), so on a
+  // case-insensitive disk two links to one folder looked like two.
+  if (!symlinksOk) return;
+  const probe = tmpTree("caseprobe", ["X"]);
+  if (!fs.existsSync(path.join(probe, "x"))) return; // case-sensitive disk
+  const root = tmpTree("casecycle", ["a/x.txt"], { "a/up1": "../A", "a/up2": "../a" });
+  await expectBoth(root, ["**/*.txt"], {}, ["a/up1/x.txt", "a/up2/x.txt", "a/x.txt"], "3 paths");
+});
+
 for (const fn of cleanups) fn();
 if (failures > 0) {
   console.error(`✗ ${failures} walker test group(s) failed`);

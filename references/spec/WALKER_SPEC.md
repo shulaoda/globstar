@@ -1,6 +1,6 @@
 # WALKER_SPEC — Filesystem Walker Built on the Glob Matcher
 
-> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.0 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
+> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.1 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
 
 ## Table of Contents
 
@@ -218,15 +218,15 @@ The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, 
 The walker uses these to skip directories that no branch of the pattern can possibly match. Seeding MUST be observationally equivalent to a root walk — a seed may only skip work, never change results. For each prefix the walker:
 
 1. **Guards.** Skip the prefix outright when:
-   - any of its segments is `..` or `.` (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields neither, and a joined `..` would escape `cwd`;
+   - any of its segments is `..`, `.` or empty (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields none of them, so no root walk reaches such a path, and a joined `..` would escape `cwd`. A brace branch that starts with `/` gives one: `{a,/b}/x` has the prefixes `a` and `/b`, and `/b` is dropped;
    - the ignore set matches the prefix itself or ANY `/`-bounded ancestor of it (§7.1 step 3 prunes an ignored directory's whole subtree, so a root walk would never reach this seed);
-   - `followSymlinks: false` and any component of the joined path is a symlink (a root walk drops symlinks entirely, §10).
+   - a part of the prefix is a symlink the root walk would not follow: any symlink under `followSymlinks: false` (a root walk drops them entirely, §10), or one whose resolved target is already a target of an earlier part (a cycle, §10). A cycle at the prefix's last part only stops the descent (step 3).
 2. Computes its absolute form: `joinAbs(cwd, prefix)` and calls `fs.statSync` on it.
-   - Stat fails: probe `lstatSync`. If THAT succeeds, the entry exists as a broken or looping symlink — treat it as a non-directory entry (step 4), exactly as the walk loop would (§10). If `lstat` fails with ENOENT/ENOTDIR, the prefix is silently skipped — this is NOT an error: `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch.
+   - Stat fails: probe `lstatSync`. If THAT succeeds, the entry exists as a broken or looping symlink — treat it as a non-directory entry (step 4), exactly as the walk loop would (§10). If `lstat` fails because nothing can be there (§9.4: ENOENT, ENOTDIR, ELOOP, ENAMETOOLONG, EINVAL, a NUL in the name), the prefix is silently skipped — this is NOT an error: `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch.
    - `lstat` fails otherwise (EACCES, …): surface it the way the walk loop would — a root walk hitting this subtree fails loudly (§9.3), so seeding MUST NOT hide it.
    - Stat succeeds: classify by file-type.
 3. If the stat reports a directory:
-   - Push it onto the seed-frame stack with `relative = prefix`, but only when `matcher.match_dir(prefix)` reports `may_match_below`; a `Pruned` or `Match` prefix has nothing to walk.
+   - Push it onto the seed-frame stack with `relative = prefix`, but only when `matcher.match_dir(prefix)` reports `may_match_below` (a `Pruned` or `Match` prefix has nothing to walk) and the prefix's last part is not a cycle (step 1). The frame's `symlinkAncestors` are the resolved targets of the symlinks among the prefix's parts, in order: what a root walk would hold on reaching it (§7.1 step 6). Without them a seed through `a/link -> .` went once more round the cycle than a root walk.
 4. If the entry is a non-directory (regular file, or a broken symlink from step 2):
    - If `matcher.match(prefix)` is true, push the file's path into the output array directly (the literal prefix IS a complete match).
    - Otherwise discard it.
@@ -241,7 +241,7 @@ The empty prefix (an empty `Uint8Array`, produced by patterns that begin with `*
 
 ### 7.1 Common per-frame loop
 
-Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of every symlink the walker descended through to reach it. Seed frames have `symlinkAncestors = []`. Both sync and async share the same per-dirent matching logic. For each `{ name, isDirectory, isSymbolicLink }` returned from a `readdir` of the frame's absolute path:
+Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of every symlink the walker descended through to reach it. Seed frames start with the targets of the symlinks on their prefix (§6 step 3); the frame for `cwd` itself starts empty. Both sync and async share the same per-dirent matching logic. For each `{ name, isDirectory, isSymbolicLink }` returned from a `readdir` of the frame's absolute path:
 
 1. **Symlink drop** — if the entry is a symbolic link AND `followSymlinks` is `false`, skip the entry (NOT emitted, NOT descended). Performed before any other work.
 2. Compute `childRel = parentRel === "" ? name : parentRel + "/" + name`.
@@ -254,7 +254,7 @@ Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of eve
 6. Branch on `isDir`:
    - **Directory.** Walker emits files only, so the directory result of `matcher.match_dir(childRel)` is consulted only for the descend decision. If `dm.may_match_below()` is true, push a child frame into the descend list. The child frame's `symlinkAncestors` is determined by:
      - **non-symlink dir** — copy the parent's `symlinkAncestors` unchanged;
-     - **symlink-to-dir** — `fs.realpathSync(childAbs)` to get `resolved`. If `resolved ∈ frame.symlinkAncestors`, this is a cycle; skip the descent. Otherwise the child's `symlinkAncestors` is `frame.symlinkAncestors ++ [resolved]`. `fs.realpathSync` failures (broken / inaccessible link) MUST also skip the descent silently.
+     - **symlink-to-dir** — `fs.realpathSync.native(childAbs)` to get `resolved`, the on-disk spelling (as Rust's `canonicalize`; the non-native `realpathSync` keeps a link's own spelling, so on a case-insensitive disk `../A` and `../a` looked like two folders). If `resolved ∈ frame.symlinkAncestors`, this is a cycle; skip the descent. Otherwise the child's `symlinkAncestors` is `frame.symlinkAncestors ++ [resolved]`. `realpath` failures (broken / inaccessible link) MUST also skip the descent silently.
    - **Non-directory.** If `matcher.match(childRel)` is true, push `childAbs` into the result array. Output is always the absolute form (§8.2).
 
 ### 7.2 Sync DFS
@@ -293,7 +293,7 @@ function joinAbs(parent, child) {
 }
 ```
 
-This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous `joinAbs` result — and, for seed frames, a §4.3-normalized static prefix. §4.3's normalization (leading-`/` strip, `//` collapse, `.`-segment removal) plus §6's `..`/`.` seed guard are what make this premise hold for the seed join; without them, pattern spellings leaked into output paths. Measured: `path.join` is ~100 µs slower per walk than `joinAbs` on a small Vite project tree.
+This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous `joinAbs` result — and, for seed frames, a §4.3-normalized static prefix. §4.3's normalization (leading-`/` strip, `//` collapse, `.`-segment removal) plus §6's guard against `..`, `.` and empty seed segments are what make this premise hold for the seed join; without them, pattern spellings leaked into output paths. Measured: `path.join` is ~100 µs slower per walk than `joinAbs` on a small Vite project tree.
 
 ### 7.5 Result-order guarantees
 
@@ -370,9 +370,11 @@ This is the walker's most visible divergence from `tinyglobby` and `fast-glob`, 
 
 Seed-prefix `fs.statSync` failures during §6 step 2 are classified, not blanket-swallowed — the rule is root-walk equivalence:
 
-- **`stat` fails and `lstat` fails with ENOENT / ENOTDIR** — silently skipped. This is "this branch of the brace did not match anything that exists on disk", a legitimate "nothing to walk on this branch" outcome rather than something the user typo'd.
+- **`stat` fails and `lstat` fails because nothing can be there** — silently skipped. That is ENOENT (missing), ENOTDIR (a part is a file), ELOOP (a part is a looping link), ENAMETOOLONG (no directory lists such a name), EINVAL or a NUL in the name (no such name exists). A root walk lists none of these, so this is "this branch of the brace did not match anything that exists on disk", a legitimate "nothing to walk on this branch" outcome rather than something the user typo'd.
 - **`stat` fails but `lstat` succeeds** — a broken or looping symlink. The entry EXISTS; §10 makes the walk loop treat it as a non-directory and emit it when matched, so the seed does the same.
 - **`lstat` fails with anything else (EACCES, …)** — surfaced as `WalkError("Io")`. A root walk reaching this subtree fails loudly (§9.3); a seed must not turn that into a silent empty result.
+
+Permissions are the one place a seed cannot see what a root walk would. A seed stats its path directly, while a root walk lists every folder on the way. So under a folder that can be entered but not listed (mode `0100`) a seed finds its file where a root walk fails, and under one that can be listed but not entered (mode `0400`) a seed fails where a root walk lists the names. Both are rare, and both surface rather than hide a problem.
 
 ---
 
@@ -383,7 +385,7 @@ Symbolic-link entries are surfaced by `readdir`'s `withFileTypes` result with `i
 - `followSymlinks: false`: the symlink is dropped entirely — NOT emitted as a file, NOT descended. Matches `fdir`'s `excludeSymlinks` mode.
 - `followSymlinks: true` (default): the walker calls `fs.statSync` on the symlink (NOT `lstatSync`), which follows it. If the result is a directory, the walker treats the symlink as a directory entry and descends into the target's contents. If the stat fails (broken link, permission error), `isDir` is silently set to `false` and the entry continues as a non-directory. Stat failures here do NOT throw `WalkError("Io")` — broken symlinks are too common in real trees to make them fatal, even in the loud-error default.
 
-**Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles by resolving each symlink-target via `fs.realpathSync` and checking the resolved path against the chain of symlink-target ancestors that reached the current frame (see §7.1 step 6). If the resolved path is already in the chain, the descent is suppressed for that entry only — the symlink path is still emitted if `matcher.match` matches it, the rest of the walk continues. `realpathSync` failures (broken / inaccessible) silently skip the descent without throwing. Algorithm parity: `fdir`'s `isRecursive` plus its `state.symlinks` map.
+**Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles by resolving each symlink-target via `fs.realpathSync.native` (Rust: `fs::canonicalize`) and checking the resolved path against the chain of symlink-target ancestors that reached the current frame (see §7.1 step 6). If the resolved path is already in the chain, the descent is suppressed for that entry only — the symlink path is still emitted if `matcher.match` matches it, the rest of the walk continues. `realpathSync` failures (broken / inaccessible) silently skip the descent without throwing. Algorithm parity: `fdir`'s `isRecursive` plus its `state.symlinks` map.
 
 Output paths preserve the symlink path as discovered through `readdir`. `fs.realpath` is called purely for cycle detection — the resolved path is NEVER substituted into the output.
 
@@ -411,6 +413,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 
 ## 12. Appendix A: Version History
 
+- **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.
 - **v0.3.0** (2026-05-04, draft):
   - `followSymlinks` semantics aligned with `tinyglobby` / `fdir`:
     - default flipped from `false` to `true` (matches Vite's `import.meta.glob` contract — pnpm-style `node_modules/<pkg>` symlinks must be traversed by default).

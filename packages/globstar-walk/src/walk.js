@@ -17,8 +17,9 @@
 //
 // Symlinks: `followSymlinks: true` (default, matching tinyglobby)
 // follows the link via `fs.statSync` to detect dir-vs-file targets,
-// and breaks cycles by `fs.realpathSync`-ing each target and checking
-// the ancestor chain — the offending descent is dropped, the rest of
+// and breaks cycles by `fs.realpathSync.native`-ing each target (the
+// on-disk spelling, as Rust's `canonicalize`) and checking the ancestor
+// chain — the offending descent is dropped, the rest of
 // the walk continues. `followSymlinks: false` drops symlinks entirely
 // (neither emitted nor descended; matches `fdir`'s `excludeSymlinks`).
 //
@@ -200,20 +201,20 @@ function initFromPrefixes(ctx) {
 
     const prefixStr = bytesToString(prefixBytes);
 
-    // `..` escapes cwd when joined and readdir yields neither `..` nor
-    // `.`. Split on every platform separator so a Windows `..\secret`
-    // can't slip past.
+    // A walked path never holds `..`, `.` or an empty segment (readdir
+    // yields none of them), so a prefix with one (`{a,/b}` gives `/b`)
+    // is reached by no root walk; `..` would also escape cwd. Split on
+    // every platform separator so a Windows `..\secret` can't slip past.
     const segs = WINDOWS ? prefixStr.split(/[/\\]/) : prefixStr.split("/");
-    if (segs.some((seg) => seg === ".." || seg === ".")) continue;
+    if (segs.some((seg) => seg === "" || seg === ".." || seg === ".")) continue;
 
     if (ctx.ignore !== null && seedIgnored(ctx.ignore, prefixStr)) continue;
 
     const joined = joinAbs(ctx.cwd, prefixStr);
 
-    // `followSymlinks: false` drops symlinks entirely (§10). A root
-    // walk would drop a symlink dirent and never reach a prefix on or
-    // beyond it, so seeding must not jump through one either.
-    if (!ctx.followSymlinks && seedCrossesSymlink(ctx.cwd, prefixStr)) continue;
+    // The links a root walk would follow on the way down.
+    const links = seedLinks(ctx, segs);
+    if (links === null) continue;
 
     let stat;
     try {
@@ -225,8 +226,7 @@ function initFromPrefixes(ctx) {
       try {
         fs.lstatSync(joined);
       } catch (lcause) {
-        const code = lcause?.code;
-        if (code === "ENOENT" || code === "ENOTDIR") continue; // §9.4
+        if (nothingThere(lcause)) continue; // §9.4
         // EACCES etc.: a root walk fails loudly here (§9.3).
         throw new WalkError("Io", { path: joined, cause: lcause });
       }
@@ -236,8 +236,12 @@ function initFromPrefixes(ctx) {
 
     if (stat.isDirectory()) {
       // Walker only emits files; dir matchDir result just gates descend.
-      if (DirMatch.mayMatchBelow(ctx.matcher.matchDir(prefixStr))) {
-        ctx.seedFrames.push({ absolute: joined, relative: prefixStr, symlinkAncestors: [] });
+      if (links.descend && DirMatch.mayMatchBelow(ctx.matcher.matchDir(prefixStr))) {
+        ctx.seedFrames.push({
+          absolute: joined,
+          relative: prefixStr,
+          symlinkAncestors: links.chain,
+        });
       }
     } else if (ctx.matcher.match(prefixStr)) {
       ctx.seedResults.push(joined);
@@ -257,22 +261,50 @@ function seedIgnored(ignore, prefixStr) {
   return ignore.match(prefixStr);
 }
 
-// Does any component of `cwd + "/" + prefixStr` (from cwd down) resolve
-// to a symlink? Used under `followSymlinks: false` to keep static-prefix
-// seeding observationally equivalent to a root walk, which drops
-// symlinks entirely (§10).
-function seedCrossesSymlink(cwd, prefixStr) {
-  let cur = cwd;
-  for (const seg of WINDOWS ? prefixStr.split(/[/\\]/) : prefixStr.split("/")) {
-    if (seg === "") continue;
-    cur = joinAbs(cur, seg);
+// What a root walk knows on reaching the seed `segs`: the targets of
+// the symlinks it followed on the way (the frame's cycle chain, §10),
+// and whether it would descend into the seed; `null` when it never gets
+// there — a symlink under `followSymlinks: false`, which drops them
+// entirely, or a link back to one already followed. A missing or broken
+// part ends the scan: the seed's own stat decides.
+function seedLinks(ctx, segs) {
+  const chain = [];
+  let cur = ctx.cwd;
+  for (let i = 0; i < segs.length; i++) {
+    cur = joinAbs(cur, segs[i]);
+    let target;
     try {
-      if (fs.lstatSync(cur).isSymbolicLink()) return true;
+      if (!fs.lstatSync(cur).isSymbolicLink()) continue;
+      if (!ctx.followSymlinks) return null;
+      target = fs.realpathSync.native(cur);
     } catch {
-      // Missing / inaccessible component — the later statSync handles it.
+      break;
     }
+    if (chain.includes(target)) {
+      // A cycle: the walk stops descending here, so it reaches the seed
+      // only when the seed is this link.
+      return i === segs.length - 1 ? { chain, descend: false } : null;
+    }
+    chain.push(target);
   }
-  return false;
+  return { chain, descend: true };
+}
+
+// A stat error that means no entry can be at the path, so a root walk
+// would never list one (§9.4): it is missing, a part is not a folder, a
+// link loops, the name is too long or invalid, or it holds a NUL.
+function nothingThere(err) {
+  switch (err?.code) {
+    case "ENOENT":
+    case "ENOTDIR":
+    case "ELOOP":
+    case "ENAMETOOLONG":
+    case "EINVAL":
+    case "ERR_INVALID_ARG_VALUE":
+      return true;
+    default:
+      return false;
+  }
 }
 
 // Per-frame match loop, shared by sync and async paths. `results` and
@@ -324,7 +356,7 @@ function processDirents(ctx, dirents, frame, results, descend) {
         if (isSymlink) {
           let resolved;
           try {
-            resolved = fs.realpathSync(childAbs);
+            resolved = fs.realpathSync.native(childAbs);
           } catch {
             continue; // broken / inaccessible
           }
@@ -389,8 +421,9 @@ function compileUnion(patterns, opts) {
 }
 
 // Bypass `path.join`'s normalization (`..` / `.` / repeated `/`) — we
-// only ever append a single dirent name to a `path.resolve`'d cwd or
-// a previous `joinAbs` result, so neither input ever contains those.
+// only ever append a dirent name, or a seed prefix the seeding checks
+// for `..`, `.` and empty segments, to a `path.resolve`'d cwd or a
+// previous `joinAbs` result, so neither input ever contains those.
 function joinAbs(parent, child) {
   return parent.charCodeAt(parent.length - 1) === 0x2f ? parent + child : parent + "/" + child;
 }
