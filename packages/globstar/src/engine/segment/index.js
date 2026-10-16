@@ -14,11 +14,16 @@ import {
   chainDir,
   nfaRun,
   nfaRunWide,
+  nfaRunSparse,
+  initSparse,
+  sparseHas,
+  sparseReach1,
   coversBelow,
   coversBelowWide,
+  coversBelowSparse,
 } from "./exec.js";
 import { bitTest, bitsIntersect } from "./bits.js";
-import { NO, YES, BAIL } from "./elem.js";
+import { NO, YES, BAIL, NFA_WIDE, NFA_SPARSE } from "./elem.js";
 
 export class SegmentMatcher {
   constructor(compiled, program, byteOnly, dot) {
@@ -87,7 +92,12 @@ export class SegmentMatcher {
 
   _nfaMatch(str, bail) {
     const g = this.graph;
-    if (g.wide) {
+    if (g.kind === NFA_SPARSE) {
+      const active = nfaRunSparse(this, str, bail);
+      if (active === null) return BAIL;
+      return sparseHas(active, g.accept) ? YES : NO;
+    }
+    if (g.kind === NFA_WIDE) {
       const active = nfaRunWide(this, str, bail);
       if (active === null) return BAIL;
       return bitTest(active, g.accept) ? YES : NO;
@@ -112,14 +122,24 @@ export class SegmentMatcher {
     if (g === null) return chainDir(this, str, bail);
     if (str.length === 0) {
       // The empty dir is the walk root: nothing consumed yet.
-      const all =
-        this.dot && (g.wide ? coversBelowWide(this, g.init.slice()) : coversBelow(this, g.init));
+      let all = false;
+      if (this.dot) {
+        if (g.kind === NFA_SPARSE) all = coversBelowSparse(this, initSparse(g));
+        else if (g.kind === NFA_WIDE) all = coversBelowWide(this, g.init.slice());
+        else all = coversBelow(this, g.init);
+      }
       return DirMatch.from(this.isMatch(str), true, all);
     }
     let exact;
     let prefix;
     let all;
-    if (g.wide) {
+    if (g.kind === NFA_SPARSE) {
+      const active = nfaRunSparse(this, str, bail);
+      if (active === null) return -1;
+      exact = sparseHas(active, g.accept);
+      prefix = sparseReach1(g, active);
+      all = this.dot && prefix && coversBelowSparse(this, active);
+    } else if (g.kind === NFA_WIDE) {
       const active = nfaRunWide(this, str, bail);
       if (active === null) return -1;
       exact = bitTest(active, g.accept);

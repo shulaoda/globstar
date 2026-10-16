@@ -265,3 +265,63 @@ fn corpus_differential_vs_or_oracle() {
     }
     assert!(checks > 5_000, "too few checks: {checks}");
 }
+
+/// Members of a union too big for the chains: its graph NFA keeps dense
+/// rows at 100 members and goes sparse at 600.
+fn big_union(n: usize) -> Vec<String> {
+    (0..n)
+        .map(|i| {
+            let (a, b) = (i % 37, i % 11);
+            match i % 7 {
+                0 => format!("a{a}/**"),
+                1 => format!("**/f{a}.ts"),
+                2 => format!("b{b}/a{a}/*"),
+                3 => format!("{{a,b}}{a}/f{b}"),
+                4 => format!("**/c{a}/**/d{b}"),
+                5 => format!("f{a}/**/b{b}"),
+                _ => format!("*{a}/a{b}"),
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn big_unions_agree_with_their_members() {
+    let segs = [
+        "a3", "b2", "f5.ts", "c7", "d1", "x", "a30", ".a", "b10", "f36",
+    ];
+    let mut paths: Vec<String> = vec![String::new()];
+    for depth in 1..=3 {
+        for i in 0..200usize {
+            let path: Vec<&str> = (0..depth)
+                .map(|k| segs[(i / 10usize.pow(k)) % segs.len()])
+                .collect();
+            paths.push(path.join("/"));
+        }
+    }
+    for n in [100, 600] {
+        let patterns = big_union(n);
+        let members: Vec<Glob> = patterns.iter().map(|p| Glob::new(p).unwrap()).collect();
+        let union = Glob::union(&patterns).unwrap();
+        for path in &paths {
+            let path = path.as_bytes();
+            let any = |f: &dyn Fn(&Glob) -> bool| members.iter().any(f);
+            assert_eq!(
+                union.is_match(path),
+                any(&|g| g.is_match(path)),
+                "{n}: {path:?}"
+            );
+            let dir = union.match_dir(path);
+            assert_eq!(
+                dir.matches(),
+                any(&|g| g.match_dir(path).matches()),
+                "{n}: {path:?}"
+            );
+            assert_eq!(
+                dir.may_match_below(),
+                any(&|g| g.match_dir(path).may_match_below()),
+                "{n}: {path:?}"
+            );
+        }
+    }
+}

@@ -58,12 +58,17 @@ matcher keeps no NFA at all. Only a matcher whose chains cannot serve
   graph,
   one state per node (two for `G0Strict`/`G1`), stepped once per
   _segment_. The active set is one u64 (int32 in JS) while the graph
-  has at most 64 states (31 in JS) and a word slice beyond, so no
-  pattern is too large. Per state the closure entered after consuming
-  a segment is precomputed; `match_dir`'s prefix bit is `active ∩
-reach1`, where `reach1[s]` ⇔ some ≥ 1-segment continuation from s
-  reaches accept (suffix satisfiability, precomputed). O(n · active),
-  active ≤ 3 in practice for one pattern. A chain with several
+  has at most 64 states (31 in JS), and per state the closure entered
+  after consuming a segment is precomputed; a word slice does the same
+  while those rows fit 32 KiB (about 500 states). Past that the NFA is
+  stepped sparsely: each position keeps its successors, the literal
+  ones sorted, and the active set lists states and whole positions
+  ("every successor of p entered"), so a step costs what it tests (one
+  binary search for a position's literals) and the tables are linear
+  in the graph. `match_dir`'s prefix bit is `active ∩ reach1`, where
+  `reach1[s]` ⇔ some ≥ 1-segment continuation from s reaches accept
+  (suffix satisfiability, precomputed). O(n · active), active ≤ 3 in
+  practice for one pattern. A chain with several
   globstars carries its own small NFA (its nodes alone) so a union
   member like `**/node_modules/**` costs what it would alone.
   `match_dir`'s all-below bit steps the graph NFA over wildcard-only

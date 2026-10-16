@@ -288,10 +288,43 @@ struct LitSet<B: Bits> {
     sorted: Box<[u32]>,
 }
 
+/// The same automaton past `MAX_ROW_BYTES` of rows, stepped sparsely. A position
+/// keeps its successors, not a closure row, and the active set holds
+/// states and whole positions: "every successor of `p` is entered" is
+/// one entry, whose literals are found by one binary search. A step
+/// costs what it tests, and the tables grow with the graph, not its
+/// square.
+#[derive(Debug, Clone)]
+struct SparseNfa {
+    /// Per state, its position; the accept state, last, has none.
+    pos: Box<[u32]>,
+    /// Per position, its node and its entry state.
+    nodes: Box<[u32]>,
+    entries: Box<[u32]>,
+    /// Per position (the start last), its successors: the literal
+    /// ones' entry states sorted by literal (case-folded when
+    /// insensitive), the other positions, and the nullable ones (`**/`)
+    /// among those, at `xs[x_at[p]..x_at[p + 1]]`.
+    lit_at: Box<[u32]>,
+    lits: Box<[u32]>,
+    other_at: Box<[u32]>,
+    others: Box<[u32]>,
+    null_at: Box<[u32]>,
+    nulls: Box<[u32]>,
+    /// Positions the pattern may end after.
+    ends: Wide,
+    /// States, and positions with a successor, that can still consume
+    /// ≥ 1 segment on a path to accept.
+    reach1: Wide,
+    succ_reach1: Wide,
+}
+
 #[derive(Debug, Clone)]
 enum AnyNfa {
     Small(Nfa<u64>),
-    Wide(Nfa<Wide>),
+    // The rarer kinds are boxed, so the common one sets the size.
+    Wide(Box<Nfa<Wide>>),
+    Sparse(Box<SparseNfa>),
 }
 
 impl AnyNfa {
@@ -299,6 +332,7 @@ impl AnyNfa {
         match self {
             AnyNfa::Small(n) => n.is_match(m, path),
             AnyNfa::Wide(n) => n.is_match(m, path),
+            AnyNfa::Sparse(n) => n.is_match(m, path),
         }
     }
 
@@ -306,6 +340,7 @@ impl AnyNfa {
         match self {
             AnyNfa::Small(n) => n.match_dir(m, dir_path),
             AnyNfa::Wide(n) => n.match_dir(m, dir_path),
+            AnyNfa::Sparse(n) => n.match_dir(m, dir_path),
         }
     }
 }

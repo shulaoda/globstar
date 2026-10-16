@@ -91,6 +91,19 @@ fn huge_segments_match_without_kept_closures() {
 }
 
 #[test]
+fn wide_graphs_step_by_what_is_active() {
+    // 18,000 states, two of them active: a step touches what is active,
+    // not every literal sibling group (100 matches took minutes).
+    let g = Glob::new(&("{a/,b/}".repeat(9000) + "x")).unwrap();
+    let path = "a/".repeat(100) + "x";
+    let start = std::time::Instant::now();
+    for _ in 0..100 {
+        assert!(!g.is_match(path.as_bytes()));
+    }
+    assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
+}
+
+#[test]
 fn classify_brace_routes_to_globstar_tier() {
     let g = Glob::new("*.{ts,tsx}").unwrap();
     // A brace counts as `Tier::Globstar`; the tier is syntax only.

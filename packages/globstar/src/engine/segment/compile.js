@@ -37,6 +37,9 @@ import {
   LINEAR_SUFFIXES,
   NO_G,
   MANY_G,
+  NFA_SMALL,
+  NFA_WIDE,
+  NFA_SPARSE,
   elemSatisfiable,
 } from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
@@ -65,7 +68,7 @@ export function compileSegment(ops, dot, ci, forceNfa) {
   if (forceNfa || chainList.length !== 1 || chainList[0].globstar === MANY_G) {
     let nStates = 1;
     for (const e of graph.elems) nStates += elemStates(e);
-    nfa = nStates <= 31 ? nfaSmall(graph, null) : nfaWide(graph, null);
+    nfa = anyNfa(graph, nStates, ci);
   }
   return { elems: graph.elems, chains: chainList, nfa };
 }
@@ -247,16 +250,50 @@ function opEqual(a, b) {
 
 const opsEqual = (a, b) => a.length === b.length && a.every((op, i) => opEqual(op, b[i]));
 
-// Add a group to `out`, joining one that agrees on boundary and partial
-// segment: their continuations are the same nodes.
+// Groups joined when they agree on boundary, pending `**/` and partial
+// segment: their continuations are the same nodes. A union leaves a
+// group per member, so past LINEAR_GROUPS they are found by a key of
+// each op's kind (and a literal's bytes).
+const LINEAR_GROUPS = 16;
+
+const agrees = (o, g) =>
+  o.state === g.state && o.pendingOss === g.pendingOss && opsEqual(o.buf, g.buf);
+
+function groupKey(g) {
+  let key = `${g.state},${g.pendingOss ? 1 : 0}`;
+  for (const op of g.buf) key += op.kind === OP_LIT ? `|${latin1(op.bytes)}` : `|#${op.kind}`;
+  return key;
+}
+
+function makeMerged() {
+  return { groups: [], index: null };
+}
+
 function merge(out, g) {
-  for (const o of out) {
-    if (o.state === g.state && o.pendingOss === g.pendingOss && opsEqual(o.buf, g.buf)) {
-      for (const t of g.tails) o.tails.push(t);
-      return;
+  const n = out.groups.length;
+  let found = -1;
+  if (n < LINEAR_GROUPS) {
+    found = out.groups.findIndex((o) => agrees(o, g));
+  } else {
+    if (out.index === null) {
+      out.index = new Map();
+      out.groups.forEach((o, i) => {
+        const key = groupKey(o);
+        const bucket = out.index.get(key);
+        if (bucket === undefined) out.index.set(key, [i]);
+        else bucket.push(i);
+      });
+    }
+    const key = groupKey(g);
+    const bucket = out.index.get(key);
+    if (bucket !== undefined) found = bucket.find((i) => agrees(out.groups[i], g)) ?? -1;
+    if (found === -1) {
+      if (bucket === undefined) out.index.set(key, [n]);
+      else bucket.push(n);
     }
   }
-  out.push(g);
+  if (found === -1) out.groups.push(g);
+  else for (const t of g.tails) out.groups[found].tails.push(t);
 }
 
 function pushInSeg(buf, op) {
@@ -318,12 +355,12 @@ class Builder {
             for (const g of groups) if (g.state !== B_OPEN) pushInSeg(g.buf, op);
             break;
           }
-          const out = [];
+          const out = makeMerged();
           for (const branch of op.branches) {
             for (const g of this.walk(branch, groups.map(forkGroup))) merge(out, g);
           }
-          for (const g of out) dedupeTails(g);
-          groups = out;
+          groups = out.groups;
+          for (const g of groups) dedupeTails(g);
           break;
         }
         case OP_SEP:
@@ -392,7 +429,7 @@ class Builder {
   // at `state`, in the same list. Open groups pass through untouched.
   joinAll(groups, state, node) {
     let joined = null;
-    const open = [];
+    const open = makeMerged();
     for (const g of groups) {
       if (g.state === B_OPEN) {
         merge(open, g);
@@ -405,7 +442,7 @@ class Builder {
       } else joined.tails.push(id);
     }
     groups.length = 0;
-    for (const g of open) groups.push(g);
+    for (const g of open.groups) groups.push(g);
     if (joined !== null) groups.push(joined);
     for (const g of groups) dedupeTails(g);
   }
@@ -530,6 +567,17 @@ function layout(graph, nodes) {
   };
 }
 
+// The most the dense rows of a graph NFA may take, about 500 states: past
+// that the sparse NFA is as fast, and its tables are linear.
+const MAX_ROW_BYTES = 32 * 1024;
+
+// Dense rows in an int32 or within MAX_ROW_BYTES, sparse beyond.
+function anyNfa(graph, nStates, ci) {
+  if (nStates <= 31) return nfaSmall(graph, null);
+  if (nStates * wordsFor(nStates) * 4 <= MAX_ROW_BYTES) return nfaWide(graph, null);
+  return nfaSparse(graph, ci);
+}
+
 // Int32 active set: at most 31 states (bit 31 is the string-mode bail
 // sentinel). The table holds per state the closure entered after
 // consuming a segment there (a globstar's includes itself) at `2s` and
@@ -583,7 +631,7 @@ function nfaSmall(graph, nodes) {
   }
   let init = 0;
   for (const t of start) init = addTarget(init, t);
-  return { wide: false, tab, init, accept, reach1 };
+  return { kind: NFA_SMALL, tab, init, accept, reach1 };
 }
 
 // The same over Int32Array words: more than 31 states.
@@ -640,7 +688,113 @@ function nfaWide(graph, nodes) {
   after[accept] = new Int32Array(words);
   const init = new Int32Array(words);
   for (const t of start) addTarget(init, t);
-  return { wide: true, after, nodeOf, init, accept, reach1, words };
+  return { kind: NFA_WIDE, after, nodeOf, init, accept, reach1, words };
+}
+
+// Past MAX_ROW_BYTES the graph NFA is stepped sparsely. A position keeps
+// its successors, not a closure row (the start is the last position):
+// the literal ones' entry states sorted by literal (`litKeys` folded
+// when insensitive), the other positions, and the nullable ones (`**/`)
+// among those, at `xs[xAt[p]..xAt[p + 1]]`. The active set holds states
+// and whole positions; see `nfaRunSparse`.
+function nfaSparse(graph, ci) {
+  const { elems, n, succs, start } = layout(graph, null);
+  const succOf = (p) => (p === n ? start : succs === null ? null : succs[p]);
+  // Linear graphs store no edges: position `p` is followed by `p + 1`.
+  const eachSucc = (p, f) => {
+    const list = succOf(p);
+    if (list === null) f(p + 1 < n ? p + 1 : ACCEPT);
+    else for (const t of list) f(t);
+  };
+  const entries = [];
+  const pos = [];
+  for (let i = 0; i < n; i++) {
+    entries.push(pos.length);
+    for (let k = elemStates(elems[i]); k > 0; k--) pos.push(i);
+  }
+  const accept = pos.length;
+  pos.push(-1);
+
+  // A position reaches accept through ≥ 1 segment iff its element can
+  // consume one and what it enters reaches accept: from the last
+  // position back, as successors always lie ahead.
+  const r1 = [];
+  const ok = [];
+  for (let i = 0; i < n; i++) {
+    r1.push(false);
+    ok.push(false);
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    let o = false;
+    eachSucc(i, (t) => {
+      if (t === ACCEPT || r1[t] || (nullable(elems[t]) && ok[t])) o = true;
+    });
+    ok[i] = o;
+    r1[i] = o && elemSatisfiable(elems[i]);
+  }
+  const reach1 = [];
+  for (let s = 0; s < pos.length; s++) reach1.push(s !== accept && r1[pos[s]]);
+
+  const key = (t) => (ci ? asciiLower(elems[t].litStr) : elems[t].litStr);
+  const litAt = [];
+  const lits = [];
+  const litKeys = [];
+  const otherAt = [];
+  const others = [];
+  const nullAt = [];
+  const nulls = [];
+  const ends = [];
+  const succReach1 = [];
+  for (let p = 0; p <= n; p++) {
+    litAt.push(lits.length);
+    otherAt.push(others.length);
+    nullAt.push(nulls.length);
+    let end = false;
+    let reaches = false;
+    const litPos = [];
+    eachSucc(p, (t) => {
+      if (t === ACCEPT) {
+        end = true;
+        return;
+      }
+      if (r1[t]) reaches = true;
+      if (elems[t].kind === EL_LIT) litPos.push(t);
+      else {
+        others.push(t);
+        if (nullable(elems[t])) nulls.push(t);
+      }
+    });
+    const keys = litPos.map(key);
+    const order = litPos.map((_, i) => i);
+    order.sort((a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : litPos[a] - litPos[b]));
+    for (const i of order) {
+      lits.push(entries[litPos[i]]);
+      litKeys.push(keys[i]);
+    }
+    ends.push(end);
+    succReach1.push(reaches);
+  }
+  litAt.push(lits.length);
+  otherAt.push(others.length);
+  nullAt.push(nulls.length);
+  return {
+    kind: NFA_SPARSE,
+    pos,
+    entries,
+    litAt,
+    lits,
+    litKeys,
+    otherAt,
+    others,
+    nullAt,
+    nulls,
+    ends,
+    reach1,
+    succReach1,
+    accept,
+    // Mark arrays reused across calls (see `nfaRunSparse`).
+    scratch: null,
+  };
 }
 
 // ── in-segment matchers ─────────────────────────────────────────────

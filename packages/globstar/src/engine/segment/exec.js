@@ -8,6 +8,7 @@ import {
   EL_WILD,
   EL_G0,
   EL_G0_STRICT,
+  EL_G1,
   WK_AFFIX,
   WK_AFFIX_SET,
   WK_AFFIX_INDEX,
@@ -420,6 +421,205 @@ export function coversBelowWide(m, active) {
     nfaStepWildWide(m, active, next);
     if (!bitTest(next, g.accept)) return false;
     if (bitsEqual(next, active)) return true;
+    const t = active;
+    active = next;
+    next = t;
+  }
+  return false;
+}
+
+// ── graph NFA, sparse ───────────────────────────────────────────────
+
+// An active set over `stamp`'s indices: states first, then position `p`
+// at `pos.length + p` (every successor of `p` entered). `items` lists
+// them; an index is in the set while its stamp is the set's `gen`, so
+// clearing it is one increment. The sets live on the NFA and are
+// reused: a match never nests another on the same matcher.
+function sparseScratch(g) {
+  if (g.scratch === null) {
+    const size = g.pos.length + g.entries.length + 1;
+    const set = () => ({ items: [], stamp: new Int32Array(size), gen: 1 });
+    g.scratch = { a: set(), b: set(), todo: [] };
+  }
+  return g.scratch;
+}
+
+function clearSet(set) {
+  set.items.length = 0;
+  if (++set.gen === 0x7fffffff) {
+    set.stamp.fill(0);
+    set.gen = 1;
+  }
+}
+
+function addTo(set, i) {
+  if (set.stamp[i] === set.gen) return false;
+  set.stamp[i] = set.gen;
+  set.items.push(i);
+  return true;
+}
+
+export const sparseHas = (set, i) => set.stamp[i] === set.gen;
+
+// Enter every successor of position `p`: the position stands for them,
+// and through a nullable one (`**/`) its successors are entered too.
+function enterSparse(g, p, next, todo) {
+  const base = g.pos.length;
+  if (!addTo(next, base + p)) return;
+  for (;;) {
+    if (g.ends[p]) addTo(next, g.accept);
+    for (let k = g.nullAt[p]; k < g.nullAt[p + 1]; k++) {
+      const t = g.nulls[k];
+      if (addTo(next, base + t)) todo.push(t);
+    }
+    if (todo.length === 0) return;
+    p = todo.pop();
+  }
+}
+
+// State `s` took a segment: a globstar stays, and its position's
+// successors are entered.
+function fireSparse(m, g, s, next, todo) {
+  const p = g.pos[s];
+  const k = m.nodes[p].kind;
+  if (k === EL_G0) addTo(next, s);
+  else if (k === EL_G0_STRICT || k === EL_G1) addTo(next, g.entries[p] + 1);
+  enterSparse(g, p, next, todo);
+}
+
+// The start's closure, in the first scratch set.
+export function initSparse(g) {
+  const { a, todo } = sparseScratch(g);
+  clearSet(a);
+  enterSparse(g, g.entries.length, a, todo);
+  return a;
+}
+
+// Order of a sorted literal key against segment `str[s..t]`, the
+// segment ASCII-folded when insensitive.
+function cmpKey(key, str, s, t, ci) {
+  const n = Math.min(key.length, t - s);
+  for (let i = 0; i < n; i++) {
+    let c = str.charCodeAt(s + i);
+    if (ci && c >= 0x41 && c <= 0x5a) c += 0x20;
+    const d = key.charCodeAt(i) - c;
+    if (d !== 0) return d;
+  }
+  return key.length - (t - s);
+}
+
+// The active set after every segment of `str`, or null on a string-mode
+// bail.
+export function nfaRunSparse(m, str, bail) {
+  const g = m.graph;
+  const scratch = sparseScratch(g);
+  let active = initSparse(g);
+  let next = scratch.b;
+  let pos = 0;
+  for (;;) {
+    if (active.items.length === 0) return active;
+    let end = nextSep(str, pos);
+    const last = end === -1;
+    if (last) end = str.length;
+    if (!stepSparse(m, g, active, next, scratch.todo, str, pos, end, bail)) return null;
+    const t = active;
+    active = next;
+    next = t;
+    if (last) return active;
+    pos = end + 1;
+  }
+}
+
+function stepSparse(m, g, active, next, todo, str, s0, e0, bail) {
+  clearSet(next);
+  const ci = m.ci;
+  const base = g.pos.length;
+  const absorbOk = m.dot || e0 === s0 || str.charCodeAt(s0) !== 0x2e;
+  for (const item of active.items) {
+    if (item < base) {
+      if (item === g.accept) continue;
+      const r = sparseConsumes(m, g, item, str, s0, e0, absorbOk, bail);
+      if (r === BAIL) return false;
+      if (r === YES) fireSparse(m, g, item, next, todo);
+      continue;
+    }
+    const p = item - base;
+    // Equal literals sit together, one binary search away.
+    const hi = g.litAt[p + 1];
+    let lo = g.litAt[p];
+    let top = hi;
+    while (lo < top) {
+      const mid = (lo + top) >>> 1;
+      if (cmpKey(g.litKeys[mid], str, s0, e0, ci) < 0) lo = mid + 1;
+      else top = mid;
+    }
+    for (; lo < hi && cmpKey(g.litKeys[lo], str, s0, e0, ci) === 0; lo++) {
+      fireSparse(m, g, g.lits[lo], next, todo);
+    }
+    for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {
+      const s = g.entries[g.others[k]];
+      const r = sparseConsumes(m, g, s, str, s0, e0, absorbOk, bail);
+      if (r === BAIL) return false;
+      if (r === YES) fireSparse(m, g, s, next, todo);
+    }
+  }
+  return true;
+}
+
+// YES / NO / BAIL for state `s` on segment `str[s0..e0]`.
+function sparseConsumes(m, g, s, str, s0, e0, absorbOk, bail) {
+  const p = g.pos[s];
+  const e = m.nodes[p];
+  switch (e.kind) {
+    case EL_LIT:
+      return litEq(e.litStr, str, s0, e0, m.ci);
+    case EL_WILD:
+      return wildConsumes(e.wild, str, s0, e0, m.ci, bail);
+    case EL_G0_STRICT:
+      // The entry state may not take an empty segment.
+      return absorbOk && !(e0 === s0 && s === g.entries[p]) ? YES : NO;
+    default:
+      return absorbOk ? YES : NO;
+  }
+}
+
+// May a state of the set still consume ≥ 1 segment on a path to accept?
+export function sparseReach1(g, set) {
+  const base = g.pos.length;
+  for (const item of set.items) {
+    if (item < base ? g.reach1[item] : g.succReach1[item - base]) return true;
+  }
+  return false;
+}
+
+// As `coversBelow`, over the set `nfaRunSparse` or `initSparse` left.
+export function coversBelowSparse(m, active) {
+  const g = m.graph;
+  const scratch = sparseScratch(g);
+  let next = active === scratch.a ? scratch.b : scratch.a;
+  const base = g.pos.length;
+  const anySeg = (s) => elemAnySeg(m.nodes[g.pos[s]]);
+  for (let step = 0; step <= g.pos.length; step++) {
+    clearSet(next);
+    for (const item of active.items) {
+      if (item < base) {
+        if (item !== g.accept && anySeg(item)) fireSparse(m, g, item, next, scratch.todo);
+        continue;
+      }
+      // Literals never take a wildcard-only segment.
+      const p = item - base;
+      for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {
+        const s = g.entries[g.others[k]];
+        if (anySeg(s)) fireSparse(m, g, s, next, scratch.todo);
+      }
+    }
+    if (!sparseHas(next, g.accept)) return false;
+    if (
+      next.items.length === active.items.length &&
+      next.items.every((i) => sparseHas(active, i))
+    ) {
+      return true;
+    }
     const t = active;
     active = next;
     next = t;

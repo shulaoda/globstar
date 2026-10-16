@@ -60,6 +60,32 @@ fn large_patterns_stay_small() {
             MB,
             32 * MB,
         ),
+        // A big union's graph NFA keeps no dense rows: its tables grow
+        // with the members, not their square.
+        (
+            "20,000 dir/file members",
+            names(20_000, |i| format!("dir{i}/file{i}")),
+            "dir14777/file14777",
+            true,
+            16 * MB,
+            32 * MB,
+        ),
+        (
+            "20,000 ignore members",
+            names(20_000, |i| {
+                [
+                    format!("**/node_modules{i}/**"),
+                    format!("dist{i}/**"),
+                    format!("**/*.gen{i}.ts"),
+                    format!("pkg{i}/**/test/*.js"),
+                ][i % 4]
+                    .clone()
+            }),
+            "pkg7/x/test/a.js",
+            true,
+            16 * MB,
+            32 * MB,
+        ),
         // A long literal next to a product is not copied into every suffix.
         (
             "{a,b} x10 and 60 KB",

@@ -12,10 +12,11 @@ use std::cmp::Ordering;
 use crate::dir_match::DirMatch;
 
 use super::bits::Bits;
+use super::bits::Wide;
 use super::compile::lit_cmp;
 use super::{
-    AffixIndex, ByteSketch, Chain, Elem, LitSet, Nfa, SegmentMatcher, Shape, SuffixRun, Wild,
-    WildKind,
+    AffixIndex, ByteSketch, Chain, Elem, LitSet, Nfa, SegmentMatcher, Shape, SparseNfa, SuffixRun,
+    Wild, WildKind,
 };
 
 /// Index just past the segment that starts at `pos`.
@@ -636,6 +637,255 @@ impl<B: Bits> Nfa<B> {
                 return false;
             }
             if next == *active {
+                return true;
+            }
+            std::mem::swap(active, &mut next);
+        }
+        false
+    }
+}
+
+/// A sparse state set: states and whole positions (every successor of
+/// the position entered), in one list to walk (a position tagged by
+/// `POS`) and one bit set to dedupe (positions after the states).
+struct Active {
+    items: Vec<u32>,
+    has: Wide,
+    /// Bit index of position 0 in `has`.
+    pos_base: usize,
+}
+
+const POS: u32 = 1 << 31;
+
+impl Active {
+    fn new(nfa: &SparseNfa) -> Self {
+        let pos_base = nfa.pos.len();
+        Active {
+            items: Vec::new(),
+            has: Wide::zero(Wide::words(pos_base + nfa.nodes.len() + 1)),
+            pos_base,
+        }
+    }
+
+    fn bit(&self, item: u32) -> usize {
+        if item & POS != 0 {
+            self.pos_base + (item & !POS) as usize
+        } else {
+            item as usize
+        }
+    }
+
+    fn has_state(&self, s: u32) -> bool {
+        self.has.test(s as usize)
+    }
+
+    /// Empty it, touching only what it holds.
+    fn clear(&mut self) {
+        for i in 0..self.items.len() {
+            let bit = self.bit(self.items[i]);
+            self.has.unset(bit);
+        }
+        self.items.clear();
+    }
+
+    /// Add a state, or a position tagged by `POS`; `false` when it was
+    /// there already.
+    fn add(&mut self, item: u32) -> bool {
+        let bit = self.bit(item);
+        if self.has.test(bit) {
+            return false;
+        }
+        self.has.set(bit);
+        self.items.push(item);
+        true
+    }
+
+    fn same(&self, other: &Active) -> bool {
+        self.items.len() == other.items.len()
+            && self.items.iter().all(|&i| other.has.test(other.bit(i)))
+    }
+}
+
+impl SparseNfa {
+    #[inline]
+    fn accept(&self) -> u32 {
+        self.pos.len() as u32 - 1
+    }
+
+    fn lits(&self, p: usize) -> &[u32] {
+        &self.lits[self.lit_at[p] as usize..self.lit_at[p + 1] as usize]
+    }
+
+    fn others(&self, p: usize) -> &[u32] {
+        &self.others[self.other_at[p] as usize..self.other_at[p + 1] as usize]
+    }
+
+    pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
+        self.run(m, path).has_state(self.accept())
+    }
+
+    pub(super) fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
+        // The empty dir is the walk root: nothing consumed yet.
+        let root = dir_path.is_empty();
+        let (mut active, exact) = if root {
+            (self.init(&mut Vec::new()), m.is_match(dir_path))
+        } else {
+            let active = self.run(m, dir_path);
+            let exact = active.has_state(self.accept());
+            (active, exact)
+        };
+        let prefix = root
+            || active.items.iter().any(|&i| match i & POS {
+                0 => self.reach1.test(i as usize),
+                _ => self.succ_reach1.test((i & !POS) as usize),
+            });
+        // `dot=false` never covers a subtree: no wildcard matches the
+        // dot-led names below.
+        let all = m.dot && prefix && self.covers_below(m, &mut active);
+        DirMatch::new(exact, prefix, all)
+    }
+
+    /// The start's closure.
+    fn init(&self, todo: &mut Vec<u32>) -> Active {
+        let mut active = Active::new(self);
+        self.enter(self.nodes.len(), &mut active, todo);
+        active
+    }
+
+    /// The active set after every segment of `path`.
+    fn run(&self, m: &SegmentMatcher, path: &[u8]) -> Active {
+        let mut todo = Vec::new();
+        let mut active = self.init(&mut todo);
+        let mut next = Active::new(self);
+        let mut pos = 0;
+        while !active.items.is_empty() {
+            let end = seg_end(path, pos);
+            self.step(m, &active, &path[pos..end], &mut next, &mut todo);
+            std::mem::swap(&mut active, &mut next);
+            if end == path.len() {
+                break;
+            }
+            pos = end + 1;
+        }
+        active
+    }
+
+    fn step(
+        &self,
+        m: &SegmentMatcher,
+        active: &Active,
+        seg: &[u8],
+        next: &mut Active,
+        todo: &mut Vec<u32>,
+    ) {
+        next.clear();
+        let absorb_ok = m.dot || seg.first() != Some(&b'.');
+        let consumes = |s: u32| {
+            let p = self.pos[s as usize] as usize;
+            match &m.elems[self.nodes[p] as usize] {
+                Elem::Lit(lit) => m.lit_eq(lit, seg),
+                Elem::Wild(w) => m.wild_consumes(w, seg),
+                Elem::G0 | Elem::G1 => absorb_ok,
+                // The entry state may not take an empty segment.
+                Elem::G0Strict => absorb_ok && !(s == self.entries[p] && seg.is_empty()),
+            }
+        };
+        for &item in &active.items {
+            if item & POS == 0 {
+                if item != self.accept() && consumes(item) {
+                    self.fire(m, item, next, todo);
+                }
+                continue;
+            }
+            let p = (item & !POS) as usize;
+            // Equal literals sit together, one binary search away.
+            let lits = self.lits(p);
+            let order = |s: u32| lit_cmp(self.lit_of(m, s), seg, m.case_insensitive);
+            let first = lits.partition_point(|&s| order(s).is_lt());
+            for &s in lits[first..].iter().take_while(|&&s| order(s).is_eq()) {
+                self.fire(m, s, next, todo);
+            }
+            for &t in self.others(p) {
+                let s = self.entries[t as usize];
+                if consumes(s) {
+                    self.fire(m, s, next, todo);
+                }
+            }
+        }
+    }
+
+    fn lit_of<'m>(&self, m: &'m SegmentMatcher, s: u32) -> &'m [u8] {
+        m.elems[self.nodes[self.pos[s as usize] as usize] as usize].as_lit()
+    }
+
+    /// State `s` took a segment: a globstar stays, and its position's
+    /// successors are entered.
+    fn fire(&self, m: &SegmentMatcher, s: u32, next: &mut Active, todo: &mut Vec<u32>) {
+        let p = self.pos[s as usize] as usize;
+        match &m.elems[self.nodes[p] as usize] {
+            Elem::G0 => {
+                next.add(s);
+            }
+            Elem::G0Strict | Elem::G1 => {
+                next.add(self.entries[p] + 1);
+            }
+            Elem::Lit(_) | Elem::Wild(_) => {}
+        }
+        self.enter(p, next, todo);
+    }
+
+    /// Enter every successor of position `p`: the position itself
+    /// stands for them, and through a nullable one (`**/`) its
+    /// successors are entered too.
+    fn enter(&self, p: usize, next: &mut Active, todo: &mut Vec<u32>) {
+        if !next.add(p as u32 | POS) {
+            return;
+        }
+        let mut p = p;
+        loop {
+            if self.ends.test(p) {
+                next.add(self.accept());
+            }
+            for &t in &self.nulls[self.null_at[p] as usize..self.null_at[p + 1] as usize] {
+                if next.add(t | POS) {
+                    todo.push(t);
+                }
+            }
+            match todo.pop() {
+                Some(t) => p = t as usize,
+                None => break,
+            }
+        }
+    }
+
+    /// Does every path below the directory match? As `Nfa::covers_below`.
+    fn covers_below(&self, m: &SegmentMatcher, active: &mut Active) -> bool {
+        let mut next = Active::new(self);
+        let mut todo = Vec::new();
+        let accept = self.accept();
+        let any_seg =
+            |s: u32| m.elems[self.nodes[self.pos[s as usize] as usize] as usize].any_seg();
+        for _ in 0..=self.pos.len() {
+            next.clear();
+            for &item in &active.items {
+                if item & POS == 0 {
+                    if item != accept && any_seg(item) {
+                        self.fire(m, item, &mut next, &mut todo);
+                    }
+                    continue;
+                }
+                // Literals never take a wildcard-only segment.
+                for &t in self.others((item & !POS) as usize) {
+                    let s = self.entries[t as usize];
+                    if any_seg(s) {
+                        self.fire(m, s, &mut next, &mut todo);
+                    }
+                }
+            }
+            if !next.has_state(accept) {
+                return false;
+            }
+            if next.same(active) {
                 return true;
             }
             std::mem::swap(active, &mut next);

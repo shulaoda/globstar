@@ -9,7 +9,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 use crate::engine::ops::Op;
 
@@ -17,7 +17,8 @@ use super::bits::{Bits, Wide};
 use super::seg_nfa::SegNfa;
 use super::{
     Affix, AffixIndex, AffixSet, AnyNfa, ByteSketch, Bytes, Chain, Elem, LINEAR_SUFFIXES, LitSet,
-    LitSets, MAX_CHAINS, Nfa, SegmentMatcher, Shape, State, SuffixRun, Wild, WildKind, facts,
+    LitSets, MAX_CHAINS, Nfa, SegmentMatcher, Shape, SparseNfa, State, SuffixRun, Wild, WildKind,
+    facts,
 };
 
 /// Successor marker for "the pattern ends here".
@@ -167,13 +168,28 @@ impl Graph {
 
     /// The NFA over the whole graph: a `u64` active set when it fits.
     fn nfa(&self) -> AnyNfa {
-        if n_states(self.elems.iter()) <= 64 {
-            AnyNfa::Small(nfa_over(&self.elems, self.ci, self.edges.as_ref(), None))
-        } else {
-            AnyNfa::Wide(nfa_over(&self.elems, self.ci, self.edges.as_ref(), None))
-        }
+        any_nfa(&self.elems, self.ci, self.edges.as_ref(), None)
     }
 }
+
+/// The NFA over the positions of a path (`None`: the graph itself):
+/// dense rows in a `u64` or within `MAX_ROW_BYTES`, sparse beyond.
+fn any_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>, path: Option<&[u32]>) -> AnyNfa {
+    let n = path.map_or(elems.len(), <[u32]>::len);
+    let elem = |i: usize| &elems[path.map_or(i, |p| p[i] as usize)];
+    let states = n_states((0..n).map(elem));
+    if states <= 64 {
+        AnyNfa::Small(nfa_over(elems, ci, edges, path))
+    } else if states * Wide::words(states) * 8 <= MAX_ROW_BYTES {
+        AnyNfa::Wide(Box::new(nfa_over(elems, ci, edges, path)))
+    } else {
+        AnyNfa::Sparse(Box::new(sparse_over(elems, ci, edges, path)))
+    }
+}
+
+/// The most the dense rows of a graph NFA may take, about 500 states:
+/// past that the sparse NFA is as fast, and its tables are linear.
+const MAX_ROW_BYTES: usize = 32 * 1024;
 
 /// The NFA over the positions of a path (`None`: the graph itself,
 /// whose `edges` a brace pattern stores; a linear one has none).
@@ -322,6 +338,106 @@ fn nfa_over<B: Bits>(
     }
 }
 
+/// The sparse NFA over the positions of a path (`None`: the graph
+/// itself): each position keeps its successors, the start's last, the
+/// literal ones sorted by literal.
+fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>, path: Option<&[u32]>) -> SparseNfa {
+    let n = path.map_or(elems.len(), <[u32]>::len);
+    let node_at = |i: usize| path.map_or(i as u32, |p| p[i]);
+    let elem = |i: usize| &elems[node_at(i) as usize];
+    // Positions of a path follow one another.
+    let edges = if path.is_some() { None } else { edges };
+    // The start is position `n`.
+    let succ_of = |p: usize| {
+        let (next, stored): (Option<u32>, &[u32]) = match edges {
+            Some(e) if p == n => (None, &e.start),
+            Some(e) => (None, e.succ(p)),
+            None if p == n => (Some(0), &[]),
+            None => (Some(if p + 1 < n { p as u32 + 1 } else { ACCEPT }), &[]),
+        };
+        next.into_iter().chain(stored.iter().copied())
+    };
+
+    let mut nodes = Vec::with_capacity(n);
+    let mut entries = Vec::with_capacity(n);
+    let mut pos = Vec::with_capacity(n + 1);
+    for i in 0..n {
+        nodes.push(node_at(i));
+        entries.push(pos.len() as u32);
+        pos.extend(std::iter::repeat_n(i as u32, elem(i).states()));
+    }
+    pos.push(ACCEPT);
+    let n_states = pos.len();
+
+    // A position reaches accept through ≥ 1 segment iff its element
+    // can consume one and what it enters reaches accept: from the last
+    // position back, as successors always lie ahead.
+    let mut r1 = vec![false; n];
+    let mut ok = vec![false; n];
+    for i in (0..n).rev() {
+        ok[i] = succ_of(i).any(|t| {
+            t == ACCEPT || r1[t as usize] || (elem(t as usize).nullable() && ok[t as usize])
+        });
+        r1[i] = elem(i).satisfiable() && ok[i];
+    }
+    let mut reach1 = Wide::zero(Wide::words(n_states));
+    for i in (0..n).filter(|&i| r1[i]) {
+        for s in entries[i]..entries[i] + elem(i).states() as u32 {
+            reach1.set(s as usize);
+        }
+    }
+
+    let (mut lit_at, mut lits) = (Vec::with_capacity(n + 2), Vec::new());
+    let (mut other_at, mut others) = (Vec::with_capacity(n + 2), Vec::new());
+    let (mut null_at, mut nulls) = (Vec::with_capacity(n + 2), Vec::new());
+    let mut ends = Wide::zero(Wide::words(n + 1));
+    let mut succ_reach1 = Wide::zero(Wide::words(n + 1));
+    for p in 0..=n {
+        lit_at.push(lits.len() as u32);
+        other_at.push(others.len() as u32);
+        null_at.push(nulls.len() as u32);
+        let mut lit_pos = Vec::new();
+        for t in succ_of(p) {
+            if t == ACCEPT {
+                ends.set(p);
+                continue;
+            }
+            if r1[t as usize] {
+                succ_reach1.set(p);
+            }
+            let e = elem(t as usize);
+            if matches!(e, Elem::Lit(_)) {
+                lit_pos.push(t);
+            } else {
+                others.push(t);
+                if e.nullable() {
+                    nulls.push(t);
+                }
+            }
+        }
+        sort_by_literal(&mut lit_pos, elems, path, ci);
+        lits.extend(lit_pos.iter().map(|&t| entries[t as usize]));
+    }
+    lit_at.push(lits.len() as u32);
+    other_at.push(others.len() as u32);
+    null_at.push(nulls.len() as u32);
+
+    SparseNfa {
+        pos: pos.into_boxed_slice(),
+        nodes: nodes.into_boxed_slice(),
+        entries: entries.into_boxed_slice(),
+        lit_at: lit_at.into_boxed_slice(),
+        lits: lits.into_boxed_slice(),
+        other_at: other_at.into_boxed_slice(),
+        others: others.into_boxed_slice(),
+        null_at: null_at.into_boxed_slice(),
+        nulls: nulls.into_boxed_slice(),
+        ends,
+        reach1,
+        succ_reach1,
+    }
+}
+
 /// NFA states over `elems`, the accept state included.
 fn n_states<'a>(elems: impl Iterator<Item = &'a Elem>) -> usize {
     elems.map(Elem::states).sum::<usize>() + 1
@@ -348,10 +464,10 @@ pub(super) fn lit_cmp(a: &[u8], b: &[u8], ci: bool) -> std::cmp::Ordering {
 
 /// The NFA over the lone chain a matcher kept instead of one (test
 /// hook).
-pub(super) fn chain_nfa(m: &SegmentMatcher) -> Nfa<Wide> {
+pub(super) fn chain_nfa(m: &SegmentMatcher) -> AnyNfa {
     let nodes = &m.chains[0].nodes;
     let path = (!nodes.is_empty()).then_some(&nodes[..]);
-    nfa_over(&m.elems, m.case_insensitive, None, path)
+    any_nfa(&m.elems, m.case_insensitive, None, path)
 }
 
 /// Elements a brace-free pattern needs (one per boundary op plus the
@@ -603,17 +719,17 @@ impl Builder {
             }
             match op {
                 Op::Alternation(branches) if crosses(op) => {
-                    let mut out: Vec<Group<'a>> = Vec::new();
+                    let mut out = Merged::default();
                     for branch in branches {
                         let copies = groups.to_vec();
                         for g in self.walk(branch, copies) {
-                            merge(&mut out, g);
+                            out.add(g);
                         }
                     }
-                    for g in &mut out {
+                    groups = out.groups;
+                    for g in &mut groups {
                         g.dedupe_tails();
                     }
-                    groups = out;
                 }
                 Op::Sep => self.close_all(&mut groups, Boundary::Strict),
                 Op::SepRun => self.close_all(&mut groups, Boundary::Lenient),
@@ -709,10 +825,10 @@ impl Builder {
         node: impl Fn(&mut Self, &mut Group<'a>) -> u32,
     ) {
         let mut joined: Option<Group<'a>> = None;
-        let mut open: Vec<Group<'a>> = Vec::new();
+        let mut open = Merged::default();
         for mut g in groups.drain(..) {
             if g.state == Boundary::Open {
-                merge(&mut open, g);
+                open.add(g);
                 continue;
             }
             let id = node(self, &mut g);
@@ -724,7 +840,7 @@ impl Builder {
                 }
             }
         }
-        groups.extend(open);
+        groups.extend(open.groups);
         groups.extend(joined);
         for g in groups.iter_mut() {
             g.dedupe_tails();
@@ -753,21 +869,70 @@ impl Builder {
     }
 }
 
-/// Add a group to `out`, joining one that agrees on boundary and
-/// partial segment: their continuations are the same nodes.
-fn merge<'a>(out: &mut Vec<Group<'a>>, g: Group<'a>) {
-    if let Some(same) = out.iter_mut().find(|o| {
-        o.state == g.state
-            && o.pending_oss == g.pending_oss
-            && o.buf.len() == g.buf.len()
-            && o.buf
+/// Groups joined when they agree on boundary, pending `**/` and partial
+/// segment: their continuations are the same nodes. A union leaves a
+/// group per member, so past `LINEAR_GROUPS` they are found by a hash
+/// of that key.
+#[derive(Default)]
+struct Merged<'a> {
+    groups: Vec<Group<'a>>,
+    index: HashMap<u64, Vec<u32>, BuildHasherDefault<Fnv>>,
+}
+
+const LINEAR_GROUPS: usize = 16;
+
+impl<'a> Merged<'a> {
+    fn add(&mut self, g: Group<'a>) {
+        let n = self.groups.len();
+        if n == LINEAR_GROUPS {
+            for (i, o) in self.groups.iter().enumerate() {
+                self.index.entry(o.key()).or_default().push(i as u32);
+            }
+        }
+        let found = if n < LINEAR_GROUPS {
+            self.groups.iter().position(|o| o.agrees(&g))
+        } else {
+            let bucket = self.index.entry(g.key()).or_default();
+            let found = bucket
                 .iter()
-                .zip(&g.buf)
+                .map(|&i| i as usize)
+                .find(|&i| self.groups[i].agrees(&g));
+            if found.is_none() {
+                bucket.push(n as u32);
+            }
+            found
+        };
+        match found {
+            Some(i) => self.groups[i].tails.extend(g.tails),
+            None => self.groups.push(g),
+        }
+    }
+}
+
+impl Group<'_> {
+    fn agrees(&self, other: &Self) -> bool {
+        self.state == other.state
+            && self.pending_oss == other.pending_oss
+            && self.buf.len() == other.buf.len()
+            && self
+                .buf
+                .iter()
+                .zip(&other.buf)
                 .all(|(a, b)| std::ptr::eq(*a, *b) || a == b)
-    }) {
-        same.tails.extend(g.tails);
-    } else {
-        out.push(g);
+    }
+
+    /// A hash of what `agrees` compares: each op by kind, a literal by
+    /// its bytes too.
+    fn key(&self) -> u64 {
+        let mut h = Fnv::default();
+        h.write(&[self.state as u8, self.pending_oss as u8]);
+        for op in &self.buf {
+            std::mem::discriminant(*op).hash(&mut h);
+            if let Op::Lit(bytes) = op {
+                h.write(bytes);
+            }
+        }
+        h.finish()
     }
 }
 

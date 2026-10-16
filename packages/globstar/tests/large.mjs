@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import v8 from "node:v8";
 import vm from "node:vm";
 import { Worker } from "node:worker_threads";
-import { compileMatcher } from "../src/index.js";
+import { compileMatcher, DirMatch } from "../src/index.js";
 
 const lib = JSON.stringify(new URL("../src/index.js", import.meta.url).href);
 
@@ -36,6 +36,60 @@ assert.deepEqual(
 );
 
 console.log("✓ large patterns compile on a small stack");
+
+// A union too big for the chains agrees with its members: its graph NFA
+// keeps dense rows at 100 members and goes sparse at 600. Twin of
+// `big_unions_agree_with_their_members` in crates/globstar/tests/glob_union.rs.
+{
+  const bigUnion = (n) =>
+    Array.from({ length: n }, (_, i) => {
+      const [a, b] = [i % 37, i % 11];
+      return [
+        `a${a}/**`,
+        `**/f${a}.ts`,
+        `b${b}/a${a}/*`,
+        `{a,b}${a}/f${b}`,
+        `**/c${a}/**/d${b}`,
+        `f${a}/**/b${b}`,
+        `*${a}/a${b}`,
+      ][i % 7];
+    });
+  const segs = ["a3", "b2", "f5.ts", "c7", "d1", "x", "a30", ".a", "b10", "f36"];
+  const paths = [""];
+  for (let depth = 1; depth <= 3; depth++) {
+    for (let i = 0; i < 200; i++) {
+      paths.push(
+        Array.from({ length: depth }, (_, k) => segs[Math.floor(i / 10 ** k) % segs.length]).join(
+          "/",
+        ),
+      );
+    }
+  }
+  for (const n of [100, 600]) {
+    const patterns = bigUnion(n);
+    const members = patterns.map((p) => compileMatcher(p));
+    const union = compileMatcher(patterns);
+    for (const path of paths) {
+      const any = (f) => members.some(f);
+      assert.equal(
+        union.match(path),
+        any((g) => g.match(path)),
+        `${n}: ${path}`,
+      );
+      const dir = union.matchDir(path);
+      assert.equal(
+        DirMatch.matches(dir),
+        any((g) => DirMatch.matches(g.matchDir(path))),
+        `${n}: ${path}`,
+      );
+      assert.equal(
+        DirMatch.mayMatchBelow(dir),
+        any((g) => DirMatch.mayMatchBelow(g.matchDir(path))),
+        `${n}: ${path}`,
+      );
+    }
+  }
+}
 
 // About 4,200 in-segment states: past the closure budget, each step
 // closes its set as it goes.
@@ -93,6 +147,14 @@ for (const { name, patterns, path, matches, maxKept } of [
     matches: true,
     maxKept: 16 * MB,
   },
+  // A big union's graph NFA keeps no dense rows.
+  {
+    name: "20,000 dir/file members",
+    patterns: names(20_000, (i) => `dir${i}/file${i}`),
+    path: "dir14777/file14777",
+    matches: true,
+    maxKept: 32 * MB,
+  },
   // A long literal next to a product is not copied into every suffix.
   {
     name: "{a,b} x10 and 60 KB",
@@ -144,6 +206,20 @@ for (const [pattern, path] of [
   const ms = performance.now() - start;
   assert.ok(ms < 200, `${pattern.slice(0, 7)} x${pattern.length}: ${ms.toFixed(0)} ms to compile`);
   assert.ok(m.match(path), pattern.slice(0, 7));
+}
+
+// A big union compiles in milliseconds (its groups are found by key, not
+// by a scan of all) and matches by one search per segment.
+{
+  const patterns = names(20_000, (i) => `dir${i}/file${i}`);
+  let start = performance.now();
+  const m = compileMatcher(patterns);
+  const compileMs = performance.now() - start;
+  assert.ok(compileMs < 1000, `20,000 members took ${compileMs.toFixed(0)} ms to compile`);
+  start = performance.now();
+  for (let i = 0; i < 10_000; i++) assert.ok(m.match(`dir${i}/file${i}`));
+  const ms = performance.now() - start;
+  assert.ok(ms < 500, `10,000 matches took ${ms.toFixed(0)} ms`);
 }
 
 // A long name list matches by binary search: 10,000 matches of a
