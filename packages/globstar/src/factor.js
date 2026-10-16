@@ -11,9 +11,19 @@ export function factorBranches(branches) {
   const prefix = liftPrefix(seqs);
   const suffix = liftSuffix(seqs, prefix.length > 0);
 
-  const residual = seqs.map((s) =>
-    s.length === 0 ? concat([]) : s.length === 1 ? s[0] : concat(s),
-  );
+  // Members that differ only in spelling (`**` and `**/**`, `\a` and
+  // `a`) leave nothing behind; one empty branch stands for them all, so
+  // a union of equal members is that member again.
+  const residual = [];
+  let empty = false;
+  for (const s of seqs) {
+    if (s.length > 1) residual.push(concat(s));
+    else if (s.length === 1) residual.push(s[0]);
+    else if (!empty) {
+      empty = true;
+      residual.push(concat([]));
+    }
+  }
   const inner = residual.length === 1 ? residual[0] : brace(residual);
 
   // Loops, not spreads: ~64k lifted nodes would overflow the argument limit.
@@ -49,19 +59,23 @@ function foldGroupAtEdge(a, b, c) {
 }
 
 function liftPrefix(seqs) {
-  const lifted = [];
-
+  // The shared whole tokens are counted first and taken out in one
+  // splice per member.
+  const first = seqs[0];
+  let at = 0;
   while (true) {
-    const size = foldGroupAtEdge(seqs[0][0], seqs[0][1], seqs[0][2]);
-    if (size === 0) return lifted;
+    const size = foldGroupAtEdge(first[at], first[at + 1], first[at + 2]);
+    if (size === 0) break;
     const same = seqs.every(
       (s, i) =>
-        i === 0 || (foldGroupAtEdge(s[0], s[1], s[2]) === size && rangeEq(s, 0, seqs[0], 0, size)),
+        i === 0 ||
+        (foldGroupAtEdge(s[at], s[at + 1], s[at + 2]) === size && rangeEq(s, at, first, at, size)),
     );
     if (!same) break;
-    for (let k = 0; k < size; k++) lifted.push(seqs[0][k]);
-    for (const s of seqs) s.splice(0, size);
+    at += size;
   }
+  const lifted = first.slice(0, at);
+  if (at > 0) for (const s of seqs) s.splice(0, at);
 
   if (lifted.length === 0 || !seqs.every((s) => s.length > 0 && s[0].tag === N_LITERAL)) {
     return lifted;

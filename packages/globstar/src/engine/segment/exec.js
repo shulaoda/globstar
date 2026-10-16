@@ -50,6 +50,16 @@ function lastSepBefore(str, end) {
 // string mode must bail.
 const MISS = -1;
 const BAILED = -2;
+
+// The wildcard-only segments `coversBelow` feeds before it gives up: a
+// pattern needs about one more than its longest run of them, and "not
+// provable" is a valid answer (GLOB_SPEC §13.6).
+const MAX_COVER_SEGMENTS = 64;
+
+// The element compares `chainDir` spends on tail tokens; past them it
+// answers what is safe ("may match below", "not all below"). Tails of
+// up to 90 elements stay exact.
+const MAX_TAIL_CHECKS = 4096;
 const fail = (end) => (end === BAILED ? BAIL : NO);
 
 // Does the chain match the whole path?
@@ -145,14 +155,27 @@ function tailAndGlobstar(m, ids, g, str, midStart, bail) {
 
 // Can the globstar `kind` take the segments between the head (ending
 // before `from`) and the tail starting at `split`? `split === from`
-// means no segment at all.
-function absorbs(m, kind, str, from, split) {
+// means no segment at all. `dotAt`, when given, is `firstDot(m, str,
+// from)`, which makes the dot check one compare.
+function absorbs(m, kind, str, from, split, dotAt) {
   if (split === from) return kind === EL_G0 || kind === EL_G0_STRICT;
   // Up to the separator before the tail, or the end.
   const to = split - 1;
   // G0_STRICT may not start with an empty segment.
   if (kind === EL_G0_STRICT && (from === to || isPathSep(str.charCodeAt(from)))) return false;
-  return dotFree(m, str, from, to);
+  return dotAt === undefined ? dotFree(m, str, from, to) : dotAt >= to;
+}
+
+// Under `dot=false`, where the first segment of `str` from `from` on
+// that starts with a `.` starts; Infinity when none does.
+function firstDot(m, str, from) {
+  if (m.dot) return Infinity;
+  if (str.charCodeAt(from) === 0x2e) return from;
+  for (let i = from; ; i++) {
+    i = nextSep(str, i);
+    if (i === -1) return Infinity;
+    if (str.charCodeAt(i + 1) === 0x2e) return i + 1;
+  }
 }
 
 // Under `dot=false`, no segment within `str[from, to)` may start with
@@ -224,24 +247,37 @@ export function chainDir(m, str, bail) {
   let all = m.dot && gAlive && tailAny;
   // Tail tokens: the tail's first `j` elements on the last `j` segments
   // with the globstar released before them. A dead globstar may leave
-  // one; `all` needs them all.
+  // one; `all` needs them all. Each `j` is its own alignment, so the
+  // compares are budgeted.
   if ((!prefix || all) && tl > 1) {
+    const dotAt = firstDot(m, str, midStart);
+    // `open(i)` for every `i` at once.
+    let openFrom = n;
+    while (openFrom > g + 1 && elemSatisfiable(elemAt(nodes, ids, openFrom - 1))) openFrom--;
+    let checks = MAX_TAIL_CHECKS;
     let end = str.length;
     for (let j = 1; j < tl; j++) {
+      if (checks < j) {
+        prefix = true;
+        all = false;
+        break;
+      }
+      checks -= j;
       const start = lastSepBefore(str, end) + 1;
-      let alive = absorbs(m, kind, str, midStart, start);
+      let alive = absorbs(m, kind, str, midStart, start, dotAt);
       if (alive) {
         const r = fixedRun(m, ids, g + 1, g + 1 + j, str, start, bail);
         if (r === BAIL) return -1;
         alive = r === YES;
       }
-      prefix ||= alive && open(g + 1 + j);
+      prefix ||= alive && g + 1 + j >= openFrom;
       all &&= alive;
       if (start === midStart) {
         // No segment is left for a longer tail.
         all &&= j + 1 === tl;
         break;
       }
+      if (prefix && !all) break;
       end = start - 1;
     }
   }
@@ -333,7 +369,7 @@ export function coversBelow(m, active) {
   const acceptBit = 1 << m.graph.accept;
   // Tokens only move forward or sit on a globstar, so the set settles
   // within the number of states.
-  const limit = m.graph.tab.length >> 1;
+  const limit = Math.min(m.graph.tab.length >> 1, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
     const next = nfaStepWild(m, active);
     if ((next & acceptBit) === 0) return false;
@@ -417,7 +453,8 @@ function nfaStepWildWide(m, active, next) {
 export function coversBelowWide(m, active) {
   const g = m.graph;
   let next = new Int32Array(g.words);
-  for (let step = 0; step <= g.after.length; step++) {
+  const limit = Math.min(g.after.length, MAX_COVER_SEGMENTS);
+  for (let step = 0; step <= limit; step++) {
     nfaStepWildWide(m, active, next);
     if (!bitTest(next, g.accept)) return false;
     if (bitsEqual(next, active)) return true;
@@ -599,7 +636,8 @@ export function coversBelowSparse(m, active) {
   let next = active === scratch.a ? scratch.b : scratch.a;
   const base = g.pos.length;
   const anySeg = (s) => elemAnySeg(m.nodes[g.pos[s]]);
-  for (let step = 0; step <= g.pos.length; step++) {
+  const limit = Math.min(g.pos.length, MAX_COVER_SEGMENTS);
+  for (let step = 0; step <= limit; step++) {
     clearSet(next);
     for (const item of active.items) {
       if (item < base) {

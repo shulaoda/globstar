@@ -14,7 +14,7 @@ Take a pattern with a brace and replace the brace with each branch in turn. You 
 
 Each expansion is a complete pattern, and every rule on these pages applies to it on its own. That matters most for `**`: whether a `**` next to a brace is a real "any depth" wildcard is decided per expansion (see [Braces and `**`](#braces-and)).
 
-globstar does not build the list of expansions in memory. A brace with thousands of branches, or many braces in a row, still compiles fast and small.
+globstar does not build the list of expansions in memory. A brace with thousands of branches, or many braces in a row, still compiles fast and small. The one exception is braces whose branches cross a `/`, like `{a,/}` written many times in a row: the number of different segments can grow with the square of their count, and such a pattern fails with `TooComplex` (see [Errors and limits](./errors.md)).
 
 Spec: [GLOB_SPEC §7.0, §7.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 

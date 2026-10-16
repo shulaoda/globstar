@@ -280,7 +280,7 @@ The equation works on tokens, not bytes. A branch is spliced in as a unit and to
 
 ### 7.2 No pre-expansion
 
-An implementation MUST NOT expand braces into N separate patterns at parse time; braces are built into the matcher. Memory and match cost therefore do not blow up on `{a,b}{c,d}{e,f}…`.
+An implementation MUST NOT expand braces into N separate patterns at parse time; braces are built into the matcher. Memory and match cost therefore do not blow up on `{a,b}{c,d}{e,f}…`. Braces whose branches cross a `/` are the exception: they can make the segments of a pattern multiply, and compilation may then fail with `TooComplex` (§10).
 
 ### 7.3 Empty branches
 
@@ -306,7 +306,7 @@ An implementation MUST accept braces nested up to 32 levels deep and MUST reject
 
 ### 7.7 Expansion cap
 
-Branch counts and Cartesian breadth are not bounded, because nothing is pre-expanded (§7.2).
+Branch counts and Cartesian breadth are not bounded, because nothing is pre-expanded (§7.2); only the work of compiling is (`TooComplex`, §10).
 
 The one bounded thing is the local expansion around `**` (§7.0). Every copy it makes is counted: one per token, a literal or class by its length, and one per brace branch. When the count would pass 4096, compilation MUST fail with `BraceExpansionTooLarge` (§10). The count runs over the whole pattern, and over all patterns of one union together (§14.1).
 
@@ -798,6 +798,8 @@ Two shapes cover a subtree without the reference rule seeing it, and get the saf
 
 The rule asks a single element to take every name, and neither shape has one.
 
+The reference implementations also bound the proof. They feed at most 64 wildcard-only segments, and a matcher whose state has not settled by then leaves all-below unset: the union of `**` and `**/` + `*/` × 100 + `x` covers everything below `a`, and is not proven. For a single path with one `**`, they spend at most 4096 element compares on the tail positions a directory may leave; past that they set may-below and leave all-below unset, which are the safe answers of both flags.
+
 ---
 
 ## 14. Multi-pattern Matchers
@@ -1039,6 +1041,7 @@ Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional, n/a not applicable.
   - §10: the JS `TooManyStates` note is gone with the engine that had the cap; `NegatedInUnion` carries `index` and `pattern`.
   - Implementation-internal names left the normative text. RFC 2119 key words are reserved for requirements; rationale and implementation notes are marked as informative.
 - **v0.2.5** (2026-10-16): `TooComplex` (§10) bounds the compile work of braces whose segments multiply.
+- **v0.2.6** (2026-10-16): §13.6 states how the reference implementations bound the all-below proof (64 wildcard-only segments, 4096 tail compares); §7.2 and §7.7 point at `TooComplex`.
 - Awaiting owner approval before freezing as v1.0.
 
 ---

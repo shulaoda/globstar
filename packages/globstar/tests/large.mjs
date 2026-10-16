@@ -243,6 +243,34 @@ for (const [pattern, path] of [
   }
 }
 
+// `matchDir` on long wildcard chains: the all-below proof feeds at most
+// 64 wildcard-only segments and the chain's tail tokens are budgeted
+// (each call took seconds). Twin of
+// `match_dir_stays_cheap_on_long_wildcard_chains` in crates/globstar/tests/glob.rs.
+{
+  const union = compileMatcher(["**", `**/${"*/".repeat(16_000)}x`]);
+  const chain = compileMatcher(`**/${"*/".repeat(32_000)}*`);
+  const deep = "a/".repeat(32_000) + "a";
+  const start = performance.now();
+  const shallow = union.matchDir("a");
+  const long = chain.matchDir(deep);
+  const ms = performance.now() - start;
+  assert.ok(ms < 1000, `matchDir took ${ms.toFixed(0)} ms`);
+  for (const dm of [shallow, long]) assert.ok(DirMatch.matches(dm) && DirMatch.mayMatchBelow(dm));
+}
+
+// Two 64 KB members with a shared prefix compile in milliseconds: the
+// shared tokens leave each member in one splice. Twin of
+// `long_shared_prefixes_lift_in_one_pass` in crates/globstar/tests/glob_union.rs.
+{
+  const [x, y] = ["a/".repeat(32_000) + "x", "a/".repeat(32_000) + "y"];
+  const start = performance.now();
+  const union = compileMatcher([x, y]);
+  const ms = performance.now() - start;
+  assert.ok(ms < 1000, `2 x 64 KB members took ${ms.toFixed(0)} ms`);
+  assert.ok(union.match(x) && union.match(y) && !union.match("a/".repeat(32_000) + "z"));
+}
+
 // A long name list matches by binary search: 10,000 matches of a
 // 20,000-name union take milliseconds, not minutes.
 {

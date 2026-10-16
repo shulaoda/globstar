@@ -3,7 +3,8 @@
 //! path is matched segment by segment. A path through the graph with
 //! at most one globstar is matched by anchored compares; everything
 //! else runs an NFA whose active set grows with the pattern, so no
-//! pattern is out of reach.
+//! pattern is too big for it. Only braces whose segments multiply are
+//! refused, by the compile walk (`GlobError::TooComplex`).
 
 mod bits;
 mod compile;

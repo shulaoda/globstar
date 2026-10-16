@@ -169,9 +169,9 @@ impl Glob {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        // The same pattern twice adds nothing to the union; factored into
-        // `p{,}` a literal would lose the Literal engine and any other
-        // pattern would carry a useless brace.
+        // The same pattern twice adds nothing to the union: it is parsed
+        // once and counts once against the expansion budget. Members that
+        // only differ in spelling fold into one when factored.
         let patterns: Vec<S> = patterns.into_iter().collect();
         let mut seen = HashSet::with_capacity(patterns.len());
         let mut bodies: Vec<Node> = Vec::with_capacity(patterns.len());

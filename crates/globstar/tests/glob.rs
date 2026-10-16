@@ -104,6 +104,21 @@ fn wide_graphs_step_by_what_is_active() {
 }
 
 #[test]
+fn match_dir_stays_cheap_on_long_wildcard_chains() {
+    // The all-below proof feeds at most 64 wildcard-only segments, and
+    // the chain's tail tokens are budgeted: each call took seconds.
+    let union = Glob::union(["**".to_string(), format!("**/{}x", "*/".repeat(16_000))]).unwrap();
+    let chain = Glob::new(&format!("**/{}*", "*/".repeat(32_000))).unwrap();
+    let deep = "a/".repeat(32_000) + "a";
+    let start = std::time::Instant::now();
+    let shallow = union.match_dir(b"a");
+    let long = chain.match_dir(deep.as_bytes());
+    assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
+    assert!(shallow.matches() && shallow.may_match_below());
+    assert!(long.matches() && long.may_match_below());
+}
+
+#[test]
 fn classify_brace_routes_to_globstar_tier() {
     let g = Glob::new("*.{ts,tsx}").unwrap();
     // A brace counts as `Tier::Globstar`; the tier is syntax only.

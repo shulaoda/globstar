@@ -16,6 +16,7 @@ import {
 } from "../src/ast.js";
 import { parse } from "../src/parser.js";
 import { compileMatcher } from "../src/glob.js";
+import { factorBranches } from "../src/factor.js";
 import {
   OP_ALTERNATION,
   OP_ANYCHAR,
@@ -159,3 +160,23 @@ assert.deepEqual(prefixesOf("{**,src}/x"), [""]);
 assert.deepEqual(prefixesOf(["src/*.ts", "!x"]), [""]);
 assert.deepEqual(prefixesOf(["!x"]), [""]);
 console.log("✓ static prefix extraction");
+
+// One body under two spellings: factoring lifts all of it and keeps one
+// empty branch, so the union answers as either member. Twin of
+// `members_spelled_differently_fold_into_one` in crates/globstar/tests/glob_union.rs.
+for (const [a, b] of [
+  ["**", "**/**"],
+  ["a/**", "a/**/**"],
+  ["/**", "/**/**"],
+  ["\\a", "a"],
+]) {
+  const union = compileMatcher([a, b]);
+  const single = compileMatcher(b);
+  for (const path of ["", "a", "a/b", "/a", "/a/b", "x/y"]) {
+    assert.equal(union.match(path), single.match(path), `${a} ${b} ${path}`);
+    assert.equal(union.matchDir(path), single.matchDir(path), `${a} ${b} ${path}`);
+  }
+}
+const folded = parse("\\a").body;
+assert.deepEqual(factorBranches([folded, parse("a").body]), folded);
+console.log("✓ members spelled differently fold into one");

@@ -21,8 +21,8 @@ export function compileMatcher(patterns, options) {
     // string mode); own-property read defeats prototype pollution.
     __engine: Object.hasOwn(o, "__engine") ? o.__engine : undefined,
   };
-  // The same pattern twice adds nothing to the union; factored into
-  // `p{,}` it would only send the matcher to a slower engine.
+  // The same pattern twice adds nothing to the union: it is parsed once
+  // and counts once against the expansion budget.
   const list = Array.isArray(patterns) ? [...new Set(patterns)] : [patterns];
   if (list.length === 0) throw new GlobError("EmptyPatternSet");
 
@@ -50,12 +50,12 @@ export function compileMatcher(patterns, options) {
 function buildEngine(asts, opts) {
   const ci = !!opts.caseInsensitive;
   const dot = !!opts.dot;
-  if (asts.length === 1) {
-    const literalBytes = nodeToLiteralBytes(asts[0].body);
-    if (literalBytes !== null) return new LiteralMatcher(literalBytes, ci);
-  }
-  const factored = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
-  const program = lower(factored, ci);
+  // Members that only differ in spelling factor into one, which may be
+  // a literal again.
+  const body = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
+  const literalBytes = nodeToLiteralBytes(body);
+  if (literalBytes !== null) return new LiteralMatcher(literalBytes, ci);
+  const program = lower(body, ci);
   return SegmentMatcher.build(program, dot, {
     forceNfa: opts.__engine === "nfa",
     byteOnly: opts.__engine === "bytes",

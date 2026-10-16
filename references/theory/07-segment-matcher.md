@@ -30,7 +30,10 @@ three nodes with `x` shared, and `{a,b}/` repeated k times is 2k+1
 nodes, not 2^k sequences. The in-segment branches of such a brace are
 walked as one choice (`{a,b,/}` as `{{a,b},/}`), and pending `**/`
 count once (`**/**/` ≡ `**/`). Partial segments that differ in length
-still give a group each: `a{a,/}` repeated k times is O(k²) nodes.
+still give a group each: `a{a,/}` repeated k times is O(k²) nodes. The
+walk counts its work and stops past 64 units per unit of pattern
+weight, so such a shape fails with `TooComplex` instead of growing
+(see Compile).
 
 ## Matching
 
@@ -94,20 +97,32 @@ step closes its set as it goes, so memory stays linear.
 One walk over the ops: groups → graph nodes → classify each
 segment; then the chains (paths) are enumerated and the NFA tables
 laid out. No subset construction, no byte-class tables; the one
-hash map, in the Rust builder only, lets a brace branch reuse a
-node another branch already made. Every pattern the parser accepts
-compiles; the only limits are the parser's — 64 KiB of pattern, 32
-levels of brace nesting, the brace-expansion budget — and the
-64-chain, 8-suffix, suffix-product and closure-budget thresholds pick
-a representation, never reject one.
+hash map lets a brace branch reuse a node another branch already
+made (JS scans its first 16 nodes before it keys them). Every pattern
+the parser accepts compiles unless its separator-crossing braces make
+its segments multiply: the walk counts its work — a unit per node and
+edge, plus each group it copies and each segment it closes by their
+size — and fails with `TooComplex` past max(2^20, 64 × the pattern's
+weight). Ordinary patterns and big unions need one to three units
+per weight, and a walk without a crossing brace has no budget at
+all. The other limits are the parser's — 64 KiB of pattern, 32 levels
+of brace nesting, the brace-expansion budget — and the 64-chain,
+8-suffix, suffix-product, closure and dense-row thresholds pick a
+representation, never reject one.
 
 ## Complexity and safety
 
-Compile O(|pattern| + edges) — linear in the ops for a brace-free
-pattern, and a separator-crossing brace adds one node per branch
-rather than a product. Match O(n·m) worst case — the NFA over the
-graph is the non-backtracking floor that rules out ReDoS — and O(n) for
-a chain with ≤ 1 globstar. The engine answers `is_match`, `match_dir`,
+Compile is linear in the pattern: a brace-free pattern walks its ops
+once, a separator-crossing brace adds one node per branch rather than
+a product, and the walk's work is capped as above. Every table built
+from the graph — chains, suffix products, in-segment closures, NFA
+rows — has a size budget past which a linear representation takes
+over, so memory is linear too. Match O(n·m) worst case — the NFA over
+the graph is the non-backtracking floor that rules out ReDoS — and
+O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 64
+wildcard-only segments for the all-below proof and 4096 element
+compares for a chain's tail tokens; past them it gives the safe
+answer (GLOB_SPEC §13.6). The engine answers `is_match`, `match_dir`,
 and `static_prefixes` natively.
 
 ## JS dual-mode execution

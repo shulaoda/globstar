@@ -102,6 +102,40 @@ fn duplicate_members_count_once() {
 }
 
 #[test]
+fn members_spelled_differently_fold_into_one() {
+    // One body under two spellings: factoring lifts all of it and keeps
+    // one empty branch, so nothing follows an open `**` (debug builds
+    // asserted on that) and a literal keeps the Literal engine.
+    for (a, b) in [
+        ("**", "**/**"),
+        ("a/**", "a/**/**"),
+        ("/**", "/**/**"),
+        ("\\a", "a"),
+    ] {
+        let union = Glob::union([a, b]).unwrap();
+        let single = Glob::new(b).unwrap();
+        for path in ["", "a", "a/b", "/a", "/a/b", "x/y"] {
+            let path = path.as_bytes();
+            assert_eq!(union.is_match(path), single.is_match(path), "{a} {b}");
+            assert_eq!(union.match_dir(path), single.match_dir(path), "{a} {b}");
+        }
+    }
+    assert_eq!(Glob::union(["\\a", "a"]).unwrap().engine_name(), "Literal");
+}
+
+#[test]
+fn long_shared_prefixes_lift_in_one_pass() {
+    // The shared tokens leave each member in one drain, not one per
+    // token: two 64 KB members took seconds.
+    let (x, y) = ("a/".repeat(32_000) + "x", "a/".repeat(32_000) + "y");
+    let start = std::time::Instant::now();
+    let union = Glob::union([&x, &y]).unwrap();
+    assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
+    assert!(union.is_match(x.as_bytes()) && union.is_match(y.as_bytes()));
+    assert!(!union.is_match(("a/".repeat(32_000) + "z").as_bytes()));
+}
+
+#[test]
 fn single_pattern_degenerates() {
     let u = Glob::union(["foo.txt"]).unwrap();
     assert!(u.is_match(b"foo.txt"));

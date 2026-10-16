@@ -6,6 +6,7 @@ use crate::ast::Node;
 /// token, so the union still starts the way its members do and keeps
 /// their static prefixes: `{src/**,spec/**}` stays, `s{rc,pec}/**` would
 /// not; `src/mod{1,2}/index.ts` is fine.
+#[inline(never)]
 pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches
         .into_iter()
@@ -17,12 +18,20 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let prefix = lift_prefix(&mut seqs);
     let suffix = lift_suffix(&mut seqs, !prefix.is_empty());
 
+    // Members that differ only in spelling (`**` and `**/**`, `\a` and
+    // `a`) leave nothing behind; one empty branch stands for them all,
+    // so a union of equal members is that member again.
+    let mut empty = false;
     let mut branches: Vec<Node> = seqs
         .into_iter()
-        .map(|mut seq| match seq.len() {
-            0 => Node::Concat(Vec::new()), // epsilon branch
-            1 => seq.pop().unwrap(),
-            _ => Node::Concat(seq),
+        .filter_map(|mut seq| match seq.len() {
+            0 if empty => None,
+            0 => {
+                empty = true;
+                Some(Node::Concat(Vec::new())) // epsilon branch
+            }
+            1 => seq.pop(),
+            _ => Some(Node::Concat(seq)),
         })
         .collect();
     let inner = if branches.len() == 1 {
@@ -71,25 +80,30 @@ fn fold_group_at_edge<'a>(mut it: impl Iterator<Item = &'a Node>) -> usize {
 }
 
 fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
-    let mut lifted = Vec::new();
-
+    // The shared whole tokens are counted first and taken out in one
+    // drain per member.
+    let mut at = 0;
     loop {
-        let size = fold_group_at_edge(seqs[0].iter());
+        let size = fold_group_at_edge(seqs[0][at..].iter());
         if size == 0 {
-            return lifted;
+            break;
         }
-        let head = &seqs[0][..size];
+        let head = &seqs[0][at..at + size];
         let same = seqs.iter().skip(1).all(|s| {
-            fold_group_at_edge(s.iter()) == size
-                && s[..size].iter().zip(head).all(|(x, y)| node_eq(x, y))
+            fold_group_at_edge(s[at..].iter()) == size
+                && s[at..at + size]
+                    .iter()
+                    .zip(head)
+                    .all(|(x, y)| node_eq(x, y))
         });
         if !same {
             break;
         }
-        lifted.extend(seqs[0].drain(..size));
-        for s in seqs.iter_mut().skip(1) {
-            s.drain(..size);
-        }
+        at += size;
+    }
+    let mut lifted: Vec<Node> = seqs[0].drain(..at).collect();
+    for s in seqs.iter_mut().skip(1) {
+        s.drain(..at);
     }
 
     if lifted.is_empty()

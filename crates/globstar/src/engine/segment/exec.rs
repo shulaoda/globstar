@@ -19,6 +19,16 @@ use super::{
     Wild, WildKind,
 };
 
+/// The wildcard-only segments `covers_below` feeds before it gives up:
+/// a pattern needs about one more than its longest run of them, and
+/// "not provable" is a valid answer (GLOB_SPEC §13.6).
+const MAX_COVER_SEGMENTS: usize = 64;
+
+/// The element compares `chain_dir` spends on tail tokens; past them it
+/// answers what is safe ("may match below", "not all below"). Tails of
+/// up to 90 elements stay exact.
+const MAX_TAIL_CHECKS: usize = 4096;
+
 /// Index just past the segment that starts at `pos`.
 #[inline]
 fn seg_end(path: &[u8], pos: usize) -> usize {
@@ -254,14 +264,22 @@ impl SegmentMatcher {
                 end = s - 1;
             }
         }
-        self.absorbs(elems.at(g), path, mid_start, split)
+        self.absorbs(elems.at(g), path, mid_start, split, None)
     }
 
     /// Can the globstar `kind` take the segments between the head
     /// (ending before `from`) and the tail starting at `split`?
-    /// `split == from` means no segment at all.
+    /// `split == from` means no segment at all. `dot_at`, when given, is
+    /// `first_dot(path, from)`, which makes the dot check one compare.
     #[inline(always)]
-    fn absorbs(&self, kind: &Elem, path: &[u8], from: usize, split: usize) -> bool {
+    fn absorbs(
+        &self,
+        kind: &Elem,
+        path: &[u8],
+        from: usize,
+        split: usize,
+        dot_at: Option<usize>,
+    ) -> bool {
         if split == from {
             return kind.nullable();
         }
@@ -273,7 +291,24 @@ impl SegmentMatcher {
         {
             return false;
         }
-        self.dot_free(path, from, to)
+        match dot_at {
+            Some(at) => at >= to,
+            None => self.dot_free(path, from, to),
+        }
+    }
+
+    /// Under `dot=false`, where the first segment of `path[from..]` that
+    /// starts with a `.` starts; `usize::MAX` when none does.
+    fn first_dot(&self, path: &[u8], from: usize) -> usize {
+        if self.dot {
+            return usize::MAX;
+        }
+        if path.get(from) == Some(&b'.') {
+            return from;
+        }
+        (from..path.len())
+            .find(|&i| std::path::is_separator(path[i] as char) && path.get(i + 1) == Some(&b'.'))
+            .map_or(usize::MAX, |i| i + 1)
     }
 
     /// Under `dot=false`, no segment within `path[from..to)` may start
@@ -352,29 +387,63 @@ impl SegmentMatcher {
         let kind = elems.at(g);
         let exact = self.tail_and_globstar(elems, g, dir, mid_start);
         // The globstar took everything after the head.
-        let g_alive = self.absorbs(kind, dir, mid_start, dir.len() + 1);
+        let g_alive = self.absorbs(kind, dir, mid_start, dir.len() + 1, None);
         let mut prefix = g_alive && open(g + 1);
         let mut all = self.dot && g_alive && tail_any;
-        // Tail tokens: `elems[g + 1..g + 1 + j]` on the last `j`
-        // segments with the globstar released before them. A dead
-        // globstar may leave one; `all` needs them all.
         if (!prefix || all) && tl > 1 {
-            let mut end = dir.len();
-            for j in 1..tl {
-                let start = seg_start(dir, end);
-                let alive = self.absorbs(kind, dir, mid_start, start)
-                    && self.fixed_run(elems, g + 1..g + 1 + j, dir, start);
-                prefix |= alive && open(g + 1 + j);
-                all &= alive;
-                if start == mid_start {
-                    // No segment is left for a longer tail.
-                    all &= j + 1 == tl;
-                    break;
-                }
-                end = start - 1;
-            }
+            (prefix, all) = self.tail_tokens(elems, g, dir, mid_start, prefix, all);
         }
         DirMatch::new(exact, prefix, all)
+    }
+
+    /// `chain_dir`'s tail tokens: `elems[g + 1..g + 1 + j]` on the last
+    /// `j` segments of `dir` with the globstar released before them. A
+    /// dead globstar may leave one, which sets `prefix`; `all` needs
+    /// them all. Each `j` is its own alignment, so the compares are
+    /// budgeted. Kept out of `chain_dir_on`, whose short paths lost 20%
+    /// with it inside.
+    #[inline(never)]
+    fn tail_tokens<E: ChainElems>(
+        &self,
+        elems: &E,
+        g: usize,
+        dir: &[u8],
+        mid_start: usize,
+        mut prefix: bool,
+        mut all: bool,
+    ) -> (bool, bool) {
+        let n = elems.len();
+        let tl = n - g - 1;
+        let kind = elems.at(g);
+        let dot_at = Some(self.first_dot(dir, mid_start));
+        // Every element from `open_from` on takes some segment.
+        let open_from = (g + 1..n)
+            .rev()
+            .find(|&j| !elems.at(j).satisfiable())
+            .map_or(0, |j| j + 1);
+        let mut checks = MAX_TAIL_CHECKS;
+        let mut end = dir.len();
+        for j in 1..tl {
+            if checks < j {
+                return (true, false);
+            }
+            checks -= j;
+            let start = seg_start(dir, end);
+            let alive = self.absorbs(kind, dir, mid_start, start, dot_at)
+                && self.fixed_run(elems, g + 1..g + 1 + j, dir, start);
+            prefix |= alive && g + 1 + j >= open_from;
+            all &= alive;
+            if start == mid_start {
+                // No segment is left for a longer tail.
+                all &= j + 1 == tl;
+                break;
+            }
+            if prefix && !all {
+                break;
+            }
+            end = start - 1;
+        }
+        (prefix, all)
     }
 
     #[inline(always)]
@@ -631,7 +700,7 @@ impl<B: Bits> Nfa<B> {
         let mut next = B::zero(B::words(self.states.len()));
         // Tokens only move forward or sit on a globstar, so the set
         // settles within the number of states.
-        for _ in 0..=self.states.len() {
+        for _ in 0..=self.states.len().min(MAX_COVER_SEGMENTS) {
             self.step_wild(m, active, &mut next);
             if !next.test(self.accept()) {
                 return false;
@@ -865,7 +934,7 @@ impl SparseNfa {
         let accept = self.accept();
         let any_seg =
             |s: u32| m.elems[self.nodes[self.pos[s as usize] as usize] as usize].any_seg();
-        for _ in 0..=self.pos.len() {
+        for _ in 0..=self.pos.len().min(MAX_COVER_SEGMENTS) {
             next.clear();
             for &item in &active.items {
                 if item & POS == 0 {
