@@ -345,3 +345,20 @@ fn a_long_class_costs_one_lookup_per_byte() {
     assert!(glob.is_match(format!("{path}b").as_bytes()));
     assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
 }
+
+// Windows: an escaped `\` is a literal no segment holds (§2.4), so its
+// expansion seeds nothing, and `match_dir` prunes where it is next.
+#[cfg(windows)]
+#[test]
+fn an_escaped_backslash_is_dead_on_windows() {
+    let union = Glob::union(["src\\\\sub/*.ts", "src/sub/*.ts"]).unwrap();
+    assert_eq!(union.static_prefixes(), [b"src/sub".to_vec()]);
+    assert!(
+        Glob::new("src\\\\sub/*.ts")
+            .unwrap()
+            .static_prefixes()
+            .is_empty()
+    );
+    let dead = Glob::new("a/b\\\\c/*.ts").unwrap();
+    assert_eq!(dead.match_dir(b"a"), globstar::DirMatch::Pruned);
+}

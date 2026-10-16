@@ -75,3 +75,14 @@ assert.equal(DirMatch.from(false, false, true), DirMatch.DescendAll);
 }
 
 console.log("✓ matchDir verdicts serve both the selecting and the excluding role");
+
+// Windows: an escaped `\` is a literal no segment holds (§2.4), so its
+// expansion seeds nothing, and `matchDir` prunes where it is next. Twin
+// of `an_escaped_backslash_is_dead_on_windows`.
+if (process.platform === "win32") {
+  const text = (m) => m.staticPrefixes().map((b) => new TextDecoder().decode(b));
+  assert.deepEqual(text(compileMatcher(["src\\\\sub/*.ts", "src/sub/*.ts"])), ["src/sub"]);
+  assert.deepEqual(text(compileMatcher("src\\\\sub/*.ts")), []);
+  assert.equal(compileMatcher("a/b\\\\c/*.ts").matchDir("a"), DirMatch.Pruned);
+  console.log("✓ an escaped backslash is dead on Windows");
+}

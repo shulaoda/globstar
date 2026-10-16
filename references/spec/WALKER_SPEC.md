@@ -2,7 +2,7 @@
 
 This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling.
 
-**Version.** v0.3.5, draft. Appendix A (§12) lists every change.
+**Version.** v0.3.6, draft. Appendix A (§12) lists every change.
 
 **Status.** Active, not yet released.
 
@@ -242,7 +242,7 @@ The walker uses these to skip directories that no branch of the pattern can poss
    - any of its segments is `..`, `.` or empty (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields none of them, so no root walk reaches such a path, and a joined `..` would escape `cwd`. A brace branch that starts with `/` gives one: `{a,/b}/x` has the prefixes `a` and `/b`, and `/b` is dropped;
    - the ignore set matches the prefix itself or ANY `/`-bounded ancestor of it (§7.1 step 3 prunes an ignored directory's whole subtree, so a root walk would never reach this seed);
    - a part of the prefix is a symlink the root walk would not follow: any symlink under `followSymlinks: false` (a root walk drops them entirely, §10), or one whose resolved target is already a target of an earlier part (a cycle, §10). A cycle at the prefix's last part only stops the descent (step 3).
-2. Computes its absolute form: `joinAbs(cwd, prefix)` and calls `fs.statSync` on it.
+2. Computes its absolute form, joining its parts to `cwd` one by one with `joinAbs` (§7.4) as a root walk would, and calls `fs.statSync` on it.
    - Stat fails: probe `lstatSync`. If THAT succeeds, the entry exists as a broken or looping symlink — treat it as a non-directory entry (step 4), exactly as the walk loop would (§10). If `lstat` fails because nothing can be there (§9.4: ENOENT, ENOTDIR, ELOOP, ENAMETOOLONG, EINVAL, a NUL in the name), the prefix is silently skipped — this is NOT an error: `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch.
    - `lstat` fails otherwise (EACCES, …): surface it the way the walk loop would — a root walk hitting this subtree fails loudly (§9.3), so seeding MUST NOT hide it.
    - Stat succeeds: classify by file-type.
@@ -308,9 +308,11 @@ The "drop late callback after failure" rule MUST hold so that in-flight readdirs
 
 ```js
 function joinAbs(parent, child) {
-  return parent.charCodeAt(parent.length - 1) === 0x2f /* '/' */
-    ? parent + child
-    : parent + "/" + child;
+  const last = parent.charCodeAt(parent.length - 1);
+  if (last === 0x2f /* '/' */) return parent + child;
+  if (!WINDOWS) return parent + "/" + child;
+  if (last === 0x5c /* '\\' */) return parent + child; // a drive root, `C:\`
+  return parent + (parent.startsWith("\\\\?\\") ? "\\" : "/") + child;
 }
 ```
 
@@ -334,7 +336,7 @@ The walker emits ONLY file paths. Directory paths are NEVER part of the output, 
 
 Each output path is the **`cwd`-prefixed absolute form** — there is no relative-output toggle. `cwd` is itself resolved to absolute at construction (§5), so output paths are always absolute regardless of the form `cwd` was passed in.
 
-Path separators are POSIX (`/`): the walker constructs paths from dirent names by string concatenation (§7.4), so the only separators present beyond what `path.resolve(cwd)` produced are the `/`s the walker inserted. On Windows, `path.resolve` returns the platform's preferred form, but the joined output is consistent within a single call.
+Path separators are POSIX (`/`): the walker constructs paths from dirent names by string concatenation (§7.4), so the only separators present beyond what `path.resolve(cwd)` produced are the `/`s the walker inserted. On Windows, `path.resolve` returns the platform's preferred form (`C:\proj`), followed by the walker's `/`s; one file has one spelling whatever the pattern's shape. Two Windows forms differ, so that every path is one Win32 can open: a `cwd` that already ends in a separator (a drive root, `C:\`) gets none added, and under a verbatim `cwd` (`\\?\C:\proj`) the walker joins with `\`, since Win32 reads no `/` in such a path.
 
 Callers wanting a path relative to `cwd` should `path.relative(cwd, p)` at their boundary; this matches what Vite's `import.meta.glob` implementation does (it always passes `absolute: true` to tinyglobby and post-relativizes itself).
 
@@ -438,6 +440,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **v0.3.3** (2026-10-16): options are checked (§3.1: own keys only, no unknown keys, booleans for the flags; `glob` rejects); an ignore entry that starts with `!` is refused (§3.2); every `!` run normalization exposes counts in the split (§4.2).
 - **v0.3.4** (2026-10-16): §3.2's ignore predicate names the folders above a path (an ignored folder hides its subtree); a symlink that closes a cycle is not emitted (§3.2, §10: the output is files only); §2.2 says async and sync each win somewhere, with measurements; §11 corrects the seeding cell and fills doublestar's `!` cell.
 - **v0.3.5** (2026-10-16): §4.4: a compile failure names the member the matcher reports, with no second compile; a whole-list error names the list cut after three.
+- **v0.3.6** (2026-10-16): §6 joins a seed part by part, as a root walk does; §7.4 and §8.2: on Windows a drive-root `cwd` gets no second separator and a verbatim `cwd` is joined with `\`.
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §7.7); seed stat failures probe `lstat` (§9.4).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.

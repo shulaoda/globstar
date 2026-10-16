@@ -235,7 +235,9 @@ function initFromPrefixes(ctx) {
 
     if (ctx.ignore !== null && seedIgnored(ctx.ignore, prefixStr)) continue;
 
-    const joined = joinAbs(ctx.cwd, prefixStr);
+    // Part by part, so the seed is joined as a root walk's paths are.
+    let joined = ctx.cwd;
+    for (const seg of segs) joined = joinAbs(joined, seg);
 
     // The links a root walk would follow on the way down.
     const links = seedLinks(ctx, segs);
@@ -523,12 +525,20 @@ function readEachEntry(dir) {
   return out;
 }
 
-// Bypass `path.join`'s normalization (`..` / `.` / repeated `/`) — we
-// only ever append a dirent name, or a seed prefix the seeding checks
-// for `..`, `.` and empty segments, to a `path.resolve`'d cwd or a
-// previous `joinAbs` result, so neither input ever contains those.
+// §7.4: `parent`, a separator, `child`, bypassing `path.join`'s
+// normalization (`..` / `.` / repeated `/`) — we only ever append a
+// dirent name, or a seed part the seeding checks for `..`, `.` and
+// empty, to a `path.resolve`'d cwd or a previous `joinAbs` result, so
+// neither input ever holds those. The separator is `/` (§8.2), but `\`
+// under a verbatim Windows path (`\\?\C:\…`), which Win32 reads with no
+// `/` in it; a parent that already ends in one (a drive root, `C:\`)
+// gets none.
 function joinAbs(parent, child) {
-  return parent.charCodeAt(parent.length - 1) === 0x2f ? parent + child : parent + "/" + child;
+  const last = parent.charCodeAt(parent.length - 1);
+  if (last === 0x2f) return parent + child;
+  if (!WINDOWS) return parent + "/" + child;
+  if (last === 0x5c) return parent + child;
+  return parent + (parent.startsWith("\\\\?\\") ? "\\" : "/") + child;
 }
 
 // Static prefixes are ASCII / valid UTF-8 bytes (parser-produced from

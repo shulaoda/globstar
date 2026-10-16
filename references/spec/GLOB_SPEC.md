@@ -2,7 +2,7 @@
 
 **Status.** This document is the normative definition of the glob dialect implemented by the `globstar` Rust crate (`crates/globstar`) and the `@globstar/core` JS package (`packages/globstar`). When code, tests or other documents disagree with it, the code changes.
 
-**Version.** 0.2.9, draft. The document is not frozen; Appendix A (§17) lists every change.
+**Version.** 0.2.10, draft. The document is not frozen; Appendix A (§17) lists every change.
 
 **Baseline.** The dialect follows `picomatch` and `fast-glob` mainline behavior with the rigor of `doublestar`. Bit-exact parity with any single tool is not a goal; §16 lists every deliberate difference.
 
@@ -736,7 +736,7 @@ A negated pattern SHOULD return `Descend` for every `d`, and never a covering re
 
 > **Implementation note.** Feed `d` to the matcher and classify where it stops: no live state is `Pruned`; an accepting state is `Match` or `DescendAndMatch`; live states without acceptance are `Descend`. For the all-below flag, continue from those states as §13.6 describes.
 >
-> The same analysis yields `static_prefixes`: for each expansion of the pattern's braces (§7.0), its literal head up to its last whole segment, with heads a shorter one covers removed. Every match starts with one of them, compared byte for byte with `/` as the separator and in the pattern's case (a case-insensitive match, or a Windows path with `\`, may differ there). Walkers seed traversal from them (WALKER_SPEC.md §6). The reference implementations bound the work linearly in the pattern; past the bound a head ends at its last whole segment, which is a shorter prefix and still holds.
+> The same analysis yields `static_prefixes`: for each expansion of the pattern's braces (§7.0), its literal head up to its last whole segment, with heads a shorter one covers removed. Every match starts with one of them, compared byte for byte with `/` as the separator and in the pattern's case (a case-insensitive match, or a Windows path with `\`, may differ there). On Windows an expansion through an escaped `\` matches nothing (§2.4), so it gives no head. Walkers seed traversal from them (WALKER_SPEC.md §6). The reference implementations bound the work linearly in the pattern; past the bound a head ends at its last whole segment, which is a shorter prefix and still holds.
 
 ### 13.6 All-below: `DescendAll` and `DescendAllAndMatch`
 
@@ -1051,6 +1051,7 @@ Every cell was measured on 2026-10-16: Bash 5.2.37 (filename expansion with `glo
 - **v0.2.6** (2026-10-16): §13.6 states how the reference implementations bound the all-below proof (64 wildcard-only segments, 4096 tail compares); §7.2 and §7.7 point at `TooComplex`.
 - **v0.2.8** (2026-10-16): §10: `InvalidRange.at` is where the range starts; an error one member of a pattern list raises names the member (`InMember` in Rust, `index` in JS).
 - **v0.2.9** (2026-10-16): §16 measured cell by cell against each tool (versions under the table), with fast-glob's npm walker and Rust crate in columns of their own, and a row for `.` and `..` under `dot = true` (§11.1 says to normalize paths from outside); the other-tool claims in §6.5, §7.4, §8.3 and §11.1 follow the measurements. §13.2's examples take the `match_dir(P, d)` order and name their `dot`. §13.6 states the all-below rule per segment with its `dot` gate, and says union members merge while a user's braces do not. §7.0 cites §8.1 for star collapse.
+- **v0.2.10** (2026-10-16): §13.5: on Windows an expansion through an escaped `\` gives no static prefix, and its segment is one `match_dir` prunes at.
 - **v0.2.7** (2026-10-16): §12.4 states dot protection as the implementations apply it, per segment start: a `*` there matches nothing, not even the empty string (`*.txt` does not match `.txt`); §15.8 shows it.
 - Awaiting owner approval before freezing as v1.0.
 

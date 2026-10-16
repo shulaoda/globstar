@@ -336,7 +336,7 @@ console.log("✓ engine shapes");
     for (const ci of [false, true]) {
       const m = compileMatcher("x" + pattern, { caseInsensitive: ci });
       for (let b = 1; b < 0x80; b++) {
-        if (b === 0x2f) continue;
+        if (b === 0x2f || (process.platform === "win32" && b === 0x5c)) continue; // separators
         // Case folding adds each listed letter's other case, then the
         // class is negated.
         const listed = (c) => classMatches({ ...cls, neg: false }, c);

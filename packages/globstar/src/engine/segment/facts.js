@@ -2,7 +2,7 @@
 // and the static prefixes a walker seeds from. JS twin of
 // `crates/globstar/src/engine/segment/facts.rs`.
 
-import { isPathSep, eqByteCi } from "../../bytes.js";
+import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../../bytes.js";
 import { latin1 } from "../../utf8.js";
 import { OP_ALTERNATION, OP_LIT, OP_SEP, OP_SEP_RUN, OP_SLASH_ANYTHING } from "../ops.js";
 import { opWeight } from "./compile.js";
@@ -125,6 +125,12 @@ function readHeads(heads, ops, at, then, acc, boundary, depth) {
       continue;
     }
     const op = ops[i++];
+    // An escaped `\` on Windows: the expansion matches nothing (§2.4), so
+    // it has no head to seed.
+    if (op.kind === OP_LIT && IS_WINDOWS_SEP && op.bytes.includes(0x5c)) {
+      acc.length = mark;
+      return;
+    }
     if (op.kind === OP_LIT && afford(heads, op.bytes.length)) {
       for (let k = 0; k < op.bytes.length; k++) acc.push(op.bytes[k]);
     } else if ((op.kind === OP_SEP || op.kind === OP_SEP_RUN) && afford(heads, 1)) {

@@ -33,12 +33,13 @@ function tmpTree(tag, files, links = {}) {
 const rel = (root, paths) => paths.map((p) => path.relative(root, p).replaceAll("\\", "/")).sort();
 
 // Symlink creation needs a privilege on Windows — probe once, skip
-// symlink-dependent assertions where unavailable.
+// symlink-dependent assertions where unavailable. Wine reports success
+// and makes no link, so the probe looks for the link too.
 const symlinksOk = (() => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "glob-walk-js-sym-"));
   try {
     fs.symlinkSync(d, path.join(d, "probe"));
-    return true;
+    return fs.lstatSync(path.join(d, "probe")).isSymbolicLink();
   } catch {
     return false;
   } finally {
@@ -518,6 +519,31 @@ await check("an entry that vanishes during a typed read is skipped", async () =>
 });
 
 for (const fn of cleanups) fn();
+// ── Windows: paths a Win32 API can open ─────────────────────────────────
+if (process.platform === "win32") {
+  await check("a drive-root or verbatim cwd gives paths Win32 opens", async () => {
+    const root = tmpTree("win-join", ["src/a.ts"]);
+    // From the drive root (`C:\`): no `\/` after it.
+    const drive = path.parse(root).root;
+    const below = path.relative(drive, root).split(path.sep).join("/");
+    for (const out of [
+      globSync(`${below}/src/*.ts`, { cwd: drive }),
+      await glob(`${below}/src/*.ts`, { cwd: drive }),
+    ]) {
+      assert.equal(out.length, 1);
+      assert.ok(!out[0].includes("\\/"), out[0]);
+      fs.statSync(out[0]);
+    }
+    // Under a verbatim cwd (`\\?\C:\…`) the separator is `\` throughout:
+    // Win32 reads no `/` in such a path.
+    for (const pattern of ["src/*.ts", "**/*.ts"]) {
+      const [only, ...rest] = globSync(pattern, { cwd: "\\\\?\\" + root });
+      assert.equal(rest.length, 0);
+      assert.ok(only.startsWith("\\\\?\\") && !only.includes("/"), only);
+    }
+  });
+}
+
 if (failures > 0) {
   console.error(`✗ ${failures} walker test group(s) failed`);
   process.exit(1);

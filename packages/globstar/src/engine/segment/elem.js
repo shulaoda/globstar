@@ -36,8 +36,13 @@ export const YES = 1;
 export const BAIL = 2;
 
 // Can the element take some segment?
+// The `minLen` of a segment no path segment can fill: one with an
+// escaped `\` on Windows, where a segment never holds a separator.
+export const NEVER_LEN = 0x7fffffff;
+
 export const elemSatisfiable = (e) =>
-  e.kind !== EL_WILD || e.wild.kind !== WK_GENERIC || e.wild.nfa.satisfiable;
+  e.kind !== EL_WILD ||
+  (e.wild.minLen !== NEVER_LEN && (e.wild.kind !== WK_GENERIC || e.wild.nfa.satisfiable));
 // Takes every non-empty segment (`matchDir`'s all-below).
 export const elemAnySeg = (e) =>
   e.kind === EL_LIT ? false : e.kind === EL_WILD ? e.wild.anySeg : true;

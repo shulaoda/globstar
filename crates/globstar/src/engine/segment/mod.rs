@@ -30,6 +30,16 @@ const LINEAR_SUFFIXES: usize = 8;
 /// static prefixes.
 type Bytes = Box<[u8]>;
 
+/// The `min_len` of a segment no path segment can fill: one with an
+/// escaped `\` on Windows, where a segment never holds a separator.
+const NEVER: u32 = u32::MAX;
+
+/// Does `lit` hold a separator byte (an escaped `\` on Windows)? A
+/// literal never holds a `/`, so elsewhere it never does.
+fn has_sep(lit: &[u8]) -> bool {
+    cfg!(windows) && lit.iter().any(|&b| std::path::is_separator(char::from(b)))
+}
+
 /// A 64-slot sketch of a set of bytes (`b % 64`): a byte not in the
 /// sketch is not in the set, so a set scan can be skipped.
 #[derive(Debug, Clone, Copy)]
@@ -121,6 +131,7 @@ impl Elem {
     #[inline]
     fn satisfiable(&self) -> bool {
         match self {
+            Elem::Wild(w) if w.min_len == NEVER => false,
             Elem::Wild(Wild {
                 kind: WildKind::Generic(nfa),
                 ..

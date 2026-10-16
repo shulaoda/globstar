@@ -1676,3 +1676,61 @@ fn walker_slash_only_pattern_is_dropped() {
     );
     assert_eq!(got, ["a.txt"].iter().map(|s| s.to_string()).collect());
 }
+
+// Windows: a seed reaches only what a root walk lists, under the spelling
+// it lists it (WALKER_SPEC §6).
+#[cfg(windows)]
+#[test]
+fn windows_seeds_reach_what_a_root_walk_lists() {
+    let t = TmpTree::new("win-seeds");
+    t.touch("src/a.ts");
+    t.touch("src/sub/b.ts");
+    t.touch("secret/key.pem");
+    let base = t.root();
+    let walk = |patterns: &[&str], ignore: &[&str]| -> Vec<String> {
+        let mut opts = WalkOptions::new(base);
+        opts.ignore = ignore.iter().map(|s| s.to_string()).collect();
+        let mut out: Vec<String> = Walk::from_patterns(patterns.iter().copied(), opts)
+            .unwrap()
+            .map(|r| {
+                r.expect("no walker error")
+                    .into_path()
+                    .display()
+                    .to_string()
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    // One spelling per file, native `\`, whatever the pattern's shape; an
+    // escaped `\` is no separator, so its member adds no second copy.
+    let b = base
+        .join("src")
+        .join("sub")
+        .join("b.ts")
+        .display()
+        .to_string();
+    for patterns in [
+        &["**/b.ts"][..],
+        &["src/sub/*.ts"],
+        &["src/sub/b.ts"],
+        &["src\\\\sub/*.ts", "src/sub/*.ts"],
+    ] {
+        assert_eq!(walk(patterns, &[]), [b.clone()], "{patterns:?}");
+    }
+    // A drive is never below base, and a name Win32 rewrites (`src.`,
+    // `src `, `nul`, `con.txt`) reaches no folder a root walk lists: no
+    // match, no error, nothing past the ignore rules.
+    let drive = format!("{}/src/*.ts", base.display().to_string().replace('\\', "/"));
+    for patterns in [
+        &[drive.as_str()][..],
+        &["src./*.ts"],
+        &["src /*.ts"],
+        &["src/a.ts."],
+        &["nul"],
+        &["con.txt"],
+        &["secret./*.pem"],
+    ] {
+        assert!(walk(patterns, &["secret"]).is_empty(), "{patterns:?}");
+    }
+}

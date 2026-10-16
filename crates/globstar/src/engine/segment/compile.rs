@@ -18,8 +18,8 @@ use super::bits::{Bits, Wide};
 use super::seg_nfa::SegNfa;
 use super::{
     Affix, AffixIndex, AffixSet, AnyNfa, ByteSketch, Bytes, Chain, Elem, LINEAR_SUFFIXES, LitSet,
-    LitSets, MAX_CHAINS, Nfa, SegmentMatcher, Shape, SparseNfa, State, SuffixRun, Wild, WildKind,
-    facts,
+    LitSets, MAX_CHAINS, NEVER, Nfa, SegmentMatcher, Shape, SparseNfa, State, SuffixRun, Wild,
+    WildKind, facts, has_sep,
 };
 
 /// Successor marker for "the pattern ends here".
@@ -912,24 +912,26 @@ impl Builder {
     }
 
     fn close(&self, buf: &[&Op]) -> Elem {
-        if !buf.iter().all(|op| matches!(op, Op::Lit(_))) {
-            return Elem::Wild(compile_wild(buf, self.dot, self.ci));
-        }
-        // Empty, one literal, or literals glued across a brace edge.
-        let lit = concat_lits(buf);
-        if lit.iter().any(|&b| std::path::is_separator(b as char)) {
-            // An escaped `\` on Windows: no segment holds a separator, so
-            // the literal is a silent miss (§2.4), kept as a wildcard
-            // that wants more bytes than any segment has.
+        // An escaped `\` on Windows: no segment holds a separator, so a
+        // segment with one is a silent miss (§2.4), kept as a wildcard
+        // that wants more bytes than any segment has.
+        if buf
+            .iter()
+            .any(|op| matches!(op, Op::Lit(lit) if has_sep(lit)))
+        {
             return Elem::Wild(Wild {
-                kind: WildKind::Affix(Affix::new(lit, Bytes::default())),
-                min_len: u32::MAX,
+                kind: WildKind::Affix(Affix::new(Bytes::default(), Bytes::default())),
+                min_len: NEVER,
                 variable: false,
                 dot_protect: false,
                 any_seg: false,
             });
         }
-        Elem::Lit(lit)
+        if !buf.iter().all(|op| matches!(op, Op::Lit(_))) {
+            return Elem::Wild(compile_wild(buf, self.dot, self.ci));
+        }
+        // Empty, one literal, or literals glued across a brace edge.
+        Elem::Lit(concat_lits(buf))
     }
 }
 

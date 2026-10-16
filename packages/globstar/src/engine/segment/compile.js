@@ -41,6 +41,7 @@ import {
   NFA_WIDE,
   NFA_SPARSE,
   elemSatisfiable,
+  NEVER_LEN,
 } from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
 import { GlobError } from "../../error.js";
@@ -541,22 +542,17 @@ class Builder {
   }
 
   close(buf) {
+    // An escaped `\` on Windows: no segment holds a separator, so a
+    // segment with one is a silent miss (§2.4), kept as a wildcard that
+    // wants more bytes than any segment has.
+    if (IS_WINDOWS_SEP && buf.some((op) => op.kind === OP_LIT && op.bytes.includes(0x5c))) {
+      return makeElem(EL_WILD, null, makeWild(WK_AFFIX, { minLen: NEVER_LEN, variable: false }));
+    }
     for (const op of buf) {
       if (op.kind !== OP_LIT) return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
     }
     // Empty, one literal, or literals glued across a brace edge.
     const bytes = buf.length === 0 ? EMPTY_BYTES : concatLits(buf, 0, buf.length);
-    if (IS_WINDOWS_SEP && bytes.includes(0x5c)) {
-      // An escaped `\` on Windows: no segment holds a separator, so the
-      // literal is a silent miss (§2.4), kept as a wildcard that wants
-      // more bytes than any segment has.
-      const never = makeWild(WK_AFFIX, {
-        prefixStr: latin1(bytes),
-        minLen: 0x7fffffff,
-        variable: false,
-      });
-      return makeElem(EL_WILD, null, never);
-    }
     return makeElem(EL_LIT, bytes, null);
   }
 }

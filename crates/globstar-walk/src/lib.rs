@@ -67,7 +67,16 @@
 //! is always a separator, and on Windows `\` is one too — the
 //! separator set follows [`std::path::is_separator`]. The walker
 //! builds relative paths with `/` internally, so matching behaves the
-//! same across platforms.
+//! same across platforms. Yielded paths join `base` and the names
+//! `read_dir` gives with the platform's separator (`\` on Windows), so
+//! one file has one spelling whatever the pattern's shape.
+//!
+//! On Windows a seed (a pattern's literal head) stops before a part
+//! Win32 would open as something else — one ending in `.` or a space, a
+//! device name such as `NUL` or `con.txt` — and the walk starts from its
+//! parent, where `read_dir` decides; a part with `:` (a drive letter, a
+//! stream) is never below `base`, so `C:/proj/src/*.ts` matches nothing,
+//! as on other platforms. Patterns are relative to `base`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -319,7 +328,10 @@ impl Walk {
             Some(m) => m,
             None => return, // empty pattern set: yield nothing
         };
-        let prefixes = matcher.static_prefixes();
+        let mut prefixes = matcher.static_prefixes();
+        if cfg!(windows) {
+            prefixes = win32_seeds(prefixes);
+        }
         for prefix in prefixes {
             if prefix.is_empty() {
                 self.stack.push(Frame {
@@ -351,13 +363,15 @@ impl Walk {
 
             let absolute = match std::str::from_utf8(&prefix) {
                 Ok(s) => {
-                    // Defense-in-depth: `normalize_pattern` already strips
-                    // Unix-style leading `/`, but on Windows a prefix
-                    // like `C:/foo` or `\\server\share` would still
-                    // make `Path::join` replace `self.base`. Reject
-                    // any join result that escapes the base.
-                    let joined = self.base.join(s);
-                    if joined.strip_prefix(&self.base).is_err() {
+                    // Part by part, so the path has the platform's
+                    // separator throughout, as a root walk's do.
+                    let mut joined = self.base.clone();
+                    for seg in s.split('/') {
+                        joined.push(seg);
+                    }
+                    // Defense-in-depth: a part that replaces the base
+                    // (a drive, a root) never gets past `win32_seeds`.
+                    if !joined.starts_with(&self.base) {
                         continue;
                     }
                     joined
@@ -843,6 +857,68 @@ fn split_bangs(raw: &str) -> Option<(usize, String)> {
     }
 }
 
+/// The seeds a Windows walk can stat. Win32 rewrites some names before
+/// it opens them (it drops a trailing `.` or space, and `NUL`, `con.txt`
+/// and the other device names name devices), so a seed through one
+/// would reach a folder `read_dir` lists under another name, past the
+/// ignore rules. Such a part cuts the seed back to its parent, where
+/// `read_dir` decides; a part with `:` (a drive, a stream) is never
+/// listed at all, so its seed is dropped. Cut seeds can cover others:
+/// those are dropped too, as `static_prefixes` drops covered heads.
+fn win32_seeds(prefixes: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = Vec::with_capacity(prefixes.len());
+    let mut cut = false;
+    'seeds: for prefix in prefixes {
+        let mut kept = 0;
+        for seg in prefix.split(|&b| b == b'/') {
+            if seg.contains(&b':') {
+                cut = true;
+                continue 'seeds;
+            }
+            if win32_rewrites(seg) {
+                cut = true;
+                break;
+            }
+            kept += seg.len() + 1;
+        }
+        let end = kept.min(prefix.len() + 1).saturating_sub(1);
+        out.push(prefix[..end].to_vec());
+    }
+    if !cut {
+        return out;
+    }
+    out.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+    out.dedup();
+    let mut kept: Vec<Vec<u8>> = Vec::with_capacity(out.len());
+    for p in out {
+        if p.is_empty() {
+            return vec![p];
+        }
+        let covered = kept
+            .iter()
+            .any(|k| p.len() > k.len() && p[k.len()] == b'/' && p.starts_with(k));
+        if !covered {
+            kept.push(p);
+        }
+    }
+    kept
+}
+
+/// Does Win32 open this name as something else: a trailing `.` or space,
+/// or a device name (`NUL`, `com1`, `con.txt`)?
+fn win32_rewrites(seg: &[u8]) -> bool {
+    if matches!(seg.last(), Some(b'.' | b' ')) {
+        return true;
+    }
+    let stem = seg.split(|&b| b == b'.').next().unwrap_or(seg);
+    let stem = stem.trim_ascii_end().to_ascii_uppercase();
+    match stem.as_slice() {
+        b"CON" | b"PRN" | b"AUX" | b"NUL" => true,
+        [b'C', b'O', b'M', d] | [b'L', b'P', b'T', d] => d.is_ascii_digit(),
+        _ => false,
+    }
+}
+
 /// `p` with `.` and `..` parts taken out as text (`..` at the root
 /// stays at the root), as Node's `path.resolve` does.
 fn lexical(p: &Path) -> PathBuf {
@@ -857,4 +933,44 @@ fn lexical(p: &Path) -> PathBuf {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{win32_rewrites, win32_seeds};
+
+    fn seeds(prefixes: &[&str]) -> Vec<String> {
+        let bytes = prefixes.iter().map(|p| p.as_bytes().to_vec()).collect();
+        win32_seeds(bytes)
+            .into_iter()
+            .map(|p| String::from_utf8(p).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn win32_rewritten_names() {
+        for name in [
+            "src.", "src ", "a.ts.", ".. ", "NUL", "nul", "con.txt", "Com1", "LPT9.log", "aux ",
+        ] {
+            assert!(win32_rewrites(name.as_bytes()), "{name}");
+        }
+        for name in [
+            "src", ".git", "a.ts", "nulls", "console", "com10", "lpt", "con-x",
+        ] {
+            assert!(!win32_rewrites(name.as_bytes()), "{name}");
+        }
+    }
+
+    // A part Win32 would rewrite cuts the seed back to its parent; a part
+    // with `:` drops it; seeds a cut one covers go too.
+    #[test]
+    fn win32_seeds_stop_where_win32_would_rewrite() {
+        assert_eq!(seeds(&["src/sub", "lib"]), ["src/sub", "lib"]);
+        assert_eq!(seeds(&["src./a"]), [""]);
+        assert_eq!(seeds(&["src/sub./x", "src/y"]), ["src"]);
+        assert_eq!(seeds(&["src/a.ts.", "lib"]), ["lib", "src"]);
+        assert_eq!(seeds(&["C:/gsw/proj/src", "lib"]), ["lib"]);
+        assert_eq!(seeds(&["nul", "src/con.txt", "src/x"]), [""]);
+        assert!(seeds(&["c:"]).is_empty());
+    }
 }

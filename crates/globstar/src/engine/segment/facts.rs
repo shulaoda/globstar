@@ -3,8 +3,8 @@
 
 use crate::engine::ops::Op;
 
-use super::Bytes;
 use super::compile::{len_then_bytes, op_weight};
+use super::{Bytes, has_sep};
 
 /// Largest suffix set worth scanning before the engine runs; a
 /// bigger alternation gets no prefilter (the engine indexes it).
@@ -155,6 +155,12 @@ impl Heads<'_> {
                 }
             };
             match op {
+                // An escaped `\` on Windows: the expansion matches nothing
+                // (§2.4), so it has no head to seed.
+                Op::Lit(bytes) if has_sep(bytes) => {
+                    acc.truncate(mark);
+                    return;
+                }
                 Op::Lit(bytes) if self.afford(bytes.len()) => acc.extend_from_slice(bytes),
                 Op::Sep | Op::SepRun if self.afford(1) => {
                     acc.push(b'/');
