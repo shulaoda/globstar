@@ -81,6 +81,45 @@ const nullable = (e) => e.kind === EL_G0 || e.kind === EL_G0_STRICT;
 // after their entry.
 const elemStates = (e) => (e.kind === EL_G0_STRICT || e.kind === EL_G1 ? 2 : 1);
 
+// The ops with each crossing brace's in-segment branches as one choice:
+// `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches give
+// a group per partial segment, 2^k of them after k braces.
+function choices(ops) {
+  if (!ops.some(splitsChoices)) return ops;
+  return ops.map((op) => {
+    if (op.kind !== OP_ALTERNATION || !crosses(op)) return op;
+    const out = [];
+    const within = [];
+    let at = -1;
+    for (const b of op.branches) {
+      if (b.some(crosses)) out.push(choices(b));
+      else {
+        if (at === -1) at = out.length;
+        within.push(b);
+      }
+    }
+    if (at !== -1) {
+      out.splice(
+        at,
+        0,
+        within.length === 1 ? within[0] : [{ kind: OP_ALTERNATION, branches: within }],
+      );
+    }
+    return { kind: OP_ALTERNATION, branches: out };
+  });
+}
+
+// Does a crossing brace in `op` have two or more in-segment branches?
+function splitsChoices(op) {
+  if (op.kind !== OP_ALTERNATION || !crosses(op)) return false;
+  let within = 0;
+  for (const b of op.branches) {
+    if (!b.some(crosses)) within++;
+    else if (b.some(splitsChoices)) return true;
+  }
+  return within > 1;
+}
+
 // Does the op hold a segment boundary?
 function crosses(op) {
   switch (op.kind) {
@@ -136,7 +175,8 @@ function buildGraph(ops, dot, ci) {
     }
   }
   const b = new Builder(dot, ci, linear);
-  const groups = b.walk(ops, [firstGroup()]);
+  // Only a separator-crossing brace can need regrouping.
+  const groups = b.walk(linear ? ops : choices(ops), [firstGroup()]);
   for (const g of groups) {
     b.settle(g);
     if (g.state === B_OPEN) {
@@ -150,22 +190,35 @@ function buildGraph(ops, dot, ci) {
 
 // Paths under construction that agree on everything still to come:
 // the nodes awaiting a successor, the boundary just crossed, the
-// in-segment ops read since, and `**/` elements read but not yet
-// emitted (a bare `**` right after them absorbs them, `x/**/**` ≡
-// `x/**`; anything else makes them real — while non-zero, `state` is
-// the boundary before the first of them and `buf` is empty).
+// in-segment ops read since, and whether a `**/` was read but not yet
+// emitted (a bare `**` right after it absorbs it, `x/**/**` ≡ `x/**`;
+// anything else makes it real; more of them add nothing, `**/**/` ≡
+// `**/` — while set, `state` is the boundary before it and `buf` is
+// empty).
 function makeGroup(tails, state, buf, pendingOss) {
   return { tails, state, buf, pendingOss };
 }
-const firstGroup = () => makeGroup([START], B_START, [], 0);
+const firstGroup = () => makeGroup([START], B_START, [], false);
 const forkGroup = (g) => makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingOss);
+
+// Drop repeated tails, which merges add; their order means nothing
+// (successors are listed by node).
+function dedupeTails(g) {
+  if (g.tails.length < 2) return;
+  g.tails.sort((a, b) => a - b);
+  let n = 1;
+  for (let i = 1; i < g.tails.length; i++) {
+    if (g.tails[i] !== g.tails[n - 1]) g.tails[n++] = g.tails[i];
+  }
+  g.tails.length = n;
+}
 
 // Continue as the one group after `id`, reusing the vectors.
 function rebase(g, id, state) {
   g.tails.length = 0;
   g.tails.push(id);
   g.state = state;
-  g.pendingOss = 0;
+  g.pendingOss = false;
 }
 
 function bytesEqual(a, b) {
@@ -269,6 +322,7 @@ class Builder {
           for (const branch of op.branches) {
             for (const g of this.walk(branch, groups.map(forkGroup))) merge(out, g);
           }
+          for (const g of out) dedupeTails(g);
           groups = out;
           break;
         }
@@ -282,11 +336,11 @@ class Builder {
           // `/*`: a strict boundary becomes lenient for the `**/` that
           // follows; after a `**/` it adds nothing.
           for (const g of groups) {
-            if (g.state === B_STRICT && g.pendingOss === 0) g.state = B_LENIENT;
+            if (g.state === B_STRICT && !g.pendingOss) g.state = B_LENIENT;
           }
           break;
         case OP_OPT_SEGMENTS_SLASH:
-          for (const g of groups) if (g.state !== B_OPEN) g.pendingOss += 1;
+          for (const g of groups) if (g.state !== B_OPEN) g.pendingOss = true;
           break;
         case OP_SLASH_ANYTHING:
           this.closeAll(groups, B_STRICT);
@@ -297,7 +351,7 @@ class Builder {
           // nothing to it, and a separator before them still needs a
           // segment to follow (`x/**/**` ≡ `x/**`), so only the pattern
           // start gives G0.
-          for (const g of groups) g.pendingOss = 0;
+          for (const g of groups) g.pendingOss = false;
           this.globstarAll(groups, (state) => (state === B_START ? EL_G0 : EL_G1));
           break;
         case OP_GLOBSTAR:
@@ -309,16 +363,11 @@ class Builder {
     return groups;
   }
 
-  // Emit a group's pending `**/` elements: the first by the boundary
-  // before them, the rest strict (`**/**/x`).
+  // Emit a group's pending `**/`, its kind by the boundary before it.
   settle(g) {
-    if (g.pendingOss === 0 || g.state === B_OPEN) return;
-    let kind = g.state === B_START || g.state === B_LENIENT ? EL_G0 : EL_G0_STRICT;
-    const n = g.pendingOss;
-    for (let i = 0; i < n; i++) {
-      rebase(g, this.emit(makeElem(kind, null, null), g.tails), B_AFTER_G);
-      kind = EL_G0_STRICT;
-    }
+    if (!g.pendingOss || g.state === B_OPEN) return;
+    const kind = g.state === B_START || g.state === B_LENIENT ? EL_G0 : EL_G0_STRICT;
+    rebase(g, this.emit(makeElem(kind, null, null), g.tails), B_AFTER_G);
   }
 
   // Close every group's segment into one node per group; they all
@@ -358,6 +407,7 @@ class Builder {
     groups.length = 0;
     for (const g of open) groups.push(g);
     if (joined !== null) groups.push(joined);
+    for (const g of groups) dedupeTails(g);
   }
 
   close(buf) {
@@ -391,21 +441,30 @@ function chains(graph) {
     const chain = makeChain(graph, null);
     return chain === null ? [] : [chain];
   }
+  // Depth-first, first branch first, along one path: a level per node
+  // on it (the start's below them) and the successor it tries next. A
+  // path is copied only when it reaches the end.
   const paths = [];
-  const stack = [];
-  for (let k = graph.start.length - 1; k >= 0; k--) stack.push([graph.start[k], []]);
-  while (stack.length > 0) {
-    const [id, path] = stack.pop();
+  const path = [];
+  const succs = [graph.start];
+  const next = [0];
+  while (succs.length > 0) {
+    const top = succs.length - 1;
+    if (next[top] === succs[top].length) {
+      succs.pop();
+      next.pop();
+      path.pop();
+      continue;
+    }
+    const id = succs[top][next[top]++];
     if (id === ACCEPT) {
-      paths.push(path);
+      paths.push(path.slice());
       if (paths.length > MAX_CHAINS) return [];
       continue;
     }
     path.push(id);
-    const succ = graph.succs[id];
-    for (let k = succ.length - 1; k >= 0; k--) {
-      stack.push([succ[k], k === 0 ? path : path.slice()]);
-    }
+    succs.push(graph.succs[id]);
+    next.push(0);
   }
   const out = [];
   for (const nodes of paths) {

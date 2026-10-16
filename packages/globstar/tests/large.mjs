@@ -131,6 +131,21 @@ for (const { name, patterns, path, matches, maxKept } of [
   assert.ok(ms < 1000, `60,000 branches took ${ms.toFixed(0)} ms to compile`);
 }
 
+// Braces that cross a `/` keep the walk to a few groups: these took
+// seconds and gigabytes, or ran out of heap.
+for (const [pattern, path] of [
+  ["{**,a}/".repeat(80) + "x", "a/x"],
+  ["{a,b,/}".repeat(14), "abababa/bababa"],
+  ["{/,a,}".repeat(20), "aa/a"],
+  ["{a/,}".repeat(1500), "a/a/"],
+]) {
+  const start = performance.now();
+  const m = compileMatcher(pattern);
+  const ms = performance.now() - start;
+  assert.ok(ms < 200, `${pattern.slice(0, 7)} x${pattern.length}: ${ms.toFixed(0)} ms to compile`);
+  assert.ok(m.match(path), pattern.slice(0, 7));
+}
+
 // A long name list matches by binary search: 10,000 matches of a
 // 20,000-name union take milliseconds, not minutes.
 {

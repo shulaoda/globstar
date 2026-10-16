@@ -7,6 +7,7 @@
 //! nodes too (a node is reused when its element and predecessors
 //! already exist), which turns a union of names into a trie.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
@@ -70,8 +71,15 @@ impl Edges {
 
 impl Graph {
     fn build(ops: &[Op], dot: bool, ci: bool) -> Self {
-        let mut b = Builder::new(ops, dot, ci);
-        let groups = b.walk(ops, vec![Group::first()]);
+        let (boundaries, linear) = survey(ops);
+        // Only a separator-crossing brace can need regrouping.
+        let ops = if linear {
+            Cow::Borrowed(ops)
+        } else {
+            choices(ops)
+        };
+        let mut b = Builder::new(boundaries, linear, dot, ci);
+        let groups = b.walk(&ops, vec![Group::first()]);
         for mut g in groups {
             b.settle(&mut g);
             if g.state == Boundary::Open {
@@ -95,26 +103,27 @@ impl Graph {
             return self.chain(None).into_iter().collect();
         };
         let mut paths: Vec<Vec<u32>> = Vec::new();
-        // Depth-first, first branch first.
-        let mut stack: Vec<(u32, Vec<u32>)> =
-            edges.start.iter().rev().map(|&s| (s, Vec::new())).collect();
-        while let Some((id, mut path)) = stack.pop() {
+        // Depth-first, first branch first, along one path: a level per
+        // node on it (the start's below them) and the successor it tries
+        // next. A path is copied only when it reaches the end.
+        let mut path: Vec<u32> = Vec::new();
+        let mut levels: Vec<(&[u32], usize)> = vec![(&edges.start, 0)];
+        while let Some((succ, next)) = levels.last_mut() {
+            let Some(&id) = succ.get(*next) else {
+                levels.pop();
+                path.pop();
+                continue;
+            };
+            *next += 1;
             if id == ACCEPT {
-                paths.push(path);
+                paths.push(path.clone());
                 if paths.len() > MAX_CHAINS {
                     return Box::default();
                 }
                 continue;
             }
             path.push(id);
-            let succ = edges.succ(id as usize);
-            for (k, &s) in succ.iter().enumerate().rev() {
-                if k == 0 {
-                    stack.push((s, path));
-                    break;
-                }
-                stack.push((s, path.clone()));
-            }
+            levels.push((edges.succ(id as usize), 0));
         }
         paths
             .into_iter()
@@ -391,11 +400,11 @@ struct Group<'a> {
     tails: Vec<u32>,
     state: Boundary,
     buf: Vec<&'a Op>,
-    /// `**/` elements read but not yet emitted: a bare `**` right after
-    /// them absorbs them (`x/**/**` ≡ `x/**`), anything else makes
-    /// them real. While non-zero, `state` is the boundary before the
-    /// first of them and `buf` is empty.
-    pending_oss: u32,
+    /// A `**/` read but not yet emitted: a bare `**` right after it
+    /// absorbs it (`x/**/**` ≡ `x/**`), anything else makes it real.
+    /// More of them add nothing (`**/**/` ≡ `**/`). While set, `state`
+    /// is the boundary before it and `buf` is empty.
+    pending_oss: bool,
 }
 
 impl Group<'_> {
@@ -404,7 +413,16 @@ impl Group<'_> {
             tails: vec![START],
             state: Boundary::Start,
             buf: Vec::new(),
-            pending_oss: 0,
+            pending_oss: false,
+        }
+    }
+
+    /// Drop repeated tails, which merges and reused nodes add; their
+    /// order means nothing (successors are listed by node).
+    fn dedupe_tails(&mut self) {
+        if self.tails.len() > 1 {
+            self.tails.sort_unstable();
+            self.tails.dedup();
         }
     }
 
@@ -414,7 +432,7 @@ impl Group<'_> {
         self.tails.clear();
         self.tails.push(id);
         self.state = state;
-        self.pending_oss = 0;
+        self.pending_oss = false;
     }
 }
 
@@ -435,8 +453,7 @@ struct Builder {
 }
 
 impl Builder {
-    fn new(ops: &[Op], dot: bool, ci: bool) -> Self {
-        let (boundaries, linear) = survey(ops);
+    fn new(boundaries: usize, linear: bool, dot: bool, ci: bool) -> Self {
         Builder {
             elems: Vec::with_capacity(boundaries + 1),
             linear,
@@ -593,6 +610,9 @@ impl Builder {
                             merge(&mut out, g);
                         }
                     }
+                    for g in &mut out {
+                        g.dedupe_tails();
+                    }
                     groups = out;
                 }
                 Op::Sep => self.close_all(&mut groups, Boundary::Strict),
@@ -602,7 +622,7 @@ impl Builder {
                     // `**/` that follows; after a `**/` it adds nothing.
                     for g in groups
                         .iter_mut()
-                        .filter(|g| g.state == Boundary::Strict && g.pending_oss == 0)
+                        .filter(|g| g.state == Boundary::Strict && !g.pending_oss)
                     {
                         g.state = Boundary::Lenient;
                     }
@@ -611,7 +631,7 @@ impl Builder {
                     for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {
                         // The parser never glues a `**` to text.
                         debug_assert!(g.buf.is_empty());
-                        g.pending_oss += 1;
+                        g.pending_oss = true;
                     }
                 }
                 Op::SlashAnything => {
@@ -624,7 +644,7 @@ impl Builder {
                     // them still needs a segment to follow (`x/**/**`
                     // ≡ `x/**`), so only the pattern start gives `G0`.
                     for g in groups.iter_mut() {
-                        g.pending_oss = 0;
+                        g.pending_oss = false;
                     }
                     self.globstar_all(&mut groups, |state| {
                         if state == Boundary::Start {
@@ -645,21 +665,17 @@ impl Builder {
         groups
     }
 
-    /// Emit a group's pending `**/` elements: the first by the boundary
-    /// before them, the rest strict (`**/**/x`).
+    /// Emit a group's pending `**/`, its kind by the boundary before it.
     fn settle(&mut self, g: &mut Group<'_>) {
-        if g.pending_oss == 0 || g.state == Boundary::Open {
+        if !g.pending_oss || g.state == Boundary::Open {
             return;
         }
-        let mut kind = match g.state {
+        let kind = match g.state {
             Boundary::Start | Boundary::Lenient => Elem::G0,
             _ => Elem::G0Strict,
         };
-        for _ in 0..g.pending_oss {
-            let id = self.emit(kind, &g.tails);
-            g.rebase(id, Boundary::AfterG);
-            kind = Elem::G0Strict;
-        }
+        let id = self.emit(kind, &g.tails);
+        g.rebase(id, Boundary::AfterG);
     }
 
     /// Close every group's segment into one node per group; they all
@@ -710,6 +726,9 @@ impl Builder {
         }
         groups.extend(open);
         groups.extend(joined);
+        for g in groups.iter_mut() {
+            g.dedupe_tails();
+        }
     }
 
     fn close(&self, buf: &[&Op]) -> Elem {
@@ -750,6 +769,53 @@ fn merge<'a>(out: &mut Vec<Group<'a>>, g: Group<'a>) {
     } else {
         out.push(g);
     }
+}
+
+/// The ops with each crossing brace's in-segment branches as one choice:
+/// `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches give
+/// a group per partial segment, 2^k of them after k braces.
+fn choices(ops: &[Op]) -> Cow<'_, [Op]> {
+    if !ops.iter().any(splits_choices) {
+        return Cow::Borrowed(ops);
+    }
+    let regroup = |op: &Op| {
+        let Op::Alternation(branches) = op else {
+            return op.clone();
+        };
+        if !crosses(op) {
+            return op.clone();
+        }
+        let mut out: Vec<Vec<Op>> = Vec::with_capacity(branches.len());
+        let mut within: Vec<Vec<Op>> = Vec::new();
+        let mut at = None;
+        for b in branches {
+            if b.iter().any(crosses) {
+                out.push(choices(b).into_owned());
+            } else {
+                at.get_or_insert(out.len());
+                within.push(b.clone());
+            }
+        }
+        if let Some(at) = at {
+            let choice = match within.len() {
+                1 => within.pop().unwrap(),
+                _ => vec![Op::Alternation(within)],
+            };
+            out.insert(at, choice);
+        }
+        Op::Alternation(out)
+    };
+    Cow::Owned(ops.iter().map(regroup).collect())
+}
+
+/// Does a crossing brace in `op` have two or more in-segment branches?
+fn splits_choices(op: &Op) -> bool {
+    let Op::Alternation(branches) = op else {
+        return false;
+    };
+    crosses(op)
+        && (branches.iter().filter(|b| !b.iter().any(crosses)).count() > 1
+            || branches.iter().any(|b| b.iter().any(splits_choices)))
 }
 
 /// Does the op hold a segment boundary?

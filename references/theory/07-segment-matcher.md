@@ -27,7 +27,10 @@ A separator-crossing brace does not multiply the pattern out: the
 compile walks the ops keeping one _group_ per distinct (boundary,
 partial segment) reaching a point of the pattern, so `{a,b}/x` is
 three nodes with `x` shared, and `{a,b}/` repeated k times is 2k+1
-nodes, not 2^k sequences.
+nodes, not 2^k sequences. The in-segment branches of such a brace are
+walked as one choice (`{a,b,/}` as `{{a,b},/}`), and pending `**/`
+count once (`**/**/` ≡ `**/`). Partial segments that differ in length
+still give a group each: `a{a,/}` repeated k times is O(k²) nodes.
 
 ## Matching
 
