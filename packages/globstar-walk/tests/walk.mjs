@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
 import { glob, globSync, WalkError } from "../src/index.js";
 
 let failures = 0;
@@ -315,6 +316,135 @@ await check("cycles are found by the on-disk spelling", async () => {
   if (!fs.existsSync(path.join(probe, "x"))) return; // case-sensitive disk
   const root = tmpTree("casecycle", ["a/x.txt"], { "a/up1": "../A", "a/up2": "../a" });
   await expectBoth(root, ["**/*.txt"], {}, ["a/up1/x.txt", "a/up2/x.txt", "a/x.txt"], "3 paths");
+});
+
+// ── paths, bases and errors spelled as the user wrote them ──────────────
+await check("a trailing `.` names the folder", async () => {
+  // `d/.` is the folder `d`: dropping the `.` made `*/.` match files.
+  const root = tmpTree("trailingdot", ["x.txt", "d/y.txt", "d/e/z.txt"]);
+  await expectBoth(root, ["*/."], {}, [], "*/.");
+  await expectBoth(root, ["**/."], {}, [], "**/.");
+  await expectBoth(
+    root,
+    ["**"],
+    { ignore: ["*/."] },
+    ["d/e/z.txt", "d/y.txt", "x.txt"],
+    "ignore */.",
+  );
+});
+
+await check("cwd resolves `..` as text", async () => {
+  // `jump/..` is the folder holding `jump`, not the parent of its
+  // target, and `..` never reaches the output (Rust does the same).
+  if (!symlinksOk) return;
+  const root = tmpTree("cwddotdot", ["top.txt", "real/inner/in.txt", "real/r.txt"], {
+    jump: "real/inner",
+  });
+  assert.deepEqual(globSync(["*.txt"], { cwd: path.join(root, "jump", "..") }), [
+    path.join(root, "top.txt"),
+  ]);
+});
+
+await check("an empty cwd is the current folder", async () => {
+  const root = tmpTree("emptycwd", ["here.txt"]);
+  const before = process.cwd();
+  process.chdir(root);
+  try {
+    assert.deepEqual(rel(process.cwd(), globSync(["*.txt"], { cwd: "" })), ["here.txt"]);
+  } finally {
+    process.chdir(before);
+  }
+});
+
+await check("an error names the pattern as written", async () => {
+  assert.throws(
+    () => globSync(["src/**", "!src/[z-a]"]),
+    (e) =>
+      e instanceof WalkError &&
+      e.pattern === "!src/[z-a]" &&
+      e.reason.includes("byte 4") &&
+      e.reason.includes("'src/[z-a]'"),
+  );
+  assert.throws(
+    () => globSync(["src/[z-a]"]),
+    (e) => e instanceof WalkError && !e.reason.includes("as the walker reads it"),
+  );
+});
+
+await check("a subtree the ignore covers is not read", async () => {
+  // Under dot=true `**/node_modules/**` covers all of `node_modules`, so
+  // an unreadable `node_modules` raises nothing. Twin of
+  // `walker_skips_a_subtree_the_ignore_covers`.
+  const root = tmpTree("ignoreprune", ["src/a.js", "node_modules/p/f.js"]);
+  const locked = path.join(root, "node_modules");
+  fs.chmodSync(locked, 0o000);
+  let readable = true;
+  try {
+    fs.readdirSync(locked);
+  } catch {
+    readable = false;
+  }
+  try {
+    if (readable) return; // root reads anything
+    const opts = { dot: true, ignore: ["**/node_modules/**"] };
+    await expectBoth(root, ["**/*.js"], opts, ["src/a.js"], "pruned");
+  } finally {
+    fs.chmodSync(locked, 0o755);
+  }
+});
+
+await check("a name that is not UTF-8 is skipped", async () => {
+  // Linux keeps any bytes; readdir hands them back with U+FFFD, a path
+  // no file has. (APFS refuses such names: nothing to test there.)
+  const root = tmpTree("nonutf8", ["src/ok.txt"]);
+  const bad = Buffer.concat([Buffer.from(root + "/caf"), Buffer.from([0xe9])]);
+  try {
+    fs.mkdirSync(bad);
+    fs.writeFileSync(Buffer.concat([bad, Buffer.from("/inner.txt")]), "x");
+  } catch {
+    return;
+  }
+  await expectBoth(root, ["**/*.txt"], {}, ["src/ok.txt"], "**/*.txt");
+  await expectBoth(root, ["*/*.txt"], {}, ["src/ok.txt"], "*/*.txt");
+});
+
+await check("an entry that vanishes during a typed read is skipped", async () => {
+  // Without entry types (ext4 `^filetype`, XFS `ftype=0`, …) readdir
+  // lstats each entry itself and fails when one vanishes in between;
+  // simulate that once per call.
+  const root = tmpTree("vanish", ["src/a.ts", "src/b.ts"]);
+  const vanished = () =>
+    Object.assign(new Error("ENOENT: no such file or directory, lstat"), {
+      code: "ENOENT",
+      syscall: "lstat",
+    });
+  const fsMod = (await import("node:fs")).default;
+  const real = { readdirSync: fsMod.readdirSync, readdir: fsMod.readdir };
+  try {
+    let failSync = true;
+    fsMod.readdirSync = (dir, opts) => {
+      if (opts?.withFileTypes && failSync) {
+        failSync = false;
+        throw vanished();
+      }
+      return real.readdirSync(dir, opts);
+    };
+    let failAsync = true;
+    fsMod.readdir = (dir, opts, cb) => {
+      if (opts?.withFileTypes && failAsync) {
+        failAsync = false;
+        process.nextTick(cb, vanished());
+        return;
+      }
+      real.readdir(dir, opts, cb);
+    };
+    syncBuiltinESMExports();
+    await expectBoth(root, ["**/*.ts"], {}, ["src/a.ts", "src/b.ts"], "fallback");
+  } finally {
+    fsMod.readdirSync = real.readdirSync;
+    fsMod.readdir = real.readdir;
+    syncBuiltinESMExports();
+  }
 });
 
 for (const fn of cleanups) fn();

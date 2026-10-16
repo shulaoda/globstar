@@ -1,6 +1,6 @@
 # WALKER_SPEC — Filesystem Walker Built on the Glob Matcher
 
-> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.1 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
+> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.2 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
 
 ## Table of Contents
 
@@ -166,7 +166,7 @@ Each individual pattern (in BOTH the positive and ignore sets, BOTH from the inp
 
 - the leading `/` run is stripped: `/a/b/*.ts` ≡ `a/b/*.ts`, `//foo` ≡ `foo`;
 - `//` runs collapse to a single `/`: `a//b/*` ≡ `a/b/*`;
-- plain `.` segments are dropped (`readdir` never yields `.`): `./src/**` ≡ `src/**`, `a/./b` ≡ `a/b`;
+- plain `.` segments are dropped (`readdir` never yields `.`): `./src/**` ≡ `src/**`, `a/./b` ≡ `a/b`. A last `.` names the folder before it, so it becomes a trailing `/` instead: `d/.` ≡ `d/`, and `*/.` matches no file (dropping it made `*/.` mean `*`);
 - a pattern that normalizes to nothing (`.`, `./`) matches nothing and is dropped.
 
 Escaped forms (`\.`) are untouched; `/` in a pattern is always structural (`\/` is a parse error, GLOB_SPEC §2.4), so the textual rewrite is safe. Without this, `./`/`//` spellings leaked verbatim into static prefixes and therefore into emitted absolute paths — the same file got different spellings depending on how the pattern was written.
@@ -182,13 +182,13 @@ After preprocessing, the walker compiles two matchers:
 
 If the positive set is empty after preprocessing (e.g. `glob(["!foo"])` with no other inputs), the walker MUST short-circuit and return an empty result without attempting any traversal.
 
-If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member that fails to compile on its own — or the whole list, formatted like `["a", "b"]`, when every member compiles alone but not together (they share one expansion budget) — and the underlying parse reason. See §9.
+If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member that fails to compile on its own, as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`) — or the whole list, formatted like `["a", "b"]`, when every member compiles alone but not together (they share one expansion budget) — and the underlying parse reason. When preprocessing changed the member, the reason names the text its byte offsets count in: `invalid character class range … at byte 4 … (in 'src/[z-a]', as the walker reads it)`. See §9.
 
 ---
 
 ## 5. `cwd` Resolution and Validation
 
-The walker MUST resolve `opts.cwd` to an absolute path immediately during construction (`path.resolve`). This guarantees that any subsequent change to the process working directory (`process.chdir`) has no effect on the in-flight walk.
+The walker MUST resolve `opts.cwd` to an absolute path immediately during construction (`path.resolve`). This guarantees that any subsequent change to the process working directory (`process.chdir`) has no effect on the in-flight walk. `path.resolve` works on the text: the empty `cwd` is the process working directory, `.` and `..` parts are taken out without asking the filesystem (`jump/..` is the folder holding `jump`, even when `jump` is a symlink), and no symlink is resolved. The Rust walker resolves its base the same way, so one base string names one folder in both.
 
 The resolved `cwd` MUST then be validated:
 
@@ -244,7 +244,7 @@ The empty prefix (an empty `Uint8Array`, produced by patterns that begin with `*
 Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of every symlink the walker descended through to reach it. Seed frames start with the targets of the symlinks on their prefix (§6 step 3); the frame for `cwd` itself starts empty. Both sync and async share the same per-dirent matching logic. For each `{ name, isDirectory, isSymbolicLink }` returned from a `readdir` of the frame's absolute path:
 
 1. **Symlink drop** — if the entry is a symbolic link AND `followSymlinks` is `false`, skip the entry (NOT emitted, NOT descended). Performed before any other work.
-2. Compute `childRel = parentRel === "" ? name : parentRel + "/" + name`.
+2. Compute `childRel = parentRel === "" ? name : parentRel + "/" + name`. A name that came back with U+FFFD and does not exist under that spelling is skipped: it was not valid UTF-8 (Linux allows any bytes), so no string names the path, and no folder can be read through it.
 3. **Ignore filter** — if `ignore !== null` AND `ignore.match(childRel)`, skip the entry. (Performed before any stat to avoid paying for resolution of ignored symlinks.)
 4. Compute `childAbs = joinAbs(parentAbs, name)` — see §7.4 for the rationale of bypassing `path.join`.
 5. Resolve `isDir`:
@@ -252,7 +252,7 @@ Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of eve
    - If the entry is a symbolic link (which by step 1 means `followSymlinks: true`), `fs.statSync` the link and use the target's `isDirectory()` result (silently treating stat failures as `false`). See §10.
    - Otherwise `isDir = false`.
 6. Branch on `isDir`:
-   - **Directory.** Walker emits files only, so the directory result of `matcher.match_dir(childRel)` is consulted only for the descend decision. If `dm.may_match_below()` is true, push a child frame into the descend list. The child frame's `symlinkAncestors` is determined by:
+   - **Directory.** Walker emits files only, so the directory result of `matcher.match_dir(childRel)` is consulted only for the descend decision. If `dm.may_match_below()` is true, and the ignore set does not cover the whole subtree (`ignore.match_dir(childRel).matches_all_below()`), push a child frame into the descend list. The second check lets `**/node_modules/**` skip `node_modules` as cheaply as `node_modules` does; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §13.6) and a positive pattern may still name one. The child frame's `symlinkAncestors` is determined by:
      - **non-symlink dir** — copy the parent's `symlinkAncestors` unchanged;
      - **symlink-to-dir** — `fs.realpathSync.native(childAbs)` to get `resolved`, the on-disk spelling (as Rust's `canonicalize`; the non-native `realpathSync` keeps a link's own spelling, so on a case-insensitive disk `../A` and `../a` looked like two folders). If `resolved ∈ frame.symlinkAncestors`, this is a cycle; skip the descent. Otherwise the child's `symlinkAncestors` is `frame.symlinkAncestors ++ [resolved]`. `realpath` failures (broken / inaccessible link) MUST also skip the descent silently.
    - **Non-directory.** If `matcher.match(childRel)` is true, push `childAbs` into the result array. Output is always the absolute form (§8.2).
@@ -358,7 +358,7 @@ Thrown when:
 
 - `fs.statSync(cwd)` fails during §5 cwd validation;
 - the resolved `cwd` is not a directory;
-- a `readdirSync` (sync path) or `fs.readdir` callback (async path) reports an error.
+- a `readdirSync` (sync path) or `fs.readdir` callback (async path) reports an error. One error is not the folder's: where a filesystem keeps no entry types (ext4 without `filetype`, XFS `ftype=0`, some FUSE and network mounts), `readdir` lstats each entry itself and fails with ENOENT from `lstat` when one vanishes in between. The walker then reads the names alone and lstats each, leaving out the ones that are gone, as if they had gone before the read.
 
 The async path REJECTS the returned Promise with the first such error and ignores subsequent late callbacks (§7.3). The sync path THROWS, abandoning any in-progress traversal.
 
@@ -413,6 +413,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 
 ## 12. Appendix A: Version History
 
+- **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.
 - **v0.3.0** (2026-05-04, draft):
   - `followSymlinks` semantics aligned with `tinyglobby` / `fdir`:

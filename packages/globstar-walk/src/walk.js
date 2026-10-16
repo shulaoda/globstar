@@ -54,6 +54,14 @@ export async function glob(patterns, options) {
       fs.readdir(frame.absolute, { withFileTypes: true }, (err, dirents) => {
         pending--;
         if (failed) return; // late callback after rejection — drop it
+        if (err && vanishedDuringRead(err)) {
+          try {
+            dirents = readEachEntry(frame.absolute);
+            err = null;
+          } catch (cause) {
+            err = cause;
+          }
+        }
         if (err) {
           failed = true;
           reject(new WalkError("Io", { path: frame.absolute, cause: err }));
@@ -88,7 +96,12 @@ export function globSync(patterns, options) {
 
     let dirents;
     try {
-      dirents = fs.readdirSync(frame.absolute, { withFileTypes: true });
+      try {
+        dirents = fs.readdirSync(frame.absolute, { withFileTypes: true });
+      } catch (err) {
+        if (!vanishedDuringRead(err)) throw err;
+        dirents = readEachEntry(frame.absolute);
+      }
     } catch (cause) {
       throw new WalkError("Io", { path: frame.absolute, cause });
     }
@@ -107,6 +120,7 @@ function prepare(patterns, optsInput) {
   const matcherOpts = toMatcherOptions(opts);
 
   const list = Array.isArray(patterns) ? patterns : [patterns];
+  // Each body keeps the text it came from, for error messages.
   const positives = [];
   const negatives = [];
   for (let i = 0; i < list.length; i++) {
@@ -124,7 +138,7 @@ function prepare(patterns, optsInput) {
     const tail = bangs === 0 ? n1 : n1.slice(bangs);
     const body = bangs === 0 ? tail : normalizePattern(tail);
     if (body === "" && tail !== "") continue; // `!.` — ignores nothing
-    (bangs & 1 ? negatives : positives).push(body);
+    (bangs & 1 ? negatives : positives).push({ raw, body });
   }
 
   // Positives first (error-precedence parity with Rust); ignore still
@@ -148,7 +162,7 @@ function prepare(patterns, optsInput) {
     // §3.2: ignore entries are never `!`-split, only normalized.
     const n = normalizePattern(raw);
     if (n === "" && raw !== "") continue;
-    ignorePatterns.push(n);
+    ignorePatterns.push({ raw, body: n });
   }
   for (const n of negatives) ignorePatterns.push(n);
   const ignore = compileUnion(ignorePatterns, matcherOpts);
@@ -180,6 +194,9 @@ function prepare(patterns, optsInput) {
     ignore,
     cwd,
     followSymlinks: !!opts.followSymlinks,
+    // Whether the ignore set can cover a whole subtree (matchDir
+    // all-below), which `dot: false` never does.
+    pruneIgnored: !!opts.dot && ignore !== null,
     seedFrames: [],
     seedResults: [],
   };
@@ -329,13 +346,16 @@ function processDirents(ctx, dirents, frame, results, descend) {
     if (isSymlink && !followSymlinks) continue;
 
     const name = dirent.name;
+    const childAbs = joinAbs(parentAbs, name);
+    // A name that is not valid UTF-8 comes back with U+FFFD, a spelling
+    // no file has: there is no path to report, nor a folder to read.
+    if (name.includes("\uFFFD") && !exists(childAbs)) continue;
     const childRel = parentRel === "" ? name : parentRel + "/" + name;
 
     // Ignore-filter early so an ignored symlink never costs a stat.
     if (ignore !== null && ignore.match(childRel)) continue;
 
     let isDir = dirent.isDirectory();
-    const childAbs = joinAbs(parentAbs, name);
     if (isSymlink) {
       // Node's Dirent only flags "is symlink", not the target type;
       // resolve on demand. (followSymlinks=true here since the off
@@ -348,7 +368,10 @@ function processDirents(ctx, dirents, frame, results, descend) {
     }
 
     if (isDir) {
-      if (DirMatch.mayMatchBelow(matcher.matchDir(childRel))) {
+      // An ignore that covers everything below skips the subtree
+      // (`**/node_modules/**` and `node_modules`).
+      const covered = ctx.pruneIgnored && DirMatch.matchesAllBelow(ignore.matchDir(childRel));
+      if (!covered && DirMatch.mayMatchBelow(matcher.matchDir(childRel))) {
         // Cycle break: when descending through a symlink target,
         // realpath and check against the ancestor chain. Already-
         // seen target → skip descent.
@@ -380,44 +403,89 @@ function processDirents(ctx, dirents, frame, results, descend) {
 const WINDOWS = process.platform === "win32";
 
 // WALKER_SPEC §4.3: spell patterns the way walked paths are spelled —
-// strip leading `/`s, collapse `//`, drop `.` segments. `/` in a
-// pattern is always structural (`\/` is a parse error), so textual
-// splitting is safe. Returns "" when nothing remains (`.`, `./`).
+// strip leading `/`s, collapse `//`, drop `.` segments. A last `.`
+// names the folder before it, so it becomes a trailing `/` (`d/.` ≡
+// `d/`, never the files `d` would match). `/` in a pattern is always
+// structural (`\/` is a parse error), so textual splitting is safe.
+// Returns "" when nothing remains (`.`, `./`).
 function normalizePattern(s) {
   let i = 0;
   while (i < s.length && s.charCodeAt(i) === 0x2f) i++;
   if (i > 0) s = s.slice(i);
   if (!s.includes("/")) return s === "." ? "" : s;
-  const trailingSlash = s.charCodeAt(s.length - 1) === 0x2f;
+  const trailingSlash = s.endsWith("/") || s.endsWith("/.");
   const segs = s.split("/").filter((seg) => seg !== "" && seg !== ".");
   return segs.length === 0 ? "" : segs.join("/") + (trailingSlash ? "/" : "");
 }
 
-// Compiles `patterns` (already normalized: leading `/` stripped etc.)
-// into one matcher; `null` for an empty list. A failure names the member
-// that does not compile on its own. When every member compiles alone, the
-// union as a whole failed (its members share one expansion budget, GLOB_SPEC
-// §7.7) and the error lists them all.
+// Compiles `{ raw, body }` pairs (`body` normalized: leading `/`
+// stripped etc.) into one matcher; `null` for an empty list. A failure
+// names the member, as written, that does not compile on its own; when
+// the written text differs, the reason says which text its byte offsets
+// count in. When every member compiles alone, the union as a whole
+// failed (its members share one expansion budget, GLOB_SPEC §7.7) and
+// the error lists them all.
 function compileUnion(patterns, opts) {
   if (patterns.length === 0) return null;
   try {
-    return compileMatcher(patterns, opts);
+    return compileMatcher(
+      patterns.map((p) => p.body),
+      opts,
+    );
   } catch (e) {
     if (!(e instanceof GlobError)) throw e;
-    let pattern = "[" + patterns.map((p) => JSON.stringify(p)).join(", ") + "]";
+    let pattern = "[" + patterns.map((p) => JSON.stringify(p.raw)).join(", ") + "]";
+    let reason = e.message;
     let cause = e;
-    for (const p of patterns) {
+    for (const { raw, body } of patterns) {
       try {
-        compileMatcher(p, opts);
+        compileMatcher(body, opts);
       } catch (member) {
         if (!(member instanceof GlobError)) throw member;
-        pattern = p;
+        pattern = raw;
+        reason =
+          raw === body
+            ? member.message
+            : `${member.message} (in '${body}', as the walker reads it)`;
         cause = member;
         break;
       }
     }
-    throw new WalkError("InvalidPattern", { pattern, reason: cause.message, cause });
+    throw new WalkError("InvalidPattern", { pattern, reason, cause });
   }
+}
+
+// Does an entry exist at `p`?
+function exists(p) {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Where a filesystem keeps no entry types (ext4 without `filetype`, XFS
+// `ftype=0`, some FUSE and network mounts), readdir lstats each entry
+// itself and fails the whole call when one vanishes between the two.
+const vanishedDuringRead = (err) => err?.code === "ENOENT" && err?.syscall === "lstat";
+
+// The entries of `dir`, typed by one lstat each; an entry that vanishes
+// in between is left out, as if it had gone before the read.
+function readEachEntry(dir) {
+  const out = [];
+  for (const name of fs.readdirSync(dir)) {
+    let entry;
+    try {
+      entry = fs.lstatSync(joinAbs(dir, name));
+    } catch (err) {
+      if (err?.code === "ENOENT") continue;
+      throw err;
+    }
+    entry.name = name;
+    out.push(entry);
+  }
+  return out;
 }
 
 // Bypass `path.join`'s normalization (`..` / `.` / repeated `/`) — we

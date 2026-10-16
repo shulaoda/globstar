@@ -1436,6 +1436,130 @@ fn walker_seed_through_a_symlink_knows_its_cycle() {
 }
 
 #[test]
+fn walker_trailing_dot_names_the_folder() {
+    // `d/.` is the folder `d`: dropping the `.` made `*/.` match files.
+    let t = TmpTree::new("trailing_dot");
+    t.touch("x.txt");
+    t.touch("d/y.txt");
+    t.touch("d/e/z.txt");
+    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+    let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
+    assert_eq!(walk("*/."), set(&[]));
+    assert_eq!(walk("**/."), set(&[]));
+    let opts = WalkOptions {
+        base: t.root().to_path_buf(),
+        ignore: vec!["*/.".to_string()],
+        ..WalkOptions::default()
+    };
+    assert_eq!(
+        collect_rel(Walk::new("**", opts).unwrap(), t.root()),
+        set(&["x.txt", "d", "d/y.txt", "d/e", "d/e/z.txt"])
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn walker_base_resolves_dot_dot_as_text() {
+    // As Node's `path.resolve`: `jump/..` is the folder holding `jump`,
+    // not the parent of the link's target, and `..` never reaches the
+    // output.
+    let t = TmpTree::new("base_dotdot");
+    t.touch("top.txt");
+    t.touch("real/inner/in.txt");
+    t.touch("real/r.txt");
+    std::os::unix::fs::symlink("real/inner", t.root().join("jump")).unwrap();
+    let base = t.root().join("jump/..");
+    let got: Vec<PathBuf> = Walk::new("*.txt", base.as_path())
+        .unwrap()
+        .map(|r| r.unwrap().into_path())
+        .collect();
+    assert_eq!(got, [t.root().join("top.txt")]);
+    let roundabout = t.root().join("nonexistent/../real");
+    let got = collect_rel(
+        Walk::new("*.txt", roundabout.as_path()).unwrap(),
+        &t.root().join("real"),
+    );
+    assert_eq!(got, ["r.txt"].iter().map(|s| s.to_string()).collect());
+}
+
+#[test]
+fn walker_empty_base_is_the_current_folder() {
+    // As `path.resolve("")` in JS.
+    let _guard = CWD_LOCK.lock().expect("cwd lock poisoned");
+    let t = TmpTree::new("empty_base");
+    t.touch("here.txt");
+    let orig = std::env::current_dir().expect("save cwd");
+    std::env::set_current_dir(t.root()).expect("chdir into tmp");
+    let here = std::env::current_dir().expect("cwd");
+    let walker = Walk::new("*.txt", "").unwrap();
+    std::env::set_current_dir(&orig).expect("restore cwd");
+    assert_eq!(walker.base(), here);
+    let got: Vec<_> = walker.map(|r| r.unwrap().into_path()).collect();
+    assert_eq!(got, [here.join("here.txt")]);
+}
+
+#[test]
+fn walker_error_names_the_pattern_as_written() {
+    let err = Walk::from_patterns(["src/**", "!src/[z-a]"], ".").unwrap_err();
+    let WalkError::InvalidPattern { pattern, reason } = &err else {
+        panic!("{err:?}");
+    };
+    assert_eq!(pattern, "!src/[z-a]");
+    assert!(
+        reason.contains("byte 4") && reason.contains("'src/[z-a]'"),
+        "{reason}"
+    );
+    // A pattern that needs no normalization is quoted as is.
+    let err = Walk::new("src/[z-a]", ".").unwrap_err();
+    assert!(!err.to_string().contains("as the walker reads it"), "{err}");
+}
+
+#[test]
+fn walker_seeds_see_the_tree_when_iterated() {
+    // Seeds are laid out on the first `next()`, as folders are read:
+    // a file gone by then is gone for both.
+    let t = TmpTree::new("lazy_seed");
+    t.touch("a.txt");
+    let literal = Walk::new("a.txt", t.root()).unwrap();
+    let glob = Walk::new("*.txt", t.root()).unwrap();
+    fs::remove_file(t.root().join("a.txt")).unwrap();
+    assert_eq!(collect_rel(literal, t.root()), BTreeSet::new());
+    assert_eq!(collect_rel(glob, t.root()), BTreeSet::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn walker_skips_a_subtree_the_ignore_covers() {
+    // Under dot=true `**/node_modules/**` covers all of `node_modules`,
+    // so the walk never reads it: an unreadable `node_modules` raises
+    // no error. (`node_modules` itself does not match `**/node_modules/**`,
+    // so the plain ignore check let the walk read it.)
+    use std::os::unix::fs::PermissionsExt;
+    let t = TmpTree::new("ignore_prune");
+    t.touch("src/a.js");
+    t.touch("node_modules/p/f.js");
+    let locked = t.root().join("node_modules");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = fs::read_dir(&locked).is_ok(); // root reads anything
+    let walk = |dot: bool| {
+        let opts = WalkOptions {
+            base: t.root().to_path_buf(),
+            dot,
+            ignore: vec!["**/node_modules/**".to_string()],
+            ..WalkOptions::default()
+        };
+        Walk::new("**/*.js", opts).unwrap().collect::<Vec<_>>()
+    };
+    let pruned = walk(true);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    if readable {
+        return;
+    }
+    let paths: Vec<_> = pruned.into_iter().map(|r| r.unwrap().into_path()).collect();
+    assert_eq!(paths, [t.root().join("src/a.js")]);
+}
+
+#[test]
 fn walker_slash_only_pattern_is_dropped() {
     // A pattern that normalizes to nothing selects nothing — it must not
     // poison the sibling patterns.

@@ -21,11 +21,15 @@ use std::path::{Path, PathBuf};
 pub struct WalkOptions {
     /// Root directory to walk. Default: `.` (current working directory).
     ///
-    /// Locked to an absolute path at [`Walk`](crate::Walk) construction via
-    /// [`std::path::absolute`], so subsequent `std::env::set_current_dir`
-    /// calls don't redirect the walker. Symlinks are **not** resolved
-    /// (that's [`std::fs::canonicalize`]'s job) — pre-canonicalize the
-    /// path yourself if you need that.
+    /// Locked to an absolute path at [`Walk`](crate::Walk) construction,
+    /// the way Node's `path.resolve` does it: against the current
+    /// directory (an empty base is the current directory itself), with
+    /// `.` and `..` taken out as text, so `jump/..` is the folder holding
+    /// `jump` even when `jump` is a symlink, as in the JS walker.
+    /// Subsequent `std::env::set_current_dir` calls don't redirect the
+    /// walker. Symlinks are **not** resolved (that's
+    /// [`std::fs::canonicalize`]'s job) — pre-canonicalize the path
+    /// yourself if you need that.
     pub base: PathBuf,
 
     /// Whether `*` / `?` / negated classes can consume a leading `.` at

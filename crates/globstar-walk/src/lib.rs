@@ -24,9 +24,10 @@
 //!
 //! Yielded paths are always absolute, rooted at the walker's `base`.
 //! `base` is locked to an absolute path at construction (via
-//! [`std::path::absolute`]) — pure path manipulation, no syscall, no
-//! symlink resolution. Subsequent `std::env::set_current_dir` calls do
-//! NOT redirect the walk.
+//! [`std::path::absolute`], with `.` and `..` then taken out as text) —
+//! pure path manipulation, no syscall, no symlink resolution.
+//! Subsequent `std::env::set_current_dir` calls do NOT redirect the
+//! walk.
 //!
 //! Unlike `tinyglobby` / `fast-glob` (Node.js), there is no `absolute`
 //! toggle for relative output. Callers that want paths relative to the
@@ -104,6 +105,12 @@ pub struct Walk {
 
     base: PathBuf,
     follow_links: bool,
+    /// Whether the ignore set can cover a whole subtree (`match_dir`
+    /// all-below), which `dot = false` never does.
+    prune_ignored: bool,
+    /// Whether the seeds are laid out yet: on the first `next()`, so
+    /// they see the same tree the walk does.
+    seeded: bool,
 
     /// LIFO stack of directories seen but not yet expanded.
     stack: Vec<Frame>,
@@ -173,8 +180,9 @@ impl Walk {
         // all leading `!`s, route by parity (odd → ignore, even → match),
         // strip every leading `!` from the body so the parser sees a
         // clean pattern. Matches the JS walker (`packages/globstar-walk/src/walk.js`).
-        let mut positives: Vec<String> = Vec::new();
-        let mut negatives: Vec<String> = Vec::new();
+        // Each body keeps the text it came from, for error messages.
+        let mut positives: Vec<(String, String)> = Vec::new();
+        let mut negatives: Vec<(String, String)> = Vec::new();
         for p in patterns {
             let raw = p.as_ref();
             // Normalize before the `!`-parity split (§4.3 before §4.2,
@@ -194,48 +202,59 @@ impl Walk {
             if body.is_empty() && !tail.is_empty() {
                 continue; // `!.` — ignores nothing
             }
+            let entry = (raw.to_string(), body);
             if bangs & 1 == 1 {
-                negatives.push(body);
+                negatives.push(entry);
             } else {
-                positives.push(body);
+                positives.push(entry);
             }
         }
 
         let matcher = compile_union(&positives, compile_opts)?;
         // `opts.ignore` entries are normalized but never `!`-split
         // (§3.2); auto-split negatives append to them.
-        let mut ignore_patterns: Vec<String> = Vec::new();
+        let mut ignore_patterns: Vec<(String, String)> = Vec::new();
         for s in &opts.ignore {
             let n = normalize_pattern(s);
             if n.is_empty() && !s.is_empty() {
                 continue;
             }
-            ignore_patterns.push(n);
+            ignore_patterns.push((s.clone(), n));
         }
         ignore_patterns.extend(negatives);
         let ignore = compile_union(&ignore_patterns, compile_opts)?;
-        // Lock the base to an absolute path at construction. `path::absolute`
-        // resolves against the current CWD without touching the filesystem and
-        // without resolving symlinks — so later `set_current_dir` calls don't
-        // redirect this walker, and user-intended symlink bases are preserved.
-        let base = path::absolute(&opts.base).map_err(|source| WalkError::Io {
-            path: opts.base.clone(),
-            source,
-        })?;
-        let mut w = Self {
+        // Lock the base to an absolute path at construction, resolved the
+        // way Node's `path.resolve` does: against the current CWD (the
+        // empty base is the CWD itself), with `.` and `..` taken out as
+        // text, without touching the filesystem or resolving symlinks — so
+        // later `set_current_dir` calls don't redirect this walker, and a
+        // symlink base stays as given.
+        let given: &Path = if opts.base.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            &opts.base
+        };
+        let base = path::absolute(given)
+            .map(|p| lexical(&p))
+            .map_err(|source| WalkError::Io {
+                path: opts.base.clone(),
+                source,
+            })?;
+        Ok(Self {
             matcher,
             ignore,
             base,
             follow_links: opts.follow_links,
+            prune_ignored: opts.dot,
+            seeded: false,
             stack: Vec::new(),
             ready: Vec::new(),
-        };
-        w.init_from_prefixes();
-        Ok(w)
+        })
     }
 
     /// The absolute base directory the walker is rooted at — locked at
-    /// construction via [`std::path::absolute`] so subsequent
+    /// construction (via [`std::path::absolute`], then `.` and `..` taken
+    /// out as text, see [`WalkOptions::base`]) so subsequent
     /// [`std::env::set_current_dir`] calls don't redirect the walk.
     ///
     /// Yielded [`DirEntry::path`]s are absolute (always rooted at this
@@ -563,7 +582,11 @@ impl Walk {
                 if dm.matches() {
                     self.ready.push(Ok(make_entry(entry.path())));
                 }
-                if dm.may_match_below() {
+                // An ignore that covers everything below skips the
+                // subtree (`**/node_modules/**` and `node_modules`).
+                let covered = self.prune_ignored
+                    && ignore.is_some_and(|ig| ig.match_dir(&child_rel).matches_all_below());
+                if dm.may_match_below() && !covered {
                     // Cycle break: when descending through a symlink
                     // target, canonicalize and check against the
                     // ancestor chain. Already-seen target → skip
@@ -606,6 +629,10 @@ impl Iterator for Walk {
     type Item = Result<DirEntry, WalkError>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if !self.seeded {
+            self.seeded = true;
+            self.init_from_prefixes();
+        }
         loop {
             if let Some(item) = self.ready.pop() {
                 return Some(item);
@@ -619,9 +646,11 @@ impl Iterator for Walk {
 }
 
 /// WALKER_SPEC §4.3: spell patterns the way walked paths are spelled —
-/// strip leading `/`s, collapse `//`, drop `.` segments. `/` in a
-/// pattern is always structural (`\/` is a parse error), so textual
-/// splitting is safe. Returns `""` when nothing remains (`.`, `./`).
+/// strip leading `/`s, collapse `//`, drop `.` segments. A last `.`
+/// names the folder before it, so it becomes a trailing `/` (`d/.` ≡
+/// `d/`, never the files `d` would match). `/` in a pattern is always
+/// structural (`\/` is a parse error), so textual splitting is safe.
+/// Returns `""` when nothing remains (`.`, `./`).
 fn normalize_pattern(s: &str) -> String {
     let s = s.trim_start_matches('/');
     if !s.contains('/') {
@@ -631,7 +660,7 @@ fn normalize_pattern(s: &str) -> String {
             s.to_string()
         };
     }
-    let trailing = s.ends_with('/');
+    let trailing = s.ends_with('/') || s.ends_with("/.");
     let segs: Vec<&str> = s
         .split('/')
         .filter(|seg| !seg.is_empty() && *seg != ".")
@@ -685,28 +714,56 @@ fn seed_ignored(ignore: &Glob, prefix: &[u8]) -> bool {
 /// whole failed (its members share one expansion budget, GLOB_SPEC
 /// §7.7), and the error lists them all.
 ///
-/// Patterns arrive already normalized by [`normalize_pattern`] (leading
-/// `/` stripped, so `Glob::static_prefixes()` always returns relative
-/// bytes — prevents `Path::join`'s "absolute-replaces-base" behavior
-/// from escaping the sandbox).
+/// Patterns arrive as (written, normalized) pairs: the normalized body
+/// by [`normalize_pattern`] (leading `/` stripped, so
+/// `Glob::static_prefixes()` always returns relative bytes — prevents
+/// `Path::join`'s "absolute-replaces-base" behavior from escaping the
+/// sandbox), the written text to name in errors. When the two differ,
+/// the reason says which text its byte offsets count in.
 ///
 /// Single-pattern inputs bypass `Glob::union_with` and call
 /// `Glob::new_with` directly, so `Walk::new("**/*.ts")` allocates no
 /// scratch vector.
-fn compile_union(patterns: &[String], opts: CompileOptions) -> Result<Option<Glob>, WalkError> {
+fn compile_union(
+    patterns: &[(String, String)],
+    opts: CompileOptions,
+) -> Result<Option<Glob>, WalkError> {
+    let bodies = || patterns.iter().map(|(_, body)| body);
     let glob = match patterns {
         [] => return Ok(None),
-        [single] => Glob::new_with(single, opts),
-        _ => Glob::union_with(patterns, opts),
+        [(_, single)] => Glob::new_with(single, opts),
+        _ => Glob::union_with(bodies(), opts),
     };
     glob.map(Some).map_err(|e| {
-        let (pattern, e) = patterns
-            .iter()
-            .find_map(|p| Glob::new_with(p, opts).err().map(|e| (p.clone(), e)))
-            .unwrap_or_else(|| (format!("{patterns:?}"), e));
-        WalkError::InvalidPattern {
-            pattern,
-            reason: e.to_string(),
-        }
+        let failed = patterns.iter().find_map(|(raw, body)| {
+            let e = Glob::new_with(body, opts).err()?;
+            let reason = if raw == body {
+                e.to_string()
+            } else {
+                format!("{e} (in '{body}', as the walker reads it)")
+            };
+            Some((raw.clone(), reason))
+        });
+        let (pattern, reason) = failed.unwrap_or_else(|| {
+            let raws: Vec<&String> = patterns.iter().map(|(raw, _)| raw).collect();
+            (format!("{raws:?}"), e.to_string())
+        });
+        WalkError::InvalidPattern { pattern, reason }
     })
+}
+
+/// `p` with `.` and `..` parts taken out as text (`..` at the root
+/// stays at the root), as Node's `path.resolve` does.
+fn lexical(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            path::Component::CurDir => {}
+            path::Component::ParentDir => {
+                out.pop();
+            }
+            comp => out.push(comp),
+        }
+    }
+    out
 }

@@ -7,18 +7,22 @@ use std::path::PathBuf;
 ///
 /// `InvalidPattern` surfaces at construction when any main or ignore
 /// pattern fails to compile. `Io` errors are yielded lazily during
-/// iteration; the walker continues after yielding an I/O error so
+/// iteration — the base check and the seeds' stats too, which run on the
+/// first `next()`; the walker continues after yielding an I/O error so
 /// consumers can log and keep going.
 #[derive(Debug)]
 pub enum WalkError {
     /// A glob pattern (main or ignore) failed to parse/compile.
     InvalidPattern {
-        /// The pattern text that failed. When the members of a pattern
-        /// list each compile alone but not together (they share one
-        /// expansion budget, GLOB_SPEC §7.7), this is the whole list,
-        /// formatted like `["a", "b"]`.
+        /// The pattern that failed, as written (`!src/[z-a]`). When the
+        /// members of a pattern list each compile alone but not together
+        /// (they share one expansion budget, GLOB_SPEC §7.7), this is the
+        /// whole list, formatted like `["a", "b"]`.
         pattern: String,
-        /// Human-readable reason (from the underlying parser).
+        /// Human-readable reason (from the underlying parser). When the
+        /// walker read the pattern differently (a leading `!` or `/`
+        /// gone, `//` or `.` taken out), it ends with the text its byte
+        /// offsets count in: `(in 'src/[z-a]', as the walker reads it)`.
         reason: String,
     },
 
