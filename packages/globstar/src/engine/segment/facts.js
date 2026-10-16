@@ -13,7 +13,7 @@ import { opWeight } from "./compile.js";
 // byte, like the path strings they are compared with.
 export function suffixes(ops) {
   const suffix = suffixArray(ops, ops.length);
-  if (suffix.length > 0) return [latin1(Uint8Array.from(suffix))];
+  if (suffix.length > 0) return [latin1(suffix)];
   return extractSuffixSet(ops);
 }
 
@@ -74,9 +74,7 @@ function extractSuffixSet(ops) {
       }
     }
 
-    const full = latin1(
-      Uint8Array.from(allLiteral ? commonTail.concat(branchSuffix) : branchSuffix),
-    );
+    const full = latin1(allLiteral ? commonTail.concat(branchSuffix) : branchSuffix);
     if (full.length === 0) return [];
     set.push(full);
   }
@@ -157,7 +155,7 @@ function readHeads(heads, ops, at, then, acc, boundary, depth) {
     }
   }
   while (end > 0 && acc[end - 1] === 0x2f) end--;
-  heads.out.push(latin1(Uint8Array.from(acc.slice(0, end))));
+  heads.out.push(latin1(acc.slice(0, end)));
   acc.length = mark;
 }
 

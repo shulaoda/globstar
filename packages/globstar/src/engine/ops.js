@@ -43,7 +43,6 @@ import {
   brace,
   classExpandedAsciiCi,
   concat,
-  klass,
   sep,
 } from "../ast.js";
 
@@ -81,12 +80,9 @@ function lowerInto(node, out, caseInsensitive, flag) {
     case N_GLOBSTAR:
       pushOp(out, GLOBSTAR_OP);
       return;
-    case N_CLASS: {
-      // The matcher keeps the class, so it gets its own exact copy.
-      const cls = caseInsensitive ? classExpandedAsciiCi(node) : node;
-      pushOp(out, { kind: OP_CLASS, cls: klass(cls.neg, exact(cls.items)) });
+    case N_CLASS:
+      pushOp(out, { kind: OP_CLASS, cls: caseInsensitive ? classExpandedAsciiCi(node) : node });
       return;
-    }
     case N_CONCAT: {
       const children = node.children;
       for (let i = 0; i < children.length; i++) {

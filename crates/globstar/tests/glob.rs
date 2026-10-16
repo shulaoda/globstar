@@ -332,3 +332,16 @@ fn prefixes_extglob_at_start() {
     // `@(foo|bar).ts` is fully literal — whole string is the prefix.
     assert_eq!(prefixes("@(foo|bar).ts"), vec![b"@(foo|bar).ts".to_vec()]);
 }
+
+// A class is a byte table: one lookup per byte, however many items it
+// lists (it was a scan of every item for every byte: 30,000 items over
+// 65,000 bytes took seconds). Twin of the check in large.mjs.
+#[test]
+fn a_long_class_costs_one_lookup_per_byte() {
+    let glob = Glob::new(&format!("*[{}]", "b".repeat(30_000))).unwrap();
+    let path = "a".repeat(65_000);
+    let start = std::time::Instant::now();
+    assert!(!glob.is_match(path.as_bytes()));
+    assert!(glob.is_match(format!("{path}b").as_bytes()));
+    assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
+}

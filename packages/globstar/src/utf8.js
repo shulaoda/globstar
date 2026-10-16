@@ -28,16 +28,17 @@ export function utf8Length(input) {
   return n;
 }
 
-// Bytes → a Latin-1 string (each byte becomes one char code). The inverse
-// of the ASCII/byte path above, used to hold short pattern literals as
-// strings for the string-mode matcher. `[]` yields `""`.
+// Bytes (a Uint8Array or a plain array of bytes) → a Latin-1 string,
+// each byte one char code. The inverse of the ASCII/byte path above,
+// used to hold short pattern literals as strings for the string-mode
+// matcher. `[]` yields `""`.
 const CHUNK = 4096; // `fromCharCode.apply` has an argument-count ceiling.
 export function latin1(bytes) {
   const n = bytes.length;
   if (n <= CHUNK) return n === 0 ? "" : String.fromCharCode.apply(null, bytes);
   let out = "";
   for (let i = 0; i < n; i += CHUNK) {
-    out += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    out += String.fromCharCode.apply(null, bytes.slice(i, i + CHUNK));
   }
   return out;
 }

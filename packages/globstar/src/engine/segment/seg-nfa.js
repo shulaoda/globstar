@@ -11,8 +11,8 @@
 // the pattern.
 
 import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION, exact } from "../ops.js";
-import { classMatches, ciLetter } from "../../ast.js";
-import { ctz32 } from "../../bytes.js";
+import { CI_BYTE, ciLetter } from "../../ast.js";
+import { ctz32, IS_WINDOWS_SEP } from "../../bytes.js";
 import { wordsFor, bitTest, bitSet, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
 
 const S_BYTE = 0;
@@ -39,6 +39,25 @@ export function compileSegNfa(ops, dot, ci) {
   return b.kinds.length <= 32 ? new SegNfaSmall(b, entry, dot) : new SegNfaWide(b, entry, dot);
 }
 
+// A class as the bytes it takes, one bit each in eight int32 words, with
+// its negation applied and the separators left out: a test is one
+// lookup, however many items the class lists. `neg` stays for dot
+// protection, where a negated class counts as a wildcard.
+function byteSet(cls) {
+  const bits = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (const it of cls.items) {
+    const lo = it.tag === CI_BYTE ? it.b : it.lo;
+    const hi = it.tag === CI_BYTE ? it.b : it.hi;
+    for (let b = lo; b <= hi; b++) bits[b >> 5] |= 1 << (b & 31);
+  }
+  if (cls.neg) for (let w = 0; w < 8; w++) bits[w] = ~bits[w];
+  bits[0x2f >> 5] &= ~(1 << (0x2f & 31));
+  if (IS_WINDOWS_SEP) bits[0x5c >> 5] &= ~(1 << (0x5c & 31));
+  return { neg: cls.neg, bits };
+}
+
+const setHas = (set, c) => ((set.bits[c >> 5] >>> (c & 31)) & 1) === 1;
+
 // Shared post-construction facts: a protected leading `.` can only be
 // taken by a literal `.` or a positive class containing it.
 function wildLed(b, initDotBlocked, test) {
@@ -46,7 +65,7 @@ function wildLed(b, initDotBlocked, test) {
   for (let s = 0; s < n; s++) {
     if (!test(initDotBlocked, s)) continue;
     if (b.kinds[s] === S_BYTE && b.byteVals[s] === 0x2e) return false;
-    if (b.kinds[s] === S_CLASS && classMatches(b.clsRefs[s], 0x2e)) return false;
+    if (b.kinds[s] === S_CLASS && setHas(b.clsRefs[s], 0x2e)) return false;
   }
   return true;
 }
@@ -63,13 +82,8 @@ function satisfiable(b, entry) {
     const k = b.kinds[s];
     if (k === S_MATCH) return true;
     if (k === S_SPLIT) reach[b.splitBs[s]] = true;
-    if (k !== S_CLASS || classFires(b.clsRefs[s])) reach[b.nexts[s]] = true;
+    if (k !== S_CLASS || b.clsRefs[s].bits.some((w) => w !== 0)) reach[b.nexts[s]] = true;
   }
-  return false;
-}
-
-function classFires(cls) {
-  for (let c = 0; c <= 255; c++) if (classMatches(cls, c)) return true;
   return false;
 }
 
@@ -194,7 +208,7 @@ class SegNfaSmall {
         if (k === S_BYTE) {
           if (byteVals[s] === c) next |= closures[nexts[s]];
         } else if (k === S_CLASS) {
-          if (classMatches(clsRefs[s], c)) next |= closures[nexts[s]];
+          if (setHas(clsRefs[s], c)) next |= closures[nexts[s]];
         } else if (k === S_ANY) {
           next |= closures[nexts[s]];
         }
@@ -302,7 +316,7 @@ class SegNfaWide {
         if (k === S_BYTE) {
           if (byteVals[s] === c) bitsOr(next, closures[nexts[s]]);
         } else if (k === S_CLASS) {
-          if (classMatches(clsRefs[s], c)) bitsOr(next, closures[nexts[s]]);
+          if (setHas(clsRefs[s], c)) bitsOr(next, closures[nexts[s]]);
         } else if (k === S_ANY) {
           bitsOr(next, closures[nexts[s]]);
         }
@@ -325,7 +339,7 @@ function stepClosing(nfa, active, next, c) {
     if (
       k === S_ANY ||
       (k === S_BYTE && nfa.byteVals[s] === c) ||
-      (k === S_CLASS && c !== -1 && classMatches(nfa.clsRefs[s], c))
+      (k === S_CLASS && c !== -1 && setHas(nfa.clsRefs[s], c))
     ) {
       bitSet(next, nfa.nexts[s]);
     }
@@ -417,7 +431,7 @@ class SegBuilder {
       }
       case OP_CLASS: {
         if (op.cls.neg) this.needsAsciiSeg = true;
-        const s = this.alloc(S_CLASS, 0, UNSET, UNSET, op.cls);
+        const s = this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(op.cls));
         return [s, [s]];
       }
       case OP_STAR: {
@@ -461,7 +475,7 @@ class SegBuilder {
   litState(b) {
     if (this.ci) {
       const cls = ciLetter(b);
-      if (cls !== null) return this.alloc(S_CLASS, 0, UNSET, UNSET, cls);
+      if (cls !== null) return this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(cls));
     }
     return this.alloc(S_BYTE, b, UNSET);
   }

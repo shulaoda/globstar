@@ -310,3 +310,41 @@ console.log("✓ limits");
   assert.ok(rows >= 20, `only ${rows} rows`);
 }
 console.log("✓ engine shapes");
+
+// A class matches through a byte table, which must take exactly what the
+// class's items define (ASCII here: a path string holds no lone byte past
+// 0x7f). Twin of `a_byte_set_takes_what_its_class_does`.
+{
+  const { classMatches } = await import("../src/ast.js");
+  for (const pattern of [
+    "[a]",
+    "[!a]",
+    "[a-c]",
+    "[!a-c]",
+    "[]a]",
+    "[]-]",
+    "[a-]",
+    "[\\]]",
+    "[\\\\]",
+    "[\x01-\x7f]",
+    "[!\x01-\x7f]",
+    "[bbbbbb]",
+    "[a-cb-dz]",
+  ]) {
+    const cls = parse(pattern).body;
+    assert.equal(cls.tag, N_CLASS, pattern);
+    for (const ci of [false, true]) {
+      const m = compileMatcher("x" + pattern, { caseInsensitive: ci });
+      for (let b = 1; b < 0x80; b++) {
+        if (b === 0x2f) continue;
+        // Case folding adds each listed letter's other case, then the
+        // class is negated.
+        const listed = (c) => classMatches({ ...cls, neg: false }, c);
+        const letter = /[a-z]/i.test(String.fromCharCode(b));
+        const want = (listed(b) || (ci && letter && listed(b ^ 0x20))) !== cls.neg;
+        assert.equal(m.match("x" + String.fromCharCode(b)), want, `${pattern} (ci ${ci}) at ${b}`);
+      }
+    }
+  }
+}
+console.log("✓ class tables");

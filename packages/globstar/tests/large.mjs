@@ -221,6 +221,19 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 1000, `60,000 branches took ${ms.toFixed(0)} ms to compile`);
 }
 
+// A class is a byte table: one lookup per byte, however many items it
+// lists (it was a scan of every item for every byte: 30,000 items over
+// 65,000 bytes took seconds). Twin of `a_long_class_costs_one_lookup_per_byte`.
+{
+  const m = compileMatcher(`*[${"b".repeat(30_000)}]`);
+  const path = "a".repeat(65_000);
+  const start = performance.now();
+  assert.equal(m.match(path), false);
+  assert.equal(m.match(path + "b"), true);
+  const ms = performance.now() - start;
+  assert.ok(ms < 300, `a 30,000-item class over 65,000 bytes took ${ms.toFixed(0)} ms`);
+}
+
 // Braces that cross a `/` keep the walk to a few groups: these took
 // seconds and gigabytes, or ran out of heap.
 for (const [pattern, path] of [

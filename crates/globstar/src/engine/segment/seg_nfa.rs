@@ -9,7 +9,7 @@
 //! is quadratic in the states) it closes its set as it goes, so memory
 //! stays linear in the pattern.
 
-use crate::ast::CharClass;
+use crate::ast::{CharClass, ClassItem};
 use crate::engine::ops::Op;
 
 use super::bits::{Bits, Wide};
@@ -91,7 +91,7 @@ impl SegNfa {
         let mut can_lit_dot = false;
         init_dot_blocked.for_each(|s| match &states[s] {
             SegState::Byte(x, _) => can_lit_dot |= *x == b'.',
-            SegState::Class(cls, _) => can_lit_dot |= cls.matches(b'.'),
+            SegState::Class(cls, _) => can_lit_dot |= cls.has(b'.'),
             _ => {}
         });
 
@@ -142,7 +142,7 @@ enum SegState {
     /// byte, next
     Byte(u8, u32),
     /// class, next
-    Class(Box<CharClass>, u32),
+    Class(Box<ByteSet>, u32),
     /// next — `?` and star bodies (segments contain no separators, so
     /// "any byte" ≡ "any non-separator byte" here).
     Any(u32),
@@ -150,6 +150,48 @@ enum SegState {
     Jump(u32),
     DotGuard(u32),
     Match,
+}
+
+/// A class as the bytes it takes, one bit each, with its negation applied
+/// and the separators left out: a test is one lookup, however many items
+/// the class lists. `negated` stays for dot protection, where a negated
+/// class counts as a wildcard.
+#[derive(Debug, Clone)]
+struct ByteSet {
+    bits: [u64; 4],
+    negated: bool,
+}
+
+impl ByteSet {
+    fn of(cls: &CharClass) -> Self {
+        let mut bits = [0u64; 4];
+        for &item in &cls.items {
+            let (lo, hi) = match item {
+                ClassItem::Byte(b) => (b, b),
+                ClassItem::Range(lo, hi) => (lo, hi),
+            };
+            for b in lo..=hi {
+                bits[usize::from(b >> 6)] |= 1 << (b & 63);
+            }
+        }
+        if cls.negated {
+            bits = bits.map(|w| !w);
+        }
+        for &b in b"/\\" {
+            if std::path::is_separator(char::from(b)) {
+                bits[usize::from(b >> 6)] &= !(1 << (b & 63));
+            }
+        }
+        ByteSet {
+            bits,
+            negated: cls.negated,
+        }
+    }
+
+    #[inline]
+    fn has(&self, b: u8) -> bool {
+        self.bits[usize::from(b >> 6)] >> (b & 63) & 1 != 0
+    }
 }
 
 impl<B: Bits> SegNfaImpl<B> {
@@ -188,7 +230,7 @@ impl<B: Bits> SegNfaImpl<B> {
                     }
                 }
                 SegState::Class(cls, nx) => {
-                    if cls.matches(c) {
+                    if cls.has(c) {
                         next.or_with(&self.closures[*nx as usize]);
                     }
                 }
@@ -207,7 +249,7 @@ impl<B: Bits> SegNfaImpl<B> {
         next.clear();
         active.for_each(|s| match &self.states[s] {
             SegState::Byte(b, nx) if c == Some(*b) => next.set(*nx as usize),
-            SegState::Class(cls, nx) if c.is_some_and(|c| cls.matches(c)) => next.set(*nx as usize),
+            SegState::Class(cls, nx) if c.is_some_and(|c| cls.has(c)) => next.set(*nx as usize),
             SegState::Any(nx) => next.set(*nx as usize),
             _ => {}
         });
@@ -252,7 +294,7 @@ fn satisfiable<B: Bits>(states: &[SegState], entry: usize, words: usize) -> bool
                 reach.set(*b as usize);
             }
             SegState::Class(cls, nx) => {
-                if (0u16..=255).any(|b| cls.matches(b as u8)) {
+                if cls.bits != [0; 4] {
                     reach.set(*nx as usize);
                 }
             }
@@ -401,7 +443,7 @@ impl SegBuilder {
                 (s, vec![s])
             }
             Op::Class(cls) => {
-                let s = self.alloc(SegState::Class(Box::new(cls.clone()), UNSET));
+                let s = self.alloc(SegState::Class(Box::new(ByteSet::of(cls)), UNSET));
                 (s, vec![s])
             }
             Op::Star => {
@@ -453,8 +495,46 @@ impl SegBuilder {
     fn lit_state(&mut self, b: u8) -> u32 {
         let class = self.ci.then(|| CharClass::ci_letter(b)).flatten();
         match class {
-            Some(cls) => self.alloc(SegState::Class(Box::new(cls), UNSET)),
+            Some(cls) => self.alloc(SegState::Class(Box::new(ByteSet::of(&cls)), UNSET)),
             None => self.alloc(SegState::Byte(b, UNSET)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ByteSet;
+    use crate::ast::Node;
+
+    // The table takes exactly the bytes the class's items define, for
+    // every byte, negated or not, with ranges and repeats.
+    #[test]
+    fn a_byte_set_takes_what_its_class_does() {
+        for pattern in [
+            "[a]",
+            "[!a]",
+            "[a-c]",
+            "[!a-c]",
+            "[]a]",
+            "[]-]",
+            "[a-]",
+            "[\\]]",
+            "[\\\\]",
+            "[\x01-\x7f]",
+            "[!\x01-\x7f]",
+            "[bbbbbb]",
+            "[a-cb-dz]",
+            "[!\u{e9}]",
+            "[\u{e9}-\u{ff}]",
+        ] {
+            let ast = crate::parser::parse(pattern.as_bytes()).unwrap();
+            let Node::Class(cls) = &ast.body else {
+                panic!("{pattern} is not one class: {:?}", ast.body);
+            };
+            let set = ByteSet::of(cls);
+            for b in 0..=255u8 {
+                assert_eq!(set.has(b), cls.matches(b), "{pattern} at byte {b:#04x}");
+            }
         }
     }
 }
