@@ -162,8 +162,7 @@ impl Glob {
     /// Compile a pattern with explicit [`CompileOptions`].
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
         let ast = parser::parse(pattern.as_bytes())?;
-        let tier = tier_of(&ast.body);
-        Self::from_ast(ast, opts, tier)
+        Self::from_ast(ast, opts, None)
     }
 
     /// Compile the boolean-OR union of several patterns into one `Glob`
@@ -230,17 +229,26 @@ impl Glob {
                 body,
             },
             opts,
-            tier,
+            Some(tier),
         )
     }
 
-    fn from_ast(ast: Ast, opts: CompileOptions, tier: Tier) -> Result<Self, GlobError> {
+    /// `tier` is a union's, from its members; a single pattern's comes
+    /// from its body here.
+    fn from_ast(ast: Ast, opts: CompileOptions, tier: Option<Tier>) -> Result<Self, GlobError> {
         let negated = ast.is_negated();
-        let engine = match ast.body.to_literal_bytes() {
-            Some(lit) => Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive)),
+        let (tier, engine) = match ast.body.to_literal_bytes() {
+            Some(lit) => (
+                tier.unwrap_or(Tier::Literal),
+                Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive)),
+            ),
             None => {
+                let tier = tier.unwrap_or_else(|| tier_of(&ast.body));
                 let program = lower(ast.body, opts.case_insensitive);
-                Engine::Segment(SegmentMatcher::build(program, opts.dot)?)
+                (
+                    tier,
+                    Engine::Segment(SegmentMatcher::build(program, opts.dot)?),
+                )
             }
         };
         Ok(Self {
