@@ -150,13 +150,14 @@ export class GlobError extends Error {
     | "EscapedSeparator"
     | "BraceNestingTooDeep"
     | "BraceExpansionTooLarge"
+    | "TooComplex"
     | "InvalidRange"
     | "EmptyPatternSet";
   /** Byte offset of the offending construct (kind-dependent). */
   readonly at?: number;
   /** Pattern length for "TooLong". */
   readonly len?: number;
-  /** The limit that was passed, for "TooLong" and the brace limits. */
+  /** The limit that was passed, for "TooLong", "TooComplex" and the brace limits. */
   readonly max?: number;
   /** Range bounds for "InvalidRange". */
   readonly low?: number;

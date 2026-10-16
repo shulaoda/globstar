@@ -13,6 +13,7 @@ mod seg_nfa;
 
 use crate::dir_match::DirMatch;
 use crate::engine::ops::OpProgram;
+use crate::error::GlobError;
 
 use bits::{Bits, Wide};
 use seg_nfa::SegNfa;
@@ -367,12 +368,8 @@ pub(crate) struct SegmentMatcher {
 }
 
 impl SegmentMatcher {
-    pub(crate) fn build(program: OpProgram, dot: bool) -> Box<Self> {
-        Box::new(compile::compile(
-            &program.ops,
-            dot,
-            program.case_insensitive,
-        ))
+    pub(crate) fn build(program: OpProgram, dot: bool) -> Result<Box<Self>, GlobError> {
+        compile::compile(&program.ops, dot, program.case_insensitive).map(Box::new)
     }
 
     /// Every matching path starts with one of these.

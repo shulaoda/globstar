@@ -31,6 +31,8 @@ function formatMessage(kind, info) {
       return `brace nesting exceeds limit ${info.max}`;
     case "BraceExpansionTooLarge":
       return `brace expansion around \`**\` exceeds limit ${info.max}`;
+    case "TooComplex":
+      return `pattern too complex: compiling it takes more than ${info.max} steps`;
     case "InvalidRange":
       return `invalid character class range \`${show(info.low)}-${show(info.high)}\` at byte ${info.at}: the end is below the start`;
     case "EmptyPatternSet":

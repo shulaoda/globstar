@@ -43,6 +43,7 @@ import {
   elemSatisfiable,
 } from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
+import { GlobError } from "../../error.js";
 import { wordsFor, bitSet, bitsOr, bitTest, bitsIntersect } from "./bits.js";
 
 // Successor marker for "the pattern ends here".
@@ -177,7 +178,15 @@ function buildGraph(ops, dot, ci) {
       break;
     }
   }
-  const b = new Builder(dot, ci, linear);
+  // A linear walk keeps one group and takes a few units per weight, so
+  // only a separator-crossing brace can reach the budget.
+  let budget = Infinity;
+  if (!linear) {
+    let weight = 0;
+    for (const op of ops) weight += opWeight(op);
+    budget = Math.max(MIN_BUDGET, weight * BUDGET_PER_WEIGHT);
+  }
+  const b = new Builder(dot, ci, linear, budget);
   // Only a separator-crossing brace can need regrouping.
   const groups = b.walk(linear ? ops : choices(ops), [firstGroup()]);
   for (const g of groups) {
@@ -185,10 +194,36 @@ function buildGraph(ops, dot, ci) {
     if (g.state === B_OPEN) {
       for (const t of g.tails) b.link(t, ACCEPT);
     } else {
+      b.cost += g.weight;
       b.link(b.emit(b.close(g.buf), g.tails), ACCEPT);
     }
   }
+  if (b.cost > b.budget) tooComplex(b.budget);
   return { elems: b.elems, succs: b.succs, start: b.start, linear };
+}
+
+// The work the graph walk may take: 64 units per unit of pattern weight
+// (`opWeight`), and never less than 2^20. Patterns of ordinary shape
+// need one to three per unit; only a shape whose segments multiply
+// (`a{a,/}` repeated, one node per pair of braces) reaches it, and it
+// fails before it costs much.
+const BUDGET_PER_WEIGHT = 64;
+const MIN_BUDGET = 1 << 20;
+
+function tooComplex(max) {
+  throw new GlobError("TooComplex", { max });
+}
+
+// What an op costs the walk to copy and compile: a literal its length, a
+// brace one plus its branches, anything else one.
+function opWeight(op) {
+  if (op.kind === OP_LIT) return op.bytes.length;
+  return op.kind === OP_ALTERNATION ? braceWeight(op) : 1;
+}
+function braceWeight(op) {
+  let w = 1;
+  for (const b of op.branches) for (const o of b) w += opWeight(o);
+  return w;
 }
 
 // Paths under construction that agree on everything still to come:
@@ -198,11 +233,14 @@ function buildGraph(ops, dot, ci) {
 // anything else makes it real; more of them add nothing, `**/**/` ≡
 // `**/` — while set, `state` is the boundary before it and `buf` is
 // empty).
-function makeGroup(tails, state, buf, pendingOss) {
-  return { tails, state, buf, pendingOss };
+// `weight` is the `opWeight` of `buf`.
+function makeGroup(tails, state, buf, pendingOss, weight) {
+  return { tails, state, buf, pendingOss, weight };
 }
-const firstGroup = () => makeGroup([START], B_START, [], false);
-const forkGroup = (g) => makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingOss);
+const firstGroup = () => makeGroup([START], B_START, [], false, 0);
+const forkGroup = (g) => makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingOss, g.weight);
+// What copying a group costs the walk.
+const groupCost = (g) => 1 + g.tails.length + g.weight;
 
 // Drop repeated tails, which merges add; their order means nothing
 // (successors are listed by node).
@@ -296,38 +334,77 @@ function merge(out, g) {
   else for (const t of g.tails) out.groups[found].tails.push(t);
 }
 
-function pushInSeg(buf, op) {
-  const last = buf.length > 0 ? buf[buf.length - 1] : null;
-  if (op.kind === OP_LIT && last !== null && last.kind === OP_LIT) {
-    const bytes = new Uint8Array(last.bytes.length + op.bytes.length);
-    bytes.set(last.bytes, 0);
-    bytes.set(op.bytes, last.bytes.length);
-    buf[buf.length - 1] = { kind: OP_LIT, bytes };
-    return;
-  }
-  buf.push(op);
+// Up to this many reusable nodes are found by a scan, past it by key.
+const LINEAR_NODES = 16;
+// `at` is a lone predecessor (a number) or the list joined (a string).
+const memoKey = (kind, lit, at) => `${kind}:${lit ?? ""}|${at}`;
+
+// The bytes of the literal ops `ops[from..to]`.
+function concatLits(ops, from, to) {
+  if (to - from === 1) return ops[from].bytes;
+  let len = 0;
+  for (let i = from; i < to; i++) len += ops[i].bytes.length;
+  const bytes = new Uint8Array(len);
+  for (let i = from, at = 0; i < to; at += ops[i].bytes.length, i++) bytes.set(ops[i].bytes, at);
+  return bytes;
 }
 
 class Builder {
-  constructor(dot, ci, linear) {
+  constructor(dot, ci, linear, budget) {
     // Elements in emission order and (unless linear) each node's
     // successors in a parallel array.
     this.elems = [];
     this.succs = [];
     this.start = [];
     this.linear = linear;
+    // Literal and globstar nodes, reused when a branch makes the same
+    // (element, predecessors) again: a scanned list while short, then
+    // also an index by key.
+    this.memo = [];
+    this.memoIndex = null;
+    // The walk's work so far: nodes and their edges, and the groups it
+    // copied and closed by their cost and weight. Past `budget` the walk
+    // stops and the pattern is too complex.
+    this.cost = 0;
+    this.budget = budget;
     this.dot = dot;
     this.ci = ci;
   }
 
   emit(elem, tails) {
+    this.cost += 1 + tails.length;
     const id = this.elems.length;
-    this.elems.push(elem);
-    if (!this.linear) {
-      this.succs.push([]);
-      for (const t of tails) this.link(t, id);
+    if (this.linear) {
+      this.elems.push(elem);
+      return id;
     }
+    if (elem.kind !== EL_WILD) {
+      const found = this.reuse(elem.kind, elem.litStr, tails, id);
+      if (found !== -1) return found;
+    }
+    this.elems.push(elem);
+    this.succs.push([]);
+    for (const t of tails) this.link(t, id);
     return id;
+  }
+
+  // The node made before as (kind, lit) after `tails`, or -1 after
+  // recording it as `id`.
+  reuse(kind, lit, tails, id) {
+    const at = tails.length === 1 ? tails[0] : tails.join(",");
+    if (this.memoIndex === null) {
+      for (const n of this.memo) if (n.kind === kind && n.lit === lit && n.at === at) return n.id;
+      this.memo.push({ kind, lit, at, id });
+      if (this.memo.length > LINEAR_NODES) {
+        this.memoIndex = new Map(this.memo.map((n) => [memoKey(n.kind, n.lit, n.at), n.id]));
+      }
+      return -1;
+    }
+    const key = memoKey(kind, lit, at);
+    const found = this.memoIndex.get(key);
+    if (found !== undefined) return found;
+    this.memoIndex.set(key, id);
+    return -1;
   }
 
   link(tail, id) {
@@ -338,6 +415,7 @@ class Builder {
 
   walk(ops, groups) {
     for (const op of ops) {
+      if (this.cost > this.budget) break;
       const k = op.kind;
       // Ops that may still be absorbed by a bare `**` keep the pending
       // `**/` elements; anything else makes them real.
@@ -352,11 +430,13 @@ class Builder {
       switch (k) {
         case OP_ALTERNATION: {
           if (!crosses(op)) {
-            for (const g of groups) if (g.state !== B_OPEN) pushInSeg(g.buf, op);
+            this.push(groups, op);
             break;
           }
           const out = makeMerged();
           for (const branch of op.branches) {
+            for (const g of groups) this.cost += groupCost(g);
+            if (this.cost > this.budget) break;
             for (const g of this.walk(branch, groups.map(forkGroup))) merge(out, g);
           }
           groups = out.groups;
@@ -394,10 +474,20 @@ class Builder {
         case OP_GLOBSTAR:
           throw new Error("raw `**` survives lowering");
         default:
-          for (const g of groups) if (g.state !== B_OPEN) pushInSeg(g.buf, op);
+          this.push(groups, op);
       }
     }
     return groups;
+  }
+
+  // Add an in-segment op to every group's partial segment.
+  push(groups, op) {
+    const weight = opWeight(op);
+    for (const g of groups) {
+      if (g.state === B_OPEN) continue;
+      g.buf.push(op);
+      g.weight += weight;
+    }
   }
 
   // Emit a group's pending `**/`, its kind by the boundary before it.
@@ -412,8 +502,10 @@ class Builder {
   closeAll(groups, state) {
     this.joinAll(groups, state, (g) => {
       this.settle(g);
+      this.cost += g.weight;
       const buf = g.buf;
       g.buf = [];
+      g.weight = 0;
       return this.emit(this.close(buf), g.tails);
     });
   }
@@ -448,11 +540,11 @@ class Builder {
   }
 
   close(buf) {
-    if (buf.length === 0) return makeElem(EL_LIT, EMPTY_BYTES, null);
-    if (buf.length > 1 || buf[0].kind !== OP_LIT) {
-      return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
+    for (const op of buf) {
+      if (op.kind !== OP_LIT) return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
     }
-    const bytes = buf[0].bytes;
+    // Empty, one literal, or literals glued across a brace edge.
+    const bytes = buf.length === 0 ? EMPTY_BYTES : concatLits(buf, 0, buf.length);
     if (IS_WINDOWS_SEP && bytes.includes(0x5c)) {
       // An escaped `\` on Windows: no segment holds a separator, so the
       // literal is a silent miss (§2.4), kept as a wildcard that wants
@@ -819,11 +911,8 @@ function makeWild(kind, fields) {
 
 function compileWild(ops, dot, ci) {
   let idx = 0;
-  let prefix = EMPTY_BYTES;
-  if (ops[0].kind === OP_LIT) {
-    prefix = ops[0].bytes;
-    idx = 1;
-  }
+  while (idx < ops.length && ops[idx].kind === OP_LIT) idx++;
+  const prefix = idx === 0 ? EMPTY_BYTES : concatLits(ops, 0, idx);
   let anychars = 0;
   let hasStar = false;
   while (idx < ops.length) {

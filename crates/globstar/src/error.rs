@@ -28,6 +28,10 @@ pub enum GlobError {
     /// Distributing braces around `**` would copy more than
     /// [`MAX_EXPANSION`].
     BraceExpansionTooLarge { max: usize },
+    /// Compiling would take more than `max` steps of work: braces whose
+    /// segments multiply (`a{a,/}` repeated many times). `max` grows with
+    /// the pattern, so every pattern of ordinary shape compiles.
+    TooComplex { max: usize },
     /// Character class range with right endpoint smaller than left.
     InvalidRange { at: usize, low: u8, high: u8 },
     /// `Glob::union` was called with an empty iterator.
@@ -56,6 +60,12 @@ impl fmt::Display for GlobError {
             Self::BraceNestingTooDeep { max } => write!(f, "brace nesting exceeds limit {max}"),
             Self::BraceExpansionTooLarge { max } => {
                 write!(f, "brace expansion around `**` exceeds limit {max}")
+            }
+            Self::TooComplex { max } => {
+                write!(
+                    f,
+                    "pattern too complex: compiling it takes more than {max} steps"
+                )
             }
             Self::InvalidRange { at, low, high } => write!(
                 f,

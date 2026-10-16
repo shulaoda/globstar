@@ -494,11 +494,14 @@ The parser MUST reject the following inputs:
 | `EscapedSeparator`       | `a\/b`                     | no file name holds a `/` (§2.4)                             |
 | `BraceNestingTooDeep`    | 33 nested `{`              | resource guard, also after the expansion around `**` (§7.6) |
 | `BraceExpansionTooLarge` | `{**,a}{/,b}` × 5          | resource guard for the expansion around `**` (§7.7)         |
+| `TooComplex`             | `{a,b,/}` × 100            | resource guard for compile work, see below                  |
 | `InvalidRange`           | `[z-a]`                    | the end is below the start                                  |
 | `EmptyPatternSet`        | `globstar([])`             | a union needs at least one pattern (§14.1)                  |
 | `NegatedInUnion`         | `Glob::union(["a", "!b"])` | Rust only: a union rejects `!` members (§14.1)              |
 
 A stray `]`, `}`, `(` or `)` is not an error; it is a literal byte (§9.1).
+
+`TooComplex` bounds the work of compiling. Braces whose branches cross a `/` can make the segments of a pattern multiply: `{a,b,/}` repeated k times has about k² distinct segments. An implementation MAY fail such a pattern with `TooComplex`, and MUST NOT fail one whose compile work stays linear in its length. The bound and how work is counted are implementation-defined; `max` reports the bound that was passed. (Informative: the reference implementations allow 64 units of work per unit of pattern size, and at least 2^20 units. Ordinary patterns and big unions need one to three per unit, so only the multiplying shapes reach the bound, at a few hundred bytes for the shape above.)
 
 The parser SHOULD be lenient in the following cases:
 
@@ -524,6 +527,7 @@ pub enum GlobError {
     EscapedSeparator { at: usize },
     BraceNestingTooDeep { max: usize },
     BraceExpansionTooLarge { max: usize },
+    TooComplex { max: usize },
     InvalidRange { at: usize, low: u8, high: u8 },
     EmptyPatternSet,
     NegatedInUnion { index: usize, pattern: String }, // Rust only (§14.1)
@@ -536,7 +540,7 @@ class GlobError extends Error {
   readonly kind:
     | "Empty" | "TooLong" | "UnterminatedClass" | "UnterminatedBrace"
     | "TrailingBackslash" | "EscapedSeparator" | "BraceNestingTooDeep"
-    | "BraceExpansionTooLarge" | "InvalidRange" | "EmptyPatternSet";
+    | "BraceExpansionTooLarge" | "TooComplex" | "InvalidRange" | "EmptyPatternSet";
   readonly at?: number; readonly len?: number; readonly max?: number;
   readonly low?: number; readonly high?: number;
 }
@@ -1034,6 +1038,7 @@ Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional, n/a not applicable.
   - §13.2 defines the walk root (`d = ""`); §13.4: a negated pattern is always `Descend`.
   - §10: the JS `TooManyStates` note is gone with the engine that had the cap; `NegatedInUnion` carries `index` and `pattern`.
   - Implementation-internal names left the normative text. RFC 2119 key words are reserved for requirements; rationale and implementation notes are marked as informative.
+- **v0.2.5** (2026-10-16): `TooComplex` (§10) bounds the compile work of braces whose segments multiply.
 - Awaiting owner approval before freezing as v1.0.
 
 ---

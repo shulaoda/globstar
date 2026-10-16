@@ -74,6 +74,11 @@ foo{a,b	UnterminatedBrace
 # ...or would nest braces deeper than 32 levels (§7.6).
 **{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}	BraceNestingTooDeep
 
+## too.complex
+# Braces whose segments multiply: `{a,b,/}` × 100 would build a node
+# per pair of braces (§10).
+{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	TooComplex
+
 ## too.long
 # pattern > 64KB (cannot represent inline; test harness generates)
 

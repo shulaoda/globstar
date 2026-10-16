@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 use crate::engine::ops::Op;
+use crate::error::GlobError;
 
 use super::bits::{Bits, Wide};
 use super::seg_nfa::SegNfa;
@@ -26,8 +27,16 @@ const ACCEPT: u32 = u32::MAX;
 /// Predecessor marker for the graph start.
 const START: u32 = u32::MAX;
 
-pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
-    let graph = Graph::build(ops, dot, ci);
+/// The work the graph walk may take: 64 units per unit of pattern
+/// weight (`op_weight`), and never less than 2^20. Patterns of ordinary
+/// shape need one to three per unit; only a shape whose segments
+/// multiply (`a{a,/}` repeated, one node per pair of braces) reaches
+/// it, and it fails before it costs much.
+const BUDGET_PER_WEIGHT: usize = 64;
+const MIN_BUDGET: usize = 1 << 20;
+
+pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> Result<SegmentMatcher, GlobError> {
+    let graph = Graph::build(ops, dot, ci)?;
     let chains = graph.chains();
     // A lone chain with at most one globstar serves `match_dir` too;
     // anything else needs the NFA.
@@ -36,7 +45,7 @@ pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
         _ => Some(Box::new(graph.nfa())),
     };
     let suffixes = facts::suffixes(ops);
-    SegmentMatcher {
+    Ok(SegmentMatcher {
         suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
         suffixes,
         chains,
@@ -45,7 +54,7 @@ pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> SegmentMatcher {
         prefixes: facts::static_prefixes(ops),
         case_insensitive: ci,
         dot,
-    }
+    })
 }
 
 /// The graph as the walk leaves it: the nodes and, for a pattern with
@@ -71,8 +80,8 @@ impl Edges {
 }
 
 impl Graph {
-    fn build(ops: &[Op], dot: bool, ci: bool) -> Self {
-        let (boundaries, linear) = survey(ops);
+    fn build(ops: &[Op], dot: bool, ci: bool) -> Result<Self, GlobError> {
+        let (boundaries, linear, weight) = survey(ops);
         // Only a separator-crossing brace can need regrouping.
         let ops = if linear {
             Cow::Borrowed(ops)
@@ -80,6 +89,11 @@ impl Graph {
             choices(ops)
         };
         let mut b = Builder::new(boundaries, linear, dot, ci);
+        // A linear walk keeps one group and takes a few units per weight,
+        // so only a separator-crossing brace can reach the budget.
+        if !linear {
+            b.budget = MIN_BUDGET.max(weight.saturating_mul(BUDGET_PER_WEIGHT));
+        }
         let groups = b.walk(&ops, vec![Group::first()]);
         for mut g in groups {
             b.settle(&mut g);
@@ -88,11 +102,15 @@ impl Graph {
                     b.end_after(t);
                 }
             } else {
+                b.cost += g.weight;
                 let id = b.emit(b.close(&g.buf), &g.tails);
                 b.end_after(id);
             }
         }
-        b.finish()
+        if b.over() {
+            return Err(GlobError::TooComplex { max: b.budget });
+        }
+        Ok(b.finish())
     }
 
     /// Every path through the graph as a `Chain`, in pattern order;
@@ -471,26 +489,44 @@ pub(super) fn chain_nfa(m: &SegmentMatcher) -> AnyNfa {
 }
 
 /// Elements a brace-free pattern needs (one per boundary op plus the
-/// last segment; with braces a floor), and whether the pattern has a
-/// separator-crossing brace at all.
-fn survey(ops: &[Op]) -> (usize, bool) {
+/// last segment; with braces a floor), whether the pattern has a
+/// separator-crossing brace at all, and its weight (`op_weight`).
+fn survey(ops: &[Op]) -> (usize, bool, usize) {
     let mut boundaries = 0;
     let mut linear = true;
+    let mut weight = 0;
     for op in ops {
         match op {
             Op::Alternation(branches) => {
                 if crosses(op) {
                     linear = false;
                 }
+                weight += 1;
                 for b in branches {
-                    boundaries += survey(b).0;
+                    let (n, _, w) = survey(b);
+                    boundaries += n;
+                    weight += w;
                 }
             }
-            Op::Lit(_) | Op::AnyChar | Op::Star | Op::Class(_) | Op::LeadingSeps => {}
-            _ => boundaries += 1,
+            Op::Lit(bytes) => weight += bytes.len(),
+            Op::AnyChar | Op::Star | Op::Class(_) | Op::LeadingSeps => weight += 1,
+            _ => {
+                boundaries += 1;
+                weight += 1;
+            }
         }
     }
-    (boundaries, linear)
+    (boundaries, linear, weight)
+}
+
+/// What an op costs the walk to copy and compile: a literal its length,
+/// a brace one plus its branches, anything else one.
+fn op_weight(op: &Op) -> usize {
+    match op {
+        Op::Lit(bytes) => bytes.len(),
+        Op::Alternation(branches) => 1 + branches.iter().flatten().map(op_weight).sum::<usize>(),
+        _ => 1,
+    }
 }
 
 /// What the last op left behind for the next element.
@@ -521,6 +557,8 @@ struct Group<'a> {
     /// More of them add nothing (`**/**/` ≡ `**/`). While set, `state`
     /// is the boundary before it and `buf` is empty.
     pending_oss: bool,
+    /// The `op_weight` of `buf`.
+    weight: usize,
 }
 
 impl Group<'_> {
@@ -530,7 +568,13 @@ impl Group<'_> {
             state: Boundary::Start,
             buf: Vec::new(),
             pending_oss: false,
+            weight: 0,
         }
+    }
+
+    /// What copying the group costs the walk.
+    fn cost(&self) -> usize {
+        1 + self.tails.len() + self.weight
     }
 
     /// Drop repeated tails, which merges and reused nodes add; their
@@ -564,6 +608,11 @@ struct Builder {
     pred_at: Vec<u32>,
     ends: Vec<u32>,
     memo: HashMap<u64, u32, BuildHasherDefault<Fnv>>,
+    /// The walk's work so far: nodes and their edges, and the groups it
+    /// copied and closed by their `cost` and weight. Past `budget` the
+    /// walk stops and the pattern is too complex.
+    cost: usize,
+    budget: usize,
     dot: bool,
     ci: bool,
 }
@@ -577,6 +626,8 @@ impl Builder {
             pred_at: Vec::new(),
             ends: Vec::new(),
             memo: HashMap::default(),
+            cost: 0,
+            budget: usize::MAX,
             dot,
             ci,
         }
@@ -643,6 +694,7 @@ impl Builder {
     /// A node for `elem` after `tails`; an existing one when a branch
     /// already made it.
     fn emit(&mut self, elem: Elem, tails: &[u32]) -> u32 {
+        self.cost += 1 + tails.len();
         let id = self.elems.len() as u32;
         if self.linear {
             self.elems.push(elem);
@@ -702,8 +754,15 @@ impl Builder {
         }
     }
 
+    fn over(&self) -> bool {
+        self.cost > self.budget
+    }
+
     fn walk<'a>(&mut self, ops: &'a [Op], mut groups: Vec<Group<'a>>) -> Vec<Group<'a>> {
         for op in ops {
+            if self.over() {
+                break;
+            }
             // Lowering never puts an op after an open globstar; should
             // one appear, the open paths absorb the rest of the path.
             debug_assert!(groups.iter().all(|g| g.state != Boundary::Open));
@@ -721,6 +780,10 @@ impl Builder {
                 Op::Alternation(branches) if crosses(op) => {
                     let mut out = Merged::default();
                     for branch in branches {
+                        self.cost += groups.iter().map(Group::cost).sum::<usize>();
+                        if self.over() {
+                            break;
+                        }
                         let copies = groups.to_vec();
                         for g in self.walk(branch, copies) {
                             out.add(g);
@@ -772,8 +835,10 @@ impl Builder {
                 }
                 Op::Globstar => unreachable!("raw `**` survives lowering"),
                 op => {
+                    let weight = op_weight(op);
                     for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {
                         g.buf.push(op);
+                        g.weight += weight;
                     }
                 }
             }
@@ -800,8 +865,10 @@ impl Builder {
     fn close_all<'a>(&mut self, groups: &mut Vec<Group<'a>>, state: Boundary) {
         self.join_all(groups, state, |b, g| {
             b.settle(g);
+            b.cost += g.weight;
             let elem = b.close(&g.buf);
             g.buf.clear();
+            g.weight = 0;
             b.emit(elem, &g.tails)
         });
     }

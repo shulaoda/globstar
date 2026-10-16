@@ -115,6 +115,7 @@ pub enum GlobError {
     EscapedSeparator { at: usize },
     BraceNestingTooDeep { max: usize },
     BraceExpansionTooLarge { max: usize },
+    TooComplex { max: usize },
     InvalidRange { at: usize, low: u8, high: u8 },
     EmptyPatternSet,
     NegatedInUnion { index: usize, pattern: String },

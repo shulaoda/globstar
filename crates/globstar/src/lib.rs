@@ -218,7 +218,7 @@ impl Glob {
                     Tier::SimpleWildcard
                 };
                 let program = lower(ast.body, opts.case_insensitive);
-                let engine = Engine::Segment(SegmentMatcher::build(program, opts.dot));
+                let engine = Engine::Segment(SegmentMatcher::build(program, opts.dot)?);
                 (tier, engine)
             }
         };

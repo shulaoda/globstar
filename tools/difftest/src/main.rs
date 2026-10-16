@@ -195,6 +195,7 @@ fn err_token(e: &GlobError) -> String {
         EscapedSeparator { .. } => "EscapedSeparator",
         BraceNestingTooDeep { .. } => "BraceNestingTooDeep",
         BraceExpansionTooLarge { .. } => "BraceExpansionTooLarge",
+        TooComplex { .. } => "TooComplex",
         InvalidRange { .. } => "InvalidRange",
         EmptyPatternSet => "EmptyPatternSet",
         NegatedInUnion { .. } => "NegatedInUnion",

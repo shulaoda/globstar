@@ -199,7 +199,7 @@ for (const [pattern, path] of [
   ["{**,a}/".repeat(80) + "x", "a/x"],
   ["{a,b,/}".repeat(14), "abababa/bababa"],
   ["{/,a,}".repeat(20), "aa/a"],
-  ["{a/,}".repeat(1500), "a/a/"],
+  ["{a/,}".repeat(800), "a/a/"],
 ]) {
   const start = performance.now();
   const m = compileMatcher(pattern);
@@ -220,6 +220,27 @@ for (const [pattern, path] of [
   for (let i = 0; i < 10_000; i++) assert.ok(m.match(`dir${i}/file${i}`));
   const ms = performance.now() - start;
   assert.ok(ms < 500, `10,000 matches took ${ms.toFixed(0)} ms`);
+}
+
+// Braces whose segments multiply would build a node per pair of them:
+// the walk gives up early. Twin of the same check in
+// tools/memory-check/tests/large_patterns.rs.
+{
+  const lists = (n) =>
+    `{${Array.from({ length: n }, (_, i) => `/a${i}`).join(",")}}{${Array.from({ length: n }, (_, i) => `b${i}/`).join(",")}}z`;
+  for (const pattern of [
+    `a${"{a,/}".repeat(2048)}b`,
+    "{a,b,/}".repeat(4096),
+    "{/,a,}".repeat(4096),
+    lists(2048),
+    "{**,a}/".repeat(8192) + "x",
+    "{a/,}".repeat(8192),
+  ]) {
+    const start = performance.now();
+    assert.throws(() => compileMatcher(pattern), { kind: "TooComplex" });
+    const ms = performance.now() - start;
+    assert.ok(ms < 1000, `${pattern.slice(0, 7)}: ${ms.toFixed(0)} ms to fail`);
+  }
 }
 
 // A long name list matches by binary search: 10,000 matches of a

@@ -4,7 +4,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-use globstar::Glob;
+use globstar::{Glob, GlobError};
 
 struct Counting;
 static LIVE: AtomicUsize = AtomicUsize::new(0);
@@ -130,8 +130,8 @@ fn large_patterns_stay_small() {
             16 * MB,
         ),
         (
-            "{a/,} x1500",
-            vec!["{a/,}".repeat(1500)],
+            "{a/,} x800",
+            vec!["{a/,}".repeat(800)],
             "a/a/",
             true,
             16 * MB,
@@ -151,5 +151,31 @@ fn large_patterns_stay_small() {
         assert!(kept <= max_kept, "{name}: keeps {kept} bytes");
         assert!(peak <= max_peak, "{name}: peaks at {peak} bytes");
         assert_eq!(glob.is_match(path.as_bytes()), matches, "{name}");
+    }
+    too_complex_patterns_fail_early();
+}
+
+// Braces whose segments multiply would build a node per pair of them;
+// the walk gives up early, with little memory spent.
+fn too_complex_patterns_fail_early() {
+    let lists = |n: usize| {
+        let a: Vec<String> = (0..n).map(|i| format!("/a{i}")).collect();
+        let b: Vec<String> = (0..n).map(|i| format!("b{i}/")).collect();
+        format!("{{{}}}{{{}}}z", a.join(","), b.join(","))
+    };
+    for pattern in [
+        format!("a{}b", "{a,/}".repeat(2048)),
+        "{a,b,/}".repeat(4096),
+        "{/,a,}".repeat(4096),
+        lists(2048),
+        "{**,a}/".repeat(8192) + "x",
+        "{a/,}".repeat(8192),
+    ] {
+        let base = LIVE.load(Relaxed);
+        PEAK.store(base, Relaxed);
+        let err = Glob::new(&pattern).unwrap_err();
+        assert!(matches!(err, GlobError::TooComplex { .. }), "{err:?}");
+        let peak = PEAK.load(Relaxed) - base;
+        assert!(peak <= 32 * MB, "{}: peaks at {peak} bytes", &pattern[..16]);
     }
 }
