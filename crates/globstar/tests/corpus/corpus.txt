@@ -782,7 +782,6 @@ a?{b,c}	ab	no-match
 # Under dot=false a segment that starts with `.` needs a first element
 # that takes the `.` itself; a `*` there matches nothing, not even the
 # empty string.
-*.txt	.txt	no-match	dot=false
 *.*	.a	no-match	dot=false
 *{.a,b}	.a	no-match	dot=false
 {*,.}a	.a	match	dot=false
@@ -790,4 +789,46 @@ a?{b,c}	ab	no-match
 [,-.]a	.a	match	dot=false
 [!a]a	.a	no-match	dot=false
 a/*.txt	a/.txt	no-match	dot=false
-*.txt	.txt	match	dot=true
+
+## spec.15.catalog
+# §15 lines no other row covered.
+?.txt	.txt	no-match	dot=false
+?txt	.txt	no-match	dot=false
+?txt	atxt	match	dot=false
+**/b	b	match
+[a-z]	x	match
+[a-z]	X	no-match
+.*	.hidden	match	dot=false
+
+## lenient.sep.through.braces (§12.3)
+# A `**` that opens or closes a brace branch keeps the `/` beside the
+# brace lenient (mutation testing, 2026-10 audit).
+{a/**,b}/{{**/x,y},z}	b//x	match
+{a,/**}/**/x	a//a/x	match
+{a/**,b/}/**/x	b///x	match
+a/{{**/x,b},c}	a//a/x	match
+{x,{a,/**}}/**/y	a//a/y	match
+
+## dot.small.cases (§12.4)
+{.b,c}	.b	match	dot=false
+a/**	a/x/	match	dot=false
+*{.,x}[!.]	.a	no-match	dot=false
+
+## ci.class.ranges (§11.2)
+# Folding applies to letters only: `@`, `[`, `` ` `` and `{` sit next to
+# the letters in ASCII and must stay out of a folded range.
+[@-Z]	b	match	case_insensitive=true
+[@-Z]	`	no-match	case_insensitive=true
+[a-~]	[	no-match	case_insensitive=true
+[Z]	z	match	case_insensitive=true
+[`]	@	no-match	case_insensitive=true
+[A-[]	{	no-match	case_insensitive=true
+[a-{]	[	no-match	case_insensitive=true
+[a-z]	@	no-match	case_insensitive=true
+a@b	a`b	no-match	case_insensitive=true
+a\[b	a{b	no-match	case_insensitive=true
+[a-a]	a	match
+
+## limits.nesting (§7.6)
+# 32 levels compile; 33 are BraceNestingTooDeep (corpus-err.txt).
+{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	match

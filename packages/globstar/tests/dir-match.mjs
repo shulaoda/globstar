@@ -65,4 +65,13 @@ for (const v of [0, 1, 2, 3, 4, 5]) {
 }
 assert.equal(DirMatch.from(false, false, true), DirMatch.DescendAll);
 
+// A union with a negated member may match anywhere (what `!b` keeps is
+// everything but `b`): a walker must never prune a folder because of it.
+{
+  const m = compileMatcher(["src/**", "!b"]);
+  assert.ok(m.match("lib/x.ts"));
+  assert.ok(DirMatch.mayMatchBelow(m.matchDir("lib")));
+  assert.ok(!DirMatch.matchesAllBelow(m.matchDir("lib")));
+}
+
 console.log("✓ matchDir verdicts serve both the selecting and the excluding role");

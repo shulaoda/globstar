@@ -41,19 +41,31 @@ function argVal(name, def) {
   const i = process.argv.indexOf(name);
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : def;
 }
-const COUNT = Number(argVal("--count", "50000"));
+function usage(message) {
+  console.error(`[fuzz] ${message}`);
+  process.exit(2);
+}
+const int = (name, value) => {
+  if (!/^\d+$/.test(value)) usage(`${name} needs a whole number, got ${JSON.stringify(value)}`);
+  return Number(value);
+};
+const COUNT = int("--count", argVal("--count", "50000"));
+if (COUNT === 0) usage("--count 0 tests nothing");
 const MODE = argVal("--mode", "all"); // all | m | n | d | u | un | ud | s
-const MAX_SAMPLES = Number(argVal("--max-samples", "30"));
+if (!["all", "m", "n", "d", "u", "un", "ud", "s"].includes(MODE)) usage(`unknown --mode ${MODE}`);
+const MAX_SAMPLES = int("--max-samples", argVal("--max-samples", "30"));
 // `--seed N` for one run, or `--seeds A-B` to sweep a range.
 const SEEDS = (() => {
   const range = argVal("--seeds", null);
   if (range) {
-    const [a, b] = range.split("-").map(Number);
+    const m = /^(\d+)-(\d+)$/.exec(range);
+    if (!m || Number(m[1]) > Number(m[2]))
+      usage(`--seeds needs A-B with A <= B, got ${JSON.stringify(range)}`);
     const out = [];
-    for (let s = a; s <= b; s++) out.push(s);
+    for (let s = Number(m[1]); s <= Number(m[2]); s++) out.push(s);
     return out;
   }
-  return [Number(argVal("--seed", "1"))];
+  return [int("--seed", argVal("--seed", "1"))];
 })();
 
 // ── deterministic PRNG (mulberry32) so any failure reproduces ────────
@@ -366,6 +378,7 @@ for (const seed of SEEDS) {
   for (const s of res.samples) if (allSamples.length < MAX_SAMPLES) allSamples.push(s);
 }
 const dt = ((Date.now() - t0) / 1000).toFixed(1);
+if (totalN === 0) usage("no case ran");
 
 if (totalDiff > 0) {
   console.log(`\n--- divergence samples (first ${MAX_SAMPLES}) ---`);

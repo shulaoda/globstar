@@ -40,6 +40,16 @@ process.chdir(ROOT);
 const args = new Set(process.argv.slice(2));
 const SKIP_RUST = args.has("--skip-rust");
 const SKIP_JS = args.has("--skip-js");
+for (const a of args) {
+  if (a !== "--skip-rust" && a !== "--skip-js") {
+    console.error(`unknown argument ${a}`);
+    process.exit(2);
+  }
+}
+if (SKIP_RUST && SKIP_JS) {
+  console.error("--skip-rust and --skip-js together verify nothing");
+  process.exit(2);
+}
 
 const CORPUS_DIR = resolve(ROOT, "crates/globstar/tests/corpus");
 
@@ -352,6 +362,21 @@ for (const side of sides) {
       `${pad(side.runtime, 8)} ${pad("(missing)", 12)} (process exit ${side.spawnStatus})`,
     );
     totalFail += 1;
+  }
+}
+
+// Both runtimes read the same files, so they must check the same number
+// of rows: a row one loader reads and the other drops is a bug in one.
+if (sides.length === 2) {
+  const count = (side) =>
+    new Map(side.rows.map((r) => [String(r.corpus) + "/" + String(r.engine), r.pass + r.fail]));
+  const [rust, js] = sides.map(count);
+  for (const [key, n] of rust) {
+    if (js.get(key) !== n) {
+      const other = js.has(key) ? String(js.get(key)) : "none";
+      console.log(`row count differs for ${String(key)}: Rust ${String(n)}, JS ${other}`);
+      totalFail += 1;
+    }
   }
 }
 

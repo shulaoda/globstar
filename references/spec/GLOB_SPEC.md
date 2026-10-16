@@ -867,7 +867,7 @@ This section previews the executable corpus in `crates/globstar/tests/corpus/`; 
 *.txt          path="a.txt"     ⇒ true
 *.txt          path=".txt"      ⇒ false  (dot=false)
 ?.txt          path="a.txt"     ⇒ true
-?.txt          path=".txt"      ⇒ false  (dot=false)
+?txt           path=".txt"      ⇒ false  (dot=false; `?` may not take the dot)
 ```
 
 ### 15.2 `**`

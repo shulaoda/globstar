@@ -8,7 +8,7 @@
 //!   - corpus-driven differential
 
 use globstar::{Glob, GlobError};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::fs;
 
 /// Oracle: independently compile each pattern and OR the results.
@@ -276,8 +276,10 @@ fn corpus_differential_vs_or_oracle() {
     // verify `Glob::union(group).is_match` agrees with the inlined OR
     // oracle on a sampling of group sizes 2/3/5/10.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
-    let mut all_patterns: HashSet<String> = HashSet::new();
-    let mut all_paths: HashSet<String> = HashSet::new();
+    // Ordered sets, so each run tests the same groups and a failure
+    // reproduces.
+    let mut all_patterns: BTreeSet<String> = BTreeSet::new();
+    let mut all_paths: BTreeSet<String> = BTreeSet::new();
     for entry in fs::read_dir(&dir).unwrap() {
         let p = entry.unwrap().path();
         let name = p.file_name().unwrap().to_string_lossy().into_owned();

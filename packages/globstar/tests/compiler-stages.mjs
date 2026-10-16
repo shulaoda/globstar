@@ -258,3 +258,17 @@ console.log("✓ matcher options are checked");
   assert.deepEqual([MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION], [65536, 32, 4096]);
 }
 console.log("✓ errors and API surface");
+
+// The length limit is exact, in bytes. Twin of `the_length_limit_is_exact`.
+{
+  const { MAX_PATTERN_LEN } = await import("../src/index.js");
+  compileMatcher("a".repeat(MAX_PATTERN_LEN));
+  assert.throws(() => compileMatcher("a".repeat(MAX_PATTERN_LEN + 1)), {
+    kind: "TooLong",
+    len: MAX_PATTERN_LEN + 1,
+    max: MAX_PATTERN_LEN,
+  });
+  compileMatcher("é".repeat(MAX_PATTERN_LEN / 2));
+  assert.throws(() => compileMatcher("é".repeat(MAX_PATTERN_LEN / 2) + "a"), { kind: "TooLong" });
+}
+console.log("✓ limits");

@@ -265,13 +265,20 @@ function table(headers, rows) {
  *   libCols     — `[[displayName, lookupKey], …]`
  *   cellOpts    — `{ isMem, divideBy }` passed through to `formatCell`
  */
+const missingCells = [];
+
 function combinedTable(rowLabelHeader, rowLabels, sources) {
   const headers = [rowLabelHeader, ...sources.flatMap((s) => s.libCols.map((c) => c[0]))];
   const rows = rowLabels.map((label) => {
     const cells = sources.flatMap((src) => {
       const groupKey = src.rowKey(label);
       const group = src.data[groupKey] ?? {};
-      return src.libCols.map(([_, key]) => formatCell(group[key] ?? "—", src.cellOpts ?? {}));
+      return src.libCols.map(([name, key]) => {
+        // A library that threw in mitata leaves no number, not a failed
+        // step: count the hole so the run fails rather than print "—".
+        if (group[key] === undefined) missingCells.push(`${label} / ${name}`);
+        return formatCell(group[key] ?? "—", src.cellOpts ?? {});
+      });
     });
     return [label, ...cells];
   });
@@ -551,6 +558,10 @@ ${combinedTable("Tree × patterns", WALKER_LABELS, [rustWalker, jsWalker])}
 `);
 
 const report = sections.join("\n");
+if (missingCells.length > 0 && !(SKIP_RUST || SKIP_JS)) {
+  process.stderr.write(`\n[bench] no number for: ${missingCells.join(", ")}\n`);
+  failed = true;
+}
 if (failed) {
   process.stderr.write("\n[bench] a step failed; BENCHMARKS.md not written\n");
   process.exit(1);

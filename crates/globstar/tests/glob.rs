@@ -119,6 +119,37 @@ fn match_dir_stays_cheap_on_long_wildcard_chains() {
 }
 
 #[test]
+fn the_length_limit_is_exact() {
+    // 65,536 bytes compile; one more is TooLong, in bytes, not chars.
+    use globstar::error::MAX_PATTERN_LEN;
+    assert!(Glob::new(&"a".repeat(MAX_PATTERN_LEN)).is_ok());
+    assert_eq!(
+        Glob::new(&"a".repeat(MAX_PATTERN_LEN + 1)).unwrap_err(),
+        globstar::GlobError::TooLong {
+            len: MAX_PATTERN_LEN + 1,
+            max: MAX_PATTERN_LEN
+        }
+    );
+    assert!(Glob::new(&"é".repeat(MAX_PATTERN_LEN / 2)).is_ok());
+    assert!(Glob::new(&("é".repeat(MAX_PATTERN_LEN / 2) + "a")).is_err());
+}
+
+#[test]
+fn errors_display_and_matchers_dispatch() {
+    // Display is what a CLI prints; `&dyn Matcher` is how a walker holds
+    // a matcher it did not build.
+    let err = Glob::new("src/[a").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "unterminated character class at byte 4: no `]` before a `/` or the end of the pattern"
+    );
+    let m: &dyn globstar::Matcher = &Glob::new("src/**/*.ts").unwrap();
+    assert!(m.is_match(b"src/a/b.ts"));
+    assert!(!m.match_dir(b"lib").matches() && !m.match_dir(b"lib").may_match_below());
+    assert_eq!(m.static_prefixes(), vec![b"src".to_vec()]);
+}
+
+#[test]
 fn invalid_range_points_at_the_range() {
     // `at` is where the range starts, not where the class opens.
     let err = Glob::new("src/[abcz-a].ts").unwrap_err();

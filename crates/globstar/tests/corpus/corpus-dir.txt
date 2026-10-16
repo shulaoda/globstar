@@ -349,7 +349,6 @@ x{a/b}y*	xa	pruned
 /p/*.log	/p/src	pruned	dot=true
 /p/dist	/p/dist	match	dot=true
 /p/src/**/*.js	/p/src	descend	dot=true
-**/*.log	/p/foo.log	descend-match	dot=true
 /p/dist/**	/p/dist	descend-all	dot=true
 **/node_modules/**	/p/node_modules	descend-all	dot=true
 **/node_modules/**	/p/node_modules/pkg	descend-all-match	dot=true
@@ -423,3 +422,6 @@ src/**		descend	dot=true
 a/**/*/*/*	a/x	descend	dot=true
 a/**/*/*/*	a/x/y	descend-all	dot=true
 a/**/*/*/*	a/x/y/z	descend-all-match	dot=true
+
+## spec.15.catalog
+**/*.ts	anything	descend
