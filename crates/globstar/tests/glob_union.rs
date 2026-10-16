@@ -53,11 +53,49 @@ fn members_share_one_expansion_budget() {
     let member = "{,/}".repeat(10) + "**/f";
     assert!(Glob::new(&member).is_ok());
     let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
-    let result = Glob::union(&members);
+    let err = Glob::union(&members).unwrap_err();
+    // The member that ran the budget out is named.
+    assert!(
+        matches!(err, GlobError::InMember { index, .. } if index > 0),
+        "{err:?}"
+    );
     assert!(matches!(
-        result,
-        Err(GlobError::BraceExpansionTooLarge { .. })
+        err.root(),
+        GlobError::BraceExpansionTooLarge { .. }
     ));
+}
+
+#[test]
+fn a_member_error_names_the_member() {
+    use std::error::Error;
+    let err = Glob::union(["src/**", "lib/**", "lib/[a"]).unwrap_err();
+    let GlobError::InMember { index, error } = &err else {
+        panic!("{err:?}");
+    };
+    assert_eq!(*index, 2);
+    assert_eq!(**error, GlobError::UnterminatedClass { at: 4 });
+    assert_eq!(err.to_string(), format!("pattern 2: {error}"));
+    assert!(err.source().is_some());
+    // A union of one is still a list.
+    assert!(matches!(
+        Glob::union(["[z-a]"]),
+        Err(GlobError::InMember { index: 0, .. })
+    ));
+    // A single pattern is not.
+    assert!(matches!(
+        Glob::new("[z-a]"),
+        Err(GlobError::InvalidRange { .. })
+    ));
+}
+
+#[test]
+fn a_union_tier_is_its_highest_members() {
+    use globstar::Tier;
+    let tier = |ps: &[&str]| Glob::union(ps).unwrap().tier();
+    assert_eq!(tier(&["a", "b"]), Tier::Literal);
+    assert_eq!(tier(&["a", "*.ts"]), Tier::SimpleWildcard);
+    assert_eq!(tier(&["a", "**/b"]), Tier::Globstar);
+    assert_eq!(tier(&["{a,b}"]), Tier::Globstar);
 }
 
 #[test]

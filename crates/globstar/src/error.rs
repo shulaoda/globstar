@@ -1,43 +1,105 @@
+//! Compile errors, and the limits that guard compiling.
+
 use core::fmt;
 
+/// The longest pattern accepted, in bytes ([`GlobError::TooLong`]).
 pub const MAX_PATTERN_LEN: usize = 64 * 1024;
+/// How deep braces may nest ([`GlobError::BraceNestingTooDeep`]).
 pub const MAX_BRACE_NESTING: usize = 32;
 /// What distributing braces around `**` may copy (§7.7), per pattern or
 /// per union: one per token, a literal or a class by its length, and one
 /// per brace branch.
 pub const MAX_EXPANSION: usize = 4096;
 
+/// Why a pattern does not compile. An `at` field is a byte offset into
+/// the UTF-8 pattern; a `max` field is the limit that was passed.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum GlobError {
     /// Empty pattern (`""`).
     Empty,
     /// Pattern length exceeds [`MAX_PATTERN_LEN`].
-    TooLong { len: usize, max: usize },
+    TooLong {
+        /// The pattern's length in bytes.
+        len: usize,
+        /// [`MAX_PATTERN_LEN`].
+        max: usize,
+    },
     /// Unterminated character class `[...`.
-    UnterminatedClass { at: usize },
+    UnterminatedClass {
+        /// Where the class opens.
+        at: usize,
+    },
     /// Unterminated brace `{...`.
-    UnterminatedBrace { at: usize },
+    UnterminatedBrace {
+        /// Where the brace opens.
+        at: usize,
+    },
     /// Pattern ends with a lone backslash.
     TrailingBackslash,
     /// Escaped path separator (`\/`). A `/` can never appear inside a file
     /// name on any platform, so the escape has no possible match.
-    EscapedSeparator { at: usize },
+    EscapedSeparator {
+        /// Where the `\` is.
+        at: usize,
+    },
     /// Brace nesting exceeds [`MAX_BRACE_NESTING`], in the pattern or once
     /// braces are distributed around `**`.
-    BraceNestingTooDeep { max: usize },
+    BraceNestingTooDeep {
+        /// [`MAX_BRACE_NESTING`].
+        max: usize,
+    },
     /// Distributing braces around `**` would copy more than
     /// [`MAX_EXPANSION`].
-    BraceExpansionTooLarge { max: usize },
+    BraceExpansionTooLarge {
+        /// [`MAX_EXPANSION`].
+        max: usize,
+    },
     /// Compiling would take more than `max` steps of work: braces whose
     /// segments multiply (`a{a,/}` repeated many times). `max` grows with
     /// the pattern, so every pattern of ordinary shape compiles.
-    TooComplex { max: usize },
+    TooComplex {
+        /// The work this pattern was allowed.
+        max: usize,
+    },
     /// Character class range with right endpoint smaller than left.
-    InvalidRange { at: usize, low: u8, high: u8 },
+    InvalidRange {
+        /// Where the range starts (its first end).
+        at: usize,
+        /// The first end, as a byte.
+        low: u8,
+        /// The second end, as a byte.
+        high: u8,
+    },
     /// `Glob::union` was called with an empty iterator.
     EmptyPatternSet,
-    /// A negated (`!`-prefixed) pattern was passed to `Glob::union`.
-    NegatedInUnion { index: usize, pattern: String },
+    /// A negated pattern (an odd number of leading `!`) was passed to
+    /// `Glob::union`.
+    NegatedInUnion {
+        /// Its position in the list, counting every member given.
+        index: usize,
+        /// The pattern as given.
+        pattern: String,
+    },
+    /// A member of the list given to `Glob::union` does not compile:
+    /// `error` says why, with offsets into that member.
+    InMember {
+        /// The member's position in the list, counting every member given.
+        index: usize,
+        /// Why it does not compile.
+        error: Box<GlobError>,
+    },
+}
+
+impl GlobError {
+    /// The error itself, past any [`InMember`](Self::InMember) wrapping:
+    /// what to match on to tell the kind of a union's failure.
+    pub fn root(&self) -> &GlobError {
+        match self {
+            Self::InMember { error, .. } => error.root(),
+            e => e,
+        }
+    }
 }
 
 impl fmt::Display for GlobError {
@@ -79,11 +141,19 @@ impl fmt::Display for GlobError {
                 "negated pattern {pattern:?} at index {index} is not allowed in Glob::union: \
                  drop the `!` and keep the excludes in a union of their own"
             ),
+            Self::InMember { index, error } => write!(f, "pattern {index}: {error}"),
         }
     }
 }
 
-impl std::error::Error for GlobError {}
+impl std::error::Error for GlobError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InMember { error, .. } => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 /// A byte as the user wrote it, or as `\xHH` when it is not a printable
 /// ASCII character (a class range is byte-based, so this may be one byte

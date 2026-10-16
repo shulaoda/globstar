@@ -172,11 +172,12 @@ function parseClass(state) {
       state.pos++;
       return klass(negated, items);
     }
+    const rangeAt = state.pos;
     const lo = parseClassByte(state, startPos);
     if (input[state.pos] === DASH && input[state.pos + 1] !== RBRACK) {
       state.pos++;
       const hi = parseClassByte(state, startPos);
-      if (hi < lo) throw new GlobError("InvalidRange", { at: startPos, low: lo, high: hi });
+      if (hi < lo) throw new GlobError("InvalidRange", { at: rangeAt, low: lo, high: hi });
       items.push(classItemRange(lo, hi));
     } else {
       items.push(classItemByte(lo));

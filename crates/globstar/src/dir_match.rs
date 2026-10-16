@@ -20,7 +20,8 @@
 ///
 /// `matches_all_below` is a guarantee; `may_match_below` errs toward
 /// `true`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DirMatch {
     /// The directory matches; nothing below it can.
     Match,
@@ -37,8 +38,10 @@ pub enum DirMatch {
 }
 
 impl DirMatch {
-    /// The verdict with these facts; `all_below` implies `may_below`.
-    pub(crate) fn new(matches: bool, may_below: bool, all_below: bool) -> Self {
+    /// The verdict with these three facts; `all_below` implies
+    /// `may_below`. For a consumer that combines verdicts of its own
+    /// (JS: `DirMatch.from`).
+    pub fn new(matches: bool, may_below: bool, all_below: bool) -> Self {
         match (matches, may_below || all_below, all_below) {
             (true, false, _) => Self::Match,
             (false, false, _) => Self::Pruned,

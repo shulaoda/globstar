@@ -70,10 +70,11 @@
 //! same across platforms.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
-pub mod entry;
-pub mod error;
-pub mod options;
+mod entry;
+mod error;
+mod options;
 
 pub use entry::DirEntry;
 pub use error::WalkError;
@@ -382,7 +383,7 @@ impl Walk {
                         // Entries carry symlink-preserving file_type.
                         if let Ok(lmeta) = fs::symlink_metadata(&absolute) {
                             self.ready
-                                .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
+                                .push(Ok(Self::make_entry(&absolute, &lmeta, depth)));
                         }
                     }
                     if descend && dm.may_match_below() {
@@ -399,7 +400,7 @@ impl Walk {
                         && let Ok(lmeta) = fs::symlink_metadata(&absolute)
                     {
                         self.ready
-                            .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
+                            .push(Ok(Self::make_entry(&absolute, &lmeta, depth)));
                     }
                 }
                 Err(_) => match fs::symlink_metadata(&absolute) {
@@ -409,7 +410,7 @@ impl Walk {
                     Ok(lmeta) => {
                         if matcher.is_match(&prefix) {
                             self.ready
-                                .push(Ok(self.make_entry(&absolute, &lmeta, depth)));
+                                .push(Ok(Self::make_entry(&absolute, &lmeta, depth)));
                         }
                     }
                     Err(lerr) if nothing_there(&lerr) => {} // §9.4
@@ -465,7 +466,7 @@ impl Walk {
 
     /// Build a [`DirEntry`] from symlink-preserving metadata (the
     /// canonical `file_type` flavor for every yielded entry).
-    fn make_entry(&self, absolute: &Path, meta: &fs::Metadata, depth: usize) -> DirEntry {
+    fn make_entry(absolute: &Path, meta: &fs::Metadata, depth: usize) -> DirEntry {
         DirEntry {
             path: absolute.to_path_buf(),
             file_type: meta.file_type(),
@@ -643,6 +644,10 @@ impl Rules<'_> {
         emitted
     }
 }
+
+// After its first `None` the stack and the folder being read stay
+// empty, so every later call is `None` too.
+impl std::iter::FusedIterator for Walk {}
 
 impl Iterator for Walk {
     type Item = Result<DirEntry, WalkError>;

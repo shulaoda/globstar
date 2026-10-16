@@ -46,7 +46,7 @@ export interface GlobstarOptions {
  * `TypeError` if a pattern is not a string.
  */
 export function globstar(
-  patterns: string | readonly string[],
+  patterns: string | Iterable<string>,
   options?: GlobstarOptions,
 ): (input: string) => boolean;
 
@@ -137,7 +137,7 @@ export interface Matcher {
  * `TypeError` if a pattern is not a string.
  */
 export function compileMatcher(
-  patterns: string | readonly string[],
+  patterns: string | Iterable<string>,
   options?: GlobstarOptions,
 ): Matcher;
 
@@ -167,7 +167,7 @@ export class GlobError extends Error {
     | "TooComplex"
     | "InvalidRange"
     | "EmptyPatternSet";
-  /** Byte offset of the offending construct (kind-dependent). */
+  /** Byte offset of the offending construct (kind-dependent; for "InvalidRange" the range's start). */
   readonly at?: number;
   /** Pattern length for "TooLong". */
   readonly len?: number;
@@ -176,5 +176,29 @@ export class GlobError extends Error {
   /** Range bounds for "InvalidRange". */
   readonly low?: number;
   readonly high?: number;
+  /**
+   * For an error from one member of a pattern list: the member's position,
+   * counting every member given. Offsets count in that member.
+   */
+  readonly index?: number;
   constructor(kind: GlobError["kind"], info?: Record<string, unknown>);
+  /** The kind, the message and the set fields, for logging. */
+  toJSON(): {
+    name: "GlobError";
+    kind: GlobError["kind"];
+    message: string;
+    at?: number;
+    len?: number;
+    max?: number;
+    low?: number;
+    high?: number;
+    index?: number;
+  };
 }
+
+/** The longest pattern accepted, in bytes (`"TooLong"`). */
+export declare const MAX_PATTERN_LEN: 65536;
+/** How deep braces may nest (`"BraceNestingTooDeep"`). */
+export declare const MAX_BRACE_NESTING: 32;
+/** What distributing braces around `**` may copy (`"BraceExpansionTooLarge"`). */
+export declare const MAX_EXPANSION: 4096;

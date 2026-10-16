@@ -186,15 +186,19 @@ fn dir_token(d: DirMatch) -> String {
         DirMatch::DescendAndMatch => "descend-match",
         DirMatch::DescendAll => "descend-all",
         DirMatch::DescendAllAndMatch => "descend-all-match",
+        // A verdict this harness does not know yet: never a JS token.
+        _ => "unknown-dir-match",
     }
     .to_string()
 }
 
 /// Map a `GlobError` to the same kind string the JS `GlobError.kind` uses,
-/// so `err:<Kind>` tokens compare 1:1 across runtimes.
+/// so `err:<Kind>` tokens compare 1:1 across runtimes. A union member's
+/// error is its own kind in JS (with an `index`), so `InMember` reads
+/// through to it.
 fn err_token(e: &GlobError) -> String {
     use GlobError::*;
-    let kind = match e {
+    let kind = match e.root() {
         Empty => "Empty",
         TooLong { .. } => "TooLong",
         UnterminatedClass { .. } => "UnterminatedClass",
@@ -207,6 +211,8 @@ fn err_token(e: &GlobError) -> String {
         InvalidRange { .. } => "InvalidRange",
         EmptyPatternSet => "EmptyPatternSet",
         NegatedInUnion { .. } => "NegatedInUnion",
+        // A kind this harness does not know yet: never a JS token.
+        _ => "Unknown",
     };
     format!("err:{kind}")
 }

@@ -26,7 +26,7 @@ impl Glob {
 }
 ```
 
-`Glob` is `Debug + Clone + Send + Sync`; compile once and share it across threads. A union is an ordinary `Glob`, not a separate set type. `union` rejects a `!`-prefixed member with `GlobError::NegatedInUnion` and an empty iterator with `GlobError::EmptyPatternSet`; a pattern given twice counts once.
+`Glob` is `Debug + Clone + Send + Sync`; compile once and share it across threads (its `Debug` shows the tier, the engine and the negation, not the compiled tables). A union is an ordinary `Glob`, not a separate set type. `union` rejects a negated member (an odd number of leading `!`; `!!x` is just `x`) with `GlobError::NegatedInUnion`, an empty iterator with `GlobError::EmptyPatternSet`, and a member that does not compile with `GlobError::InMember`, which names it by index; a pattern given twice counts once.
 
 ```rust
 let glob = Glob::new("src/**/*.rs")?;
@@ -37,7 +37,7 @@ assert!(set.is_match(b"docs/guide/intro.md"));
 assert_eq!(set.static_prefixes(), vec![b"src".to_vec(), b"docs".to_vec()]);
 ```
 
-`tier()` and `engine_name()` are diagnostics: the pattern's syntactic class (`Tier::Literal`, `Tier::SimpleWildcard`, `Tier::Globstar`) and which engine compilation chose. Neither is consulted at match time.
+`tier()` and `engine_name()` are diagnostics: the pattern's syntactic class (`Tier::Literal`, `Tier::SimpleWildcard`, `Tier::Globstar`; for a union the highest of its members') and which engine compilation chose. Neither is consulted at match time.
 
 ## `CompileOptions`
 
@@ -106,6 +106,7 @@ The surface a walker consumes, implemented by `Glob`. It is object-safe, so a wa
 ## `GlobError`
 
 ```rust
+#[non_exhaustive]
 pub enum GlobError {
     Empty,
     TooLong { len: usize, max: usize },
@@ -119,10 +120,11 @@ pub enum GlobError {
     InvalidRange { at: usize, low: u8, high: u8 },
     EmptyPatternSet,
     NegatedInUnion { index: usize, pattern: String },
+    InMember { index: usize, error: Box<GlobError> },
 }
 ```
 
-`GlobError` implements `Display` and `std::error::Error`. The limits are public constants: `MAX_PATTERN_LEN` (64 KiB), `MAX_BRACE_NESTING` (32) and `MAX_EXPANSION` (4096). What each variant means, with an example, is in [Errors and limits](../guide/errors.md).
+`GlobError` implements `Display` and `std::error::Error` (`InMember`'s `source()` is the error inside; `root()` reads through it). The enum is `#[non_exhaustive]`: match it with a `_` arm. The limits are public constants in `globstar::error`: `MAX_PATTERN_LEN` (64 KiB), `MAX_BRACE_NESTING` (32) and `MAX_EXPANSION` (4096). What each variant means, with an example, is in [Errors and limits](../guide/errors.md).
 
 ```rust
 match Glob::new("src/[a") {

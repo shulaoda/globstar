@@ -13,22 +13,39 @@ export function globstar(patterns, options) {
 
 export function compileMatcher(patterns, options) {
   const opts = matcherOptions(options);
-  // The same pattern twice adds nothing to the union: it is parsed once
-  // and counts once against the expansion budget.
-  const list = Array.isArray(patterns) ? [...new Set(patterns)] : [patterns];
-  if (list.length === 0) throw new GlobError("EmptyPatternSet");
+  // A string is one pattern; any other iterable is a list, whose member
+  // errors carry the member's `index` (counting every member given).
+  const isList =
+    typeof patterns !== "string" &&
+    patterns != null &&
+    typeof patterns[Symbol.iterator] === "function";
+  const given = isList ? [...patterns] : [patterns];
+  if (given.length === 0) throw new GlobError("EmptyPatternSet");
 
   const positiveAsts = [];
   const negativeAsts = [];
   const budget = { left: MAX_EXPANSION };
-  for (let i = 0; i < list.length; i++) {
-    const pattern = list[i];
+  // The same pattern twice adds nothing to the union: it is parsed once
+  // and counts once against the expansion budget.
+  const seen = given.length > 1 ? new Set() : null;
+  for (let i = 0; i < given.length; i++) {
+    const pattern = given[i];
     if (typeof pattern !== "string") {
       throw new TypeError(
         `pattern must be a string, got ${pattern === null ? "null" : typeof pattern}`,
       );
     }
-    const ast = parse(pattern, budget);
+    if (seen !== null) {
+      if (seen.has(pattern)) continue;
+      seen.add(pattern);
+    }
+    let ast;
+    try {
+      ast = parse(pattern, budget);
+    } catch (e) {
+      if (isList && e instanceof GlobError) throw inMember(e, i);
+      throw e;
+    }
     if (ast.isNegated) negativeAsts.push(ast);
     else positiveAsts.push(ast);
   }
@@ -37,6 +54,13 @@ export function compileMatcher(patterns, options) {
   const negativeEngines = negativeAsts.map((ast) => buildEngine([ast], opts));
 
   return makeMatcher(positiveEngine, negativeEngines);
+}
+
+// A list member's error: its `index`, and the message saying which.
+function inMember(e, index) {
+  e.index = index;
+  e.message = `pattern ${index}: ${e.message}`;
+  return e;
 }
 
 // The options bag with its defaults: only own keys count (a key on

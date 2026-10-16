@@ -57,10 +57,7 @@ export interface GlobOptions {
  * `TypeError`. An option key explicitly set to `undefined` keeps its
  * default.
  */
-export function glob(
-  patterns: string | readonly string[],
-  options?: GlobOptions,
-): Promise<string[]>;
+export function glob(patterns: string | Iterable<string>, options?: GlobOptions): Promise<string[]>;
 
 /**
  * Sync DFS glob. Use when blocking traversal is OK and the corpus is
@@ -77,7 +74,7 @@ export function glob(
  * }
  * ```
  */
-export function globSync(patterns: string | readonly string[], options?: GlobOptions): string[];
+export function globSync(patterns: string | Iterable<string>, options?: GlobOptions): string[];
 
 /**
  * Thrown by {@link glob} / {@link globSync}. Discriminate via

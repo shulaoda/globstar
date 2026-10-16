@@ -20,7 +20,7 @@ export const DESCEND_AND_MATCH = 3;
 export const DESCEND_ALL = 4;
 export const DESCEND_ALL_AND_MATCH = 5;
 
-export const DirMatch = {
+export const DirMatch = Object.freeze({
   /** The directory matches; nothing below it can. */
   Match: MATCH,
   /** Neither the directory nor anything below it matches. */
@@ -58,4 +58,4 @@ export const DirMatch = {
   matchesAllBelow(d) {
     return d === DESCEND_ALL || d === DESCEND_ALL_AND_MATCH;
   },
-};
+});

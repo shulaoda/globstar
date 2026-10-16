@@ -700,7 +700,7 @@ impl Builder {
             self.elems.push(elem);
             return id;
         }
-        let key = self.key(&elem, tails);
+        let key = Self::key(&elem, tails);
         if let Some(&found) = key.and_then(|k| self.memo.get(&k))
             && self.same(found, &elem, tails)
         {
@@ -716,7 +716,7 @@ impl Builder {
     }
 
     /// Reuse key of a literal or globstar node; wildcards stay apart.
-    fn key(&self, elem: &Elem, tails: &[u32]) -> Option<u64> {
+    fn key(elem: &Elem, tails: &[u32]) -> Option<u64> {
         let mut h = Fnv::default();
         match elem {
             Elem::Lit(lit) => {

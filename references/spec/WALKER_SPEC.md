@@ -188,7 +188,7 @@ After preprocessing, the walker compiles two matchers:
 
 If the positive set is empty after preprocessing (e.g. `glob(["!foo"])` with no other inputs), the walker MUST short-circuit and return an empty result without attempting any traversal.
 
-If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member that fails to compile on its own, as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`) — or the whole list, formatted like `["a", "b"]`, when every member compiles alone but not together (they share one expansion budget) — and the underlying parse reason. When preprocessing changed the member, the reason names the text its byte offsets count in: `invalid character class range … at byte 4 … (in 'src/[z-a]', as the walker reads it)`. See §9.
+If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member that fails to compile on its own, as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`) — or the whole list, formatted like `["a", "b"]`, when every member compiles alone but not together (they share one expansion budget) — and the underlying parse reason. When preprocessing changed the member, the reason names the text its byte offsets count in: `invalid character class range … at byte 5 … (in 'src/[z-a]', as the walker reads it)`. See §9.
 
 ---
 

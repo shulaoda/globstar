@@ -43,13 +43,6 @@ impl OpProgram {
     pub fn ops(&self) -> &[Op] {
         &self.ops
     }
-
-    fn from_normalized(ops: Vec<Op>, case_insensitive: bool) -> Self {
-        Self {
-            ops,
-            case_insensitive,
-        }
-    }
 }
 
 /// Lower an AST into one normalized [`OpProgram`]. The nodes move into
@@ -68,7 +61,10 @@ pub fn lower(node: Node, case_insensitive: bool) -> OpProgram {
     lower_into(node, &mut ops, case_insensitive);
     fold_globstars_inplace(&mut ops);
     apply_leading_seps(&mut ops, false);
-    OpProgram::from_normalized(ops, case_insensitive)
+    OpProgram {
+        ops,
+        case_insensitive,
+    }
 }
 
 /// Is a brace with a `**` at its edge beside a `/`?

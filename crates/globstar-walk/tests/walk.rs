@@ -1511,7 +1511,7 @@ fn walker_error_names_the_pattern_as_written() {
     };
     assert_eq!(pattern, "!src/[z-a]");
     assert!(
-        reason.contains("byte 4") && reason.contains("'src/[z-a]'"),
+        reason.contains("byte 5") && reason.contains("'src/[z-a]'"),
         "{reason}"
     );
     // A pattern that needs no normalization is quoted as is.
@@ -1597,6 +1597,22 @@ fn walker_refuses_an_ignore_entry_that_starts_with_bang() {
         assert_eq!(pattern, "!src/**");
         assert!(source.is_none());
         assert!(err.to_string().contains("cannot start with `!`"), "{err}");
+    }
+}
+
+#[test]
+fn walker_takes_any_path_like_base() {
+    // `&String`, `&OsStr` and `OsString` convert like `&str` and paths.
+    let t = TmpTree::new("path_like");
+    t.touch("a.txt");
+    let s = t.root().to_string_lossy().into_owned();
+    let os = t.root().as_os_str();
+    for walk in [
+        Walk::new("*.txt", &s).unwrap(),
+        Walk::new("*.txt", os).unwrap(),
+        Walk::new("*.txt", os.to_os_string()).unwrap(),
+    ] {
+        assert_eq!(collect_rel(walk, t.root()).len(), 1);
     }
 }
 

@@ -1,3 +1,5 @@
+// The longest pattern accepted, in bytes (`TooLong`), and how deep braces
+// may nest (`BraceNestingTooDeep`).
 export const MAX_PATTERN_LEN = 64 * 1024;
 export const MAX_BRACE_NESTING = 32;
 // What distributing braces around `**` may copy (§7.7), per matcher: one
@@ -10,6 +12,15 @@ export class GlobError extends Error {
     this.name = "GlobError";
     this.kind = kind;
     if (info) Object.assign(this, info);
+  }
+
+  toJSON() {
+    // `message` is not enumerable, so JSON would drop it.
+    const out = { name: this.name, kind: this.kind, message: this.message };
+    for (const key of ["at", "len", "max", "low", "high", "index"]) {
+      if (this[key] !== undefined) out[key] = this[key];
+    }
+    return out;
   }
 }
 

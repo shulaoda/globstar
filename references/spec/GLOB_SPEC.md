@@ -514,7 +514,7 @@ The parser SHOULD be lenient in the following cases:
 | consecutive `**/**`       | `a/**/**/b`    | `a/**/b` (§8.6)                                           |
 | repeated `/`              | `a//b`         | kept as written; only `**` boundaries are lenient (§12.3) |
 
-The reference error types follow. `at` is a byte offset into the UTF-8 pattern.
+The reference error types follow. `at` is a byte offset into the UTF-8 pattern (for `InvalidRange`, where the range starts). An error that one member of a pattern list raises names the member by its position in the list, counting every member given: Rust wraps it in `InMember`, JS adds `index` and keeps the member's `kind`.
 
 ```rust
 // Rust
@@ -531,6 +531,7 @@ pub enum GlobError {
     InvalidRange { at: usize, low: u8, high: u8 },
     EmptyPatternSet,
     NegatedInUnion { index: usize, pattern: String }, // Rust only (§14.1)
+    InMember { index: usize, error: Box<GlobError> },   // a union member's error
 }
 ```
 
@@ -543,6 +544,7 @@ class GlobError extends Error {
     | "BraceExpansionTooLarge" | "TooComplex" | "InvalidRange" | "EmptyPatternSet";
   readonly at?: number; readonly len?: number; readonly max?: number;
   readonly low?: number; readonly high?: number;
+  readonly index?: number; // a list member's error: the member's position
 }
 ```
 
@@ -1044,6 +1046,7 @@ Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional, n/a not applicable.
   - Implementation-internal names left the normative text. RFC 2119 key words are reserved for requirements; rationale and implementation notes are marked as informative.
 - **v0.2.5** (2026-10-16): `TooComplex` (§10) bounds the compile work of braces whose segments multiply.
 - **v0.2.6** (2026-10-16): §13.6 states how the reference implementations bound the all-below proof (64 wildcard-only segments, 4096 tail compares); §7.2 and §7.7 point at `TooComplex`.
+- **v0.2.8** (2026-10-16): §10: `InvalidRange.at` is where the range starts; an error one member of a pattern list raises names the member (`InMember` in Rust, `index` in JS).
 - **v0.2.7** (2026-10-16): §12.4 states dot protection as the implementations apply it, per segment start: a `*` there matches nothing, not even the empty string (`*.txt` does not match `.txt`); §15.8 shows it.
 - Awaiting owner approval before freezing as v1.0.
 

@@ -42,6 +42,7 @@
 //! release.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 #[doc(hidden)]
 pub mod ast;
@@ -67,8 +68,10 @@ use engine::segment::SegmentMatcher;
 use factor::factor_branches;
 
 /// Syntactic complexity class of a compiled pattern — useful for
-/// diagnostics, not consulted at match time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// diagnostics, not consulted at match time. A union's tier is the
+/// highest of its members' (`Literal` < `SimpleWildcard` < `Globstar`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum Tier {
     /// Pure literal (no metacharacter).
     Literal,
@@ -79,7 +82,7 @@ pub enum Tier {
 }
 
 /// Compile-time options for [`Glob::new_with`] and [`Glob::union_with`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct CompileOptions {
     /// When `false`, wildcards (`*` `?` `[^x]`) cannot consume a leading
@@ -102,11 +105,14 @@ impl Default for CompileOptions {
 }
 
 impl CompileOptions {
+    /// These options with [`dot`](Self::dot) set to `v`.
     pub fn dot(mut self, v: bool) -> Self {
         self.dot = v;
         self
     }
 
+    /// These options with [`case_insensitive`](Self::case_insensitive)
+    /// set to `v`.
     pub fn case_insensitive(mut self, v: bool) -> Self {
         self.case_insensitive = v;
         self
@@ -119,11 +125,23 @@ impl CompileOptions {
 /// is `Send + Sync + Clone`, so it can be shared across threads
 /// freely. See the [crate docs](crate) for an overview and the
 /// repository's `GLOB_SPEC.md` for the dialect.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Glob {
     tier: Tier,
     engine: Engine,
     negated: bool,
+}
+
+/// The tier, the engine and the negation; the compiled tables are left
+/// out (a union's run to kilobytes).
+impl std::fmt::Debug for Glob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Glob")
+            .field("tier", &self.tier)
+            .field("engine", &self.engine_name())
+            .field("negated", &self.negated)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -144,17 +162,21 @@ impl Glob {
     /// Compile a pattern with explicit [`CompileOptions`].
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
         let ast = parser::parse(pattern.as_bytes())?;
-        Self::from_ast(ast, opts)
+        let tier = tier_of(&ast.body);
+        Self::from_ast(ast, opts, tier)
     }
 
     /// Compile the boolean-OR union of several patterns into one `Glob`
     /// with default options.
     ///
-    /// `!`-negated members are rejected with
-    /// [`GlobError::NegatedInUnion`]; an empty iterator with
-    /// [`GlobError::EmptyPatternSet`]. A pattern given twice counts
-    /// once. The members share one expansion budget
-    /// ([`GlobError::BraceExpansionTooLarge`]).
+    /// A negated member (an odd number of leading `!`) is rejected with
+    /// [`GlobError::NegatedInUnion`]; `!!x` is just `x`. An empty iterator
+    /// fails with [`GlobError::EmptyPatternSet`], and a member that does
+    /// not compile with [`GlobError::InMember`], which names it by index
+    /// ([`GlobError::root`] gives the error inside). A pattern given
+    /// twice counts once. The members share one expansion budget
+    /// ([`GlobError::BraceExpansionTooLarge`]). The [`tier`](Self::tier)
+    /// is the highest of the members'.
     pub fn union<I, S>(patterns: I) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -176,18 +198,25 @@ impl Glob {
         let mut seen = HashSet::with_capacity(patterns.len());
         let mut bodies: Vec<Node> = Vec::with_capacity(patterns.len());
         let mut budget = error::MAX_EXPANSION;
+        let mut tier = Tier::Literal;
         for (index, pattern) in patterns.iter().enumerate() {
             let pattern = pattern.as_ref();
             if !seen.insert(pattern) {
                 continue;
             }
-            let parsed = parser::parse_within(pattern.as_bytes(), &mut budget)?;
+            let parsed = parser::parse_within(pattern.as_bytes(), &mut budget).map_err(|e| {
+                GlobError::InMember {
+                    index,
+                    error: Box::new(e),
+                }
+            })?;
             if parsed.is_negated() {
                 return Err(GlobError::NegatedInUnion {
                     index,
                     pattern: pattern.to_string(),
                 });
             }
+            tier = tier.max(tier_of(&parsed.body));
             bodies.push(parsed.body);
         }
         let body = match bodies.len() {
@@ -201,25 +230,17 @@ impl Glob {
                 body,
             },
             opts,
+            tier,
         )
     }
 
-    fn from_ast(ast: Ast, opts: CompileOptions) -> Result<Self, GlobError> {
+    fn from_ast(ast: Ast, opts: CompileOptions, tier: Tier) -> Result<Self, GlobError> {
         let negated = ast.is_negated();
-        let (tier, engine) = match ast.body.to_literal_bytes() {
-            Some(lit) => (
-                Tier::Literal,
-                Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive)),
-            ),
+        let engine = match ast.body.to_literal_bytes() {
+            Some(lit) => Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive)),
             None => {
-                let tier = if ast.body.has_globstar() || contains_brace(&ast.body) {
-                    Tier::Globstar
-                } else {
-                    Tier::SimpleWildcard
-                };
                 let program = lower(ast.body, opts.case_insensitive);
-                let engine = Engine::Segment(SegmentMatcher::build(program, opts.dot)?);
-                (tier, engine)
+                Engine::Segment(SegmentMatcher::build(program, opts.dot)?)
             }
         };
         Ok(Self {
@@ -295,6 +316,17 @@ impl Glob {
             Engine::Literal(m) => m.match_dir(dir_path),
             Engine::Segment(m) => m.match_dir(dir_path),
         }
+    }
+}
+
+/// A body's syntactic tier.
+fn tier_of(body: &Node) -> Tier {
+    if body.is_pure_literal() {
+        Tier::Literal
+    } else if body.has_globstar() || contains_brace(body) {
+        Tier::Globstar
+    } else {
+        Tier::SimpleWildcard
     }
 }
 

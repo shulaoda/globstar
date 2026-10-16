@@ -12,6 +12,7 @@
 //! # let _ = opts;
 //! ```
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// Configuration for a [`Walk`](crate::Walk). See module docs for
@@ -114,5 +115,20 @@ impl From<PathBuf> for WalkOptions {
 impl From<&PathBuf> for WalkOptions {
     fn from(base: &PathBuf) -> Self {
         Self::new(base.as_path())
+    }
+}
+impl From<&String> for WalkOptions {
+    fn from(base: &String) -> Self {
+        Self::new(base.as_str())
+    }
+}
+impl From<&OsStr> for WalkOptions {
+    fn from(base: &OsStr) -> Self {
+        Self::new(base)
+    }
+}
+impl From<OsString> for WalkOptions {
+    fn from(base: OsString) -> Self {
+        Self::new(base)
     }
 }

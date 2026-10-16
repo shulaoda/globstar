@@ -212,13 +212,14 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 return Ok(CharClass { negated, items });
             }
+            let range_at = self.pos;
             let low = self.parse_class_byte(start_pos)?;
             if self.peek() == Some(b'-') && self.peek_at(1) != Some(b']') {
                 self.pos += 1; // consume `-`
                 let high = self.parse_class_byte(start_pos)?;
                 if high < low {
                     return Err(GlobError::InvalidRange {
-                        at: start_pos,
+                        at: range_at,
                         low,
                         high,
                     });
@@ -266,10 +267,7 @@ impl<'a> Parser<'a> {
             branches.push(self.parse_sequence(true)?);
 
             match self.peek() {
-                Some(b',') => {
-                    self.pos += 1;
-                    continue;
-                }
+                Some(b',') => self.pos += 1,
                 Some(b'}') => {
                     self.pos += 1;
                     self.brace_depth -= 1;

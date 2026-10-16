@@ -119,6 +119,44 @@ fn match_dir_stays_cheap_on_long_wildcard_chains() {
 }
 
 #[test]
+fn invalid_range_points_at_the_range() {
+    // `at` is where the range starts, not where the class opens.
+    let err = Glob::new("src/[abcz-a].ts").unwrap_err();
+    assert_eq!(
+        err,
+        globstar::GlobError::InvalidRange {
+            at: 8,
+            low: b'z',
+            high: b'a'
+        }
+    );
+    assert!(err.to_string().contains("at byte 8"), "{err}");
+}
+
+#[test]
+fn glob_debug_is_short() {
+    // The compiled tables stay out of Debug (a union's ran to kilobytes).
+    let names: Vec<String> = (0..50).map(|i| format!("src/m{i}/**/*.ts")).collect();
+    let text = format!("{:?}", Glob::union(&names).unwrap());
+    assert_eq!(
+        text,
+        r#"Glob { tier: Globstar, engine: "Segment", negated: false }"#
+    );
+}
+
+#[test]
+fn dir_match_new_combines_the_three_facts() {
+    use globstar::DirMatch;
+    assert_eq!(DirMatch::new(true, false, false), DirMatch::Match);
+    assert_eq!(DirMatch::new(false, true, true), DirMatch::DescendAll);
+    // `all_below` implies `may_below`.
+    assert_eq!(
+        DirMatch::new(true, false, true),
+        DirMatch::DescendAllAndMatch
+    );
+}
+
+#[test]
 fn classify_brace_routes_to_globstar_tier() {
     let g = Glob::new("*.{ts,tsx}").unwrap();
     // A brace counts as `Tier::Globstar`; the tier is syntax only.

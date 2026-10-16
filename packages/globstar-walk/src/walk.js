@@ -119,7 +119,13 @@ function prepare(patterns, optsInput) {
   const opts = normalizeOptions(optsInput);
   const matcherOpts = toMatcherOptions(opts);
 
-  const list = Array.isArray(patterns) ? patterns : [patterns];
+  // A string is one pattern; any other iterable is a list.
+  const list =
+    typeof patterns !== "string" &&
+    patterns != null &&
+    typeof patterns[Symbol.iterator] === "function"
+      ? [...patterns]
+      : [patterns];
   // Each body keeps the text it came from, for error messages.
   const positives = [];
   const negatives = [];

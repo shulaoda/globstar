@@ -210,6 +210,11 @@ await check("option misuse throws clear TypeErrors", async () => {
   }
 });
 
+await check("any iterable is a pattern list", async () => {
+  const root = tmpTree("iterable", ["a.ts", "b.js", "c.md"]);
+  await expectBoth(root, new Set(["*.ts", "*.js"]), {}, ["a.ts", "b.js"], "Set");
+});
+
 await check("bangs exposed by normalization count too", async () => {
   // `!/!x` ≡ `!!x` ≡ `x`: a `/` between two `!` runs hides neither.
   // Twin of `walker_bangs_exposed_by_normalization_count_too`.
@@ -408,7 +413,7 @@ await check("an error names the pattern as written", async () => {
     (e) =>
       e instanceof WalkError &&
       e.pattern === "!src/[z-a]" &&
-      e.reason.includes("byte 4") &&
+      e.reason.includes("byte 5") &&
       e.reason.includes("'src/[z-a]'"),
   );
   assert.throws(

@@ -11,6 +11,7 @@ use std::path::PathBuf;
 /// first `next()`; the walker continues after yielding an I/O error so
 /// consumers can log and keep going.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum WalkError {
     /// A glob pattern (main or ignore) failed to parse/compile.
     InvalidPattern {

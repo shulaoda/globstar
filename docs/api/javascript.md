@@ -98,7 +98,7 @@ try {
 }
 ```
 
-The full list of kinds, with an example for each, is in [Errors and limits](../guide/errors.md).
+The full list of kinds, with an example for each, is in [Errors and limits](../guide/errors.md). An error from one member of a pattern list also has `index`, the member's position. `JSON.stringify(err)` keeps the message. The limits `MAX_PATTERN_LEN`, `MAX_BRACE_NESTING` and `MAX_EXPANSION` are exported, and a pattern list may be any iterable of strings (an array, a `Set`, …).
 
 ## Walker
 

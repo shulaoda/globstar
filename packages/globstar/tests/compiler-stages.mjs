@@ -224,3 +224,37 @@ try {
   delete Object.prototype.dot;
 }
 console.log("✓ matcher options are checked");
+
+// Errors: a list member's error names its index (counting every member
+// given), `at` of InvalidRange is the range, JSON keeps the message.
+// Twins of `a_member_error_names_the_member` (glob_union.rs) and
+// `invalid_range_points_at_the_range` (glob.rs).
+{
+  const { GlobError, DirMatch, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } =
+    await import("../src/index.js");
+  const thrown = (f) => {
+    try {
+      f();
+    } catch (e) {
+      return e;
+    }
+    throw new Error("no error");
+  };
+  const member = thrown(() => compileMatcher(["src/**", "src/**", "lib/[a"]));
+  assert.ok(member instanceof GlobError);
+  assert.equal(member.kind, "UnterminatedClass");
+  assert.equal(member.index, 2);
+  assert.equal(member.at, 4);
+  assert.ok(member.message.startsWith("pattern 2: "), member.message);
+  assert.equal(thrown(() => compileMatcher("lib/[a")).index, undefined);
+  const range = thrown(() => compileMatcher("src/[abcz-a].ts"));
+  assert.equal(range.at, 8);
+  const json = JSON.parse(JSON.stringify(range));
+  assert.equal(json.message, range.message);
+  assert.deepEqual([json.kind, json.at, json.low, json.high], ["InvalidRange", 8, 0x7a, 0x61]);
+  // Any iterable is a list; DirMatch is frozen; the limits are exported.
+  assert.equal(compileMatcher(new Set(["*.ts", "*.js"])).match("a.js"), true);
+  assert.ok(Object.isFrozen(DirMatch));
+  assert.deepEqual([MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION], [65536, 32, 4096]);
+}
+console.log("✓ errors and API surface");
