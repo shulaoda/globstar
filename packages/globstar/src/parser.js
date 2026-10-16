@@ -47,7 +47,7 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
   }
 
   // `pending`: a `**` was left to `resolveGlobstars` (see `doubleStar`).
-  const state = { input: bytes, pos: 0, brace_depth: 0, pending: false };
+  const state = { input: bytes, pos: 0, pending: false };
 
   let negationCount = 0;
   while (state.pos < bytes.length && bytes[state.pos] === BANG) {
@@ -57,12 +57,15 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
   // `!` and `!!` negate nothing (§4.5).
   if (state.pos === bytes.length) throw new GlobError("Empty");
 
-  let body = parseSequence(state, false);
+  let body = parseSequence(state, 0);
   if (state.pending) body = resolveGlobstars(body, budget);
   return { body, isNegated: (negationCount & 1) === 1 };
 }
 
-function parseSequence(state, inBrace) {
+// The sequence up to the end, or (`depth` > 0, inside that many braces)
+// up to the `,` or `}` that ends its branch.
+function parseSequence(state, depth) {
+  const inBrace = depth > 0;
   const { input } = state;
   const nodes = [];
   const litBuf = [];
@@ -116,7 +119,7 @@ function parseSequence(state, inBrace) {
         nodes.push(parseClass(state));
         break;
       case LBRACE:
-        parseBraceInto(state, nodes, litBuf, flushLit);
+        parseBraceInto(state, depth + 1, nodes, litBuf, flushLit);
         break;
       default:
         litBuf.push(b);
@@ -209,8 +212,8 @@ function parseClassByte(state, classStart) {
   return resolved;
 }
 
-function parseBraceInto(state, nodes, litBuf, flushLit) {
-  const branches = parseBrace(state);
+function parseBraceInto(state, depth, nodes, litBuf, flushLit) {
+  const branches = parseBrace(state, depth);
   if (branches.length === 1) {
     litBuf.push(LBRACE);
     const single = branches[0];
@@ -229,17 +232,17 @@ function parseBraceInto(state, nodes, litBuf, flushLit) {
   }
 }
 
-function parseBrace(state) {
+// The brace at `pos`, the `depth`th one open.
+function parseBrace(state, depth) {
   const { input } = state;
   const startPos = state.pos;
   state.pos++;
-  state.brace_depth++;
-  if (state.brace_depth > MAX_BRACE_NESTING) {
+  if (depth > MAX_BRACE_NESTING) {
     throw new GlobError("BraceNestingTooDeep", { max: MAX_BRACE_NESTING });
   }
   const branches = [];
   while (true) {
-    branches.push(parseSequence(state, true));
+    branches.push(parseSequence(state, depth));
     const next = input[state.pos];
     if (next === COMMA) {
       state.pos++;
@@ -247,7 +250,6 @@ function parseBrace(state) {
     }
     if (next === RBRACE) {
       state.pos++;
-      state.brace_depth--;
       return branches;
     }
     throw new GlobError("UnterminatedBrace", { at: startPos });

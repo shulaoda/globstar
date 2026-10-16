@@ -832,7 +832,6 @@ impl Builder {
                         }
                     });
                 }
-                Op::Globstar => unreachable!("raw `**` survives lowering"),
                 op => {
                     let weight = op_weight(op);
                     for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {

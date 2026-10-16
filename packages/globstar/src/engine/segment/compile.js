@@ -13,7 +13,6 @@ import {
   OP_CLASS,
   OP_SEP,
   OP_SEP_RUN,
-  OP_GLOBSTAR,
   OP_OPT_SEGMENTS_SLASH,
   OP_SLASH_ANYTHING,
   OP_GLOBSTAR_ANY,
@@ -472,8 +471,6 @@ class Builder {
           for (const g of groups) g.pendingOss = false;
           this.globstarAll(groups, (state) => (state === B_START ? EL_G0 : EL_G1));
           break;
-        case OP_GLOBSTAR:
-          throw new Error("raw `**` survives lowering");
         default:
           this.push(groups, op);
       }

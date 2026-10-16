@@ -21,7 +21,6 @@ import {
   OP_ALTERNATION,
   OP_ANYCHAR,
   OP_CLASS,
-  OP_GLOBSTAR,
   OP_GLOBSTAR_ANY,
   OP_LEADING_SEPS,
   OP_LIT,
@@ -40,7 +39,6 @@ function assertNormalizedProgram(ops) {
   let previousLit = false;
   let previousStar = false;
   for (const op of ops) {
-    if (op.kind === OP_GLOBSTAR) throw new Error("raw globstar escaped lowering");
     if (op.kind === OP_LIT && previousLit) throw new Error("adjacent literal ops");
     if (op.kind === OP_STAR && previousStar) throw new Error("adjacent star ops");
     if (op.kind === OP_ALTERNATION) {
@@ -106,8 +104,6 @@ function opsDump(ops) {
           return "S";
         case OP_SEP_RUN:
           return "R";
-        case OP_GLOBSTAR:
-          return "G";
         case OP_OPT_SEGMENTS_SLASH:
           return "O";
         case OP_SLASH_ANYTHING:

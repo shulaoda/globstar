@@ -23,7 +23,6 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
     let mut p = Parser {
         input,
         pos: 0,
-        brace_depth: 0,
         pending: false,
     };
 
@@ -37,7 +36,7 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
         return Err(GlobError::Empty);
     }
 
-    let mut body = p.parse_sequence(false)?;
+    let mut body = p.parse_sequence(0)?;
     if p.pending {
         body = resolve_globstars(body, budget)?;
     }
@@ -50,7 +49,6 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
 struct Parser<'a> {
     input: &'a [u8],
     pos: usize,
-    brace_depth: usize,
     /// A `**` was left to `resolve_globstars` (see [`Parser::double_star`]).
     pending: bool,
 }
@@ -64,7 +62,10 @@ impl<'a> Parser<'a> {
         self.input.get(self.pos + offset).copied()
     }
 
-    fn parse_sequence(&mut self, in_brace: bool) -> Result<Node, GlobError> {
+    /// The sequence up to the end, or (`depth` > 0, inside that many
+    /// braces) up to the `,` or `}` that ends its branch.
+    fn parse_sequence(&mut self, depth: usize) -> Result<Node, GlobError> {
+        let in_brace = depth > 0;
         let remaining = self.input.len() - self.pos;
         // Most brace branches are one literal, which needs no node list.
         let mut nodes: Vec<Node> = if in_brace {
@@ -120,7 +121,7 @@ impl<'a> Parser<'a> {
                     let class = self.parse_class()?;
                     nodes.push(Node::Class(class));
                 }
-                b'{' => match <[Node; 1]>::try_from(self.parse_brace()?) {
+                b'{' => match <[Node; 1]>::try_from(self.parse_brace(depth + 1)?) {
                     Ok([single]) => {
                         lit_buf.push(b'{');
                         let inner = match single {
@@ -253,13 +254,13 @@ impl<'a> Parser<'a> {
         Ok(resolved)
     }
 
-    fn parse_brace(&mut self) -> Result<Vec<Node>, GlobError> {
+    /// The brace at `pos`, the `depth`th one open.
+    fn parse_brace(&mut self, depth: usize) -> Result<Vec<Node>, GlobError> {
         let start_pos = self.pos;
         debug_assert_eq!(self.input[self.pos], b'{');
         self.pos += 1;
 
-        self.brace_depth += 1;
-        if self.brace_depth > MAX_BRACE_NESTING {
+        if depth > MAX_BRACE_NESTING {
             return Err(GlobError::BraceNestingTooDeep {
                 max: MAX_BRACE_NESTING,
             });
@@ -267,13 +268,12 @@ impl<'a> Parser<'a> {
 
         let mut branches = Vec::with_capacity(4);
         loop {
-            branches.push(self.parse_sequence(true)?);
+            branches.push(self.parse_sequence(depth)?);
 
             match self.peek() {
                 Some(b',') => self.pos += 1,
                 Some(b'}') => {
                     self.pos += 1;
-                    self.brace_depth -= 1;
                     return Ok(branches);
                 }
                 _ => return Err(GlobError::UnterminatedBrace { at: start_pos }),

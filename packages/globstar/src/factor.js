@@ -8,8 +8,11 @@ import { N_CONCAT, N_GLOBSTAR, N_LITERAL, N_SEPARATOR, brace, concat, lit } from
 // is fine.
 export function factorBranches(branches) {
   const seqs = branches.map((n) => (n.tag === N_CONCAT ? n.children.slice() : [n]));
-  const prefix = liftPrefix(seqs);
-  const suffix = liftSuffix(seqs, prefix.length > 0);
+  const prefix = liftTokens(seqs, true);
+  const bytes = prefix.length > 0;
+  const head = bytes ? liftBytes(seqs, true) : null;
+  const suffix = liftTokens(seqs, false);
+  const tail = bytes ? liftBytes(seqs, false) : null;
 
   // Members that differ only in spelling (`**` and `**/**`, `\a` and
   // `a`) leave nothing behind; one empty branch stands for them all, so
@@ -28,11 +31,16 @@ export function factorBranches(branches) {
 
   // Loops, not spreads: ~64k lifted nodes would overflow the argument limit.
   const out = prefix;
+  if (head !== null) out.push(head);
   if (inner.tag === N_CONCAT) for (const child of inner.children) out.push(child);
   else out.push(inner);
+  if (tail !== null) out.push(tail);
   for (const node of suffix) out.push(node);
   return out.length === 1 ? out[0] : concat(out);
 }
+
+// The `k`th node from the front, or from the back.
+const at = (s, k, front) => (front ? s[k] : s[s.length - 1 - k]);
 
 function nodeEq(a, b) {
   if (a === b) return true;
@@ -44,92 +52,65 @@ function nodeEq(a, b) {
   return true;
 }
 
-function rangeEq(seqA, offA, seqB, offB, len) {
-  for (let k = 0; k < len; k++) {
-    if (!nodeEq(seqA[offA + k], seqB[offB + k])) return false;
-  }
-  return true;
-}
-
-function foldGroupAtEdge(a, b, c) {
+// How many nodes from `k` on stay together: `**/`, `/**/` and `/**` are
+// lifted whole or not at all.
+function group(s, k, front) {
+  const a = at(s, k, front);
+  const b = at(s, k + 1, front);
   if (a === undefined) return 0;
   if (a.tag === N_GLOBSTAR) return b?.tag === N_SEPARATOR ? 2 : 1;
-  if (a.tag === N_SEPARATOR && b?.tag === N_GLOBSTAR) return c?.tag === N_SEPARATOR ? 3 : 2;
+  if (a.tag === N_SEPARATOR && b?.tag === N_GLOBSTAR) {
+    return at(s, k + 2, front)?.tag === N_SEPARATOR ? 3 : 2;
+  }
   return 1;
 }
 
-function liftPrefix(seqs) {
-  // The shared whole tokens are counted first and taken out in one
-  // splice per member.
+// The whole tokens every member starts (or ends) with, taken out of them.
+function liftTokens(seqs, front) {
   const first = seqs[0];
-  let at = 0;
-  while (true) {
-    const size = foldGroupAtEdge(first[at], first[at + 1], first[at + 2]);
-    if (size === 0) break;
-    const same = seqs.every(
-      (s, i) =>
-        i === 0 ||
-        (foldGroupAtEdge(s[at], s[at + 1], s[at + 2]) === size && rangeEq(s, at, first, at, size)),
-    );
-    if (!same) break;
-    at += size;
-  }
-  const lifted = first.slice(0, at);
-  if (at > 0) for (const s of seqs) s.splice(0, at);
-
-  if (lifted.length === 0 || !seqs.every((s) => s.length > 0 && s[0].tag === N_LITERAL)) {
-    return lifted;
-  }
-  const lits = seqs.map((s) => s[0].bytes);
-  const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
   let n = 0;
-  while (n < min && lits.every((l) => l[n] === lits[0][n])) n++;
-  if (n === 0) return lifted;
-  lifted.push(lit(lits[0].slice(0, n)));
-  for (const s of seqs) {
-    const remaining = s[0].bytes.slice(n);
-    if (remaining.length === 0) s.shift();
-    else s[0] = lit(remaining);
+  while (true) {
+    const size = group(first, n, front);
+    if (size === 0) break;
+    const same = seqs.every((s, i) => {
+      if (i === 0) return true;
+      if (group(s, n, front) !== size) return false;
+      for (let k = n; k < n + size; k++) {
+        if (!nodeEq(at(s, k, front), at(first, k, front))) return false;
+      }
+      return true;
+    });
+    if (!same) break;
+    n += size;
+  }
+  const lifted = front ? first.slice(0, n) : first.slice(first.length - n);
+  if (n > 0) {
+    for (const s of seqs) {
+      if (front) s.splice(0, n);
+      else s.length -= n;
+    }
   }
   return lifted;
 }
 
-function liftSuffix(seqs, bytes) {
-  const liftedReverse = [];
-
-  while (true) {
-    const len0 = seqs[0].length;
-    const size = foldGroupAtEdge(seqs[0][len0 - 1], seqs[0][len0 - 2], seqs[0][len0 - 3]);
-    if (size === 0) break;
-    const same = seqs.every(
-      (s, i) =>
-        i === 0 ||
-        (foldGroupAtEdge(s[s.length - 1], s[s.length - 2], s[s.length - 3]) === size &&
-          rangeEq(s, s.length - size, seqs[0], len0 - size, size)),
-    );
-    if (!same) break;
-    for (let k = size - 1; k >= 0; k--) liftedReverse.push(seqs[0][len0 - size + k]);
-    for (const s of seqs) s.length -= size;
+// The bytes every member's first (or last) literal shares, taken out of
+// them, as one literal; `null` when there are none.
+function liftBytes(seqs, front) {
+  if (!seqs.every((s) => s.length > 0 && at(s, 0, front).tag === N_LITERAL)) return null;
+  const lits = seqs.map((s) => at(s, 0, front).bytes);
+  const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
+  const byte = (l, i) => (front ? l[i] : l[l.length - 1 - i]);
+  let n = 0;
+  while (n < min && lits.every((l) => byte(l, n) === byte(lits[0], n))) n++;
+  if (n === 0) return null;
+  for (const s of seqs) {
+    const b = at(s, 0, front).bytes;
+    const rest = front ? b.slice(n) : b.slice(0, b.length - n);
+    const k = front ? 0 : s.length - 1;
+    if (rest.length > 0) s[k] = lit(rest);
+    else if (front) s.shift();
+    else s.pop();
   }
-
-  if (bytes && seqs.every((s) => s.length > 0 && s[s.length - 1].tag === N_LITERAL)) {
-    const lits = seqs.map((s) => s[s.length - 1].bytes);
-    const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
-    let n = 0;
-    while (n < min && lits.every((l) => l[l.length - 1 - n] === lits[0][lits[0].length - 1 - n])) {
-      n++;
-    }
-    if (n > 0) {
-      const ref = lits[0];
-      liftedReverse.push(lit(ref.slice(ref.length - n)));
-      for (const s of seqs) {
-        const last = s[s.length - 1];
-        const remaining = last.bytes.slice(0, last.bytes.length - n);
-        if (remaining.length === 0) s.pop();
-        else s[s.length - 1] = lit(remaining);
-      }
-    }
-  }
-
-  return liftedReverse.reverse();
+  const ref = lits[0];
+  return lit(front ? ref.slice(0, n) : ref.slice(ref.length - n));
 }

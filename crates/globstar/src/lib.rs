@@ -348,17 +348,19 @@ impl Glob {
 fn tier_of(body: &Node) -> Tier {
     if body.is_pure_literal() {
         Tier::Literal
-    } else if body.has_globstar() || contains_brace(body) {
+    } else if has_globstar_or_brace(body) {
         Tier::Globstar
     } else {
         Tier::SimpleWildcard
     }
 }
 
-fn contains_brace(node: &Node) -> bool {
+/// A `**` or a brace anywhere, in one walk (a `**` in a brace is in a
+/// brace).
+fn has_globstar_or_brace(node: &Node) -> bool {
     match node {
-        Node::Brace(_) => true,
-        Node::Concat(xs) => xs.iter().any(contains_brace),
+        Node::Globstar | Node::Brace(_) => true,
+        Node::Concat(xs) => xs.iter().any(has_globstar_or_brace),
         _ => false,
     }
 }

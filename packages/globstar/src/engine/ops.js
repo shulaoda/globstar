@@ -7,12 +7,11 @@ export const OP_STAR = 2;
 export const OP_CLASS = 3;
 export const OP_SEP = 4;
 export const OP_SEP_RUN = 5;
-export const OP_GLOBSTAR = 6;
-export const OP_OPT_SEGMENTS_SLASH = 7;
-export const OP_SLASH_ANYTHING = 8;
-export const OP_GLOBSTAR_ANY = 9;
-export const OP_LEADING_SEPS = 10;
-export const OP_ALTERNATION = 11;
+export const OP_OPT_SEGMENTS_SLASH = 6;
+export const OP_SLASH_ANYTHING = 7;
+export const OP_GLOBSTAR_ANY = 8;
+export const OP_LEADING_SEPS = 9;
+export const OP_ALTERNATION = 10;
 
 // `a` copied to its length. V8 grows an array that `push` fills by half
 // again plus 16 slots and never gives the room back; a matcher keeps its
@@ -25,7 +24,6 @@ const ANYCHAR_OP = Object.freeze({ kind: OP_ANYCHAR });
 const STAR_OP = Object.freeze({ kind: OP_STAR });
 const SEP_OP = Object.freeze({ kind: OP_SEP });
 const SEP_RUN_OP = Object.freeze({ kind: OP_SEP_RUN });
-const GLOBSTAR_OP = Object.freeze({ kind: OP_GLOBSTAR });
 const OSS_OP = Object.freeze({ kind: OP_OPT_SEGMENTS_SLASH });
 const SLASH_ANY_OP = Object.freeze({ kind: OP_SLASH_ANYTHING });
 const GSTAR_ANY_OP = Object.freeze({ kind: OP_GLOBSTAR_ANY });
@@ -46,24 +44,15 @@ import {
   sep,
 } from "../ast.js";
 
-// Nodes are shared, not copied, so a brace that needs the `/` beside it
-// (see `absorbSeps`) is cheapest to find while lowering; the rare second
-// pass costs nothing on every other pattern.
+// Lower an AST into one normalized program.
 export function lower(node, caseInsensitive) {
   const ops = [];
-  const flag = { needsAbsorb: false };
-  lowerInto(node, ops, caseInsensitive, flag);
-  if (flag.needsAbsorb) {
-    ops.length = 0;
-    lowerInto(absorbSeps(node), ops, caseInsensitive, flag);
-  }
-  foldGlobstars(ops);
-  applyLeadingSeps(ops, false);
-  const ci = !!caseInsensitive;
-  return { ops, caseInsensitive: ci };
+  lowerInto(node, ops, caseInsensitive);
+  leadSeps(ops);
+  return { ops, caseInsensitive: !!caseInsensitive };
 }
 
-function lowerInto(node, out, caseInsensitive, flag) {
+function lowerInto(node, out, caseInsensitive) {
   switch (node.tag) {
     case N_LITERAL:
       pushOp(out, { kind: OP_LIT, bytes: node.bytes });
@@ -78,7 +67,7 @@ function lowerInto(node, out, caseInsensitive, flag) {
       pushOp(out, STAR_OP);
       return;
     case N_GLOBSTAR:
-      pushOp(out, GLOBSTAR_OP);
+      out.push(GSTAR_ANY_OP);
       return;
     case N_CLASS:
       pushOp(out, { kind: OP_CLASS, cls: caseInsensitive ? classExpandedAsciiCi(node) : node });
@@ -86,25 +75,44 @@ function lowerInto(node, out, caseInsensitive, flag) {
     case N_CONCAT: {
       const children = node.children;
       for (let i = 0; i < children.length; i++) {
-        const child = children[i];
-        if (child.tag === N_BRACE) {
-          const prevSep = i > 0 && children[i - 1].tag === N_SEPARATOR;
-          const nextSep = i + 1 < children.length && children[i + 1].tag === N_SEPARATOR;
-          if (
-            (prevSep && child.branches.some(leadsGlobstar)) ||
-            (nextSep && child.branches.some(trailsGlobstar))
-          ) {
-            flag.needsAbsorb = true;
+        let child = children[i];
+        if (child.tag === N_GLOBSTAR) {
+          // `**/` is OptSegmentsSlash, and the `/` before it (a brace's
+          // trailing ones too) is lenient (§12.3); `/**` is SlashAnything;
+          // a bare `**` is GlobstarAny.
+          const prev = out[out.length - 1];
+          if (children[i + 1]?.tag === N_SEPARATOR) {
+            if (prev === SEP_OP) out[out.length - 1] = SEP_RUN_OP;
+            else if (prev?.kind === OP_ALTERNATION) upgradeTrailingSeps(prev.branches);
+            out.push(OSS_OP);
+            i++;
+          } else if (prev === SEP_OP) {
+            out[out.length - 1] = SLASH_ANY_OP;
+          } else {
+            out.push(GSTAR_ANY_OP);
           }
+          continue;
         }
-        lowerInto(child, out, caseInsensitive, flag);
-        // Two braces around one `/`, both with a `**` at that edge:
-        // `absorbSeps` gave the `/` to the first, so a `**/` opening a
-        // branch of the second keeps its lenient boundary (§12.3) by taking
-        // any further separators itself.
-        if (i > 0 && children[i - 1].tag === N_BRACE && child.tag === N_BRACE) {
-          takeLeadingSeps(out[out.length - 1].branches);
+        if (child.tag === N_BRACE) {
+          // A brace with a `**` at an edge takes the `/` beside it into
+          // every branch, so the `**/` or `/**` fold happens inside the
+          // branch: `{a/**,b}/x` lowers as `{a/**/,b/}x`.
+          const n = out.length;
+          const prev = n > 0 && out[n - 1] === SEP_OP && child.branches.some(leadsGlobstar);
+          const next = children[i + 1]?.tag === N_SEPARATOR && child.branches.some(trailsGlobstar);
+          if (prev) out.pop();
+          if (next) i++;
+          if (prev || next) child = withSeps(child, prev, next);
+          // Two braces around one `/`, both with a `**` at that edge: the
+          // first took the `/`, so a `**/` opening a branch of the second
+          // keeps its lenient boundary (§12.3) by taking any further
+          // separators itself.
+          const afterBrace = out.length > 0 && out[out.length - 1].kind === OP_ALTERNATION;
+          lowerInto(child, out, caseInsensitive);
+          if (afterBrace) for (const branch of out[out.length - 1].branches) leadSeps(branch);
+          continue;
         }
+        lowerInto(child, out, caseInsensitive);
       }
       return;
     }
@@ -112,14 +120,26 @@ function lowerInto(node, out, caseInsensitive, flag) {
       const branches = [];
       for (const branch of node.branches) {
         const branchOps = [];
-        lowerInto(branch, branchOps, caseInsensitive, flag);
-        foldGlobstars(branchOps);
+        lowerInto(branch, branchOps, caseInsensitive);
         branches.push(branchOps);
       }
       pushOp(out, { kind: OP_ALTERNATION, branches });
       return;
     }
   }
+}
+
+function withSeps(node, prev, next) {
+  return brace(
+    node.branches.map((branch) => {
+      const seq = [];
+      if (prev) seq.push(sep());
+      if (branch.tag === N_CONCAT) for (const c of branch.children) seq.push(c);
+      else seq.push(branch);
+      if (next) seq.push(sep());
+      return concat(seq);
+    }),
+  );
 }
 
 function pushOp(out, op) {
@@ -135,12 +155,12 @@ function pushOp(out, op) {
   }
 }
 
-function takeLeadingSeps(branches) {
-  for (const branch of branches) {
-    const first = branch[0];
-    if (first?.kind === OP_OPT_SEGMENTS_SLASH) branch.unshift(LEADING_SEPS_OP);
-    else if (first?.kind === OP_ALTERNATION) takeLeadingSeps(first.branches);
-  }
+// A `**/` that opens the program, or a branch at its head, also takes the
+// leading separators (§8.5).
+function leadSeps(ops) {
+  const first = ops[0];
+  if (first?.kind === OP_OPT_SEGMENTS_SLASH) ops.unshift(LEADING_SEPS_OP);
+  else if (first?.kind === OP_ALTERNATION) for (const branch of first.branches) leadSeps(branch);
 }
 
 function leadsGlobstar(node) {
@@ -157,121 +177,10 @@ function trailsGlobstar(node) {
   return node.tag === N_BRACE && node.branches.some(trailsGlobstar);
 }
 
-// `tailIsOss`: the enclosing program continues with an OptSegmentsSlash
-// (union factoring lifts shared trailing `**/` behind the alternation),
-// so an empty branch's expansion starts with `**/` and needs the §8.5
-// LeadingSeps.
-function applyLeadingSeps(ops, tailIsOss) {
-  if (ops.length === 0) return;
-  const nextIsOss = ops.length > 1 ? ops[1].kind === OP_OPT_SEGMENTS_SLASH : tailIsOss;
-  const first = ops[0];
-  if (first.kind === OP_OPT_SEGMENTS_SLASH) {
-    ops.unshift(LEADING_SEPS_OP);
-  } else if (first.kind === OP_ALTERNATION) {
-    for (const branch of first.branches) {
-      if (branch.length === 0) {
-        if (nextIsOss) branch.push(LEADING_SEPS_OP);
-      } else {
-        applyLeadingSeps(branch, nextIsOss);
-      }
-    }
-  }
-}
-
-// Gives a brace the `/` beside it when a branch has a `**` at that edge, so
-// the `**/` or `/**` fold happens inside the branch: `{a/**,b}/x` becomes
-// `{a/**/,b/}x`. A `/` already owned by a `**` token stays.
-function absorbSeps(node) {
-  if (node.tag === N_CONCAT) {
-    const out = [];
-    const children = node.children;
-    let i = 0;
-    while (i < children.length) {
-      const child = children[i];
-      if (child.tag !== N_BRACE) {
-        out.push(absorbSeps(child));
-        i++;
-        continue;
-      }
-      const prevIsSep = out.length > 0 && out[out.length - 1].tag === N_SEPARATOR;
-      const prevSepOwnedByGlobstar =
-        prevIsSep && out.length >= 2 && out[out.length - 2].tag === N_GLOBSTAR;
-      const absorbPrev = prevIsSep && !prevSepOwnedByGlobstar && child.branches.some(leadsGlobstar);
-      const absorbNext =
-        i + 1 < children.length &&
-        children[i + 1].tag === N_SEPARATOR &&
-        child.branches.some(trailsGlobstar);
-      if (!absorbPrev && !absorbNext) {
-        out.push(absorbSeps(child));
-        i++;
-        continue;
-      }
-      if (absorbPrev) out.pop();
-      const branches = child.branches.map((branch) => {
-        const sequence = [];
-        if (absorbPrev) sequence.push(sep());
-        // Loop, not spread: ~64k children would overflow the argument limit.
-        if (branch.tag === N_CONCAT) for (const child of branch.children) sequence.push(child);
-        else sequence.push(branch);
-        if (absorbNext) sequence.push(sep());
-        return absorbSeps(concat(sequence));
-      });
-      out.push(brace(branches));
-      i += absorbNext ? 2 : 1;
-    }
-    return concat(out);
-  }
-  if (node.tag === N_BRACE) return brace(node.branches.map(absorbSeps));
-  return node;
-}
-
 function upgradeTrailingSeps(branches) {
   for (const branch of branches) {
-    const last = branch.length > 0 ? branch[branch.length - 1] : undefined;
-    if (last === undefined) continue;
-    if (last.kind === OP_SEP) branch[branch.length - 1] = SEP_RUN_OP;
-    else if (last.kind === OP_ALTERNATION) upgradeTrailingSeps(last.branches);
-  }
-}
-
-function foldGlobstars(ops) {
-  let write = 0;
-  let read = 0;
-  while (read < ops.length) {
-    if (ops[read].kind === OP_GLOBSTAR && ops[read + 1]?.kind === OP_SEP) {
-      ops[write++] = OSS_OP;
-      read += 2;
-    } else {
-      if (read !== write) ops[write] = ops[read];
-      read++;
-      write++;
-    }
-  }
-  ops.length = write;
-
-  for (let i = 0; i + 1 < ops.length; i++) {
-    if (ops[i + 1].kind !== OP_OPT_SEGMENTS_SLASH) continue;
-    if (ops[i].kind === OP_SEP) ops[i] = SEP_RUN_OP;
-    // A branch-trailing `/` before `**/` is `**`-adjacent too:
-    // `{src/,lib/}**/x` ≡ `src/**/x` ∪ `lib/**/x` (§7.0 + §12.3).
-    else if (ops[i].kind === OP_ALTERNATION) upgradeTrailingSeps(ops[i].branches);
-  }
-
-  write = 0;
-  read = 0;
-  while (read < ops.length) {
-    if (ops[read].kind === OP_SEP && ops[read + 1]?.kind === OP_GLOBSTAR) {
-      ops[write++] = SLASH_ANY_OP;
-      read += 2;
-    } else {
-      if (read !== write) ops[write] = ops[read];
-      read++;
-      write++;
-    }
-  }
-  ops.length = write;
-
-  for (let i = 0; i < ops.length; i++) {
-    if (ops[i].kind === OP_GLOBSTAR) ops[i] = GSTAR_ANY_OP;
+    const last = branch[branch.length - 1];
+    if (last?.kind === OP_SEP) branch[branch.length - 1] = SEP_RUN_OP;
+    else if (last?.kind === OP_ALTERNATION) upgradeTrailingSeps(last.branches);
   }
 }

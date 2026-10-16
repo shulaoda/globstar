@@ -13,7 +13,6 @@ fn is_normalized(ops: &[Op]) -> bool {
     let mut previous_star = false;
     for op in ops {
         match op {
-            Op::Globstar => return false,
             Op::Lit(_) if previous_lit => return false,
             Op::Star if previous_star => return false,
             Op::Alternation(branches) if !branches.iter().all(|b| is_normalized(b)) => {
@@ -109,7 +108,6 @@ fn ops_dump(ops: &[Op], out: &mut String) {
             Op::Class(_) => out.push('K'),
             Op::Sep => out.push('S'),
             Op::SepRun => out.push('R'),
-            Op::Globstar => out.push('G'),
             Op::OptSegmentsSlash => out.push('O'),
             Op::SlashAnything => out.push('A'),
             Op::GlobstarAny => out.push('Y'),

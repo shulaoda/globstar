@@ -15,8 +15,11 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
             other => vec![other],
         })
         .collect();
-    let prefix = lift_prefix(&mut seqs);
-    let suffix = lift_suffix(&mut seqs, !prefix.is_empty());
+    let mut out = lift_tokens(&mut seqs, true);
+    let bytes = !out.is_empty();
+    let head = bytes.then(|| lift_bytes(&mut seqs, true)).flatten();
+    let mut suffix = lift_tokens(&mut seqs, false);
+    let tail = bytes.then(|| lift_bytes(&mut seqs, false)).flatten();
 
     // Members that differ only in spelling (`**` and `**/**`, `\a` and
     // `a`) leave nothing behind; one empty branch stands for them all,
@@ -40,16 +43,26 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
         Node::Brace(branches)
     };
 
-    let mut out = prefix;
+    out.extend(head);
     match inner {
         Node::Concat(xs) => out.extend(xs),
         other => out.push(other),
     }
-    out.extend(suffix);
+    out.extend(tail);
+    out.append(&mut suffix);
     if out.len() == 1 {
         out.pop().unwrap()
     } else {
         Node::Concat(out)
+    }
+}
+
+/// The `k`th node of `seq` from the front, or from the back.
+fn at(seq: &[Node], k: usize, front: bool) -> Option<&Node> {
+    if front {
+        seq.get(k)
+    } else {
+        seq.len().checked_sub(k + 1).map(|i| &seq[i])
     }
 }
 
@@ -64,12 +77,14 @@ fn node_eq(a: &Node, b: &Node) -> bool {
     }
 }
 
-fn fold_group_at_edge<'a>(mut it: impl Iterator<Item = &'a Node>) -> usize {
-    match (it.next(), it.next()) {
+/// How many nodes from the `k`th on stay together: `**/`, `/**/` and
+/// `/**` are lifted whole or not at all.
+fn group(seq: &[Node], k: usize, front: bool) -> usize {
+    match (at(seq, k, front), at(seq, k + 1, front)) {
         (None, _) => 0,
         (Some(Node::Globstar), Some(Node::Separator)) => 2,
         (Some(Node::Separator), Some(Node::Globstar)) => {
-            if matches!(it.next(), Some(Node::Separator)) {
+            if matches!(at(seq, k + 2, front), Some(Node::Separator)) {
                 3
             } else {
                 2
@@ -79,130 +94,72 @@ fn fold_group_at_edge<'a>(mut it: impl Iterator<Item = &'a Node>) -> usize {
     }
 }
 
-fn lift_prefix(seqs: &mut [Vec<Node>]) -> Vec<Node> {
-    // The shared whole tokens are counted first and taken out in one
-    // drain per member.
-    let mut at = 0;
+/// The whole tokens every member starts (or ends) with, taken out of
+/// them: counted first, then drained once per member.
+fn lift_tokens(seqs: &mut [Vec<Node>], front: bool) -> Vec<Node> {
+    let mut n = 0;
     loop {
-        let size = fold_group_at_edge(seqs[0][at..].iter());
-        if size == 0 {
-            break;
-        }
-        let head = &seqs[0][at..at + size];
-        let same = seqs.iter().skip(1).all(|s| {
-            fold_group_at_edge(s[at..].iter()) == size
-                && s[at..at + size]
-                    .iter()
-                    .zip(head)
-                    .all(|(x, y)| node_eq(x, y))
-        });
-        if !same {
-            break;
-        }
-        at += size;
-    }
-    let mut lifted: Vec<Node> = seqs[0].drain(..at).collect();
-    for s in seqs.iter_mut().skip(1) {
-        s.drain(..at);
-    }
-
-    if lifted.is_empty()
-        || !seqs
-            .iter()
-            .all(|s| matches!(s.first(), Some(Node::Literal(_))))
-    {
-        return lifted;
-    }
-    let lits: Vec<&[u8]> = seqs
-        .iter()
-        .map(|s| match &s[0] {
-            Node::Literal(b) => b.as_slice(),
-            _ => unreachable!("checked above"),
-        })
-        .collect();
-    let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
-    let n = (0..min)
-        .take_while(|&i| {
-            let b = lits[0][i];
-            lits.iter().skip(1).all(|l| l[i] == b)
-        })
-        .count();
-    if n == 0 {
-        return lifted;
-    }
-    lifted.push(Node::Literal(lits[0][..n].to_vec()));
-    for s in seqs.iter_mut() {
-        let Node::Literal(b) = &mut s[0] else {
-            unreachable!("checked above");
+        let first = &seqs[0];
+        let size = group(first, n, front);
+        let same = |s: &Vec<Node>| {
+            group(s, n, front) == size
+                && (n..n + size)
+                    .all(|k| node_eq(at(s, k, front).unwrap(), at(first, k, front).unwrap()))
         };
-        b.drain(..n);
-        if b.is_empty() {
-            s.remove(0);
+        if size == 0 || !seqs[1..].iter().all(same) {
+            break;
+        }
+        n += size;
+    }
+    let mut lifted = Vec::new();
+    for (i, s) in seqs.iter_mut().enumerate() {
+        let len = s.len();
+        let cut = if front {
+            s.drain(..n)
+        } else {
+            s.drain(len - n..)
+        };
+        if i == 0 {
+            lifted.extend(cut);
         }
     }
     lifted
 }
 
-fn lift_suffix(seqs: &mut [Vec<Node>], bytes: bool) -> Vec<Node> {
-    let mut lifted_reverse = Vec::new();
-
-    loop {
-        let size = fold_group_at_edge(seqs[0].iter().rev());
-        if size == 0 {
-            break;
+/// The bytes every member's first (or last) literal shares, taken out of
+/// them as one literal.
+fn lift_bytes(seqs: &mut [Vec<Node>], front: bool) -> Option<Node> {
+    let edge_lit = |s| match at(s, 0, front) {
+        Some(Node::Literal(b)) => Some(b.as_slice()),
+        _ => None,
+    };
+    let lits: Vec<&[u8]> = seqs.iter().map(|s| edge_lit(s)).collect::<Option<_>>()?;
+    let byte = |l: &[u8], i: usize| if front { l[i] } else { l[l.len() - 1 - i] };
+    let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
+    let n = (0..min)
+        .take_while(|&i| lits.iter().all(|l| byte(l, i) == byte(lits[0], i)))
+        .count();
+    if n == 0 {
+        return None;
+    }
+    let shared = if front {
+        lits[0][..n].to_vec()
+    } else {
+        lits[0][lits[0].len() - n..].to_vec()
+    };
+    for s in seqs.iter_mut() {
+        let k = if front { 0 } else { s.len() - 1 };
+        let Node::Literal(b) = &mut s[k] else {
+            unreachable!("every edge is a literal")
+        };
+        if front {
+            b.drain(..n);
+        } else {
+            b.truncate(b.len() - n);
         }
-        let len0 = seqs[0].len();
-        let tail = &seqs[0][len0 - size..];
-        let same = seqs.iter().skip(1).all(|s| {
-            fold_group_at_edge(s.iter().rev()) == size
-                && s[s.len() - size..]
-                    .iter()
-                    .zip(tail)
-                    .all(|(x, y)| node_eq(x, y))
-        });
-        if !same {
-            break;
-        }
-        lifted_reverse.extend(seqs[0].drain(len0 - size..).rev());
-        for s in seqs.iter_mut().skip(1) {
-            s.truncate(s.len() - size);
+        if b.is_empty() {
+            s.remove(k);
         }
     }
-
-    if bytes
-        && seqs
-            .iter()
-            .all(|s| matches!(s.last(), Some(Node::Literal(_))))
-    {
-        let lits: Vec<&[u8]> = seqs
-            .iter()
-            .map(|s| match s.last().unwrap() {
-                Node::Literal(b) => b.as_slice(),
-                _ => unreachable!("checked above"),
-            })
-            .collect();
-        let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
-        let n = (0..min)
-            .take_while(|&i| {
-                let b = lits[0][lits[0].len() - 1 - i];
-                lits.iter().skip(1).all(|l| l[l.len() - 1 - i] == b)
-            })
-            .count();
-        if n > 0 {
-            lifted_reverse.push(Node::Literal(lits[0][lits[0].len() - n..].to_vec()));
-            for s in seqs.iter_mut() {
-                let last = s.len() - 1;
-                let Node::Literal(b) = &mut s[last] else {
-                    unreachable!("checked above");
-                };
-                b.truncate(b.len() - n);
-                if b.is_empty() {
-                    s.pop();
-                }
-            }
-        }
-    }
-
-    lifted_reverse.reverse();
-    lifted_reverse
+    Some(Node::Literal(shared))
 }
