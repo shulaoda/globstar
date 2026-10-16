@@ -7,7 +7,7 @@ import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { globstar } from "@globstar/core";
-import { assertAgree, freshSet } from "./shared.js";
+import { MISS, assertAgree, assertMisses, freshSet } from "./shared.js";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
@@ -91,14 +91,35 @@ assertAgree(
   PATHS,
 );
 
+assertMisses(
+  LIBS,
+  PATTERN_SETS.map(([, patterns]) => patterns),
+  MISS,
+);
+
 // Matchers for patterns not seen before, and a first match: what a new
-// pattern set costs before it answers.
+// pattern set costs before it answers. The match misses, so a library
+// that matches one member at a time runs (and compiles) every member.
+// Then that first match alone, on matchers just built (the build not
+// counted): what a library leaves for the first call.
 console.log("===== PHASE 1: COMPILE =====\n");
 for (const [label, patterns] of PATTERN_SETS) {
   group(`compile: ${label}`, () => {
     summary(() => {
       for (const [name, build, runFn] of LIBS) {
-        bench(name, () => do_not_optimize(runFn(build(freshSet(patterns)), PATHS[0])));
+        bench(name, () => do_not_optimize(runFn(build(freshSet(patterns)), MISS)));
+      }
+    });
+  });
+  group(`first match: ${label}`, () => {
+    summary(() => {
+      for (const [name, build, runFn] of LIBS) {
+        bench(name, function* () {
+          yield {
+            [0]: () => build(freshSet(patterns)),
+            bench: (m) => do_not_optimize(runFn(m, MISS)),
+          };
+        });
       }
     });
   });

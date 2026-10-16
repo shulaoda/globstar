@@ -8,7 +8,7 @@ import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { globstar } from "@globstar/core";
-import { assertAgree, fresh } from "./shared.js";
+import { MISS, assertAgree, assertMisses, fresh } from "./shared.js";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
@@ -55,14 +55,34 @@ assertAgree(
   PATHS,
 );
 
+assertMisses(
+  LIBS,
+  PATTERNS.map(([p]) => p),
+  MISS,
+);
+
 // A matcher for a pattern not seen before, and its first match: what a
-// new pattern costs before it answers.
+// new pattern costs before it answers. Then that first match alone, on a
+// matcher just built (the build not counted): what a library leaves for
+// the first call, such as compiling its RegExp.
 console.log("===== PHASE 1: COMPILE =====\n");
 for (const [p, label] of PATTERNS) {
   group(`compile: ${label}`, () => {
     summary(() => {
       for (const [name, build, runFn] of LIBS) {
-        bench(name, () => do_not_optimize(runFn(build(fresh(p)), PATHS[0])));
+        bench(name, () => do_not_optimize(runFn(build(fresh(p)), MISS)));
+      }
+    });
+  });
+  group(`first match: ${label}`, () => {
+    summary(() => {
+      for (const [name, build, runFn] of LIBS) {
+        bench(name, function* () {
+          yield {
+            [0]: () => build(fresh(p)),
+            bench: (m) => do_not_optimize(runFn(m, MISS)),
+          };
+        });
       }
     });
   });

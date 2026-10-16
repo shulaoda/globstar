@@ -5,12 +5,16 @@
 //!   globstar       — `Glob::union`
 //!   globset / wax / fast_glob — third-party baselines
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;
 use globset::GlobBuilder;
 use globstar::Glob;
 use std::path::Path;
 use wax::Pattern as WaxPattern;
+
+/// A path no row matches. A first match on it runs every part a matcher
+/// left for its first use (in a list of separate matchers, each one).
+const MISS: &str = "target/debug/build/foo";
 
 const PATHS: &[&str] = &[
     "src/main.ts",
@@ -92,9 +96,10 @@ fn build_wax(patterns: &[&str]) -> Vec<wax::Glob<'static>> {
 
 // ---------- COMPILE bench ----------
 /// A build and its first match: regex-backed matchers build their
-/// search cache on first use, so the build alone undercounts them.
+/// search cache on first use, so the build alone undercounts them. The
+/// match misses, so separate matchers all run.
 fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
-    let first = PATHS[0];
+    let first = MISS;
     let mut group = c.benchmark_group(format!("compile_{label}"));
     group.bench_function("globstar", |b| {
         b.iter(|| black_box(build_globstar(black_box(patterns)).is_match(first.as_bytes())));
@@ -109,6 +114,34 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
                 .any(|g| g.is_match(first));
             black_box(any)
         });
+    });
+    group.finish();
+}
+
+/// The first match alone, on matchers just built (the build is not
+/// timed): what a library leaves for its first use.
+fn bench_first(c: &mut Criterion, label: &str, patterns: &[&str]) {
+    let mut group = c.benchmark_group(format!("first_{label}"));
+    group.bench_function("globstar", |b| {
+        b.iter_batched_ref(
+            || build_globstar(patterns),
+            |g| black_box(g.is_match(MISS.as_bytes())),
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("globset", |b| {
+        b.iter_batched_ref(
+            || build_globset(patterns),
+            |g| black_box(g.is_match(Path::new(MISS))),
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("wax_or", |b| {
+        b.iter_batched_ref(
+            || build_wax(patterns),
+            |gs| black_box(gs.iter().any(|g| g.is_match(MISS))),
+            BatchSize::SmallInput,
+        );
     });
     group.finish();
 }
@@ -162,6 +195,7 @@ fn assert_all_agree() {
         let union = build_globstar(&patterns);
         let gset = build_globset(&patterns);
         let wax_g = build_wax(&patterns);
+        assert!(!union.is_match(MISS.as_bytes()), "`{label}` matches {MISS}");
         for &path in PATHS {
             let want = union.is_match(path.as_bytes());
             for (name, got) in [
@@ -181,6 +215,7 @@ fn bench_all(c: &mut Criterion) {
     assert_all_agree();
     for (label, patterns) in pattern_sets() {
         bench_compile(c, label, &patterns);
+        bench_first(c, label, &patterns);
         bench_match(c, label, &patterns);
     }
 }

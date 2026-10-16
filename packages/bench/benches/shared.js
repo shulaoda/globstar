@@ -13,6 +13,21 @@ export function fresh(pattern) {
   return pattern.endsWith("}") ? pattern.slice(0, -1) + tag + "}" : pattern + tag;
 }
 
+// A path no row matches. A first match on it runs every part a matcher
+// left for its first use: in a list matched one member at a time, each
+// member, where a hit would stop at the first.
+export const MISS = "target/debug/build/foo";
+
+// Throws unless `path` is a miss for every input.
+export function assertMisses(libs, inputs, path) {
+  const [[name, build, run]] = libs;
+  for (const input of inputs) {
+    if (run(build(input), path)) {
+      throw new Error(`${name} matches ${path} with ${JSON.stringify(input)}: not a miss`);
+    }
+  }
+}
+
 // A fresh variant of every member of a pattern set.
 export function freshSet(patterns) {
   return patterns.map(fresh);

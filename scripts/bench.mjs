@@ -316,6 +316,15 @@ const rustSingle = {
       ["wax (Rust)", "wax"],
     ],
   },
+  first: {
+    data: rust.matcherSingle ?? empty,
+    rowKey: (l) => `first_${l}`,
+    libCols: [
+      ["globstar (Rust)", "globstar"],
+      ["globset (Rust)", "globset"],
+      ["wax (Rust)", "wax"],
+    ],
+  },
   match: {
     data: rust.matcherSingle ?? empty,
     rowKey: (l) => `match_${l}`,
@@ -343,6 +352,16 @@ const jsSingle = {
   compile: {
     data: js.matcherSingle ?? empty,
     rowKey: (l) => `compile: ${l}`,
+    libCols: [
+      ["globstar (JS)", "globstar"],
+      ["picomatch (JS)", "picomatch"],
+      ["minimatch (JS)", "minimatch"],
+      ["micromatch (JS)", "micromatch"],
+    ],
+  },
+  first: {
+    data: js.matcherSingle ?? empty,
+    rowKey: (l) => `first match: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
       ["picomatch (JS)", "picomatch"],
@@ -383,6 +402,15 @@ const rustMulti = {
       ["wax (Rust)", "wax_or"],
     ],
   },
+  first: {
+    data: rust.matcherMulti ?? empty,
+    rowKey: (l) => `first_${l}`,
+    libCols: [
+      ["globstar (Rust)", "globstar"],
+      ["globset (Rust)", "globset"],
+      ["wax (Rust)", "wax_or"],
+    ],
+  },
   match: {
     data: rust.matcherMulti ?? empty,
     rowKey: (l) => `match_${l}`,
@@ -410,6 +438,16 @@ const jsMulti = {
   compile: {
     data: js.matcherMulti ?? empty,
     rowKey: (l) => `compile: ${l}`,
+    libCols: [
+      ["globstar (JS)", "globstar"],
+      ["picomatch (JS)", "picomatch"],
+      ["minimatch (JS)", "minimatch"],
+      ["micromatch (JS)", "micromatch"],
+    ],
+  },
+  first: {
+    data: js.matcherMulti ?? empty,
+    rowKey: (l) => `first match: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
       ["picomatch (JS)", "picomatch"],
@@ -488,7 +526,13 @@ use them for relative comparison, not absolute SLOs.
 > first use) or build their search cache (globset, wax) only then. On
 > the JS side each iteration gets a pattern not seen before, of the
 > row's shape (a short literal tag added), since V8 caches a RegExp by
-> its source.
+> its source. The first match is on a path no row matches, so a list
+> matched one member at a time runs every member.
+
+> **First match cells** time that first match alone, on a matcher
+> just built (the build is not timed): the part of the compile cell a
+> library leaves for its first call. A matcher that compiles everything
+> up front shows about one ordinary match here.
 
 > **Memory cells** count what a matcher keeps once it has matched
 > every bench path: JS from 1,000 distinct patterns of the row's shape
@@ -562,6 +606,10 @@ sections.push(`## Single-pattern matcher
 
 ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.compile, jsSingle.compile])}
 
+### First match (deferred compile)
+
+${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.first, jsSingle.first])}
+
 ### Match (per call)
 
 ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.match, jsSingle.match])}
@@ -576,6 +624,10 @@ sections.push(`## Multi-pattern matcher
 ### Compile (per matcher)
 
 ${combinedTable("Set", MULTI_SETS, [rustMulti.compile, jsMulti.compile])}
+
+### First match (deferred compile)
+
+${combinedTable("Set", MULTI_SETS, [rustMulti.first, jsMulti.first])}
 
 ### Match (per call)
 
