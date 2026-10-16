@@ -9,6 +9,7 @@ import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { compileSegment, opsHaveNonAscii } from "./compile.js";
 import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
+import { exact } from "../ops.js";
 import {
   chainMatches,
   chainDir,
@@ -37,10 +38,10 @@ export class SegmentMatcher {
     this.ci = !!program.caseInsensitive;
     this.dot = dot;
     this.byteOnly = byteOnly;
-    this.prefixes = computeStaticPrefixes(program.ops);
+    this.prefixes = exact(computeStaticPrefixes(program.ops));
     this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
     const suf = suffixes(program.ops);
-    this.suffixes = suf.length > 0 ? suf : null;
+    this.suffixes = suf.length > 0 ? exact(suf) : null;
   }
 
   // `opts.forceNfa` bypasses the chains, `opts.byteOnly` the string

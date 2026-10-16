@@ -10,7 +10,7 @@
 // the states) it closes its set as it goes, so memory stays linear in
 // the pattern.
 
-import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION } from "../ops.js";
+import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION, exact } from "../ops.js";
 import { classMatches, ciLetter } from "../../ast.js";
 import { ctz32 } from "../../bytes.js";
 import { wordsFor, bitTest, bitSet, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
@@ -142,10 +142,10 @@ function closeWide(nfa, set, block) {
 // Up to 32 states each state's closure is kept, so a step ORs them.
 class SegNfaSmall {
   constructor(b, entry, dot) {
-    this.kinds = b.kinds;
-    this.byteVals = b.byteVals;
-    this.nexts = b.nexts;
-    this.clsRefs = b.clsRefs;
+    this.kinds = exact(b.kinds);
+    this.byteVals = exact(b.byteVals);
+    this.nexts = exact(b.nexts);
+    this.clsRefs = exact(b.clsRefs);
     const n = b.kinds.length;
 
     // Guard-passing closures, in one backward pass: every ε-edge points
@@ -158,7 +158,7 @@ class SegNfaSmall {
       else if (k === S_JUMP || k === S_DOT_GUARD) closures[s] = closures[b.nexts[s]];
       else closures[s] = 1 << s;
     }
-    this.closures = closures;
+    this.closures = exact(closures);
     this.init = closures[entry];
     // Under `dot` a leading `.` needs no protection, so the blocked
     // closure is just `init` (DotGuards behave like Jumps).
@@ -230,11 +230,11 @@ function anySegSmall(nfa) {
 // The same automaton over Int32Array words: more than 32 states.
 class SegNfaWide {
   constructor(b, entry, dot) {
-    this.kinds = b.kinds;
-    this.byteVals = b.byteVals;
-    this.nexts = b.nexts;
-    this.splitBs = b.splitBs;
-    this.clsRefs = b.clsRefs;
+    this.kinds = exact(b.kinds);
+    this.byteVals = exact(b.byteVals);
+    this.nexts = exact(b.nexts);
+    this.splitBs = exact(b.splitBs);
+    this.clsRefs = exact(b.clsRefs);
     const n = b.kinds.length;
     const words = wordsFor(n);
     this.words = words;
@@ -258,7 +258,7 @@ class SegNfaWide {
         }
       }
     }
-    this.closures = closures;
+    this.closures = closures === null ? null : exact(closures);
     const entrySet = (block) => {
       const set = new Int32Array(this.words);
       bitSet(set, entry);

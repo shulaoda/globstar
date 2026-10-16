@@ -19,6 +19,7 @@ import {
   OP_GLOBSTAR_ANY,
   OP_LEADING_SEPS,
   OP_ALTERNATION,
+  exact,
 } from "../ops.js";
 import { CI_BYTE } from "../../ast.js";
 import { IS_WINDOWS_SEP } from "../../bytes.js";
@@ -71,7 +72,7 @@ export function compileSegment(ops, dot, ci, forceNfa) {
     for (const e of graph.elems) nStates += elemStates(e);
     nfa = anyNfa(graph, nStates, ci);
   }
-  return { elems: graph.elems, chains: chainList, nfa };
+  return { elems: exact(graph.elems), chains: exact(chainList), nfa };
 }
 
 function makeElem(kind, litBytes, wild) {
@@ -723,7 +724,7 @@ function nfaSmall(graph, nodes) {
   }
   let init = 0;
   for (const t of start) init = addTarget(init, t);
-  return { kind: NFA_SMALL, tab, init, accept, reach1 };
+  return { kind: NFA_SMALL, tab: exact(tab), init, accept, reach1 };
 }
 
 // The same over Int32Array words: more than 31 states.
@@ -780,7 +781,15 @@ function nfaWide(graph, nodes) {
   after[accept] = new Int32Array(words);
   const init = new Int32Array(words);
   for (const t of start) addTarget(init, t);
-  return { kind: NFA_WIDE, after, nodeOf, init, accept, reach1, words };
+  return {
+    kind: NFA_WIDE,
+    after: exact(after),
+    nodeOf: exact(nodeOf),
+    init,
+    accept,
+    reach1,
+    words,
+  };
 }
 
 // Past MAX_ROW_BYTES the graph NFA is stepped sparsely. A position keeps
@@ -871,18 +880,18 @@ function nfaSparse(graph, ci) {
   nullAt.push(nulls.length);
   return {
     kind: NFA_SPARSE,
-    pos,
-    entries,
-    litAt,
-    lits,
-    litKeys,
-    otherAt,
-    others,
-    nullAt,
-    nulls,
-    ends,
-    reach1,
-    succReach1,
+    pos: exact(pos),
+    entries: exact(entries),
+    litAt: exact(litAt),
+    lits: exact(lits),
+    litKeys: exact(litKeys),
+    otherAt: exact(otherAt),
+    others: exact(others),
+    nullAt: exact(nullAt),
+    nulls: exact(nulls),
+    ends: exact(ends),
+    reach1: exact(reach1),
+    succReach1: exact(succReach1),
     accept,
     // Mark arrays reused across calls (see `nfaRunSparse`).
     scratch: null,
@@ -1044,7 +1053,7 @@ function indexSuffixes(suffixes, ci) {
     if (last !== null && last.len === len) last.end = i + 1;
     else runs.push({ len, start: i, end: i + 1 });
   }
-  return { set, runs };
+  return { set: exact(set), runs: exact(runs) };
 }
 
 function asciiLower(s) {

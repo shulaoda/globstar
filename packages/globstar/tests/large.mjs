@@ -184,6 +184,34 @@ for (const { name, patterns, path, matches, maxKept } of [
   assert.equal(got, matches, name);
 }
 
+// A matcher keeps its arrays at their length: one more state costs a few
+// slots, not the room V8 leaves after `push` (half again plus 16 slots;
+// it was a 1 KB step at 18 segment states). Each range stays in one NFA
+// form, whose switch is a real step.
+async function perMatcher(pattern) {
+  gc();
+  await new Promise((resolve) => setImmediate(resolve));
+  gc();
+  const before = used();
+  const kept = Array.from({ length: 1000 }, () => compileMatcher(pattern));
+  gc();
+  const bytes = (used() - before) / kept.length;
+  assert.equal(kept[0].match(""), false);
+  return bytes;
+}
+/** @param {string} name @param {(k: number) => string} shape */
+async function evenSteps(name, shape, from, to) {
+  let prev = await perMatcher(shape(from));
+  for (let k = from + 1; k <= to; k++) {
+    const bytes = await perMatcher(shape(k));
+    const step = Math.round(bytes - prev);
+    assert.ok(step < 300, `${name}: ${k} costs ${step} bytes more than ${k - 1}`);
+    prev = bytes;
+  }
+}
+await evenSteps("segment NFA", (k) => `src/**/n*d[k-m]e?${"t".repeat(k)}`, 2, 20);
+await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
+
 // A brace with 60,000 branches compiles in milliseconds: its branch
 // tails are gathered in one list, not copied once per branch.
 {

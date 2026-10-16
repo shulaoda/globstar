@@ -14,6 +14,13 @@ export const OP_GLOBSTAR_ANY = 9;
 export const OP_LEADING_SEPS = 10;
 export const OP_ALTERNATION = 11;
 
+// `a` copied to its length. V8 grows an array that `push` fills by half
+// again plus 16 slots and never gives the room back; a matcher keeps its
+// arrays as long as it lives, so the ones it stores are copied once.
+export function exact(a) {
+  return a.slice();
+}
+
 const ANYCHAR_OP = Object.freeze({ kind: OP_ANYCHAR });
 const STAR_OP = Object.freeze({ kind: OP_STAR });
 const SEP_OP = Object.freeze({ kind: OP_SEP });
@@ -36,6 +43,7 @@ import {
   brace,
   classExpandedAsciiCi,
   concat,
+  klass,
   sep,
 } from "../ast.js";
 
@@ -73,9 +81,12 @@ function lowerInto(node, out, caseInsensitive, flag) {
     case N_GLOBSTAR:
       pushOp(out, GLOBSTAR_OP);
       return;
-    case N_CLASS:
-      pushOp(out, { kind: OP_CLASS, cls: caseInsensitive ? classExpandedAsciiCi(node) : node });
+    case N_CLASS: {
+      // The matcher keeps the class, so it gets its own exact copy.
+      const cls = caseInsensitive ? classExpandedAsciiCi(node) : node;
+      pushOp(out, { kind: OP_CLASS, cls: klass(cls.neg, exact(cls.items)) });
       return;
+    }
     case N_CONCAT: {
       const children = node.children;
       for (let i = 0; i < children.length; i++) {

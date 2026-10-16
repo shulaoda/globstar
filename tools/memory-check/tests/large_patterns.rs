@@ -153,6 +153,37 @@ fn large_patterns_stay_small() {
         assert_eq!(glob.is_match(path.as_bytes()), matches, "{name}");
     }
     too_complex_patterns_fail_early();
+    one_more_state_costs_little();
+}
+
+// One more state costs what the one before it did: the matcher keeps its
+// tables at their length, never with the room a growing `Vec` leaves.
+// Twin of the same check in packages/globstar/tests/large.mjs; each range
+// stays in one NFA form, whose switch is a real step.
+fn one_more_state_costs_little() {
+    even_steps(
+        "segment NFA",
+        |k| format!("src/**/n*d[k-m]e?{}", "t".repeat(k)),
+        2,
+        20,
+    );
+    even_steps("graph NFA", |k| format!("**/a{}", "/**/a".repeat(k)), 1, 14);
+}
+
+fn even_steps(name: &str, shape: fn(usize) -> String, from: usize, to: usize) {
+    let kept = |k: usize| cost(&[shape(k)]).0;
+    let mut prev = kept(from + 1);
+    let first = prev - kept(from);
+    for k in from + 2..=to {
+        let bytes = kept(k);
+        let step = bytes - prev;
+        assert!(
+            step <= 2 * first,
+            "{name}: {k} costs {step} bytes more than {}, the first step {first}",
+            k - 1
+        );
+        prev = bytes;
+    }
 }
 
 // Braces whose segments multiply would build a node per pair of them;
