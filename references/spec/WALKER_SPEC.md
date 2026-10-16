@@ -2,7 +2,7 @@
 
 This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling.
 
-**Version.** v0.3.7, draft. Appendix A (§12) lists every change.
+**Version.** v0.3.8, draft. Appendix A (§12) lists every change.
 
 **Status.** Active, not yet released.
 
@@ -131,7 +131,7 @@ final_match(path) := positive.match(path)
 
 An ignored folder hides its whole subtree: `glob("**/*.js", { ignore: ["dist"] })` drops `dist/a.js`, though `dist` alone names no `.js` file.
 
-`ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. Each `ignore` entry is itself a strictly positive pattern: the array is NOT subject to the §4.2 `!`-split rule, and an entry that starts with `!` (after §4.3 normalization) is refused with `WalkError("InvalidPattern")`. As the matcher's whole-pattern negation (GLOB_SPEC.md §9.3) it would ignore everything except what it names, which is never what a caller writing `!src/**` into an ignore list means; escape a name that starts with `!` as `\!`.
+`ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. An entry that ends in `/` (also after §4.3 normalization, `d/.` ≡ `d/`) matches folders only: a folder is asked about with its `/`, so `node_modules/` prunes the folder `node_modules` and everything below it, never a file of that name; like every pattern it is anchored at `cwd` (`**/node_modules/` for any depth). A positive pattern that ends in `/` matches folders only too, so it selects no file (§8.1). Each `ignore` entry is itself a strictly positive pattern: the array is NOT subject to the §4.2 `!`-split rule, and an entry that starts with `!` (after §4.3 normalization) is refused with `WalkError("InvalidPattern")`. As the matcher's whole-pattern negation (GLOB_SPEC.md §9.3) it would ignore everything except what it names, which is never what a caller writing `!src/**` into an ignore list means; escape a name that starts with `!` as `\!`.
 
 ### 3.3 Toggles deliberately NOT provided
 
@@ -331,7 +331,7 @@ This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the 
 
 ### 8.1 Always file paths
 
-The walker emits ONLY file paths. Directory paths are NEVER part of the output, even when the pattern matches them in the matcher's sense (e.g. `src/cli` matching the directory `src/cli`). This is hardwired and not configurable, matching the `onlyFiles: true` default of the JS ecosystem.
+The walker emits ONLY file paths. Directory paths are NEVER part of the output, even when the pattern matches them in the matcher's sense (e.g. `src/cli` matching the directory `src/cli`). This is hardwired and not configurable, matching the `onlyFiles: true` default of the JS ecosystem. FIFOs, sockets and devices are no files to read (a reader would block on a FIFO) and are never emitted; a symlink takes its target's type, and one that resolves to nothing (dangling, looping) is emitted like a file when it matches.
 
 ### 8.2 Path form
 
@@ -443,6 +443,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **v0.3.5** (2026-10-16): §4.4: a compile failure names the member the matcher reports, with no second compile; a whole-list error names the list cut after three.
 - **v0.3.6** (2026-10-16): §6 joins a seed part by part, as a root walk does; §7.4 and §8.2: on Windows a drive-root `cwd` gets no second separator and a verbatim `cwd` is joined with `\`.
 - **v0.3.7** (2026-10-16): §6: a seed part with a non-ASCII name must appear in its folder's listing as written (APFS opens an NFC spelling of an NFD name); §10: `followSymlinks: false` judges an entry when its parent is read, which a tree changing during the walk can get around.
+- **v0.3.8** (2026-10-16): §3.2: a pattern or ignore entry that ends in `/` matches folders only (`node_modules/` prunes the folder). §8.1: FIFOs, sockets and devices are never emitted.
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §7.7); seed stat failures probe `lstat` (§9.4).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.

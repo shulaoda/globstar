@@ -20,6 +20,22 @@
 //! # Ok::<(), globstar_walk::WalkError>(())
 //! ```
 //!
+//! # What is yielded
+//!
+//! Files that match, and also the folders that match (unlike the JS
+//! walker, which yields files only): `**` yields `d` and `d/x.txt`. A
+//! yielded [`DirEntry`]'s [`file_type`](DirEntry::file_type) tells them
+//! apart; filter on `!entry.file_type().is_dir()` for files only.
+//! FIFOs, sockets and devices are never yielded (a reader would block on
+//! a FIFO); a symlink takes its target's type, and one that resolves to
+//! nothing (dangling, looping) is yielded like a file when it matches.
+//!
+//! A pattern or ignore entry that ends in `/` matches folders only:
+//! `src/` yields the folder `src`, never a file of that name, and an
+//! ignore entry `node_modules/` prunes the folder `node_modules` with
+//! everything below it. Patterns are anchored at `base`, so write
+//! `**/node_modules/` for any depth.
+//!
 //! # Output paths
 //!
 //! Yielded paths are always absolute, rooted at the walker's `base`.
@@ -112,6 +128,12 @@ pub struct Walk {
     /// `!`-prefixed patterns auto-split out of the input). `None` if
     /// nothing should be ignored.
     ignore: Option<Glob>,
+
+    /// The patterns and ignore entries that end in `/`, which match
+    /// folders only: asked about a folder with its `/` (`src/` yields
+    /// the folder `src`, `node_modules/` prunes it), never a file.
+    dirs: Option<Glob>,
+    ignore_dirs: Option<Glob>,
 
     base: PathBuf,
     follow_links: bool,
@@ -223,6 +245,7 @@ impl Walk {
         }
 
         let matcher = compile_union(&positives, compile_opts)?;
+        let dirs = compile_union(&folders_only(&positives), compile_opts)?;
         // `opts.ignore` entries are normalized but never `!`-split
         // (§3.2); auto-split negatives append to them. A leading `!`
         // there would ignore everything else, and is refused.
@@ -246,6 +269,7 @@ impl Walk {
         }
         ignore_patterns.extend(negatives);
         let ignore = compile_union(&ignore_patterns, compile_opts)?;
+        let ignore_dirs = compile_union(&folders_only(&ignore_patterns), compile_opts)?;
         // Lock the base to an absolute path at construction, resolved the
         // way Node's `path.resolve` does: against the current CWD (the
         // empty base is the CWD itself), with `.` and `..` taken out as
@@ -266,6 +290,8 @@ impl Walk {
         Ok(Self {
             matcher,
             ignore,
+            dirs,
+            ignore_dirs,
             base,
             follow_links: opts.follow_links,
             prune_ignored: opts.dot,
@@ -360,6 +386,13 @@ impl Walk {
             {
                 continue;
             }
+            // The folders above the seed, against the folder-only entries.
+            if (0..prefix.len()).any(|i| {
+                std::path::is_separator(prefix[i] as char)
+                    && folder_matches(self.ignore_dirs.as_ref(), &prefix[..i])
+            }) {
+                continue;
+            }
 
             if !listed_as_is(&self.base, &prefix) {
                 continue;
@@ -396,8 +429,11 @@ impl Walk {
 
             match fs::metadata(&absolute) {
                 Ok(meta) if meta.is_dir() => {
+                    if folder_matches(self.ignore_dirs.as_ref(), &prefix) {
+                        continue;
+                    }
                     let dm = matcher.match_dir(&prefix);
-                    if dm.matches() {
+                    if dm.matches() || folder_matches(self.dirs.as_ref(), &prefix) {
                         // Entries carry symlink-preserving file_type.
                         if let Ok(lmeta) = fs::symlink_metadata(&absolute) {
                             self.ready
@@ -413,6 +449,7 @@ impl Walk {
                         });
                     }
                 }
+                Ok(meta) if is_special(meta.file_type()) => {}
                 Ok(_) => {
                     if matcher.is_match(&prefix)
                         && let Ok(lmeta) = fs::symlink_metadata(&absolute)
@@ -508,6 +545,8 @@ impl Walk {
         let rules = Rules {
             matcher,
             ignore,
+            dirs: self.dirs.as_ref(),
+            ignore_dirs: self.ignore_dirs.as_ref(),
             follow_links: self.follow_links,
             prune_ignored: self.prune_ignored,
         };
@@ -526,6 +565,8 @@ impl Walk {
 struct Rules<'a> {
     matcher: &'a Glob,
     ignore: Option<&'a Glob>,
+    dirs: Option<&'a Glob>,
+    ignore_dirs: Option<&'a Glob>,
     follow_links: bool,
     prune_ignored: bool,
 }
@@ -602,12 +643,15 @@ impl Rules<'_> {
             }
         };
 
-        let is_dir = if file_type.is_symlink() {
-            fs::metadata(entry.path())
-                .map(|m| m.is_dir())
-                .unwrap_or(false)
+        // A symlink takes its target's type; one that resolves to nothing
+        // (dangling, looping) stays a link, emitted like a file.
+        let (is_dir, special) = if file_type.is_symlink() {
+            match fs::metadata(entry.path()) {
+                Ok(m) => (m.is_dir(), is_special(m.file_type())),
+                Err(_) => (false, false),
+            }
         } else {
-            file_type.is_dir()
+            (file_type.is_dir(), is_special(file_type))
         };
 
         let child_depth = frame.depth + 1;
@@ -619,14 +663,21 @@ impl Rules<'_> {
             metadata: cached_metadata.clone(),
         };
 
+        if special {
+            return None;
+        }
         if !is_dir {
             return self
                 .matcher
                 .is_match(&child_rel)
                 .then(|| Ok(make_entry(entry.path())));
         }
+        if folder_matches(self.ignore_dirs, &child_rel) {
+            return None;
+        }
         let dm = self.matcher.match_dir(&child_rel);
-        let emitted = dm.matches().then(|| Ok(make_entry(entry.path())));
+        let emitted = (dm.matches() || folder_matches(self.dirs, &child_rel))
+            .then(|| Ok(make_entry(entry.path())));
         // An ignore that covers everything below skips the subtree
         // (`**/node_modules/**` and `node_modules`).
         let covered = self.prune_ignored
@@ -859,6 +910,27 @@ fn split_bangs(raw: &str) -> Option<(usize, String)> {
         }
         body = next;
     }
+}
+
+/// The entries that end in `/` (WALKER_SPEC §3.2), which match folders
+/// only.
+fn folders_only(entries: &[(String, String)]) -> Vec<(String, String)> {
+    entries
+        .iter()
+        .filter(|(_, body)| body.ends_with('/'))
+        .cloned()
+        .collect()
+}
+
+/// Does a folder-only matcher match the folder `rel`, asked with its `/`?
+fn folder_matches(dirs: Option<&Glob>, rel: &[u8]) -> bool {
+    dirs.is_some_and(|d| d.is_match(&[rel, b"/"].concat()))
+}
+
+/// A FIFO, a socket or a device: not a file to read, so never emitted (a
+/// reader would block on a FIFO).
+fn is_special(t: fs::FileType) -> bool {
+    !t.is_dir() && !t.is_file() && !t.is_symlink()
 }
 
 /// Does each non-ASCII part of `prefix` appear in its folder's listing as

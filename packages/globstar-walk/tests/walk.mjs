@@ -8,6 +8,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
+import { execFileSync } from "node:child_process";
+import { once } from "node:events";
+import * as net from "node:net";
 import { glob, globSync, WalkError } from "../src/index.js";
 
 let failures = 0;
@@ -391,17 +394,14 @@ await check("cycles are found by the on-disk spelling", async () => {
 
 // ── paths, bases and errors spelled as the user wrote them ──────────────
 await check("a trailing `.` names the folder", async () => {
-  // `d/.` is the folder `d`: dropping the `.` made `*/.` match files.
+  // `d/.` is the folder `d` (`d/`, §4.3): dropping the `.` made `*/.`
+  // match files. As a pattern it selects no file; as an ignore entry it
+  // prunes the folders it names (§3.2).
   const root = tmpTree("trailingdot", ["x.txt", "d/y.txt", "d/e/z.txt"]);
   await expectBoth(root, ["*/."], {}, [], "*/.");
   await expectBoth(root, ["**/."], {}, [], "**/.");
-  await expectBoth(
-    root,
-    ["**"],
-    { ignore: ["*/."] },
-    ["d/e/z.txt", "d/y.txt", "x.txt"],
-    "ignore */.",
-  );
+  await expectBoth(root, ["**"], { ignore: ["*/."] }, ["x.txt"], "ignore */.");
+  await expectBoth(root, ["**"], { ignore: ["d/e/."] }, ["d/y.txt", "x.txt"], "ignore d/e/.");
 });
 
 await check("cwd resolves `..` as text", async () => {
@@ -519,6 +519,60 @@ await check("an entry that vanishes during a typed read is skipped", async () =>
 });
 
 for (const fn of cleanups) fn();
+// ── A trailing `/` matches folders only ─────────────────────────────────
+await check("a pattern that ends in / matches folders only", async () => {
+  // WALKER_SPEC §3.2: `node_modules/` prunes the folder, never a file;
+  // anchored like any pattern. A positive one selects no file. Twin of
+  // the Rust check.
+  const root = tmpTree("folders", [
+    "node_modules/p/i.js",
+    "src/a.js",
+    "src/node_modules/q.js",
+    "build",
+    "dist/x.js",
+  ]);
+  for (const [patterns, ignore, want] of [
+    ["**/*.js", ["node_modules/"], ["dist/x.js", "src/a.js", "src/node_modules/q.js"]],
+    ["**/*.js", ["**/node_modules/"], ["dist/x.js", "src/a.js"]],
+    ["*", ["build/"], ["build"]],
+    [["**/*.js", "!dist/"], [], ["node_modules/p/i.js", "src/a.js", "src/node_modules/q.js"]],
+    ["node_modules/p/*.js", ["node_modules/"], []],
+    ["src/", [], []],
+  ]) {
+    const opts = { cwd: root, ignore };
+    assert.deepEqual(rel(root, globSync(patterns, opts)), want, String(patterns));
+    assert.deepEqual(rel(root, await glob(patterns, opts)), want, String(patterns));
+  }
+});
+
+// ── Special files are not files ─────────────────────────────────────────
+if (process.platform !== "win32" && symlinksOk) {
+  await check("FIFOs and sockets are no files", async () => {
+    // A reader would block on a FIFO. A link takes its target's type; a
+    // dangling one is still emitted. Twin of the Rust check.
+    const root = tmpTree("special", ["a.txt"]);
+    execFileSync("mkfifo", [path.join(root, "fifo")]);
+    const server = net.createServer().listen(path.join(root, "sock"));
+    await once(server, "listening");
+    fs.symlinkSync("fifo", path.join(root, "to-fifo"));
+    fs.symlinkSync("a.txt", path.join(root, "to-a"));
+    fs.symlinkSync("missing", path.join(root, "dangling"));
+    try {
+      for (const [pattern, want] of [
+        ["*", ["a.txt", "dangling", "to-a"]],
+        ["fifo", []],
+        ["sock", []],
+        ["to-fifo", []],
+      ]) {
+        assert.deepEqual(rel(root, globSync(pattern, { cwd: root })), want, pattern);
+        assert.deepEqual(rel(root, await glob(pattern, { cwd: root })), want, pattern);
+      }
+    } finally {
+      server.close();
+    }
+  });
+}
+
 // ── A lone `!` is an empty pattern ──────────────────────────────────────
 await check("a lone bang is an empty pattern, named as written", async () => {
   const root = tmpTree("lone-bang", ["a.js"]);

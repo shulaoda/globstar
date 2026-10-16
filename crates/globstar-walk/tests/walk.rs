@@ -1476,24 +1476,27 @@ fn walker_seed_through_a_symlink_knows_its_cycle() {
 
 #[test]
 fn walker_trailing_dot_names_the_folder() {
-    // `d/.` is the folder `d`: dropping the `.` made `*/.` match files.
+    // `d/.` is the folder `d` (`d/`, WALKER_SPEC §4.3): dropping the `.`
+    // made `*/.` match files. As a pattern it yields the folders it names;
+    // as an ignore entry it prunes them (§3.2).
     let t = TmpTree::new("trailing_dot");
     t.touch("x.txt");
     t.touch("d/y.txt");
     t.touch("d/e/z.txt");
     let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
     let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
-    assert_eq!(walk("*/."), set(&[]));
-    assert_eq!(walk("**/."), set(&[]));
-    let opts = WalkOptions {
-        base: t.root().to_path_buf(),
-        ignore: vec!["*/.".to_string()],
-        ..WalkOptions::default()
+    assert_eq!(walk("*/."), set(&["d"]));
+    assert_eq!(walk("**/."), set(&["d", "d/e"]));
+    let ignoring = |entry: &str| {
+        let opts = WalkOptions {
+            base: t.root().to_path_buf(),
+            ignore: vec![entry.to_string()],
+            ..WalkOptions::default()
+        };
+        collect_rel(Walk::new("**", opts).unwrap(), t.root())
     };
-    assert_eq!(
-        collect_rel(Walk::new("**", opts).unwrap(), t.root()),
-        set(&["x.txt", "d", "d/y.txt", "d/e", "d/e/z.txt"])
-    );
+    assert_eq!(ignoring("*/."), set(&["x.txt"]));
+    assert_eq!(ignoring("d/e/."), set(&["x.txt", "d", "d/y.txt"]));
 }
 
 #[cfg(unix)]
@@ -1782,5 +1785,91 @@ fn a_lone_bang_is_an_empty_pattern() {
             }
             _ => panic!("expected InvalidPattern, got {err:?}"),
         }
+    }
+}
+
+// A FIFO, a socket or a device is no file to read (a reader would block
+// on a FIFO). A link takes its target's type; a dangling one is still
+// emitted. Twin of the check in walk.mjs.
+#[cfg(unix)]
+#[test]
+fn fifos_and_sockets_are_no_files() {
+    use std::os::unix::fs::symlink;
+    let t = TmpTree::new("sp");
+    t.touch("a.txt");
+    let root = t.root();
+    let made = std::process::Command::new("mkfifo")
+        .arg(root.join("fifo"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let _sock = std::os::unix::net::UnixListener::bind(root.join("sock")).unwrap();
+    symlink("fifo", root.join("to-fifo")).unwrap();
+    symlink("a.txt", root.join("to-a")).unwrap();
+    symlink("missing", root.join("dangling")).unwrap();
+    let walk = |pattern: &str| collect_rel(Walk::new(pattern, root).unwrap(), root);
+    let want: BTreeSet<String> = ["a.txt", "dangling", "to-a"].map(String::from).into();
+    assert_eq!(walk("*"), want);
+    for seeded in ["fifo", "sock", "to-fifo"] {
+        assert!(walk(seeded).is_empty(), "{seeded}");
+    }
+}
+
+// A pattern or ignore entry that ends in `/` matches folders only
+// (WALKER_SPEC §3.2): `node_modules/` prunes the folder, never a file;
+// `src/` yields the folder. Twin of the check in walk.mjs.
+#[test]
+fn a_pattern_that_ends_in_a_slash_matches_folders_only() {
+    let t = TmpTree::new("folders");
+    for f in [
+        "node_modules/p/i.js",
+        "src/a.js",
+        "src/node_modules/q.js",
+        "build",
+        "dist/x.js",
+    ] {
+        t.touch(f);
+    }
+    let root = t.root();
+    let walk = |patterns: &[&str], ignore: &[&str]| -> Vec<String> {
+        let mut opts = WalkOptions::new(root);
+        opts.ignore = ignore.iter().map(|s| s.to_string()).collect();
+        collect_rel(Walk::from_patterns(patterns, opts).unwrap(), root)
+            .into_iter()
+            .collect()
+    };
+    let cases: [(&[&str], &[&str], &[&str]); 9] = [
+        (
+            &["**/*.js"],
+            &["node_modules/"],
+            &["dist/x.js", "src/a.js", "src/node_modules/q.js"],
+        ),
+        (
+            &["**/*.js"],
+            &["**/node_modules/"],
+            &["dist/x.js", "src/a.js"],
+        ),
+        (
+            &["*"],
+            &["build/"],
+            &["build", "dist", "node_modules", "src"],
+        ),
+        (
+            &["**/*.js", "!dist/"],
+            &[],
+            &["node_modules/p/i.js", "src/a.js", "src/node_modules/q.js"],
+        ),
+        (&["node_modules/p/*.js"], &["node_modules/"], &[]),
+        (&["src/"], &[], &["src"]),
+        (&["build/"], &[], &[]),
+        (&["*/"], &[], &["dist", "node_modules", "src"]),
+        (&["*/"], &["src/"], &["dist", "node_modules"]),
+    ];
+    for (patterns, ignore, want) in cases {
+        assert_eq!(
+            walk(patterns, ignore),
+            want,
+            "{patterns:?} ignore {ignore:?}"
+        );
     }
 }

@@ -136,4 +136,4 @@ match Glob::new("src/[a") {
 
 ## Walker
 
-The filesystem walker is the `globstar-walk` crate: an iterator over matched entries that seeds from `static_prefixes`, prunes with `match_dir`, and takes a separate ignore set. Its behavior is governed by its own crate documentation.
+The filesystem walker is the `globstar-walk` crate: an iterator over matched entries that seeds from `static_prefixes`, prunes with `match_dir`, and takes a separate ignore set. It yields matching folders as well as files (the JS walker yields files only), never FIFOs, sockets or devices; a pattern or ignore entry that ends in `/` matches folders only. Its behavior is governed by its own crate documentation.

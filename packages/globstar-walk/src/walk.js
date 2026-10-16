@@ -174,6 +174,12 @@ function prepare(patterns, optsInput) {
   }
   for (const n of negatives) ignorePatterns.push(n);
   const ignore = compileUnion(ignorePatterns, matcherOpts);
+  // §3.2: an entry that ends in `/` ignores folders only, asked about
+  // with their `/` (`node_modules/` prunes the folder, not a file).
+  const ignoreDirs = compileUnion(
+    ignorePatterns.filter((p) => p.body.endsWith("/")),
+    matcherOpts,
+  );
 
   // Lock cwd to an absolute path and validate BEFORE the empty-positives
   // early return: bad-cwd loudness must not depend on pattern content.
@@ -200,6 +206,7 @@ function prepare(patterns, optsInput) {
   const ctx = {
     matcher,
     ignore,
+    ignoreDirs,
     cwd,
     followSymlinks: !!opts.followSymlinks,
     // Whether the ignore set can cover a whole subtree (matchDir
@@ -234,6 +241,7 @@ function initFromPrefixes(ctx) {
     if (segs.some((seg) => seg === "" || seg === ".." || seg === ".")) continue;
 
     if (ctx.ignore !== null && seedIgnored(ctx.ignore, prefixStr)) continue;
+    if (ctx.ignoreDirs !== null && seedFolderIgnored(ctx.ignoreDirs, prefixStr)) continue;
 
     // Part by part, so the seed is joined as a root walk's paths are.
     let joined = ctx.cwd;
@@ -264,6 +272,7 @@ function initFromPrefixes(ctx) {
     }
 
     if (stat.isDirectory()) {
+      if (ctx.ignoreDirs !== null && ctx.ignoreDirs.match(prefixStr + "/")) continue;
       // Walker only emits files; dir matchDir result just gates descend.
       if (links.descend && DirMatch.mayMatchBelow(ctx.matcher.matchDir(prefixStr))) {
         ctx.seedFrames.push({
@@ -272,7 +281,7 @@ function initFromPrefixes(ctx) {
           symlinkAncestors: links.chain,
         });
       }
-    } else if (ctx.matcher.match(prefixStr)) {
+    } else if (!isSpecial(stat) && ctx.matcher.match(prefixStr)) {
       ctx.seedResults.push(joined);
     }
   }
@@ -280,6 +289,18 @@ function initFromPrefixes(ctx) {
 
 // An ignored directory prunes its subtree (§7.1 step 3), so a seed is
 // dead if `ignore` matches it or any `/`-bounded ancestor.
+// The folders above a seed, each asked about with its `/`, against the
+// ignore entries for folders only.
+function seedFolderIgnored(ignoreDirs, prefixStr) {
+  for (let i = 0; i < prefixStr.length; i++) {
+    const c = prefixStr.charCodeAt(i);
+    if ((c === 0x2f || (WINDOWS && c === 0x5c)) && ignoreDirs.match(prefixStr.slice(0, i + 1))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function seedIgnored(ignore, prefixStr) {
   for (let i = 0; i < prefixStr.length; i++) {
     const c = prefixStr.charCodeAt(i);
@@ -368,18 +389,25 @@ function processDirents(ctx, dirents, frame, results, descend) {
     if (ignore !== null && ignore.match(childRel)) continue;
 
     let isDir = dirent.isDirectory();
+    let special = isSpecial(dirent);
     if (isSymlink) {
       // Node's Dirent only flags "is symlink", not the target type;
       // resolve on demand. (followSymlinks=true here since the off
-      // case continued above.)
+      // case continued above.) One that resolves to nothing (dangling,
+      // looping) stays a link, emitted like a file.
       try {
-        isDir = fs.statSync(childAbs).isDirectory();
+        const target = fs.statSync(childAbs);
+        isDir = target.isDirectory();
+        special = isSpecial(target);
       } catch {
         isDir = false;
+        special = false;
       }
     }
+    if (special) continue;
 
     if (isDir) {
+      if (ctx.ignoreDirs !== null && ctx.ignoreDirs.match(childRel + "/")) continue;
       // An ignore that covers everything below skips the subtree
       // (`**/node_modules/**` and `node_modules`).
       const covered = ctx.pruneIgnored && DirMatch.matchesAllBelow(ignore.matchDir(childRel));
@@ -547,6 +575,12 @@ function listedAsIs(cwd, segs) {
     dir = joinAbs(dir, seg);
   }
   return true;
+}
+
+// A FIFO, a socket or a device: not a file to read, so never emitted (a
+// reader would block on a FIFO).
+function isSpecial(s) {
+  return s.isFIFO() || s.isSocket() || s.isCharacterDevice() || s.isBlockDevice();
 }
 
 function isNonAscii(s) {
