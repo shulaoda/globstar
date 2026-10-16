@@ -75,7 +75,7 @@ function ensureContainer() {
     "apt-get update -qq",
     "apt-get install -y -qq gcc-mingw-w64-x86-64 unzip curl >/dev/null",
     "apt-get install -y -qq wine64:amd64 >/dev/null || apt-get install -y -qq wine:amd64 >/dev/null",
-    "rustup target add x86_64-pc-windows-gnu",
+    "rustup target add x86_64-pc-windows-gnu && rustup component add clippy",
     `curl -fsSL https://nodejs.org/dist/${NODE}/node-${NODE}-win-x64.zip -o /tmp/node.zip`,
     `unzip -q /tmp/node.zip -d /opt && mv /opt/node-${NODE}-win-x64 /opt/node-win`,
   ].join("\n");
@@ -88,6 +88,15 @@ function ensureContainer() {
 ensureContainer();
 let failed = 0;
 if (want("--rust")) {
+  // Code under `cfg(windows)` is only compiled here.
+  console.log("[lane] Rust: cargo clippy --target x86_64-pc-windows-gnu");
+  if (
+    inContainer(
+      "cargo clippy -q --locked --target x86_64-pc-windows-gnu --workspace --all-targets -- -D warnings",
+    ) !== 0
+  ) {
+    failed++;
+  }
   console.log("[lane] Rust: cargo test --target x86_64-pc-windows-gnu (under wine)");
   const status = inContainer(
     "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine cargo test -q --locked " +

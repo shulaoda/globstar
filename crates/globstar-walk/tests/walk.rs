@@ -1719,7 +1719,11 @@ fn windows_seeds_reach_what_a_root_walk_lists() {
         &["src/sub/b.ts"],
         &["src\\\\sub/*.ts", "src/sub/*.ts"],
     ] {
-        assert_eq!(walk(patterns, &[]), [b.clone()], "{patterns:?}");
+        assert_eq!(
+            walk(patterns, &[]),
+            std::slice::from_ref(&b),
+            "{patterns:?}"
+        );
     }
     // A drive is never below base, and a name Win32 rewrites (`src.`,
     // `src `, `nul`, `con.txt`) reaches no folder a root walk lists: no
@@ -1871,5 +1875,39 @@ fn a_pattern_that_ends_in_a_slash_matches_folders_only() {
             want,
             "{patterns:?} ignore {ignore:?}"
         );
+    }
+}
+
+// A seed is reached as a root walk reaches it: through the walk's own
+// per-entry rule, so a folder the ignore set covers is pruned before it
+// is read, from a seed as from the root. Twin of the check in walk.mjs.
+#[cfg(unix)]
+#[test]
+fn a_seed_under_a_folder_the_ignore_set_covers_is_not_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = TmpTree::new("covered-seed");
+    t.touch("node_modules/p/i.js");
+    t.touch("a.js");
+    let locked = t.root().join("node_modules");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let walk = |pattern: &str| {
+        let opts = WalkOptions {
+            base: t.root().to_path_buf(),
+            dot: true,
+            ignore: vec!["**/node_modules/**".into()],
+            ..WalkOptions::default()
+        };
+        Walk::new(pattern, opts).unwrap().collect::<Vec<_>>()
+    };
+    let got: Vec<_> = [
+        "node_modules/**/*.js",
+        "[n]ode_modules/**/*.js",
+        "{node_modules,zz}/**/*.js",
+    ]
+    .map(|p| (p, walk(p).len()))
+    .into();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    for (pattern, items) in got {
+        assert_eq!(items, 0, "{pattern}");
     }
 }

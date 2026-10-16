@@ -2,7 +2,7 @@
 
 This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling.
 
-**Version.** v0.3.8, draft. Appendix A (§12) lists every change.
+**Version.** v0.3.9, draft. Appendix A (§12) lists every change.
 
 **Status.** Active, not yet released.
 
@@ -236,22 +236,13 @@ The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, 
 | `{src,test}/*.rs` | `["src", "test"]`                       |
 | `{src,lib}/main.rs` | `["lib/main.rs", "src/main.rs"]`      |
 
-The walker uses these to skip directories that no branch of the pattern can possibly match. Seeding MUST be observationally equivalent to a root walk — a seed may only skip work, never change results. For each prefix the walker:
+The walker uses these to skip directories that no branch of the pattern can possibly match. Seeding MUST be observationally equivalent to a root walk — a seed may only skip work, never change results. So a seed is reached the way a root walk reaches it, part by part from `cwd`, and each part is judged by the walk's own per-entry rule (§7.1) as its folder's only entry, with its `lstatSync` standing in for the dirent. Every rule of the walk then holds for seeds by construction: ignore entries and folder-only entries, the covered-folder prune, special files, `followSymlinks`, the cycle chain, broken links. For each prefix the walker:
 
-1. **Guards.** Skip the prefix outright when:
-   - any of its segments is `..`, `.` or empty (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields none of them, so no root walk reaches such a path, and a joined `..` would escape `cwd`. A brace branch that starts with `/` gives one: `{a,/b}/x` has the prefixes `a` and `/b`, and `/b` is dropped;
-   - a part with a non-ASCII name is not in its folder's listing as written: a file system that ignores Unicode normalization (APFS) opens an NFC spelling of a name stored NFD, which a root walk, comparing names as listed, never matches (one `readdir` per such part);
-   - the ignore set matches the prefix itself or ANY `/`-bounded ancestor of it (§7.1 step 3 prunes an ignored directory's whole subtree, so a root walk would never reach this seed);
-   - a part of the prefix is a symlink the root walk would not follow: any symlink under `followSymlinks: false` (a root walk drops them entirely, §10), or one whose resolved target is already a target of an earlier part (a cycle, §10). A cycle at the prefix's last part only stops the descent (step 3).
-2. Computes its absolute form, joining its parts to `cwd` one by one with `joinAbs` (§7.4) as a root walk would, and calls `fs.statSync` on it.
-   - Stat fails: probe `lstatSync`. If THAT succeeds, the entry exists as a broken or looping symlink — treat it as a non-directory entry (step 4), exactly as the walk loop would (§10). If `lstat` fails because nothing can be there (§9.4: ENOENT, ENOTDIR, ELOOP, ENAMETOOLONG, EINVAL, a NUL in the name), the prefix is silently skipped — this is NOT an error: `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch.
-   - `lstat` fails otherwise (EACCES, …): surface it the way the walk loop would — a root walk hitting this subtree fails loudly (§9.3), so seeding MUST NOT hide it.
-   - Stat succeeds: classify by file-type.
-3. If the stat reports a directory:
-   - Push it onto the seed-frame stack with `relative = prefix`, but only when `matcher.match_dir(prefix)` reports `may_match_below` (a `Pruned` or `Match` prefix has nothing to walk) and the prefix's last part is not a cycle (step 1). The frame's `symlinkAncestors` are the resolved targets of the symlinks among the prefix's parts, in order: what a root walk would hold on reaching it (§7.1 step 6). Without them a seed through `a/link -> .` went once more round the cycle than a root walk.
-4. If the entry is a non-directory (regular file, or a broken symlink from step 2):
-   - If `matcher.match(prefix)` is true, push the file's path into the output array directly (the literal prefix IS a complete match).
-   - Otherwise discard it.
+1. **Guards.** Skip the prefix outright when any of its segments is `..`, `.` or empty (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields none of them, so no root walk reaches such a path, and a joined `..` would escape `cwd`. A brace branch that starts with `/` gives one: `{a,/b}/x` has the prefixes `a` and `/b`, and `/b` is dropped.
+2. **Walks the parts.** For each part, from `cwd` down:
+   - A part with a non-ASCII name must be in its folder's listing as written (one `readdir` per such part): a file system that ignores Unicode normalization (APFS) opens an NFC spelling of a name stored NFD, which a root walk, comparing names as listed, never matches. Otherwise the seed is dropped.
+   - `lstatSync` the part. If nothing can be there (§9.4: ENOENT, ENOTDIR, ELOOP, ENAMETOOLONG, EINVAL, a NUL in the name), the seed is silently dropped — this is NOT an error: `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch. Any other failure (EACCES, …) is thrown, as the walk would (§9.3).
+   - Judge the entry with §7.1. A part before the last must give a child frame, which the next part continues from; otherwise the seed is dropped, as a root walk would not descend there. The last part's result is the seed's: a matching file goes to the output, a folder worth walking to the seed frames.
 
 Seed frames and seed file emissions each preserve the (deduplicated, sorted) prefix order; file-prefix emissions drain before directory walking begins. Order beyond that is unspecified (§7.5).
 
@@ -263,7 +254,7 @@ The empty prefix (an empty `Uint8Array`, produced by patterns that begin with `*
 
 ### 7.1 Common per-frame loop
 
-Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of every symlink the walker descended through to reach it. Seed frames start with the targets of the symlinks on their prefix (§6 step 3); the frame for `cwd` itself starts empty. Both sync and async share the same per-dirent matching logic. For each `{ name, isDirectory, isSymbolicLink }` returned from a `readdir` of the frame's absolute path:
+Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of every symlink the walker descended through to reach it. Seed frames carry the targets of the symlinks on their prefix, gathered as §6 step 2 walks it; the frame for `cwd` itself starts empty. Both sync and async share the same per-dirent matching logic. For each `{ name, isDirectory, isSymbolicLink }` returned from a `readdir` of the frame's absolute path:
 
 1. **Symlink drop** — if the entry is a symbolic link AND `followSymlinks` is `false`, skip the entry (NOT emitted, NOT descended). Performed before any other work.
 2. Compute `childRel = parentRel === "" ? name : parentRel + "/" + name`. A name that came back with U+FFFD and does not exist under that spelling is skipped: it was not valid UTF-8 (Linux allows any bytes), so no string names the path, and no folder can be read through it.
@@ -392,13 +383,14 @@ This is the walker's most visible divergence from `tinyglobby` and `fast-glob`, 
 
 ### 9.4 Stat failures during seeding
 
-Seed-prefix `fs.statSync` failures during §6 step 2 are classified, not blanket-swallowed — the rule is root-walk equivalence:
+A seed's parts are `lstat`-ed one by one (§6 step 2), and the failures are classified, not blanket-swallowed — the rule is root-walk equivalence:
 
-- **`stat` fails and `lstat` fails because nothing can be there** — silently skipped. That is ENOENT (missing), ENOTDIR (a part is a file), ELOOP (a part is a looping link), ENAMETOOLONG (no directory lists such a name), EINVAL or a NUL in the name (no such name exists). A root walk lists none of these, so this is "this branch of the brace did not match anything that exists on disk", a legitimate "nothing to walk on this branch" outcome rather than something the user typo'd.
-- **`stat` fails but `lstat` succeeds** — a broken or looping symlink. The entry EXISTS; §10 makes the walk loop treat it as a non-directory and emit it when matched, so the seed does the same.
-- **`lstat` fails with anything else (EACCES, …)** — surfaced as `WalkError("Io")`. A root walk reaching this subtree fails loudly (§9.3); a seed must not turn that into a silent empty result.
+- **Nothing can be there** — silently skipped. That is ENOENT (missing), ENOTDIR (a part is a file), ELOOP (a part is a looping link), ENAMETOOLONG (no directory lists such a name), EINVAL or a NUL in the name (no such name exists). A root walk lists none of these, so this is "this branch of the brace did not match anything that exists on disk", a legitimate "nothing to walk on this branch" outcome rather than something the user typo'd.
+- **Anything else (EACCES, …)** — surfaced as `WalkError("Io")`, naming the part that failed. A root walk reaching this subtree fails loudly (§9.3); a seed must not turn that into a silent empty result.
 
-Permissions are the one place a seed cannot see what a root walk would. A seed stats its path directly, while a root walk lists every folder on the way. So under a folder that can be entered but not listed (mode `0100`) a seed finds its file where a root walk fails, and under one that can be listed but not entered (mode `0400`) a seed fails where a root walk lists the names. Both are rare, and both surface rather than hide a problem.
+A part that `lstat` finds is judged by §7.1 like any entry, so a broken or looping symlink is a non-directory emitted when it matches (§10), as in the walk.
+
+Permissions are the one place a seed cannot see what a root walk would. A seed `lstat`s its parts, while a root walk lists every folder on the way. So under a folder that can be entered but not listed (mode `0100`) a seed finds its file where a root walk fails, and under one that can be listed but not entered (mode `0400`) a seed fails where a root walk lists the names. Both are rare, and both surface rather than hide a problem.
 
 ---
 
@@ -444,6 +436,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **v0.3.6** (2026-10-16): §6 joins a seed part by part, as a root walk does; §7.4 and §8.2: on Windows a drive-root `cwd` gets no second separator and a verbatim `cwd` is joined with `\`.
 - **v0.3.7** (2026-10-16): §6: a seed part with a non-ASCII name must appear in its folder's listing as written (APFS opens an NFC spelling of an NFD name); §10: `followSymlinks: false` judges an entry when its parent is read, which a tree changing during the walk can get around.
 - **v0.3.8** (2026-10-16): §3.2: a pattern or ignore entry that ends in `/` matches folders only (`node_modules/` prunes the folder). §8.1: FIFOs, sockets and devices are never emitted.
+- **v0.3.9** (2026-10-16): §6: a seed is reached part by part through the walk's own per-entry rule (§7.1), so it follows every rule of a root walk by construction; this also prunes a seed below a folder the ignore set covers, which used to be read.
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §7.7); seed stat failures probe `lstat` (§9.4).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.

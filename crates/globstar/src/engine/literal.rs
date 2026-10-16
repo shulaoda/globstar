@@ -23,30 +23,22 @@ impl LiteralMatcher {
     }
 
     pub fn is_match(&self, path: &[u8]) -> bool {
-        self.path_eq(path)
-    }
-
-    pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        if self.path_eq(dir_path) {
-            return DirMatch::Match;
-        }
-        if self.literal_under(dir_path) {
-            return DirMatch::Descend;
-        }
-        DirMatch::Pruned
-    }
-
-    fn path_eq(&self, path: &[u8]) -> bool {
         let n = self.match_prefix(path);
         n == self.literal.len() && n == path.len()
     }
 
-    fn literal_under(&self, dir_path: &[u8]) -> bool {
-        if dir_path.is_empty() {
-            return true;
-        }
+    /// One scan: the directory is the literal itself, or a whole
+    /// segment run of it (the root `""` included), or neither.
+    pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
         let n = self.match_prefix(dir_path);
-        n == dir_path.len() && n < self.literal.len() && self.literal[n] == b'/'
+        if n == dir_path.len() && n == self.literal.len() {
+            DirMatch::Match
+        } else if dir_path.is_empty() || (n == dir_path.len() && self.literal.get(n) == Some(&b'/'))
+        {
+            DirMatch::Descend
+        } else {
+            DirMatch::Pruned
+        }
     }
 
     #[inline(always)]

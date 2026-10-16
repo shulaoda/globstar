@@ -519,6 +519,31 @@ await check("an entry that vanishes during a typed read is skipped", async () =>
 });
 
 for (const fn of cleanups) fn();
+// ── A seed is reached as a root walk reaches it ─────────────────────────
+if (process.platform !== "win32" && process.getuid?.() !== 0) {
+  await check("a seed under a folder the ignore set covers is not read", async () => {
+    // The seed goes through the walk's own per-entry rule, so the
+    // covered-folder prune applies to it as it does in a root walk: a
+    // folder that cannot be read is never opened. Twin of the Rust check.
+    const root = tmpTree("covered-seed", ["node_modules/p/i.js", "a.js"]);
+    const locked = path.join(root, "node_modules");
+    fs.chmodSync(locked, 0o000);
+    try {
+      const opts = { cwd: root, dot: true, ignore: ["**/node_modules/**"] };
+      for (const pattern of [
+        "node_modules/**/*.js",
+        "[n]ode_modules/**/*.js",
+        "{node_modules,zz}/**/*.js",
+      ]) {
+        assert.deepEqual(globSync(pattern, opts), [], pattern);
+        assert.deepEqual(await glob(pattern, opts), [], pattern);
+      }
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+}
+
 // ── A trailing `/` matches folders only ─────────────────────────────────
 await check("a pattern that ends in / matches folders only", async () => {
   // WALKER_SPEC §3.2: `node_modules/` prunes the folder, never a file;

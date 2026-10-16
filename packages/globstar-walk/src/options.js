@@ -39,11 +39,3 @@ export function normalizeOptions(input) {
     ignore: opt("ignore"),
   };
 }
-
-// Project user-facing options into the bag the matcher consumes.
-export function toMatcherOptions(opts) {
-  return {
-    dot: opts.dot,
-    caseInsensitive: opts.caseInsensitive,
-  };
-}

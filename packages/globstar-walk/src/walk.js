@@ -33,7 +33,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { compileMatcher, DirMatch, GlobError } from "@globstar/core";
 import { WalkError } from "./error.js";
-import { normalizeOptions, toMatcherOptions } from "./options.js";
+import { normalizeOptions } from "./options.js";
 
 export async function glob(patterns, options) {
   const ctx = prepare(patterns, options);
@@ -117,7 +117,7 @@ export function globSync(patterns, options) {
 
 function prepare(patterns, optsInput) {
   const opts = normalizeOptions(optsInput);
-  const matcherOpts = toMatcherOptions(opts);
+  const matcherOpts = { dot: opts.dot, caseInsensitive: opts.caseInsensitive };
 
   // A string is one pattern; any other iterable is a list.
   const list =
@@ -219,125 +219,42 @@ function prepare(patterns, optsInput) {
   return ctx;
 }
 
-// Seed the traversal from the matcher's static prefixes — pure-literal
-// heads jump straight to their deepest known directory. Missing
-// prefixes are silently skipped: `{a,b}/foo` where only `a/` exists
-// still produces results from the `a` branch.
+// Seed the traversal from the matcher's static prefixes. Each seed is
+// reached the way a root walk reaches it: part by part from cwd, each
+// part judged by `processDirents` as its folder's only entry (an lstat
+// stands in for the dirent). An ancestor that gives no child frame drops
+// the seed; the last part's file and frame are the seed's.
 function initFromPrefixes(ctx) {
-  for (const prefixBytes of ctx.matcher.staticPrefixes()) {
-    if (prefixBytes.length === 0) {
-      // Empty prefix = walk from cwd itself; cwd already validated.
-      ctx.seedFrames.push({ absolute: ctx.cwd, relative: "", symlinkAncestors: [] });
+  for (const bytes of ctx.matcher.staticPrefixes()) {
+    let frame = { absolute: ctx.cwd, relative: "", symlinkAncestors: [] };
+    const prefix = bytesToString(bytes);
+    if (prefix === "") {
+      ctx.seedFrames.push(frame);
       continue;
     }
-
-    const prefixStr = bytesToString(prefixBytes);
-
-    // A walked path never holds `..`, `.` or an empty segment (readdir
-    // yields none of them), so a prefix with one (`{a,/b}` gives `/b`)
-    // is reached by no root walk; `..` would also escape cwd. Split on
-    // every platform separator so a Windows `..\secret` can't slip past.
-    const segs = WINDOWS ? prefixStr.split(/[/\\]/) : prefixStr.split("/");
-    if (segs.some((seg) => seg === "" || seg === ".." || seg === ".")) continue;
-
-    if (ctx.ignore !== null && seedIgnored(ctx.ignore, prefixStr)) continue;
-    if (ctx.ignoreDirs !== null && seedFolderIgnored(ctx.ignoreDirs, prefixStr)) continue;
-
-    // Part by part, so the seed is joined as a root walk's paths are.
-    let joined = ctx.cwd;
-    for (const seg of segs) joined = joinAbs(joined, seg);
-
-    if (!listedAsIs(ctx.cwd, segs)) continue;
-
-    // The links a root walk would follow on the way down.
-    const links = seedLinks(ctx, segs);
-    if (links === null) continue;
-
-    let stat;
-    try {
-      stat = fs.statSync(joined);
-    } catch {
-      // Still lstat-able ⇒ the entry exists (broken/looping symlink):
-      // the walk emits those as non-directories (§10), so the seed
-      // must too.
+    // A walked path never holds `..`, `.` or an empty segment, so no
+    // root walk reaches such a prefix (and `..` would escape cwd).
+    const parts = WINDOWS ? prefix.split(/[/\\]/) : prefix.split("/");
+    if (parts.some((p) => p === "" || p === ".." || p === ".")) continue;
+    for (let i = 0; i < parts.length && frame !== undefined; i++) {
+      const name = parts[i];
+      if (isNonAscii(name) && !listed(frame.absolute, name)) break;
+      const abs = joinAbs(frame.absolute, name);
+      let entry;
       try {
-        fs.lstatSync(joined);
-      } catch (lcause) {
-        if (nothingThere(lcause)) continue; // §9.4
-        // EACCES etc.: a root walk fails loudly here (§9.3).
-        throw new WalkError("Io", { path: joined, cause: lcause });
+        entry = fs.lstatSync(abs);
+      } catch (cause) {
+        if (nothingThere(cause)) break; // §9.4
+        throw new WalkError("Io", { path: abs, cause }); // §9.3
       }
-      if (ctx.matcher.match(prefixStr)) ctx.seedResults.push(joined);
-      continue;
-    }
-
-    if (stat.isDirectory()) {
-      if (ctx.ignoreDirs !== null && ctx.ignoreDirs.match(prefixStr + "/")) continue;
-      // Walker only emits files; dir matchDir result just gates descend.
-      if (links.descend && DirMatch.mayMatchBelow(ctx.matcher.matchDir(prefixStr))) {
-        ctx.seedFrames.push({
-          absolute: joined,
-          relative: prefixStr,
-          symlinkAncestors: links.chain,
-        });
-      }
-    } else if (!isSpecial(stat) && ctx.matcher.match(prefixStr)) {
-      ctx.seedResults.push(joined);
+      entry.name = name;
+      const last = i === parts.length - 1;
+      const below = [];
+      processDirents(ctx, [entry], frame, last ? ctx.seedResults : [], below);
+      if (last) ctx.seedFrames.push(...below);
+      frame = below[0];
     }
   }
-}
-
-// An ignored directory prunes its subtree (§7.1 step 3), so a seed is
-// dead if `ignore` matches it or any `/`-bounded ancestor.
-// The folders above a seed, each asked about with its `/`, against the
-// ignore entries for folders only.
-function seedFolderIgnored(ignoreDirs, prefixStr) {
-  for (let i = 0; i < prefixStr.length; i++) {
-    const c = prefixStr.charCodeAt(i);
-    if ((c === 0x2f || (WINDOWS && c === 0x5c)) && ignoreDirs.match(prefixStr.slice(0, i + 1))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function seedIgnored(ignore, prefixStr) {
-  for (let i = 0; i < prefixStr.length; i++) {
-    const c = prefixStr.charCodeAt(i);
-    if ((c === 0x2f || (WINDOWS && c === 0x5c)) && ignore.match(prefixStr.slice(0, i))) {
-      return true;
-    }
-  }
-  return ignore.match(prefixStr);
-}
-
-// What a root walk knows on reaching the seed `segs`: the targets of
-// the symlinks it followed on the way (the frame's cycle chain, §10),
-// and whether it would descend into the seed; `null` when it never gets
-// there — a symlink under `followSymlinks: false`, which drops them
-// entirely, or a link back to one already followed. A missing or broken
-// part ends the scan: the seed's own stat decides.
-function seedLinks(ctx, segs) {
-  const chain = [];
-  let cur = ctx.cwd;
-  for (let i = 0; i < segs.length; i++) {
-    cur = joinAbs(cur, segs[i]);
-    let target;
-    try {
-      if (!fs.lstatSync(cur).isSymbolicLink()) continue;
-      if (!ctx.followSymlinks) return null;
-      target = fs.realpathSync.native(cur);
-    } catch {
-      break;
-    }
-    if (chain.includes(target)) {
-      // A cycle: the walk stops descending here, so it reaches the seed
-      // only when the seed is this link.
-      return i === segs.length - 1 ? { chain, descend: false } : null;
-    }
-    chain.push(target);
-  }
-  return { chain, descend: true };
 }
 
 // A stat error that means no entry can be at the path, so a root walk
@@ -452,7 +369,6 @@ function normalizePattern(s) {
   let i = 0;
   while (i < s.length && s.charCodeAt(i) === 0x2f) i++;
   if (i > 0) s = s.slice(i);
-  if (!s.includes("/")) return s === "." ? "" : s;
   const trailingSlash = s.endsWith("/") || s.endsWith("/.");
   const segs = s.split("/").filter((seg) => seg !== "" && seg !== ".");
   return segs.length === 0 ? "" : segs.join("/") + (trailingSlash ? "/" : "");
@@ -555,26 +471,16 @@ function readEachEntry(dir) {
   return out;
 }
 
-// Does each non-ASCII part of a seed appear in its folder's listing as
-// written? A file system that ignores Unicode normalization (APFS) opens
-// an NFC spelling of a name stored NFD, which a root walk, comparing
-// names as listed, never matches. A folder that cannot be read leaves it
-// to the seed's own stat.
-function listedAsIs(cwd, segs) {
-  let dir = cwd;
-  for (const seg of segs) {
-    if (isNonAscii(seg)) {
-      let names;
-      try {
-        names = fs.readdirSync(dir);
-      } catch {
-        return true;
-      }
-      if (!names.includes(seg)) return false;
-    }
-    dir = joinAbs(dir, seg);
+// Is `name` in the listing of `dir` as written? A file system that
+// ignores Unicode normalization (APFS) opens an NFC spelling of a name
+// stored NFD, which a root walk, comparing names as listed, never
+// matches. A folder that cannot be read leaves it to the lstat.
+function listed(dir, name) {
+  try {
+    return fs.readdirSync(dir).includes(name);
+  } catch {
+    return true;
   }
-  return true;
 }
 
 // A FIFO, a socket or a device: not a file to read, so never emitted (a

@@ -120,26 +120,10 @@ use globstar::{CompileOptions, Glob, GlobError};
 /// [`WalkOptions`] — a path string, a `PathBuf`, or the struct itself.
 #[derive(Debug)]
 pub struct Walk {
-    /// Compiled positive-pattern union. `None` if no positive patterns
-    /// were given (walker yields nothing).
-    matcher: Option<Glob>,
-
-    /// Compiled ignore-pattern union (combines `opts.ignore` and any
-    /// `!`-prefixed patterns auto-split out of the input). `None` if
-    /// nothing should be ignored.
-    ignore: Option<Glob>,
-
-    /// The patterns and ignore entries that end in `/`, which match
-    /// folders only: asked about a folder with its `/` (`src/` yields
-    /// the folder `src`, `node_modules/` prunes it), never a file.
-    dirs: Option<Glob>,
-    ignore_dirs: Option<Glob>,
+    /// What decides each entry; `None` when no pattern selects anything.
+    rules: Option<Rules>,
 
     base: PathBuf,
-    follow_links: bool,
-    /// Whether the ignore set can cover a whole subtree (`match_dir`
-    /// all-below), which `dot = false` never does.
-    prune_ignored: bool,
     /// Whether the seeds are laid out yet: on the first `next()`, so
     /// they see the same tree the walk does.
     seeded: bool,
@@ -287,14 +271,17 @@ impl Walk {
                 path: opts.base.clone(),
                 source,
             })?;
-        Ok(Self {
+        let rules = matcher.map(|matcher| Rules {
             matcher,
             ignore,
             dirs,
             ignore_dirs,
-            base,
             follow_links: opts.follow_links,
             prune_ignored: opts.dot,
+        });
+        Ok(Self {
+            rules,
+            base,
             seeded: false,
             stack: Vec::new(),
             reading: None,
@@ -327,11 +314,12 @@ impl Walk {
         &self.base
     }
 
-    /// Seed the traversal stack via the matcher's `static_prefixes()`.
-    ///
-    /// Pure-literal patterns whose prefix resolves to an existing file
-    /// are yielded directly (no traversal). Other prefixes become stack
-    /// frames under `base`. Missing prefixes silently skip.
+    /// Seed the traversal from the matcher's `static_prefixes()`. A seed
+    /// is reached the way a root walk reaches it: part by part from
+    /// `base`, each part judged by [`Rules::judge`] as its folder's only
+    /// entry (its `lstat` stands in for the listing). An ancestor that
+    /// gives no child frame drops the seed; the last part's entry and
+    /// frame are the seed's.
     fn init_from_prefixes(&mut self) {
         // A bad base fails loudly whatever the patterns are, never as a
         // silently empty walk.
@@ -350,131 +338,68 @@ impl Walk {
             }));
             return;
         }
-        let matcher = match self.matcher.as_ref() {
-            Some(m) => m,
-            None => return, // empty pattern set: yield nothing
+        let Some(rules) = &self.rules else {
+            return; // empty pattern set: yield nothing
         };
-        let mut prefixes = matcher.static_prefixes();
-        if cfg!(windows) {
-            prefixes = win32_seeds(prefixes);
-        }
-        for prefix in prefixes {
+        for prefix in rules.matcher.static_prefixes() {
+            let mut frame = Frame {
+                absolute: self.base.clone(),
+                relative: Vec::new(),
+                depth: 0,
+                symlink_ancestors: Vec::new(),
+            };
             if prefix.is_empty() {
-                self.stack.push(Frame {
-                    absolute: self.base.clone(),
-                    relative: Vec::new(),
-                    depth: 0,
-                    symlink_ancestors: Vec::new(),
-                });
+                self.stack.push(frame);
                 continue;
             }
-
-            // A walked path never holds `..`, `.` or an empty segment
-            // (`read_dir` yields none of them), so a prefix with one
-            // (`{a,/b}` gives `/b`) is reached by no root walk; `..` would
-            // also escape `base`. Split on every platform separator so a
-            // Windows `..\secret` can't slip past.
+            // A walked path never holds `..`, `.` or an empty segment, so
+            // no root walk reaches such a prefix (and `..` would escape
+            // `base`). Split on every platform separator.
             if prefix
-                .split(|&b| std::path::is_separator(b as char))
+                .split(|&b| path::is_separator(b as char))
                 .any(|seg| seg.is_empty() || seg == b".." || seg == b".")
             {
                 continue;
             }
-
-            if let Some(ig) = &self.ignore
-                && seed_ignored(ig, &prefix)
-            {
-                continue;
-            }
-            // The folders above the seed, against the folder-only entries.
-            if (0..prefix.len()).any(|i| {
-                std::path::is_separator(prefix[i] as char)
-                    && folder_matches(self.ignore_dirs.as_ref(), &prefix[..i])
-            }) {
-                continue;
-            }
-
-            if !listed_as_is(&self.base, &prefix) {
-                continue;
-            }
-
-            let absolute = match std::str::from_utf8(&prefix) {
-                Ok(s) => {
-                    // Part by part, so the path has the platform's
-                    // separator throughout, as a root walk's do.
-                    let mut joined = self.base.clone();
-                    for seg in s.split('/') {
-                        joined.push(seg);
-                    }
-                    // Defense-in-depth: a part that replaces the base
-                    // (a drive, a root) never gets past `win32_seeds`.
-                    if !joined.starts_with(&self.base) {
-                        continue;
-                    }
-                    joined
-                }
-                Err(_) => continue,
-            };
-
-            // The links a root walk would follow on the way down.
-            let Some((symlink_ancestors, descend)) = self.seed_links(&absolute) else {
+            let Ok(text) = std::str::from_utf8(&prefix) else {
                 continue;
             };
-
-            // Depth of the prefix from the base: one per segment.
-            let depth = 1 + prefix
-                .iter()
-                .filter(|&&b| std::path::is_separator(b as char))
-                .count();
-
-            match fs::metadata(&absolute) {
-                Ok(meta) if meta.is_dir() => {
-                    if folder_matches(self.ignore_dirs.as_ref(), &prefix) {
-                        continue;
-                    }
-                    let dm = matcher.match_dir(&prefix);
-                    if dm.matches() || folder_matches(self.dirs.as_ref(), &prefix) {
-                        // Entries carry symlink-preserving file_type.
-                        if let Ok(lmeta) = fs::symlink_metadata(&absolute) {
-                            self.ready
-                                .push(Ok(Self::make_entry(&absolute, &lmeta, depth)));
-                        }
-                    }
-                    if descend && dm.may_match_below() {
-                        self.stack.push(Frame {
-                            absolute,
-                            relative: prefix,
-                            depth,
-                            symlink_ancestors,
-                        });
-                    }
+            let parts: Vec<&str> = text.split('/').collect();
+            for (i, name) in parts.iter().enumerate() {
+                if opens_as_another(name) && !listed(&frame.absolute, name) {
+                    break;
                 }
-                Ok(meta) if is_special(meta.file_type()) => {}
-                Ok(_) => {
-                    if matcher.is_match(&prefix)
-                        && let Ok(lmeta) = fs::symlink_metadata(&absolute)
-                    {
-                        self.ready
-                            .push(Ok(Self::make_entry(&absolute, &lmeta, depth)));
-                    }
+                let path = frame.absolute.join(name);
+                // Defense-in-depth: a part that replaces the base (a
+                // drive, a root) is never listed, so never gets here.
+                if !path.starts_with(&self.base) {
+                    break;
                 }
-                Err(_) => match fs::symlink_metadata(&absolute) {
-                    // Still lstat-able ⇒ the entry exists (broken or
-                    // looping symlink): the walk emits those as
-                    // non-directories (§10), so the seed must too.
-                    Ok(lmeta) => {
-                        if matcher.is_match(&prefix) {
-                            self.ready
-                                .push(Ok(Self::make_entry(&absolute, &lmeta, depth)));
-                        }
+                let meta = match fs::symlink_metadata(&path) {
+                    Ok(m) => m,
+                    Err(e) if nothing_there(&e) => break, // §9.4
+                    Err(source) => {
+                        self.ready.push(Err(WalkError::Io { path, source }));
+                        break;
                     }
-                    Err(lerr) if nothing_there(&lerr) => {} // §9.4
-                    // EACCES etc.: a root walk fails loudly here.
-                    Err(lerr) => self.ready.push(Err(WalkError::Io {
-                        path: absolute,
-                        source: lerr,
-                    })),
-                },
+                };
+                let listed = Listed {
+                    name: name.as_ref(),
+                    file_type: meta.file_type(),
+                    #[cfg(windows)]
+                    metadata: meta,
+                };
+                let mut below = Vec::new();
+                let item = rules.judge(&frame, listed, &mut below);
+                if i + 1 == parts.len() {
+                    self.ready.extend(item.map(Ok));
+                    self.stack.extend(below);
+                    break;
+                }
+                match below.pop() {
+                    Some(child) => frame = child,
+                    None => break,
+                }
             }
         }
 
@@ -484,74 +409,16 @@ impl Walk {
         self.stack.reverse();
     }
 
-    /// What a root walk knows on reaching the seed `joined`: the
-    /// targets of the symlinks it followed on the way (the frame's
-    /// cycle chain, §10), and whether it would descend into the seed;
-    /// `None` when it never gets there — a symlink under `follow_links:
-    /// false`, which drops them entirely, or a link back to one already
-    /// followed. A missing or broken part ends the scan: the seed's own
-    /// stat decides.
-    fn seed_links(&self, joined: &Path) -> Option<(Vec<PathBuf>, bool)> {
-        let rel = joined.strip_prefix(&self.base).ok()?;
-        let parts = rel.components().count();
-        let mut chain = Vec::new();
-        let mut cur = self.base.clone();
-        for (i, comp) in rel.components().enumerate() {
-            cur.push(comp);
-            match fs::symlink_metadata(&cur) {
-                Ok(m) if m.file_type().is_symlink() => {}
-                Ok(_) => continue,
-                Err(_) => break,
-            }
-            if !self.follow_links {
-                return None;
-            }
-            let Ok(target) = fs::canonicalize(&cur) else {
-                break;
-            };
-            if chain.contains(&target) {
-                // A cycle: the walk stops descending here, so it reaches
-                // the seed only when the seed is this link.
-                return (i + 1 == parts).then_some((chain, false));
-            }
-            chain.push(target);
-        }
-        Some((chain, true))
-    }
-
-    /// Build a [`DirEntry`] from symlink-preserving metadata (the
-    /// canonical `file_type` flavor for every yielded entry).
-    fn make_entry(absolute: &Path, meta: &fs::Metadata, depth: usize) -> DirEntry {
-        DirEntry {
-            path: absolute.to_path_buf(),
-            file_type: meta.file_type(),
-            depth,
-            #[cfg(windows)]
-            metadata: meta.clone(),
-        }
-    }
-
     /// The next item of the folder being read; `None` once it is done,
     /// when its child folders go on the stack, first child on top.
     fn read_next(&mut self) -> Option<Result<DirEntry, WalkError>> {
         let reading = self.reading.as_mut()?;
-        // Frames exist only when `matcher` is `Some` (`init_from_prefixes`
-        // returns early otherwise).
-        let matcher = self
-            .matcher
-            .as_ref()
-            .expect("matcher present while reading");
-        let ignore = self.ignore.as_ref();
-        let rules = Rules {
-            matcher,
-            ignore,
-            dirs: self.dirs.as_ref(),
-            ignore_dirs: self.ignore_dirs.as_ref(),
-            follow_links: self.follow_links,
-            prune_ignored: self.prune_ignored,
-        };
+        let rules = self.rules.as_ref()?;
         for entry in reading.entries.by_ref() {
-            if let Some(item) = rules.visit(entry, &reading.frame, &mut reading.children) {
+            if let Some(item) = rules
+                .visit(entry, &reading.frame, &mut reading.children)
+                .transpose()
+            {
                 return Some(item);
             }
         }
@@ -562,152 +429,143 @@ impl Walk {
 }
 
 /// What decides each entry of a folder.
-struct Rules<'a> {
-    matcher: &'a Glob,
-    ignore: Option<&'a Glob>,
-    dirs: Option<&'a Glob>,
-    ignore_dirs: Option<&'a Glob>,
+#[derive(Debug)]
+struct Rules {
+    matcher: Glob,
+    /// `opts.ignore` and the `!`-split patterns.
+    ignore: Option<Glob>,
+    /// The patterns and ignore entries that end in `/`, which match
+    /// folders only: asked about a folder with its `/`.
+    dirs: Option<Glob>,
+    ignore_dirs: Option<Glob>,
     follow_links: bool,
+    /// Whether the ignore set can cover a whole subtree (`match_dir`
+    /// all-below), which `dot = false` never does.
     prune_ignored: bool,
 }
 
-impl Rules<'_> {
-    /// One entry of the folder `frame`: the item it yields, if any. A
-    /// folder to walk goes to `children`.
+/// An entry as its folder lists it.
+struct Listed<'a> {
+    name: &'a std::ffi::OsStr,
+    /// Symlink-preserving.
+    file_type: fs::FileType,
+    #[cfg(windows)]
+    metadata: fs::Metadata,
+}
+
+impl Rules {
+    /// One `read_dir` item of the folder `frame`.
     fn visit(
         &self,
         entry: io::Result<fs::DirEntry>,
         frame: &Frame,
         children: &mut Vec<Frame>,
-    ) -> Option<Result<DirEntry, WalkError>> {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(source) => {
-                return Some(Err(WalkError::Io {
-                    path: frame.absolute.clone(),
-                    source,
-                }));
-            }
+    ) -> Result<Option<DirEntry>, WalkError> {
+        let entry = entry.map_err(|source| WalkError::Io {
+            path: frame.absolute.clone(),
+            source,
+        })?;
+        let fail = |source| WalkError::Io {
+            path: entry.path(),
+            source,
         };
-
-        let file_type = match entry.file_type() {
-            Ok(t) => t,
-            Err(source) => {
-                return Some(Err(WalkError::Io {
-                    path: entry.path(),
-                    source,
-                }));
-            }
+        let name = entry.file_name();
+        let listed = Listed {
+            name: &name,
+            file_type: entry.file_type().map_err(fail)?,
+            // Free on Windows: `FindFirstFileW` filled it in.
+            #[cfg(windows)]
+            metadata: entry.metadata().map_err(fail)?,
         };
+        Ok(self.judge(frame, listed, children))
+    }
 
-        // `follow_links: false` → symlinks are dropped entirely
-        // (matches `tinyglobby`'s `excludeSymlinks` semantics, NOT
-        // walkdir's "treat as file"). Skip before any further work.
+    /// The entry `name` of the folder `frame`: what it yields, if
+    /// anything. A folder to walk goes to `children`.
+    fn judge(&self, frame: &Frame, listed: Listed, children: &mut Vec<Frame>) -> Option<DirEntry> {
+        let Listed {
+            name, file_type, ..
+        } = listed;
+        // Built only when needed, as `fs::DirEntry::path` builds it.
+        let path = || frame.absolute.join(name);
+        // `follow_links: false` drops symlinks entirely.
         if file_type.is_symlink() && !self.follow_links {
             return None;
         }
-
-        let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        let name_bytes = name_str.as_bytes();
-
-        let mut child_rel = Vec::with_capacity(frame.relative.len() + 1 + name_bytes.len());
+        let mut child_rel = Vec::with_capacity(frame.relative.len() + 1 + name_str.len());
         child_rel.extend_from_slice(&frame.relative);
         if !frame.relative.is_empty() {
             child_rel.push(b'/');
         }
-        child_rel.extend_from_slice(name_bytes);
+        child_rel.extend_from_slice(name_str.as_bytes());
 
         // Ignore-filter before any stat, so an ignored symlink never
         // costs a metadata resolution (WALKER_SPEC §7.1 order).
-        if let Some(ig) = self.ignore
-            && ig.is_match(&child_rel)
+        if self
+            .ignore
+            .as_ref()
+            .is_some_and(|ig| ig.is_match(&child_rel))
         {
             return None;
         }
-
-        // On Windows, `std::fs::DirEntry::metadata` is free — the data
-        // was already pulled from `FindFirstFileW` during readdir.
-        // Cache it so `DirEntry::metadata` is also syscall-free later.
-        // On Unix we skip this (metadata would cost one stat syscall
-        // per entry even if the user never asks for it) and fall back
-        // to lazy `symlink_metadata` on demand.
-        #[cfg(windows)]
-        let cached_metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(source) => {
-                return Some(Err(WalkError::Io {
-                    path: entry.path(),
-                    source,
-                }));
-            }
-        };
-
         // A symlink takes its target's type; one that resolves to nothing
         // (dangling, looping) stays a link, emitted like a file.
         let (is_dir, special) = if file_type.is_symlink() {
-            match fs::metadata(entry.path()) {
+            match fs::metadata(path()) {
                 Ok(m) => (m.is_dir(), is_special(m.file_type())),
                 Err(_) => (false, false),
             }
         } else {
             (file_type.is_dir(), is_special(file_type))
         };
-
-        let child_depth = frame.depth + 1;
-        let make_entry = |path: PathBuf| DirEntry {
-            path,
-            file_type,
-            depth: child_depth,
-            #[cfg(windows)]
-            metadata: cached_metadata.clone(),
-        };
-
         if special {
             return None;
         }
+        let depth = frame.depth + 1;
+        let entry = |path| DirEntry {
+            path,
+            file_type,
+            depth,
+            #[cfg(windows)]
+            metadata: listed.metadata.clone(),
+        };
         if !is_dir {
-            return self
-                .matcher
-                .is_match(&child_rel)
-                .then(|| Ok(make_entry(entry.path())));
+            return self.matcher.is_match(&child_rel).then(|| entry(path()));
         }
-        if folder_matches(self.ignore_dirs, &child_rel) {
+        if folder_matches(self.ignore_dirs.as_ref(), &child_rel) {
             return None;
         }
         let dm = self.matcher.match_dir(&child_rel);
-        let emitted = (dm.matches() || folder_matches(self.dirs, &child_rel))
-            .then(|| Ok(make_entry(entry.path())));
+        let emitted =
+            (dm.matches() || folder_matches(self.dirs.as_ref(), &child_rel)).then(|| entry(path()));
         // An ignore that covers everything below skips the subtree
         // (`**/node_modules/**` and `node_modules`).
         let covered = self.prune_ignored
             && self
                 .ignore
+                .as_ref()
                 .is_some_and(|ig| ig.match_dir(&child_rel).matches_all_below());
         if !dm.may_match_below() || covered {
             return emitted;
         }
-        // Cycle break: when descending through a symlink target,
-        // canonicalize and check against the ancestor chain. An
-        // already-seen target, or a broken or unreadable link, skips the
-        // descent (still emitted if it matched).
-        let symlink_ancestors = if file_type.is_symlink() {
-            let Ok(resolved) = fs::canonicalize(entry.path()) else {
+        // Cycle break: a link to a target already on the way down, or a
+        // broken or unreadable one, is not descended (still emitted).
+        let path = path();
+        let mut symlink_ancestors = frame.symlink_ancestors.clone();
+        if file_type.is_symlink() {
+            let Ok(resolved) = fs::canonicalize(&path) else {
                 return emitted;
             };
-            if frame.symlink_ancestors.contains(&resolved) {
+            if symlink_ancestors.contains(&resolved) {
                 return emitted;
             }
-            let mut chain = frame.symlink_ancestors.clone();
-            chain.push(resolved);
-            chain
-        } else {
-            frame.symlink_ancestors.clone()
-        };
+            symlink_ancestors.push(resolved);
+        }
         children.push(Frame {
-            absolute: entry.path(),
+            absolute: path,
             relative: child_rel,
-            depth: child_depth,
+            depth,
             symlink_ancestors,
         });
         emitted
@@ -764,13 +622,6 @@ impl Iterator for Walk {
 /// Returns `""` when nothing remains (`.`, `./`).
 fn normalize_pattern(s: &str) -> String {
     let s = s.trim_start_matches('/');
-    if !s.contains('/') {
-        return if s == "." {
-            String::new()
-        } else {
-            s.to_string()
-        };
-    }
     let trailing = s.ends_with('/') || s.ends_with("/.");
     let segs: Vec<&str> = s
         .split('/')
@@ -804,37 +655,10 @@ fn nothing_there(err: &io::Error) -> bool {
     || format!("{kind:?}") == "FilesystemLoop"
 }
 
-/// An ignored directory prunes its subtree (§7.1 step 3), so a seed is
-/// dead if `ignore` matches it or any `/`-bounded ancestor.
-fn seed_ignored(ignore: &Glob, prefix: &[u8]) -> bool {
-    for i in 0..prefix.len() {
-        if std::path::is_separator(prefix[i] as char) && ignore.is_match(&prefix[..i]) {
-            return true;
-        }
-    }
-    ignore.is_match(prefix)
-}
-
-/// Compile a sequence of patterns into a single brace-merged
-/// [`Glob`] via [`Glob::union_with`]. Returns `None` for an empty
-/// input list.
-///
-/// A compile failure becomes [`WalkError::InvalidPattern`] naming the
-/// member the union failed in ([`GlobError::InMember`]), with the error
-/// for that member; when it ran past the expansion budget the members
-/// share (GLOB_SPEC §7.7), the reason says so. An error no one member
-/// explains (the union's compile work) names the list, cut after three.
-///
-/// Patterns arrive as (written, normalized) pairs: the normalized body
-/// by [`normalize_pattern`] (leading `/` stripped, so
-/// `Glob::static_prefixes()` always returns relative bytes — prevents
-/// `Path::join`'s "absolute-replaces-base" behavior from escaping the
-/// sandbox), the written text to name in errors. When the two differ,
-/// the reason says which text its byte offsets count in.
-///
-/// Single-pattern inputs bypass `Glob::union_with` and call
-/// `Glob::new_with` directly, so `Walk::new("**/*.ts")` allocates no
-/// scratch vector.
+/// The (written, normalized) patterns as one [`Glob`], or `None` for
+/// none. A failure names the member as written, with that member's error
+/// (and says which text its offsets count in, when normalizing changed
+/// it); an error no one member explains names the list, cut after three.
 fn compile_union(
     patterns: &[(String, String)],
     opts: CompileOptions,
@@ -933,84 +757,31 @@ fn is_special(t: fs::FileType) -> bool {
     !t.is_dir() && !t.is_file() && !t.is_symlink()
 }
 
-/// Does each non-ASCII part of `prefix` appear in its folder's listing as
-/// written? A file system that ignores Unicode normalization (APFS) opens
-/// an NFC spelling of a name stored NFD, which a root walk, comparing
-/// names as listed, never matches. A folder that cannot be read leaves it
-/// to the seed's own stat.
-fn listed_as_is(base: &Path, prefix: &[u8]) -> bool {
-    let mut dir = base.to_path_buf();
-    for seg in prefix.split(|&b| b == b'/') {
-        if !seg.is_ascii() {
-            let Ok(entries) = fs::read_dir(&dir) else {
-                return true;
-            };
-            if !entries
-                .flatten()
-                .any(|e| e.file_name().as_encoded_bytes() == seg)
-            {
-                return false;
-            }
-        }
-        match std::str::from_utf8(seg) {
-            Ok(name) => dir.push(name),
-            Err(_) => return true,
-        }
-    }
-    true
+/// Can opening `name` reach an entry its folder lists under another name?
+/// A file system that ignores Unicode normalization (APFS) opens an NFC
+/// spelling of a name stored NFD; Win32 drops a trailing `.` or space,
+/// opens `NUL`, `con.txt` and the other device names as devices, and reads
+/// `C:` as a drive. A root walk, comparing names as listed, never matches
+/// such a spelling.
+fn opens_as_another(name: &str) -> bool {
+    !name.is_ascii() || (cfg!(windows) && win32_rewrites(name.as_bytes()))
 }
 
-/// The seeds a Windows walk can stat. Win32 rewrites some names before
-/// it opens them (it drops a trailing `.` or space, and `NUL`, `con.txt`
-/// and the other device names name devices), so a seed through one
-/// would reach a folder `read_dir` lists under another name, past the
-/// ignore rules. Such a part cuts the seed back to its parent, where
-/// `read_dir` decides; a part with `:` (a drive, a stream) is never
-/// listed at all, so its seed is dropped. Cut seeds can cover others:
-/// those are dropped too, as `static_prefixes` drops covered heads.
-fn win32_seeds(prefixes: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
-    let mut out: Vec<Vec<u8>> = Vec::with_capacity(prefixes.len());
-    let mut cut = false;
-    'seeds: for prefix in prefixes {
-        let mut kept = 0;
-        for seg in prefix.split(|&b| b == b'/') {
-            if seg.contains(&b':') {
-                cut = true;
-                continue 'seeds;
-            }
-            if win32_rewrites(seg) {
-                cut = true;
-                break;
-            }
-            kept += seg.len() + 1;
-        }
-        let end = kept.min(prefix.len() + 1).saturating_sub(1);
-        out.push(prefix[..end].to_vec());
+/// Is `name` in the listing of `dir` as written? A folder that cannot be
+/// read leaves it to the `lstat`.
+fn listed(dir: &Path, name: &str) -> bool {
+    match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .flatten()
+            .any(|e| e.file_name().as_encoded_bytes() == name.as_bytes()),
+        Err(_) => true,
     }
-    if !cut {
-        return out;
-    }
-    out.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
-    out.dedup();
-    let mut kept: Vec<Vec<u8>> = Vec::with_capacity(out.len());
-    for p in out {
-        if p.is_empty() {
-            return vec![p];
-        }
-        let covered = kept
-            .iter()
-            .any(|k| p.len() > k.len() && p[k.len()] == b'/' && p.starts_with(k));
-        if !covered {
-            kept.push(p);
-        }
-    }
-    kept
 }
 
 /// Does Win32 open this name as something else: a trailing `.` or space,
-/// or a device name (`NUL`, `com1`, `con.txt`)?
+/// a device name (`NUL`, `com1`, `con.txt`), or a `:` (a drive, a stream)?
 fn win32_rewrites(seg: &[u8]) -> bool {
-    if matches!(seg.last(), Some(b'.' | b' ')) {
+    if matches!(seg.last(), Some(b'.' | b' ')) || seg.contains(&b':') {
         return true;
     }
     let stem = seg.split(|&b| b == b'.').next().unwrap_or(seg);
@@ -1040,20 +811,13 @@ fn lexical(p: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{win32_rewrites, win32_seeds};
-
-    fn seeds(prefixes: &[&str]) -> Vec<String> {
-        let bytes = prefixes.iter().map(|p| p.as_bytes().to_vec()).collect();
-        win32_seeds(bytes)
-            .into_iter()
-            .map(|p| String::from_utf8(p).unwrap())
-            .collect()
-    }
+    use super::win32_rewrites;
 
     #[test]
     fn win32_rewritten_names() {
         for name in [
             "src.", "src ", "a.ts.", ".. ", "NUL", "nul", "con.txt", "Com1", "LPT9.log", "aux ",
+            "C:", "a:b",
         ] {
             assert!(win32_rewrites(name.as_bytes()), "{name}");
         }
@@ -1062,18 +826,5 @@ mod tests {
         ] {
             assert!(!win32_rewrites(name.as_bytes()), "{name}");
         }
-    }
-
-    // A part Win32 would rewrite cuts the seed back to its parent; a part
-    // with `:` drops it; seeds a cut one covers go too.
-    #[test]
-    fn win32_seeds_stop_where_win32_would_rewrite() {
-        assert_eq!(seeds(&["src/sub", "lib"]), ["src/sub", "lib"]);
-        assert_eq!(seeds(&["src./a"]), [""]);
-        assert_eq!(seeds(&["src/sub./x", "src/y"]), ["src"]);
-        assert_eq!(seeds(&["src/a.ts.", "lib"]), ["lib", "src"]);
-        assert_eq!(seeds(&["C:/gsw/proj/src", "lib"]), ["lib"]);
-        assert_eq!(seeds(&["nul", "src/con.txt", "src/x"]), [""]);
-        assert!(seeds(&["c:"]).is_empty());
     }
 }
