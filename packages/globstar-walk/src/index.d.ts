@@ -37,8 +37,10 @@ export interface GlobOptions {
 
 /**
  * Concurrent async glob. Each discovered directory schedules its own
- * `fs.readdir` callback immediately, so syscalls overlap on libuv's
- * threadpool — the right choice for any non-trivial corpus.
+ * `fs.readdir` at once, so the reads overlap on libuv's threadpool and
+ * the event loop is never blocked. It gains most when reads are slow (a
+ * cold cache, macOS); with a warm cache on Linux {@link globSync} can be
+ * faster. Measure where it matters.
  *
  * Multi-pattern combines via OR. `!`-prefixed patterns auto-split into
  * the ignore set by the parity of their leading `!`s (`!x` is ignored,
@@ -61,9 +63,9 @@ export interface GlobOptions {
 export function glob(patterns: string | Iterable<string>, options?: GlobOptions): Promise<string[]>;
 
 /**
- * Sync DFS glob. Use when blocking traversal is OK and the corpus is
- * small enough that I/O concurrency wouldn't pay for itself (a few
- * hundred files or fewer). For everything else prefer {@link glob}.
+ * Sync DFS glob: one directory at a time, no promise cost per
+ * directory, and fewer listings held at once. Use it when blocking is
+ * OK; with a warm cache it can beat {@link glob}.
  *
  * Same options, same `!`-split behavior, same file-only output.
  * Errors throw a {@link WalkError} synchronously; wrongly-typed

@@ -91,8 +91,8 @@ export declare const DirMatch: {
   mayMatchBelow(d: DirMatchValue): boolean;
   /**
    * `DescendAll` or `DescendAllAndMatch` — every path below the
-   * directory matches: `match(dir + "/" + s)` holds for every `s` of one
-   * or more non-empty segments. `true` is a guarantee; `false` means
+   * directory matches: `match(dir === "" ? s : dir + "/" + s)` holds for
+   * every `s` of one or more non-empty segments. `true` is a guarantee; `false` means
    * "not all, or not provable". Always `false` under `dot: false`, where
    * no wildcard matches the dot-led names below.
    *

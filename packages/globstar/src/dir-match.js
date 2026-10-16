@@ -53,8 +53,9 @@ export const DirMatch = Object.freeze({
   },
 
   // Does every path below the directory match: `match(dir + "/" + s)`
-  // for every `s` of one or more non-empty segments? `true` is a
-  // guarantee; `false` means "not all, or not provable".
+  // (just `s` at the root `""`) for every `s` of one or more non-empty
+  // segments? `true` is a guarantee; `false` means "not all, or not
+  // provable".
   matchesAllBelow(d) {
     return d === DESCEND_ALL || d === DESCEND_ALL_AND_MATCH;
   },

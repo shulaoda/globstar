@@ -54,7 +54,7 @@ are out of scope. The first four denote `L(p)`, `L(p) ∪ {ε}`, `L(p)*`, and `L
 NFA(p) ─subset─→ DFA(p) ─toggle accept set─→ DFA(¬p)
 ```
 
-The cost is a tight upper bound of `2^{|p|}` DFA states. This bound is reached for natural patterns (e.g. `(a|b)^n`); a single occurrence of `!(...)` therefore suffices to push the compile-time state count past any reasonable matcher budget.
+The cost is a tight upper bound of `2^{|p|}` DFA states. This bound is reached by short patterns: `(a|b)*a(a|b)^{n-1}` ("the n-th byte from the end is `a`") has an NFA of n+1 states and a minimal DFA of 2^n (while `(a|b)^n` itself needs only n+2); a single occurrence of `!(...)` therefore suffices to push the compile-time state count past any reasonable matcher budget.
 
 The production architecture deliberately avoids complement construction: SegmentMatcher represents positive glob structure directly and simulates a positive NFA over it. Supporting `!(...)` would require determinization (or a different total representation) before complementing the accepting set, with a potential exponential state blow-up. Excluding it preserves the bounded compile model; leading whole-pattern `!` is instead handled by boolean inversion outside the engine.
 

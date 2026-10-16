@@ -69,8 +69,9 @@ impl DirMatch {
     }
 
     /// Does every path below the directory match: `is_match(dir + "/" +
-    /// s)` for every `s` of one or more non-empty segments? `true` is a
-    /// guarantee; `false` means "not all, or not provable".
+    /// s)` (just `s` when `dir` is the root `""`) for every `s` of one or
+    /// more non-empty segments? `true` is a guarantee; `false` means "not
+    /// all, or not provable".
     #[inline]
     pub fn matches_all_below(self) -> bool {
         matches!(self, Self::DescendAll | Self::DescendAllAndMatch)

@@ -77,7 +77,7 @@ Spec: [GLOB_SPEC §7.3](https://github.com/shulaoda/globstar/blob/main/reference
 
 ## A brace needs a comma
 
-A brace with no comma is not a brace. `{a}` is just the three characters `{`, `a`, `}`. This follows Bash and other glob tools. It also means range forms like `{1..3}` are plain text, because ranges are not supported.
+A brace with no comma is not a brace. `{a}` is just the three characters `{`, `a`, `}`. This follows Bash, picomatch and the npm fast-glob; globset, doublestar and the Rust fast-glob crate read `{a}` as a group, so there it matches `a`. It also means range forms like `{1..3}` are plain text, because ranges are not supported.
 
 | Pattern      | Path         | Match? |
 | ------------ | ------------ | ------ |

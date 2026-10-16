@@ -147,7 +147,7 @@ all    ← dot and prefix and covers_below(S)      (§2.5)
 verdict ← combine(exact, prefix, all)
 ```
 
-This is the production path. It answers the directory query without rebuilding a byte-level automaton or allocating per call.
+This is the production path. It answers the directory query without rebuilding a byte-level automaton. The chain path and the one-word NFA allocate nothing per call; past 64 states the NFA allocates its few word-slice sets per call.
 
 ### 2.3 The suffix prefilter is not used
 
@@ -192,7 +192,7 @@ On a lone chain the simulation has a closed form, which `chain_dir` uses: the gl
 
 Under `dot=false` it returns `false` without simulating: `**` does not match a dot-led name, so some `d/.x` always escapes.
 
-One corner is not provable: branches that split the names by length — `?/**/?` with `**/??*` — cover together, but the rule asks each `Wild` to take every length on its own and answers `false` there. Branches that merge into one segment (`**/?` with `**/??*` factors to `**/?{,?*}`) are one `Wild` and are proven.
+One corner is not provable: branches that split the names by length — `?/**/?` with `**/??*` — cover together, but the rule asks each `Wild` to take every length on its own and answers `false` there. Union members that merge into one segment (`**/?` with `**/??*` factors to `**/?{,?*}`) are one `Wild` and are proven; factoring merges members, not the braces a user wrote, so `{**/?,**/??*}` stays two branches and is not.
 
 ## 3. Walker integration
 
@@ -352,4 +352,4 @@ If `**/*.test.ts` were instead routed through `match_dir`, a directory where `ma
 ## 7. References
 
 - Hopcroft, J. E., Motwani, R., Ullman, J. D. _Introduction to Automata Theory, Languages, and Computation_. Reverse reachability and quotient automata are textbook material; the `reach1` mask (`engine/segment/compile.rs`) is a direct application.
-- The `DirMatch` six-valued formulation is characteristic of the Rust `globset` / `ignore` ecosystem; the equivalent verdict is used internally by `walkdir::WalkDir::filter`. The literature for prefix-based pruning of regular-expression search lives in index-pattern work (e.g. _Cox, R., Russ Cox's regular expression notes_) and incremental DFA matching.
+- The six-valued `DirMatch` is this project's own. `globset` has no directory query; `ignore`'s `Match` (none / ignore / whitelist) speaks only of the path itself; `walkdir`'s `filter_entry` takes a plain `bool` from its caller. The literature for prefix-based pruning of regular-expression search lives in index-pattern work (e.g. _Cox, R., Russ Cox's regular expression notes_) and incremental DFA matching.

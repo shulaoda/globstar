@@ -2,7 +2,7 @@
 
 **Status.** This document is the normative definition of the glob dialect implemented by the `globstar` Rust crate (`crates/globstar`) and the `@globstar/core` JS package (`packages/globstar`). When code, tests or other documents disagree with it, the code changes.
 
-**Version.** 0.2.4, draft. The document is not frozen; Appendix A (§17) lists every change.
+**Version.** 0.2.9, draft. The document is not frozen; Appendix A (§17) lists every change.
 
 **Baseline.** The dialect follows `picomatch` and `fast-glob` mainline behavior with the rigor of `doublestar`. Bit-exact parity with any single tool is not a goal; §16 lists every deliberate difference.
 
@@ -235,7 +235,7 @@ Under `dot = false`, a negated class at a segment start does not match `.`; unde
 
 ### 6.5 Empty classes and the POSIX first-`]` rule
 
-A `]` immediately after `[`, `[!` or `[^` is a member, not the closer, as in bash, fnmatch, picomatch and fast-glob. Consequences:
+A `]` immediately after `[`, `[!` or `[^` is a member, not the closer, as in bash, fnmatch, picomatch, globset and fast-glob. Consequences:
 
 - `[]]` matches `]`; `[!]]` matches any byte except `]`; `[]-]` matches `]` or `-`.
 - `[]`, `[!]` and `[^]` are `UnterminatedClass`: the `]` was a member, and no closer follows.
@@ -265,7 +265,7 @@ Two exceptions keep the equation from over-applying:
 1. The leading `!` is read before expansion (§9.3). `{!a,b}` expands to the body `!a`, whose `!` is a literal byte.
 2. An empty expansion means ε, not an error. The empty branch of `{a,}` contributes the empty string; the `Empty` error (§10) applies to the user's pattern only.
 
-The equation works on tokens, not bytes. A branch is spliced in as a unit and tokens never fuse across the splice: `*{,a}*` is `L(* ε *)` ∪ `L(* a *)`, and the two stars of the empty expansion stay two stars (which collapse to one, §10). They do not become a `**` the author never wrote.
+The equation works on tokens, not bytes. A branch is spliced in as a unit and tokens never fuse across the splice: `*{,a}*` is `L(* ε *)` ∪ `L(* a *)`, and the two stars of the empty expansion stay two stars (which collapse to one, §8.1). They do not become a `**` the author never wrote.
 
 > **Implementation note.** The equation defines meaning only; §7.2 still forbids pre-expanding braces, and an implementation need only be equivalent. The reference implementations decide a `**` beside plain tokens while parsing. A `**` whose neighbor is a brace edge that can be a separator, or empty, is handled by distributing that brace over it (`**{/a,b}` → `{**/a,**b}`, `{a/,b}**` → `{a/**,b**}`); two braces meeting at a `**` edge (`{**,a}{/,b}`) merge into one. Only the branches the `**` can affect are taken apart, and branches that put a `/` toward the `**` share that one `/` (`**{/a,/b}` → `**/{a,b}`). This local expansion is what §7.6 and §7.7 bound.
 
@@ -288,9 +288,9 @@ An implementation MUST NOT expand braces into N separate patterns at parse time;
 
 ### 7.4 Single-branch braces
 
-`{a}` (no comma) is not a brace. It is the literal three bytes `{a}`, as in bash, picomatch and fast-glob.
+`{a}` (no comma) is not a brace. It is the literal three bytes `{a}`, as in bash, picomatch and the npm fast-glob. globset, doublestar and the fast-glob crate read it as a one-branch group instead, so there `{a}` matches `a`.
 
-The now-literal `{` or `}` is a plain byte, not a segment boundary, so a `**` next to it degrades to `*` (§8.1): `{**}` ≡ `{*}` matches `{a}` but not `{a/b}`, and `{a/**}` ≡ `{a/*}`. A `**` with `/` on both sides stays a globstar: `{a/**/b}` matches `{a/x/y/b}`. This is a deliberate divergence from picomatch and fast-glob, which keep the globstar (§16).
+The now-literal `{` or `}` is a plain byte, not a segment boundary, so a `**` next to it degrades to `*` (§8.1): `{**}` ≡ `{*}` matches `{a}` but not `{a/b}`, and `{a/**}` ≡ `{a/*}`. A `**` with `/` on both sides stays a globstar: `{a/**/b}` matches `{a/x/y/b}`. This is a deliberate divergence from picomatch and the npm fast-glob, which keep the globstar; bash degrades it the same way (§16).
 
 A separator stays structural; it never becomes literal content. `x{a/b}y` is the two-segment pattern `x{a` / `b}y`, exactly like `x\{a/b\}y`.
 
@@ -372,7 +372,7 @@ L(a/**/b)  = { "a/" + w + "b" : w empty or ending in / }  ; a/b, a/x/b, a/x/y/b,
 | `a/b`   | true       |                            |
 | `a/b/c` | true       |                            |
 
-This agrees with picomatch, fast-glob and globset, and deliberately differs from doublestar, which makes `a/**` match `a`. To select a directory and everything below it, write `{a,a/**}`.
+This agrees with globset, minimatch and the fast-glob crate. It deliberately differs from picomatch (unless `strictSlashes: true`) and doublestar, which make `a/**` match `a`. To select a directory and everything below it, write `{a,a/**}`.
 
 ### 8.4 `match_dir` and `a/**`
 
@@ -581,7 +581,9 @@ The default at the matcher layer is `true`. The walker layer defaults to `false`
 | `dot = false` | no match          | no match         | name the dot (`.*`, `[.]*`) or pass `dot = true` |
 | `dot = true`  | match             | match            |                                                  |
 
-`dot = false` is the bash and picomatch behavior.
+`dot = false` is the picomatch behavior. Bash and POSIX `fnmatch` are stricter: a class never matches a leading dot there (`[.]env` does not match `.env`); only a literal `.` does.
+
+Under `dot = true`, `*` and `**` also match the names `.` and `..`: `public/**` matches `public/../secret.txt`, which picomatch never matches. A path is matched as the bytes given, never resolved, so a caller matching paths from outside normalizes them first. The walker never meets such names, since `readdir` does not return them.
 
 > **Rationale.** The matcher is a pure pattern-to-path predicate; hidden files are a filesystem convention, not a property of the pattern language. The convention therefore lives in the walker's default.
 
@@ -703,7 +705,7 @@ match_dir(P, d) :=
 
 Both flags about "below" are one-sided (§13.6). A `false` may-below is a guarantee that nothing below matches; `true` MAY be conservative. The reference implementations report may-below at the root for every pattern, since nothing has been consumed there.
 
-`d` is taken as given and never canonicalized. `match_dir("src", "src")` is `Match`. A trailing slash asks about that exact byte string: `match_dir("a/", "a/**")` is `DescendAndMatch` (`a/` ∈ L and `a//x` ∈ L), while `match_dir("a/", "a/b")` is `Pruned` (nothing in `{a/b}` starts with `a//`). Walkers get directory paths from `readdir` without a trailing separator, so the slashless form is the canonical query.
+`d` is taken as given and never canonicalized. `match_dir("src", "src")` is `Match`. A trailing slash asks about that exact byte string: `match_dir("a/**", "a/")` is `DescendAndMatch` under `dot = false` (`a/` ∈ L and `a//x` ∈ L, but `a//.x` ∉ L; under `dot = true` every path below matches, so it is `DescendAllAndMatch`), while `match_dir("a/b", "a/")` is `Pruned` (nothing in `{a/b}` starts with `a//`). Walkers get directory paths from `readdir` without a trailing separator, so the slashless form is the canonical query.
 
 ### 13.3 Examples
 
@@ -763,13 +765,11 @@ An implementation MUST NOT set all-below unless `all_below(P, d)` holds. A consu
 
 #### Reference rule
 
-The reference implementations decide the flag by continuing from the state `d` leaves the matcher in and feeding it every wildcard-only path: a path whose bytes are consumed by `?`, `*` and `**` alone. Literals and classes, negated classes included, take none of them. The flag is set when every such path in `R` is accepted. A real byte is accepted wherever a wildcard-only byte is, which gives the guarantee.
+The reference implementations decide the flag segment by segment. Under `dot = false` it is never set: `**` does not match `d/.cache`, so no subtree is covered. Under `dot = true` they continue from the state `d` leaves the matcher in and step it over a _wildcard-only segment_: a name of any length whose bytes only `?`, `*` and `**` consume (literals and classes, negated classes included, take none). A globstar absorbs the segment; an element inside a segment takes it only if its wildcards alone take every non-empty name (`*` and `?*` do; `?` and `*.js` do not); a literal never does. The state must accept after every step, and the flag is set once a step leaves the state unchanged. A real segment is taken wherever a wildcard-only one is (no wildcard is dot-protected under `dot = true`), which gives the guarantee.
 
 Consequences:
-
-- Under `dot = false` the flag is never set: `**` does not match `d/.cache`, so no subtree is covered.
 - A pure literal pattern never sets it, and neither does a negated pattern (§13.4).
-- A union sets it when its members cover the subtree together, not only when one member does (§14.3).
+- A union sets it when its members cover the subtree together, not only when one member does (§14.3). Members that differ in one segment are merged first (`["**/?", "**/??*"]` becomes one element, `**/?{,?*}`, and is proven at `a`); a brace the user wrote is not regrouped, so `{**/?,**/??*}` keeps its two branches and gets `DescendAndMatch` at `a`, though it matches the same paths.
 
 #### Examples
 
@@ -796,7 +796,7 @@ All rows use `dot = true` unless marked.
 Two shapes cover a subtree without the reference rule seeing it, and get the safe `Descend`:
 
 - coverage through classes: `/p/dist/**/{a*,[!a]*}` takes every name, as one starting with `a` or one that does not;
-- coverage by name length across separator-crossing branches: `?/**/?` with `**/??*` takes every name below `c/x.js`, as a one-byte name or a longer one.
+- coverage by name length across branches: `?/**/?` with `**/??*` takes every name below `c/x.js`, as a one-byte name or a longer one (and so does a brace like `{**/?,**/??*}`, above).
 
 The rule asks a single element to take every name, and neither shape has one.
 
@@ -993,33 +993,36 @@ All-below (`dot=true`, §13.6):
 
 ## 16. Differences from Other Tools
 
-| Behavior                                  | globstar                            | Bash               | picomatch              | globset                                | fast-glob                  | doublestar    |
-| ----------------------------------------- | ----------------------------------- | ------------------ | ---------------------- | -------------------------------------- | -------------------------- | ------------- |
-| `dot` default                             | `true` (matcher) / `false` (walker) | `false`            | `false`                | `true` (no concept)                    | `true` (no concept)        | `false`       |
-| `case_insensitive`                        | ASCII only, default `false`         | `shopt nocaseglob` | `nocase` option        | `case_insensitive` builder             | `caseSensitiveMatch=false` | Unicode-aware |
-| `**` must own a segment                   | enforced                            | ✅                 | ✅                     | ✅                                     | ✅                         | ✅            |
-| `a/**` matches `a`                        | ❌                                  | ⚠️                 | ⚠️                     | ❌                                     | ❌                         | ❌            |
-| `**` in braces judged on expansion (§7.0) | ✅                                  | ✅ (expands first) | ❌ (branch-local `.*`) | ❌ (demotes to `*` even at boundaries) | ❌                         | n/a           |
-| `**` in single-branch brace `{**}` (§7.4) | degrades to `*`                     | literal            | keeps globstar         | ⚠️                                     | keeps globstar             | ⚠️            |
-| `**/X` matches absolute `/a/X` (§8.5)     | ✅                                  | n/a                | ✅                     | ✅                                     | ✅                         | ❌            |
-| Extglobs                                  | ❌ (literal)                        | ✅ (`shopt`)       | ✅                     | ❌                                     | ❌                         | ✅            |
-| POSIX character classes                   | ❌                                  | ✅                 | ✅                     | ❌                                     | ❌                         | ⚠️            |
-| `[/]` inside a class (§6.2)               | parse error                         | literal            | literal                | literal                                | literal                    | ⚠️            |
-| POSIX first-`]` rule (§6.5)               | ✅                                  | ✅                 | ✅                     | ❌                                     | ❌                         | ⚠️            |
-| `[!a]` ≡ `[^a]`                           | ✅ (both negate)                    | ✅                 | ❌ (only `[^a]`)       | ⚠️                                     | ❌ (only `[^a]`)           | ⚠️            |
-| Brace ranges `{1..10}`                    | ❌                                  | ✅                 | ✅                     | ❌                                     | ❌                         | ❌            |
-| Brace nesting                             | ≤ 32                                | ✅                 | ✅                     | ✅                                     | ≤ 10                       | ✅            |
-| Leading-`!` negation                      | ✅                                  | n/a                | ✅                     | ⚠️                                     | ✅                         | ✅            |
-| `/` required in patterns                  | ✅                                  | n/a                | ⚠️                     | ⚠️                                     | ⚠️                         | ⚠️            |
-| `\` is always the escape                  | ✅                                  | ✅                 | ✅                     | ⚠️                                     | ⚠️                         | ⚠️            |
-| `\` in a path is a separator (§12.3)      | platform-conditional                | ❌                 | ✅ (JS paths)          | platform                               | ❌                         | platform      |
-| Stray `]`, `}`, `)`                       | literal                             | literal            | literal                | literal                                | literal                    | literal       |
-| Unclosed constructs                       | parse error                         | literal            | ⚠️                     | error                                  | error                      | literal       |
-| `match_dir` API                           | ✅ (first-class)                    | n/a                | ❌                     | ✅                                     | ❌                         | ❌            |
+| Behavior                                      | globstar                            | Bash               | picomatch                       | globset                      | fast-glob (npm)               | fast-glob (crate)              | doublestar                                     |
+| --------------------------------------------- | ----------------------------------- | ------------------ | ------------------------------- | ---------------------------- | ----------------------------- | ------------------------------ | ---------------------------------------------- |
+| `dot` default                                 | `true` (matcher) / `false` (walker) | `false`            | `false`                         | `true` (no concept)          | `false`                       | `true` (no concept)            | `true` (`Glob`: `WithNoHidden()`)              |
+| Case-insensitive                              | ASCII only, default `false`         | `shopt nocaseglob` | `nocase` option                 | `case_insensitive` builder   | `caseSensitiveMatch: false`   | ❌                              | `WithCaseInsensitive()` (`Glob` only), Unicode |
+| `**` must own a segment                       | enforced                            | ✅                  | ✅                               | ✅ (with `literal_separator`) | ✅                             | ✅                              | ✅                                              |
+| `a/**` matches `a`                            | ❌                                   | ⚠️ (lists `a/`)    | ✅ (❌ with `strictSlashes`)      | ❌                            | ⚠️ (walker: no; matcher: yes) | ❌                              | ✅                                              |
+| `**` in braces judged on the expansion (§7.0) | ✅                                   | ✅ (expands first)  | ❌ (branch-local `.*`)           | ❌                            | ✅ (expands first)             | ❌                              | ⚠️ (not `**{/a,b}`)                            |
+| `**` in a single-branch brace `{**}` (§7.4)   | degrades to `*`                     | degrades to `*`    | keeps globstar                  | a group; `**` acts as `*`    | keeps globstar                | a group (= `**`)               | a group (= `**`)                               |
+| `**/X` matches the absolute `/a/X` (§8.5)     | ✅                                   | n/a                | ✅                               | ✅                            | n/a (walker)                  | ✅                              | ✅                                              |
+| Extglobs                                      | ❌ (literal)                         | ✅ (`shopt`)        | ✅                               | ❌                            | ✅                             | ❌                              | ❌                                              |
+| POSIX character classes                       | ❌                                   | ✅                  | ✅                               | ❌                            | ✅                             | ❌                              | ❌                                              |
+| `[/]` inside a class (§6.2)                   | parse error                         | literal            | ⚠️ (`/` or the literal text)    | matches `/`                  | never matches                 | never matches                  | ⚠️ (`Match`: `/`; `Glob`: error)               |
+| POSIX first-`]` rule (§6.5)                   | ✅                                   | ✅                  | ✅                               | ✅                            | ✅                             | ✅                              | ❌ (error)                                      |
+| `[!a]` same as `[^a]`                         | ✅ (both negate)                     | ✅                  | ❌ (only `[^a]`; ✅ with `posix`) | ✅                            | ✅                             | ✅                              | ✅                                              |
+| Brace ranges `{1..10}`                        | ❌                                   | ✅                  | ✅                               | ❌                            | ✅                             | ❌                              | ❌                                              |
+| Brace nesting                                 | ≤ 32                                | ✅                  | ✅                               | ✅                            | ✅                             | ≤ 10                           | ✅                                              |
+| Leading-`!` negation                          | ✅                                   | n/a                | ✅                               | ❌ (literal)                  | ✅ (an ignore pattern)         | ✅                              | ❌ (literal)                                    |
+| `/` required in patterns                      | ✅                                   | n/a                | ✅                               | ⚠️                           | ✅                             | ✅                              | ⚠️ (`PathMatch`)                               |
+| `\` is always the escape                      | ✅                                   | ✅                  | ✅                               | ⚠️                           | ✅                             | ✅ ¹                            | ⚠️ (`PathMatch`)                               |
+| `\` in a path is a separator (§12.3)          | platform-conditional                | ❌                  | ⚠️ (`windows` option)           | platform                     | n/a (walker)                  | platform ¹                     | platform (`PathMatch`)                         |
+| Stray `]`, `}`, `)`                           | literal                             | literal            | literal                         | `}` is an error              | literal                       | literal                        | ⚠️ (`}`: `Glob` error)                         |
+| Unclosed constructs                           | parse error                         | literal            | ⚠️                              | error                        | ⚠️ (no error)                 | no match (`validate()` errors) | error                                          |
+| `match_dir` API                               | ✅ (first-class)                     | n/a                | ❌                               | ❌                            | ❌                             | ❌                              | ❌                                              |
+| `*` and `**` match `.` and `..` (dot on)      | ✅                                   | ❌                  | ❌                               | ✅                            | ❌                             | ✅                              | ✅                                              |
 
-Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional, n/a not applicable.
+Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional, n/a not applicable. ¹ Measured on Unix only; the crate has no platform switch for `\` in patterns and splits paths with `std::path::is_separator`.
 
-> **Note.** This dialect is closest to picomatch and doublestar. It is stricter about input (`/` is mandatory in patterns), treats `match_dir` as a first-class operation, and is stricter about syntax errors: an unterminated class or brace is a hard error, never silently literal.
+Every cell was measured on 2026-10-16: Bash 5.2.37 (filename expansion with `globstar`, and `[[ ]]` where no file can exist), picomatch 4.0.7 (4.0.4 and 2.3.2 answer the same), globset 0.4.20 (with `literal_separator(true)`), fast-glob 3.3.3 from npm (a walker; it matches through micromatch 4.0.8 and picomatch 2.3.2, and expands braces first), the fast-glob crate 1.1.2 (`glob_match`), and doublestar v4.10.3 (`Match`, and `Glob` on real trees). Windows cells come from a simulated platform. Tools change between versions.
+
+> **Note.** Of these tools, picomatch is the closest. globstar is stricter about input (`/` is mandatory in patterns), treats `match_dir` as a first-class operation, and is stricter about syntax errors: an unclosed class or brace is a hard error, never silently literal.
 
 ---
 
@@ -1047,6 +1050,7 @@ Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional, n/a not applicable.
 - **v0.2.5** (2026-10-16): `TooComplex` (§10) bounds the compile work of braces whose segments multiply.
 - **v0.2.6** (2026-10-16): §13.6 states how the reference implementations bound the all-below proof (64 wildcard-only segments, 4096 tail compares); §7.2 and §7.7 point at `TooComplex`.
 - **v0.2.8** (2026-10-16): §10: `InvalidRange.at` is where the range starts; an error one member of a pattern list raises names the member (`InMember` in Rust, `index` in JS).
+- **v0.2.9** (2026-10-16): §16 measured cell by cell against each tool (versions under the table), with fast-glob's npm walker and Rust crate in columns of their own, and a row for `.` and `..` under `dot = true` (§11.1 says to normalize paths from outside); the other-tool claims in §6.5, §7.4, §8.3 and §11.1 follow the measurements. §13.2's examples take the `match_dir(P, d)` order and name their `dot`. §13.6 states the all-below rule per segment with its `dot` gate, and says union members merge while a user's braces do not. §7.0 cites §8.1 for star collapse.
 - **v0.2.7** (2026-10-16): §12.4 states dot protection as the implementations apply it, per segment start: a `*` there matches nothing, not even the empty string (`*.txt` does not match `.txt`); §15.8 shows it.
 - Awaiting owner approval before freezing as v1.0.
 

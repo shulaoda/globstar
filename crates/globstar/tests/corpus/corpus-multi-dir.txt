@@ -86,4 +86,6 @@
 
 ## union.all-below.empty.dir.is.cwd
 ["src/**","**"]		descend-all-match	dot=true
+# Below the root is `s` itself (`a`), not `/` + `s`.
+["?*","?*/**"]		descend-all	dot=true
 ["src/**","tests/**"]		descend	dot=true

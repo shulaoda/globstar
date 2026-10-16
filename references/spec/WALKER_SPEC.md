@@ -1,6 +1,14 @@
 # WALKER_SPEC — Filesystem Walker Built on the Glob Matcher
 
-> This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling. **Version:** v0.3.3 (draft) **Status:** active — not yet released. **Reference implementation:** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec. **Normative keywords:** "MUST", "SHOULD", "MAY" follow RFC 2119.
+This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling.
+
+**Version.** v0.3.4, draft. Appendix A (§12) lists every change.
+
+**Status.** Active, not yet released.
+
+**Reference implementation.** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec.
+
+**Conventions.** "MUST", "SHOULD", "MAY" follow RFC 2119.
 
 ## Table of Contents
 
@@ -56,9 +64,11 @@ export function globSync(patterns: string | readonly string[], options?: GlobOpt
 
 ### 2.2 Choosing async vs sync
 
-`glob` (async) is the recommended entry for any non-trivial corpus. Each discovered directory schedules its own `fs.readdir` callback immediately, letting libuv overlap syscalls across the threadpool.
+`glob` (async) reads directories concurrently: each discovered directory schedules its own `fs.readdir` at once, and libuv overlaps the reads on its threadpool. It does not block the event loop, and it gains most when reads are slow — a cold cache, a network or slow disk, macOS's `readdir`. It can hold more directory listings in memory at once than the sync walk does.
 
-`globSync` (sync DFS) is appropriate when blocking traversal is acceptable AND the corpus is small enough that I/O concurrency cannot amortize the per-await microtask cost (a few hundred files or fewer). On real Vite-style projects the async path is consistently 30–40% faster than its sync counterpart.
+`globSync` (sync DFS) reads one directory at a time and pays no promise or callback cost per directory. Use it when blocking is acceptable; with a warm cache it can be the faster of the two.
+
+Which one is faster depends on the platform, the cache and the tree, so measure where it matters. Two warm-cache runs of Vite's `packages/vite` `src/**/*.ts` (962 files): macOS (APFS) sync 7.2 ms, async 4.4 ms; Linux (tmpfs) sync 1.9 ms, async 3.0 ms.
 
 Both paths share the same matching, preprocessing, error model, and output shape. The only difference is how they sequence `readdir` calls.
 
@@ -105,7 +115,7 @@ Forwarded to the matcher (ASCII-only). See GLOB_SPEC.md §11.2 for the precise s
 
 Default is **`true`**, matching `tinyglobby`'s `followSymbolicLinks` default. Vite's `import.meta.glob` relies on this (e.g. pnpm-style `node_modules/<pkg>` symlinks must be traversed for the glob to see the real package contents).
 
-When `true`, the walker resolves symbolic-link directory entries via `fs.statSync` to determine whether the link target is a directory and should be descended. To prevent infinite descent on cyclic symlinks, the walker MUST also `fs.realpathSync` each symlink target and check the resolved path against the chain of symlink-target ancestors that lead to the current frame; if it's already in the chain, the descent is skipped (the symlink path is still emitted as a dir match if the matcher matches it — only the descent is suppressed). See §7.1 step 6 below.
+When `true`, the walker resolves symbolic-link directory entries via `fs.statSync` to determine whether the link target is a directory and should be descended. To prevent infinite descent on cyclic symlinks, the walker MUST also `fs.realpathSync` each symlink target and check the resolved path against the chain of symlink-target ancestors that lead to the current frame; if it's already in the chain, the descent is skipped. The link names a directory, so it is never emitted itself (the output is files only, §8.1); the rest of the walk goes on. See §7.1 step 6 below.
 
 When `false`, symlinks are dropped entirely: NOT emitted as files, NOT descended. This matches `fdir`'s `excludeSymlinks` mode and `tinyglobby`'s `followSymbolicLinks: false`.
 
@@ -114,8 +124,12 @@ When `false`, symlinks are dropped entirely: NOT emitted as files, NOT descended
 An additional set of glob patterns. A path matches the walker's final predicate if and only if:
 
 ```
-final_match(path) := positive.match(path) AND NOT ignore.match(path)
+final_match(path) := positive.match(path)
+                     AND NOT ignore.match(path)
+                     AND NOT ignore.match(d) for every folder d above path, below cwd
 ```
+
+An ignored folder hides its whole subtree: `glob("**/*.js", { ignore: ["dist"] })` drops `dist/a.js`, though `dist` alone names no `.js` file.
 
 `ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. Each `ignore` entry is itself a strictly positive pattern: the array is NOT subject to the §4.2 `!`-split rule, and an entry that starts with `!` (after §4.3 normalization) is refused with `WalkError("InvalidPattern")`. As the matcher's whole-pattern negation (GLOB_SPEC.md §9.3) it would ignore everything except what it names, which is never what a caller writing `!src/**` into an ignore list means; escape a name that starts with `!` as `\!`.
 
@@ -392,7 +406,7 @@ Symbolic-link entries are surfaced by `readdir`'s `withFileTypes` result with `i
 - `followSymlinks: false`: the symlink is dropped entirely — NOT emitted as a file, NOT descended. Matches `fdir`'s `excludeSymlinks` mode.
 - `followSymlinks: true` (default): the walker calls `fs.statSync` on the symlink (NOT `lstatSync`), which follows it. If the result is a directory, the walker treats the symlink as a directory entry and descends into the target's contents. If the stat fails (broken link, permission error), `isDir` is silently set to `false` and the entry continues as a non-directory. Stat failures here do NOT throw `WalkError("Io")` — broken symlinks are too common in real trees to make them fatal, even in the loud-error default.
 
-**Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles by resolving each symlink-target via `fs.realpathSync.native` (Rust: `fs::canonicalize`) and checking the resolved path against the chain of symlink-target ancestors that reached the current frame (see §7.1 step 6). If the resolved path is already in the chain, the descent is suppressed for that entry only — the symlink path is still emitted if `matcher.match` matches it, the rest of the walk continues. `realpathSync` failures (broken / inaccessible) silently skip the descent without throwing. Algorithm parity: `fdir`'s `isRecursive` plus its `state.symlinks` map.
+**Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles by resolving each symlink-target via `fs.realpathSync.native` (Rust: `fs::canonicalize`) and checking the resolved path against the chain of symlink-target ancestors that reached the current frame (see §7.1 step 6). If the resolved path is already in the chain, the descent is suppressed for that entry only; the link names a directory, so it is not emitted (§8.1), and the rest of the walk continues. `realpathSync` failures (broken / inaccessible) silently skip the descent without throwing. Algorithm parity: `fdir`'s `isRecursive` plus its `state.symlinks` map.
 
 Output paths preserve the symlink path as discovered through `readdir`. `fs.realpath` is called purely for cycle detection — the resolved path is NEVER substituted into the output.
 
@@ -406,8 +420,8 @@ Output paths preserve the symlink path as discovered through `readdir`. `fs.real
 | `onlyFiles` default               | hardwired `true`                    | configurable, default `true`  | configurable, default `true` | configurable, default `true` | configurable |
 | IO errors throw                   | ✅ (default, no opt-out)            | ✅ (an unreadable folder throws `EACCES`) | ❌ (silent, via `fdir`)      | ✅ (as fast-glob)            | configurable |
 | Bad-cwd throws                    | ✅ (validated upfront)              | a file `cwd` throws           | ❌ (returns empty)           | a file `cwd` throws          | varies       |
-| `!`-prefix splits to ignore       | ✅ (by `!` parity: `!!x` is `x`)    | ✅ (one `!`)                  | ✅ (one `!`)                 | ✅ (`!!x` ignores `x`; an all-`!` list expands to `**/*` first) | ❌           |
-| Static-prefix seeding             | ✅ (per-pattern)                    | ✅                            | ✅                           | ✅                           | ✅           |
+| `!`-prefix splits to ignore       | ✅ (by `!` parity: `!!x` is `x`)    | ✅ (one `!`)                  | ✅ (one `!`)                 | ✅ (`!!x` ignores `x`; an all-`!` list expands to `**/*` first) | ❌ | ❌           |
+| Static-prefix seeding             | ✅ (the literal heads of all patterns, one seed per covering head) | ✅                            | ✅                           | ✅                           | ✅           |
 | `withFileTypes` option            | ❌ (drop entirely)                  | ✅                            | ❌                           | ✅                           | ✅           |
 | `onError` callback                | ❌ (errors throw)                   | ❌                            | ❌                           | ❌                           | ❌           |
 | `followSymlinks` default          | `true`                              | `true`                        | `true`                       | `true`                       | `true`       |
@@ -422,6 +436,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 ## 12. Appendix A: Version History
 
 - **v0.3.3** (2026-10-16): options are checked (§3.1: own keys only, no unknown keys, booleans for the flags; `glob` rejects); an ignore entry that starts with `!` is refused (§3.2); every `!` run normalization exposes counts in the split (§4.2).
+- **v0.3.4** (2026-10-16): §3.2's ignore predicate names the folders above a path (an ignored folder hides its subtree); a symlink that closes a cycle is not emitted (§3.2, §10: the output is files only); §2.2 says async and sync each win somewhere, with measurements; §11 corrects the seeding cell and fills doublestar's `!` cell.
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §7.7); seed stat failures probe `lstat` (§9.4).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.

@@ -6,11 +6,11 @@ A filesystem walker meets directories before it meets the files inside them. `ma
 
 For a directory path `d`, a pattern answers three questions:
 
-| Fact                | Question                                                                        | Which way it errs                               |
-| ------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `matches`           | Does `d` itself match, exactly as a file path would?                            | Exact.                                          |
-| `may match below`   | Could some path `d/…` match?                                                    | `false` is a guarantee; `true` may be cautious. |
-| `matches all below` | Does _every_ path `d/…` match, for every `…` of one or more non-empty segments? | `true` is a guarantee; `false` may be cautious. |
+| Fact                | Question                                                                                                     | Which way it errs                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
+| `matches`           | Does `d` itself match, exactly as a file path would?                                                         | Exact.                                          |
+| `may match below`   | Could some path `d/…` match?                                                                                 | `false` is a guarantee; `true` may be cautious. |
+| `matches all below` | Does _every_ path `d/…` match (`…` alone at the root `""`), for every `…` of one or more non-empty segments? | `true` is a guarantee; `false` may be cautious. |
 
 "All below" implies "may below", so the three bits form six consistent combinations. Each is a verdict:
 

@@ -1,19 +1,19 @@
 # Differences from other tools
 
-This page answers "how is globstar different from the glob tool I already use?". It covers the tools the spec compares against: Bash, picomatch, globset (Rust), fast-glob, and doublestar (Go). If you move patterns from one of them to globstar, check the rows below first.
+This page answers "how is globstar different from the glob tool I already use?". It covers the tools the spec compares against: Bash, picomatch, globset (Rust), fast-glob (the npm walker and the Rust crate, which differ), and doublestar (Go). If you move patterns from one of them to globstar, check the rows below first.
 
 ::: tip What the other columns mean
-The columns for other tools repeat what the spec states in [GLOB_SPEC §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md). They were not re-tested for this page, and tools change between versions. The globstar column is checked against `@globstar/core`, and each section shows the examples. The spec's comparison table does not include minimatch or gitignore, so this page does not either.
+Every cell for another tool was measured on 2026-10-16, the same runs as [GLOB_SPEC §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md): Bash 5.2.37, picomatch 4.0.7, globset 0.4.20, fast-glob 3.3.3 from npm (it matches through micromatch and picomatch 2), the fast-glob crate 1.1.2 and doublestar v4.10.3. Windows cells come from a simulated platform, and tools change between versions. The globstar column is checked against `@globstar/core`, and each section shows the examples. The comparison does not include minimatch or gitignore.
 :::
 
-Symbols: ✅ yes, ❌ no, ⚠️ the spec marks it as partial or conditional, n/a does not apply to that tool.
+Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional (the cell says how), n/a does not apply to that tool. ¹ Measured on Unix only.
 
 ## Options
 
-| Behavior         | globstar                            | Bash               | picomatch       | globset                    | fast-glob                  | doublestar    |
-| ---------------- | ----------------------------------- | ------------------ | --------------- | -------------------------- | -------------------------- | ------------- |
-| `dot` default    | `true` (matcher) / `false` (walker) | `false`            | `false`         | `true` (no concept)        | `true` (no concept)        | `false`       |
-| Case-insensitive | ASCII-only, default `false`         | `shopt nocaseglob` | `nocase` option | `case_insensitive` builder | `caseSensitiveMatch=false` | Unicode-aware |
+| Behavior         | globstar                            | Bash               | picomatch       | globset                    | fast-glob (npm)             | fast-glob (crate)   | doublestar                                     |
+| ---------------- | ----------------------------------- | ------------------ | --------------- | -------------------------- | --------------------------- | ------------------- | ---------------------------------------------- |
+| `dot` default    | `true` (matcher) / `false` (walker) | `false`            | `false`         | `true` (no concept)        | `false`                     | `true` (no concept) | `true` (`Glob`: `WithNoHidden()`)              |
+| Case-insensitive | ASCII only, default `false`         | `shopt nocaseglob` | `nocase` option | `case_insensitive` builder | `caseSensitiveMatch: false` | ❌                  | `WithCaseInsensitive()` (`Glob` only), Unicode |
 
 In globstar:
 
@@ -28,13 +28,13 @@ The matcher defaults to `dot: true`, and the walkers default to `dot: false`. Ca
 
 ## The `**` wildcard
 
-| Behavior                                | globstar        | Bash               | picomatch              | globset                                | fast-glob      | doublestar |
-| --------------------------------------- | --------------- | ------------------ | ---------------------- | -------------------------------------- | -------------- | ---------- |
-| `**` must own a segment                 | enforced        | ✅                 | ✅                     | ✅                                     | ✅             | ✅         |
-| `a/**` matches `a`                      | ❌              | ⚠️                 | ⚠️                     | ❌                                     | ❌             | ❌         |
-| `**` in braces judged on the expansion  | ✅              | ✅ (expands first) | ❌ (branch-local `.*`) | ❌ (demotes to `*` even at boundaries) | ❌             | n/a        |
-| `**` in a single-branch brace `{**}`    | degrades to `*` | literal            | keeps globstar         | ⚠️                                     | keeps globstar | ⚠️         |
-| `**/X` matches the absolute path `/a/X` | ✅              | n/a                | ✅                     | ✅                                     | ✅             | ❌         |
+| Behavior                               | globstar        | Bash               | picomatch                    | globset                       | fast-glob (npm)               | fast-glob (crate) | doublestar          |
+| -------------------------------------- | --------------- | ------------------ | ---------------------------- | ----------------------------- | ----------------------------- | ----------------- | ------------------- |
+| `**` must own a segment                | enforced        | ✅                 | ✅                           | ✅ (with `literal_separator`) | ✅                            | ✅                | ✅                  |
+| `a/**` matches `a`                     | ❌              | ⚠️ (lists `a/`)    | ✅ (❌ with `strictSlashes`) | ❌                            | ⚠️ (walker: no; matcher: yes) | ❌                | ✅                  |
+| `**` in braces judged on the expansion | ✅              | ✅ (expands first) | ❌ (branch-local `.*`)       | ❌                            | ✅ (expands first)            | ❌                | ⚠️ (not `**{/a,b}`) |
+| `**` in a single-branch brace `{**}`   | degrades to `*` | degrades to `*`    | keeps globstar               | a group; `**` acts as `*`     | keeps globstar                | a group (= `**`)  | a group (= `**`)    |
+| `**/X` matches the absolute `/a/X`     | ✅              | n/a                | ✅                           | ✅                            | n/a (walker)                  | ✅                | ✅                  |
 
 In globstar:
 
@@ -53,12 +53,12 @@ A brace means "any one of these". globstar judges each `**` as if the brace were
 
 ## Character classes
 
-| Behavior                            | globstar         | Bash    | picomatch        | globset | fast-glob        | doublestar |
-| ----------------------------------- | ---------------- | ------- | ---------------- | ------- | ---------------- | ---------- |
-| POSIX character classes             | ❌               | ✅      | ✅               | ❌      | ❌               | ⚠️         |
-| `[/]` inside a class                | parse error      | literal | literal          | literal | literal          | ⚠️         |
-| POSIX first-`]` rule                | ✅               | ✅      | ✅               | ❌      | ❌               | ⚠️         |
-| Negated class `[!a]` same as `[^a]` | ✅ (both negate) | ✅      | ❌ (only `[^a]`) | ⚠️      | ❌ (only `[^a]`) | ⚠️         |
+| Behavior                | globstar         | Bash    | picomatch                         | globset     | fast-glob (npm) | fast-glob (crate) | doublestar                       |
+| ----------------------- | ---------------- | ------- | --------------------------------- | ----------- | --------------- | ----------------- | -------------------------------- |
+| POSIX character classes | ❌               | ✅      | ✅                                | ❌          | ✅              | ❌                | ❌                               |
+| `[/]` inside a class    | parse error      | literal | ⚠️ (`/` or the literal text)      | matches `/` | never matches   | never matches     | ⚠️ (`Match`: `/`; `Glob`: error) |
+| POSIX first-`]` rule    | ✅               | ✅      | ✅                                | ✅          | ✅              | ✅                | ❌ (error)                       |
+| `[!a]` same as `[^a]`   | ✅ (both negate) | ✅      | ❌ (only `[^a]`; ✅ with `posix`) | ✅          | ✅              | ✅                | ✅                               |
 
 In globstar:
 
@@ -74,10 +74,10 @@ A class can never hold `/`, so `[/]` fails to compile instead of silently matchi
 
 ## Braces
 
-| Behavior        | globstar | Bash | picomatch | globset | fast-glob | doublestar |
-| --------------- | -------- | ---- | --------- | ------- | --------- | ---------- |
-| Brace `{1..10}` | ❌       | ✅   | ✅        | ❌      | ❌        | ❌         |
-| Brace nesting   | ≤ 32     | ✅   | ✅        | ✅      | ≤ 10      | ✅         |
+| Behavior               | globstar | Bash | picomatch | globset | fast-glob (npm) | fast-glob (crate) | doublestar |
+| ---------------------- | -------- | ---- | --------- | ------- | --------------- | ----------------- | ---------- |
+| Brace ranges `{1..10}` | ❌       | ✅   | ✅        | ❌      | ✅              | ❌                | ❌         |
+| Brace nesting          | ≤ 32     | ✅   | ✅        | ✅      | ✅              | ≤ 10              | ✅         |
 
 In globstar:
 
@@ -91,14 +91,14 @@ There are no ranges. `{1..3}` has no comma, so it is a one-branch brace and stay
 
 ## Other syntax
 
-| Behavior                 | globstar     | Bash         | picomatch | globset | fast-glob | doublestar |
-| ------------------------ | ------------ | ------------ | --------- | ------- | --------- | ---------- |
-| Extglobs                 | ❌ (literal) | ✅ (`shopt`) | ✅        | ❌      | ❌        | ✅         |
-| Leading-`!` negation     | ✅           | n/a          | ✅        | ⚠️      | ✅        | ✅         |
-| `/` required in patterns | ✅           | n/a          | ⚠️        | ⚠️      | ⚠️        | ⚠️         |
-| `\` is always the escape | ✅           | ✅           | ✅        | ⚠️      | ⚠️        | ⚠️         |
-| Stray `]`, `}`, `)`      | literal      | literal      | literal   | literal | literal   | literal    |
-| Unclosed constructs      | parse error  | literal      | ⚠️        | error   | error     | literal    |
+| Behavior                 | globstar     | Bash         | picomatch | globset         | fast-glob (npm)        | fast-glob (crate)              | doublestar             |
+| ------------------------ | ------------ | ------------ | --------- | --------------- | ---------------------- | ------------------------------ | ---------------------- |
+| Extglobs                 | ❌ (literal) | ✅ (`shopt`) | ✅        | ❌              | ✅                     | ❌                             | ❌                     |
+| Leading-`!` negation     | ✅           | n/a          | ✅        | ❌ (literal)    | ✅ (an ignore pattern) | ✅                             | ❌ (literal)           |
+| `/` required in patterns | ✅           | n/a          | ✅        | ⚠️              | ✅                     | ✅                             | ⚠️ (`PathMatch`)       |
+| `\` is always the escape | ✅           | ✅           | ✅        | ⚠️              | ✅                     | ✅ ¹                           | ⚠️ (`PathMatch`)       |
+| Stray `]`, `}`, `)`      | literal      | literal      | literal   | `}` is an error | literal                | literal                        | ⚠️ (`}`: `Glob` error) |
+| Unclosed constructs      | parse error  | literal      | ⚠️        | error           | ⚠️ (no error)          | no match (`validate()` errors) | error                  |
 
 In globstar:
 
@@ -119,10 +119,11 @@ Extglob syntax such as `@(a|b)` is plain text. In a pattern, `/` is the only sep
 
 ## Paths and directories
 
-| Behavior                     | globstar             | Bash | picomatch     | globset  | fast-glob | doublestar |
-| ---------------------------- | -------------------- | ---- | ------------- | -------- | --------- | ---------- |
-| `\` in a path is a separator | platform-conditional | ❌   | ✅ (JS paths) | platform | ❌        | platform   |
-| `match_dir` API              | ✅ (first-class)     | n/a  | ❌            | ✅       | ❌        | ❌         |
+| Behavior                                 | globstar             | Bash | picomatch             | globset  | fast-glob (npm) | fast-glob (crate) | doublestar             |
+| ---------------------------------------- | -------------------- | ---- | --------------------- | -------- | --------------- | ----------------- | ---------------------- |
+| `\` in a path is a separator             | platform-conditional | ❌   | ⚠️ (`windows` option) | platform | n/a (walker)    | platform ¹        | platform (`PathMatch`) |
+| `match_dir` API                          | ✅ (first-class)     | n/a  | ❌                    | ❌       | ❌              | ❌                | ❌                     |
+| `*` and `**` match `.` and `..` (dot on) | ✅                   | ❌   | ❌                    | ✅       | ❌              | ✅                | ✅                     |
 
 In globstar:
 
@@ -132,10 +133,12 @@ In globstar:
 | `compileMatcher('src/**/*.ts').matchDir('src')`    | `DirMatch.Descend`                          |
 | `compileMatcher('src/**/*.ts').matchDir('tests')`  | `DirMatch.Pruned`                           |
 
+With `dot: true`, the matcher's default, `*` and `**` also match the names `.` and `..`, so `public/**` matches `public/../secret.txt`; picomatch never does. Normalize a path from outside before you match it. The walkers never see such names.
+
 A `\` in a path counts as a separator only on Windows. `matchDir` tells a walker whether a directory can hold matches, so it can skip whole subtrees. See [How a path is matched](./matching.md#in-paths-always-and-on-windows) and [Directory matching](./directory-matching.md).
 
 ## Summary
 
-The spec sums it up this way: globstar is closest to picomatch and doublestar. It is stricter about input (patterns must use `/`), it treats directory matching as a first-class operation, and it is stricter about syntax errors: an unclosed class or brace is always an error, never silently turned into literal text.
+Of these tools, picomatch is the closest. It is stricter about input (patterns must use `/`), it treats directory matching as a first-class operation, and it is stricter about syntax errors: an unclosed class or brace is always an error, never silently turned into literal text.
 
 Spec: [GLOB_SPEC §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
