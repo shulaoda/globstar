@@ -117,29 +117,23 @@ assertMisses(
   MISS,
 );
 
-// Matchers for patterns not seen before, and a first match: what a new
-// pattern set costs before it answers. The match misses, so a library
-// that matches one member at a time runs (and compiles) every member.
-// Then that first match alone, on matchers just built (the build not
-// counted): what a library leaves for the first call.
+// Matchers for patterns not seen before: the build alone, then the
+// build and its first match, which is what a new pattern set costs
+// before it answers. The match misses, so a library that matches one
+// member at a time runs (and compiles) every member.
 console.log("===== PHASE 1: COMPILE =====\n");
 for (const [label, patterns] of PATTERN_SETS) {
+  group(`build: ${label}`, () => {
+    summary(() => {
+      for (const [name, build] of LIBS) {
+        bench(name, () => do_not_optimize(build(freshSet(patterns))));
+      }
+    });
+  });
   group(`compile: ${label}`, () => {
     summary(() => {
       for (const [name, build, runFn] of LIBS) {
         bench(name, () => do_not_optimize(runFn(build(freshSet(patterns)), MISS)));
-      }
-    });
-  });
-  group(`first match: ${label}`, () => {
-    summary(() => {
-      for (const [name, build, runFn] of LIBS) {
-        bench(name, function* () {
-          yield {
-            [0]: () => build(freshSet(patterns)),
-            bench: (m) => do_not_optimize(runFn(m, MISS)),
-          };
-        });
       }
     });
   });

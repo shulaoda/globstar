@@ -61,28 +61,23 @@ assertMisses(
   MISS,
 );
 
-// A matcher for a pattern not seen before, and its first match: what a
-// new pattern costs before it answers. Then that first match alone, on a
-// matcher just built (the build not counted): what a library leaves for
-// the first call, such as compiling its RegExp.
+// A matcher for a pattern not seen before: the build alone, then the
+// build and its first match, which is what a new pattern costs before
+// it answers (a library may leave work for the first call, such as
+// compiling its RegExp).
 console.log("===== PHASE 1: COMPILE =====\n");
 for (const [p, label] of PATTERNS) {
+  group(`build: ${label}`, () => {
+    summary(() => {
+      for (const [name, build] of LIBS) {
+        bench(name, () => do_not_optimize(build(fresh(p))));
+      }
+    });
+  });
   group(`compile: ${label}`, () => {
     summary(() => {
       for (const [name, build, runFn] of LIBS) {
         bench(name, () => do_not_optimize(runFn(build(fresh(p)), MISS)));
-      }
-    });
-  });
-  group(`first match: ${label}`, () => {
-    summary(() => {
-      for (const [name, build, runFn] of LIBS) {
-        bench(name, function* () {
-          yield {
-            [0]: () => build(fresh(p)),
-            bench: (m) => do_not_optimize(runFn(m, MISS)),
-          };
-        });
       }
     });
   });

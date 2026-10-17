@@ -309,18 +309,18 @@ function combinedTable(rowLabelHeader, rowLabels, sources) {
 const empty = {};
 
 const rustSingle = {
-  compile: {
+  build: {
     data: rust.matcherSingle ?? empty,
-    rowKey: (l) => `compile_${l}`,
+    rowKey: (l) => `build_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax"],
     ],
   },
-  first: {
+  compile: {
     data: rust.matcherSingle ?? empty,
-    rowKey: (l) => `first_${l}`,
+    rowKey: (l) => `compile_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
       ["globset (Rust)", "globset"],
@@ -351,9 +351,9 @@ const rustSingle = {
 };
 
 const jsSingle = {
-  compile: {
+  build: {
     data: js.matcherSingle ?? empty,
-    rowKey: (l) => `compile: ${l}`,
+    rowKey: (l) => `build: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
       ["picomatch (JS)", "picomatch"],
@@ -361,9 +361,9 @@ const jsSingle = {
       ["micromatch (JS)", "micromatch"],
     ],
   },
-  first: {
+  compile: {
     data: js.matcherSingle ?? empty,
-    rowKey: (l) => `first match: ${l}`,
+    rowKey: (l) => `compile: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
       ["picomatch (JS)", "picomatch"],
@@ -395,18 +395,18 @@ const jsSingle = {
 };
 
 const rustMulti = {
-  compile: {
+  build: {
     data: rust.matcherMulti ?? empty,
-    rowKey: (l) => `compile_${l}`,
+    rowKey: (l) => `build_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
       ["globset (Rust)", "globset"],
       ["wax (Rust)", "wax_or"],
     ],
   },
-  first: {
+  compile: {
     data: rust.matcherMulti ?? empty,
-    rowKey: (l) => `first_${l}`,
+    rowKey: (l) => `compile_${l}`,
     libCols: [
       ["globstar (Rust)", "globstar"],
       ["globset (Rust)", "globset"],
@@ -437,9 +437,9 @@ const rustMulti = {
 };
 
 const jsMulti = {
-  compile: {
+  build: {
     data: js.matcherMulti ?? empty,
-    rowKey: (l) => `compile: ${l}`,
+    rowKey: (l) => `build: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
       ["picomatch (JS)", "picomatch"],
@@ -447,9 +447,9 @@ const jsMulti = {
       ["micromatch (JS)", "micromatch"],
     ],
   },
-  first: {
+  compile: {
     data: js.matcherMulti ?? empty,
-    rowKey: (l) => `first match: ${l}`,
+    rowKey: (l) => `compile: ${l}`,
     libCols: [
       ["globstar (JS)", "globstar"],
       ["picomatch (JS)", "picomatch"],
@@ -523,18 +523,16 @@ use them for relative comparison, not absolute SLOs.
 > default), and each bench checks before timing that all of them give
 > the same answer on every row.
 
-> **Compile cells** time a matcher for the pattern plus its first
-> match: the regex-based libraries compile their regex (V8 does it on
-> first use) or build their search cache (globset, wax) only then. On
-> the JS side each iteration gets a pattern not seen before, of the
-> row's shape (a short literal tag added), since V8 caches a RegExp by
-> its source. The first match is on a path no row matches, so a list
-> matched one member at a time runs every member.
+> **Build cells** time building a matcher for the pattern, and nothing
+> else: what a library does before its first match. On the JS side each
+> iteration gets a pattern not seen before, of the row's shape (a short
+> literal tag added), since V8 caches a RegExp by its source.
 
-> **First match cells** time that first match alone, on a matcher
-> just built (the build is not timed): the part of the compile cell a
-> library leaves for its first call. A matcher that compiles everything
-> up front shows about one ordinary match here.
+> **Build + first match cells** time that build plus the matcher's
+> first match: the regex-based libraries compile their regex (V8 does it
+> on first use) or build their search cache (globset, wax) only then, so
+> this is what a one-shot use pays. The first match is on a path no row
+> matches, so a list matched one member at a time runs every member.
 
 > **Memory cells** count what a matcher keeps once it has matched
 > every bench path: JS from 1,000 distinct patterns of the row's shape
@@ -606,13 +604,13 @@ Two pattern sets per scale: \`multi-small\` (4 patterns) and
 
 sections.push(`## Single-pattern matcher
 
-### Compile (per matcher)
+### Build (per matcher)
+
+${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.build, jsSingle.build])}
+
+### Build + first match
 
 ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.compile, jsSingle.compile])}
-
-### First match (deferred compile)
-
-${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.first, jsSingle.first])}
 
 ### Match (per call)
 
@@ -625,13 +623,13 @@ ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.mem, jsSingle.mem])}
 
 sections.push(`## Multi-pattern matcher
 
-### Compile (per matcher)
+### Build (per matcher)
+
+${combinedTable("Set", MULTI_SETS, [rustMulti.build, jsMulti.build])}
+
+### Build + first match
 
 ${combinedTable("Set", MULTI_SETS, [rustMulti.compile, jsMulti.compile])}
-
-### First match (deferred compile)
-
-${combinedTable("Set", MULTI_SETS, [rustMulti.first, jsMulti.first])}
 
 ### Match (per call)
 

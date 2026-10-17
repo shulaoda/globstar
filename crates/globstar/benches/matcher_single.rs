@@ -16,7 +16,7 @@
 //! the per-call parse + match work, matching what the JS bench
 //! prints.
 
-use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;
 use globset::GlobBuilder;
 use globstar::{CompileOptions, Glob};
@@ -97,6 +97,29 @@ fn strict_globset(pattern: &str) -> globset::GlobMatcher {
         .compile_matcher()
 }
 
+/// The build alone: what a library does before its first match.
+fn bench_build(c: &mut Criterion, label: &str, pattern: &str) {
+    let mut group = c.benchmark_group(format!("build_{label}"));
+    group.bench_function("globstar", |b| {
+        b.iter(|| black_box(build_public(black_box(pattern))));
+    });
+    group.bench_function("globset", |b| {
+        b.iter(|| black_box(strict_globset(black_box(pattern))));
+    });
+    group.bench_function("wax", |b| {
+        b.iter(|| {
+            black_box(
+                wax::Glob::new(black_box(pattern))
+                    .expect("wax parse")
+                    .into_owned(),
+            )
+        });
+    });
+    group.finish();
+}
+
+/// The build and its first match: regex-backed matchers build their
+/// search cache on first use, so the build alone undercounts them.
 fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
     let first = MISS;
     let mut group = c.benchmark_group(format!("compile_{label}"));
@@ -116,34 +139,6 @@ fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
     });
     // fast_glob has no separate compile step; we measure it inside
     // the per-call match below where a single call is parse+match.
-    group.finish();
-}
-
-/// The first match alone, on a matcher just built (the build is not
-/// timed): what a library leaves for its first use.
-fn bench_first(c: &mut Criterion, label: &str, pattern: &str) {
-    let mut group = c.benchmark_group(format!("first_{label}"));
-    group.bench_function("globstar", |b| {
-        b.iter_batched_ref(
-            || build_public(pattern),
-            |g| black_box(g.is_match(MISS.as_bytes())),
-            BatchSize::SmallInput,
-        );
-    });
-    group.bench_function("globset", |b| {
-        b.iter_batched_ref(
-            || strict_globset(pattern),
-            |g| black_box(g.is_match(Path::new(MISS))),
-            BatchSize::SmallInput,
-        );
-    });
-    group.bench_function("wax", |b| {
-        b.iter_batched_ref(
-            || wax::Glob::new(pattern).expect("wax parse").into_owned(),
-            |g| black_box(g.is_match(MISS)),
-            BatchSize::SmallInput,
-        );
-    });
     group.finish();
 }
 
@@ -189,8 +184,8 @@ fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
 fn bench_all(c: &mut Criterion) {
     assert_all_agree();
     for &(label, pattern) in PATTERNS {
+        bench_build(c, label, pattern);
         bench_compile(c, label, pattern);
-        bench_first(c, label, pattern);
         bench_match(c, label, pattern);
     }
 }
