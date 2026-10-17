@@ -12,8 +12,8 @@ mod exec;
 mod facts;
 mod seg_nfa;
 
+use crate::ast::Node;
 use crate::dir_match::DirMatch;
-use crate::engine::ops::Op;
 use crate::error::GlobError;
 
 use bits::{Bits, Wide};
@@ -344,8 +344,8 @@ pub(crate) struct SegmentMatcher {
 }
 
 impl SegmentMatcher {
-    pub(crate) fn build(ops: &[Op], dot: bool, ci: bool) -> Result<Box<Self>, GlobError> {
-        compile::compile(ops, dot, ci).map(Box::new)
+    pub(crate) fn build(body: &Node, dot: bool, ci: bool) -> Result<Box<Self>, GlobError> {
+        compile::compile(body, dot, ci).map(Box::new)
     }
 
     /// Every matching path starts with one of these.

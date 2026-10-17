@@ -7,15 +7,15 @@ Implementations: `crates/globstar/src/engine/segment/facts.rs` and `packages/glo
 ## 0. Pipeline
 
 ```
-Vec<Op>  ──►  push_suffix(ops)           ──►  one suffix
-   │          (right-to-left over Lit/Sep ops)        │
+AST      ──►  trailing(nodes)            ──►  one suffix
+   │          (right-to-left over literal/separator nodes)
    │                                                  │
-   └────►  if that suffix is empty AND tail is an Alternation of ≤ 16 branches:
-              suffix_set(ops)            ──►  one suffix per branch
+   └────►  if that suffix is empty AND the tail is a brace of ≤ 16 branches:
+              suffix_set(nodes)          ──►  one suffix per branch
 
                                                   │
                                                   ▼
-                          suffixes(ops): a list of byte strings (empty = no prefilter)
+                          suffixes(body): a list of byte strings (empty = no prefilter)
                                                   │
                                                   │  carried inside the matcher
                                                   ▼
@@ -28,7 +28,7 @@ Vec<Op>  ──►  push_suffix(ops)           ──►  one suffix
 
 `accept(path)` is the check: `SegmentMatcher::prefilter` in Rust (`exec.rs`), `_factsAccept` in JS (`engine/segment/index.js`). It is a separator-aware `ends_with`: a `'/'` byte in the suffix matches any `Seps` byte in the path (so `*/main.ts`, suffix `/main.ts`, rejects `src\foo.js` on Windows and accepts `src\main.ts`).
 
-When the trailing `Lit`/`Sep` run is non-empty it is the single anchor. Otherwise, when the program ends in an `Op::Alternation` of at most 16 branches (e.g. `**/*.{ts,tsx,js}`), `suffix_set` derives one anchor per branch and `accept` succeeds if `path` ends with any of them.
+When the trailing literal/separator run is non-empty it is the single anchor. Otherwise, when the pattern ends in a brace of at most 16 branches (e.g. `**/*.{ts,tsx,js}`), `suffix_set` derives one anchor per branch and `accept` succeeds if `path` ends with any of them.
 
 ## 1. The prefilter abstraction
 
@@ -59,7 +59,7 @@ prefilter_P(w) := w ends with suffix(P)
 
 is a sound prefilter: any `w ∈ L(P)` ends with `suffix(P)` by definition. The implementation stores `suffix(P)` as one byte string and evaluates `prefilter_P` by separator-aware `ends_with` (§4).
 
-For patterns with no such suffix whose tail is an `Op::Alternation` of at most 16 branches (`MAX_SUFFIX_SET`), we extract a _suffix set_ instead:
+For patterns with no such suffix whose tail is a brace of at most 16 branches (`MAX_SUFFIX_SET`), we extract a _suffix set_ instead:
 
 ```
 suffix_set(P) := { s_i : s_i is the suffix contributed by branch i }
@@ -89,22 +89,22 @@ Without this rule, `*/main.ts` (suffix `/main.ts`) would incorrectly reject `src
 
 ## 5. Extraction algorithm
 
-`push_suffix(ops)` (JS `suffixArray`) walks the linear `Op` program right to left, collecting bytes:
+`trailing(nodes)` (JS `trailingLiteral`) walks the pattern's node sequence right to left, collecting bytes:
 
 ```
-Op::Lit(b₁ … bₖ)             → push bₖ, …, b₁
-Op::Sep                      → push '/'
+Literal(b₁ … bₖ)             → push bₖ, …, b₁
+Separator                    → push '/', unless it is the `/` of a `**/`
 any other                    → halt collection
 ```
 
-The collected bytes are reversed to form the suffix. Halting at the first non-literal op is required for soundness: a non-literal op can produce arbitrary bytes at the suffix, so prepending its contribution would be unsound. `SepRun` and `OptSegmentsSlash` halt it too, so the suffix of `a/**/b` is `b`, not `/b`.
+The collected bytes are reversed to form the suffix. Halting at the first other node is required for soundness: a wildcard or a `**` can produce arbitrary bytes at the suffix, so prepending its contribution would be unsound. The `/` right after a `**` (or after a brace a `**` ends) belongs to that `**/`, which absorbs zero segments too, so the suffix of `a/**/b` is `b`, not `/b`, and `**/b` keeps matching `b`.
 
-`suffix_set(ops)` (JS `extractSuffixSet`) is invoked when `push_suffix(ops)` yields the empty suffix and the program ends with `Op::Alternation(branches)` of at most `MAX_SUFFIX_SET = 16` branches:
+`suffix_set(nodes)` (JS `extractSuffixSet`) is invoked when `trailing(nodes)` yields the empty suffix and the pattern ends with a brace of at most `MAX_SUFFIX_SET = 16` branches:
 
 ```
-common_tail := push_suffix(ops without the trailing Alternation)
+common_tail := trailing(nodes without the trailing brace)
 for branch in branches:
-    branch_suffix := push_suffix(branch)
+    branch_suffix := trailing(branch)
     if branch is not all-literal AND branch_suffix is empty:
         return {}                    // abort the strategy
     full_suffix := if branch is all-literal then
@@ -136,10 +136,10 @@ The corollary is that the matcher may safely short-circuit `is_match` to `false`
 ### 7.1 `**/*.ts` (single suffix)
 
 ```
-Vec<Op>          : [ LeadingSeps, OptSegmentsSlash, Star, Lit(".ts") ]
+AST              : [ Globstar, Separator, Star, Literal(".ts") ]
 right-to-left:
-  Lit(".ts")     → push 's', 't', '.'
-  Star           → halt (non-literal)
+  Literal(".ts") → push 's', 't', '.'
+  Star           → halt (not a literal)
 reverse buffer   → ".ts"
 suffixes         = [ b".ts" ]               (suffix_set not tried: the suffix is non-empty)
 ```
@@ -159,19 +159,19 @@ The engine is invoked only on rows that returned `true`. For a walker pulling 10
 ### 7.2 `**/*.{ts,tsx,js}` (suffix set)
 
 ```
-Vec<Op>          : [ LeadingSeps, OptSegmentsSlash, Star, Lit("."),
-                     Alternation([
-                       [Lit("ts")],
-                       [Lit("tsx")],
-                       [Lit("js")],
+AST              : [ Globstar, Separator, Star, Literal("."),
+                     Brace([
+                       Literal("ts"),
+                       Literal("tsx"),
+                       Literal("js"),
                      ]) ]
 
-push_suffix(full ops): walks right-to-left;
-  the trailing Alternation halts the walk → suffix = ε
+trailing(all nodes): walks right-to-left;
+  the trailing brace halts the walk → suffix = ε
 
 suffix_set:
-  trailing op is an Alternation of 3 (≤ 16) all-literal branches:
-    common_tail = push_suffix([LeadingSeps, OptSegmentsSlash, Star, Lit(".")])
+  the last node is a brace of 3 (≤ 16) all-literal branches:
+    common_tail = trailing([Globstar, Separator, Star, Literal(".")])
                 = ".";
     branch[0] all-literal "ts"  → full = "." + "ts"  = ".ts"
     branch[1] all-literal "tsx" → full = "." + "tsx" = ".tsx"
@@ -184,11 +184,11 @@ suffix_set       = [ b".ts", b".tsx", b".js" ]
 ### 7.3 `src/**/*` (no usable suffix)
 
 ```
-Vec<Op>          : [ Lit("src"), SepRun, OptSegmentsSlash, Star ]
+AST              : [ Literal("src"), Separator, Globstar, Separator, Star ]
 right-to-left:
-  Star           → halt (non-literal)
+  Star           → halt (not a literal)
 suffix           = ε
-suffix_set: tail is not an Alternation → returns ∅
+suffix_set: the last node is not a brace → returns ∅
 suffixes         = []
 ```
 
@@ -197,8 +197,8 @@ No anchor: `suffixes` is empty. `accept(path)` always returns `true`; the prefil
 ### 7.4 `src/main.{ts,rs}` (mixed-suffix set)
 
 ```
-Vec<Op>          : [ Lit("src"), Sep, Lit("main."),
-                     Alternation([ [Lit("ts")], [Lit("rs")] ]) ]
+AST              : [ Literal("src"), Separator, Literal("main."),
+                     Brace([ Literal("ts"), Literal("rs") ]) ]
 
 push_suffix: tail Alternation halts → ε
 suffix_set:
@@ -218,14 +218,14 @@ The 11-byte anchor is more selective than the 3-byte ".ts" / ".tsx" / ".js" of �
 
 Rust, `crates/globstar/src/engine/segment/`:
 
-- `facts.rs::suffixes(ops)` — entry; returns the suffix list (`Box<[Bytes]>`), empty when there is no prefilter. Runs `push_suffix`, falls back to `suffix_set` if the single suffix is empty.
-- `facts.rs::push_suffix` / `facts.rs::suffix_set` — internal helpers; `MAX_SUFFIX_SET = 16`.
+- `facts.rs::suffixes(body)` — entry; returns the suffix list (`Box<[Bytes]>`), empty when there is no prefilter. Runs `trailing`, falls back to `suffix_set` if the single suffix is empty.
+- `facts.rs::trailing` / `facts.rs::suffix_set` — internal helpers; `MAX_SUFFIX_SET = 16`.
 - `exec.rs::SegmentMatcher::prefilter(path)` — separator-aware end-anchored comparison (single suffix or set), the first step of `is_match`.
 
 JS, `packages/globstar/src/engine/segment/`:
 
-- `facts.js::suffixes(ops)` — entry; returns a string array (one char per byte), empty when there is no prefilter.
-- `facts.js::suffixArray` / `facts.js::extractSuffixSet` — internal helpers; `MAX_SUFFIX_SET = 16`.
+- `facts.js::suffixes(body)` — entry; returns a string array (one char per byte), empty when there is no prefilter.
+- `facts.js::trailingLiteral` / `facts.js::extractSuffixSet` — internal helpers; `MAX_SUFFIX_SET = 16`.
 - `facts.js::endsWithSepAware` — the separator-aware `ends_with`.
 - `index.js::SegmentMatcher._factsAccept(str)` — the check, the first step of `_isMatch`.
 

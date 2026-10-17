@@ -9,7 +9,7 @@
 // `distribute`; `mayTouch` tells when that can be the case. Then `decide`
 // turns every `**` into a globstar or a star by the tokens beside it.
 
-import { N_SEPARATOR, N_BRACE, N_CONCAT, N_GLOBSTAR, star } from "./ast.js";
+import { N_SEPARATOR, N_BRACE, N_CONCAT, N_GLOBSTAR, star, N_STAR } from "./ast.js";
 import { distribute } from "./distribute.js";
 
 // `budget.left` is what distribution may still copy (§7.7).
@@ -72,6 +72,8 @@ function decide(node, before, after) {
         continue;
       }
     }
+    // A `*` run is one `*` (§8.4): a `**` turned star next to one.
+    if (item.tag === N_STAR && kept > 0 && seq[kept - 1].tag === N_STAR) continue;
     seq[kept++] = item;
   }
   if (kept < seq.length) seq.length = kept;

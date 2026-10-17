@@ -1,5 +1,4 @@
 import { parse } from "./parser.js";
-import { lower } from "./engine/ops.js";
 import { LiteralMatcher } from "./engine/literal.js";
 import { SegmentMatcher } from "./engine/segment/index.js";
 import { nodeToLiteral } from "./ast.js";
@@ -109,7 +108,7 @@ export function buildEngine(asts, opts) {
   const body = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
   const literal = nodeToLiteral(body);
   if (literal !== null) return new LiteralMatcher(literal, ci);
-  return SegmentMatcher.build(lower(body), dot, ci, {
+  return SegmentMatcher.build(body, dot, ci, {
     forceNfa: opts.__engine === "nfa",
     byteOnly: opts.__engine === "bytes",
   });

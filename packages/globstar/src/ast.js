@@ -92,3 +92,16 @@ export function nodeToLiteral(n) {
   }
   return out;
 }
+
+// The node as a sequence: a concat's children, or the node alone.
+export function seq(n) {
+  return n.tag === N_CONCAT ? n.children : [n];
+}
+
+// Does the node end in a `**` (in every expansion of a brace, in some)?
+// Such a `**` reads the `/` after the node as its `**/`.
+export function endsWithGlobstar(n) {
+  if (n.tag === N_GLOBSTAR) return true;
+  if (n.tag === N_CONCAT) return n.children.length > 0 && endsWithGlobstar(n.children.at(-1));
+  return n.tag === N_BRACE && n.branches.some(endsWithGlobstar);
+}

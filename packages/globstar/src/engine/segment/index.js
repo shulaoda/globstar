@@ -7,7 +7,7 @@
 import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
-import { compileSegment, opsHaveNonAscii } from "./compile.js";
+import { compileSegment, hasNonAscii } from "./compile.js";
 import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
 import {
   chainMatches,
@@ -32,7 +32,7 @@ import {
 } from "./elem.js";
 
 export class SegmentMatcher {
-  constructor(compiled, ops, ci, byteOnly, dot) {
+  constructor(compiled, body, ci, byteOnly, dot) {
     this.elems = compiled.elems;
     // The paths through the graph, tried in order; none past MAX_CHAINS.
     this.chains = compiled.chains;
@@ -43,9 +43,9 @@ export class SegmentMatcher {
     this.ci = ci;
     this.dot = dot;
     this.byteOnly = byteOnly;
-    this.prefixes = computeStaticPrefixes(ops).map(flat);
+    this.prefixes = computeStaticPrefixes(body).map(flat);
     this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
-    const suf = suffixes(ops);
+    const suf = suffixes(body);
     this.suffixes = suf.length > 0 ? suf.map(flat) : null;
   }
 
@@ -79,12 +79,12 @@ export class SegmentMatcher {
 
   // `opts.forceNfa` bypasses the chains, `opts.byteOnly` the string
   // mode: test hooks that cross-check the code paths.
-  static build(ops, dot, ci, opts = {}) {
+  static build(body, dot, ci, opts = {}) {
     const forceNfa = !!opts.forceNfa;
-    const compiled = compileSegment(ops, dot, ci, forceNfa);
+    const compiled = compileSegment(body, dot, ci, forceNfa);
     if (forceNfa) compiled.chains = [];
-    const byteOnly = !!opts.byteOnly || opsHaveNonAscii(ops);
-    return new SegmentMatcher(compiled, ops, ci, byteOnly, dot);
+    const byteOnly = !!opts.byteOnly || hasNonAscii(body);
+    return new SegmentMatcher(compiled, body, ci, byteOnly, dot);
   }
 
   staticPrefixes() {

@@ -1,5 +1,4 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use globstar::engine::ops::lower;
 use globstar::parser::parse;
 
 const CASES: &[(&str, &str)] = &[
@@ -20,18 +19,6 @@ fn bench_stages(c: &mut Criterion) {
         });
     }
     parse_group.finish();
-
-    let parsed: Vec<_> = CASES
-        .iter()
-        .map(|&(name, pattern)| (name, parse(pattern.as_bytes()).expect("parse").body))
-        .collect();
-    let mut lower_group = c.benchmark_group("stage_lower");
-    for (name, body) in &parsed {
-        lower_group.bench_with_input(BenchmarkId::from_parameter(*name), body, |b, ast| {
-            b.iter(|| lower(black_box(ast.clone())));
-        });
-    }
-    lower_group.finish();
 }
 
 criterion_group!(benches, bench_stages);

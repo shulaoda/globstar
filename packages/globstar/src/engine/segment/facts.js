@@ -1,19 +1,20 @@
-// Literal facts read off the ops at compile time: the suffix prefilter
+// Literal facts read off the AST at compile time: the suffix prefilter
 // and the static prefixes a walker seeds from. JS twin of
 // `crates/globstar/src/engine/segment/facts.rs`.
 
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../../bytes.js";
-import { OP_ALTERNATION, OP_LIT, OP_SEP } from "../ops.js";
-import { opWeight } from "./compile.js";
+import { N_BRACE, N_LITERAL, N_SEPARATOR, endsWithGlobstar, seq } from "../../ast.js";
+import { nodeWeight } from "./compile.js";
 
 // Literal suffixes one of which every match ends with: the trailing
-// `Lit`/`Sep` run (separators as `/`), or when the pattern ends in a
-// brace, one per branch. Empty when nothing is guaranteed. One char per
-// byte, like the path strings they are compared with.
-export function suffixes(ops) {
-  const suffix = trailingLiteral(ops, ops.length);
+// literal/separator run (separators as `/`), or when the pattern ends in
+// a brace, one per branch. Empty when nothing is guaranteed. One char
+// per byte, like the path strings they are compared with.
+export function suffixes(body) {
+  const nodes = seq(body);
+  const suffix = trailingLiteral(nodes, nodes.length);
   if (suffix.length > 0) return [suffix];
-  return extractSuffixSet(ops);
+  return extractSuffixSet(nodes);
 }
 
 // Does `str` end with `suffix`? A pattern `/` takes any separator byte.
@@ -35,13 +36,15 @@ export function endsWithSepAware(str, suffix, ci) {
   return true;
 }
 
-// The bytes of the `Lit`/`Sep` run that ends `ops[..end]`.
-function trailingLiteral(ops, end) {
+// The bytes of the literal/separator run that ends `nodes[..end]`. The
+// `/` of a `**/` is not part of it: `**/b` matches `b` alone.
+function trailingLiteral(nodes, end) {
   let acc = "";
   for (let i = end - 1; i >= 0; i--) {
-    const op = ops[i];
-    if (op.kind === OP_LIT) acc = op.str + acc;
-    else if (op.kind === OP_SEP) acc = "/" + acc;
+    const node = nodes[i];
+    if (node.tag === N_LITERAL) acc = node.str + acc;
+    else if (node.tag === N_SEPARATOR && !(i > 0 && endsWithGlobstar(nodes[i - 1])))
+      acc = "/" + acc;
     else break;
   }
   return acc;
@@ -51,17 +54,22 @@ function trailingLiteral(ops, end) {
 // alternation gets no prefilter (the engine indexes it).
 const MAX_SUFFIX_SET = 16;
 
-function extractSuffixSet(ops) {
-  if (ops.length === 0) return [];
-  const last = ops[ops.length - 1];
-  if (last.kind !== OP_ALTERNATION || last.branches.length > MAX_SUFFIX_SET) return [];
+// When the pattern ends in a brace: one guaranteed suffix per branch, or
+// none when a branch guarantees nothing.
+function extractSuffixSet(nodes) {
+  if (nodes.length === 0) return [];
+  const last = nodes[nodes.length - 1];
+  if (last.tag !== N_BRACE || last.branches.length > MAX_SUFFIX_SET) return [];
 
-  const commonTail = trailingLiteral(ops, ops.length - 1);
+  const commonTail = trailingLiteral(nodes, nodes.length - 1);
 
   const set = [];
   for (const branch of last.branches) {
-    const branchSuffix = trailingLiteral(branch, branch.length);
-    const allLiteral = branch.every((op) => op.kind === OP_LIT || op.kind === OP_SEP);
+    const b = seq(branch);
+    const branchSuffix = trailingLiteral(b, b.length);
+    // Gluing the common tail to a branch that is not all-literal would
+    // claim more than the branch guarantees.
+    const allLiteral = b.every((n) => n.tag === N_LITERAL || n.tag === N_SEPARATOR);
     const full = allLiteral ? commonTail + branchSuffix : branchSuffix;
     if (full.length === 0) return [];
     set.push(full);
@@ -80,62 +88,63 @@ const HEAD_BUDGET_FLOOR = 4096;
 // `b/c`), so a factored union keeps its members' heads.
 //
 // Every byte read and every branch taken costs one unit of a budget of
-// HEAD_BUDGET_FLOOR plus twice the pattern's weight (`opWeight`, only
-// worked out once the floor is spent): reading each op once costs at
+// HEAD_BUDGET_FLOOR plus twice the pattern's weight (`nodeWeight`, only
+// worked out once the floor is spent): reading each node once costs at
 // most its weight, and re-reading what follows a brace for each branch
 // is what the rest pays for. Past the budget, or past MAX_HEAD_DEPTH
 // nested braces, the head ends at its last whole segment, a shorter
 // prefix that still holds: `{a,b}{c,d}…` stops after a few braces
 // instead of doubling, and a brace before a long literal copies it a few
 // times, not once per branch.
-export function computeStaticPrefixes(ops) {
-  const heads = { root: ops, spent: 0, limit: HEAD_BUDGET_FLOOR, weighed: false, out: [] };
-  readHeads(heads, ops, 0, null, "", 0, 0);
+export function computeStaticPrefixes(body) {
+  const nodes = seq(body);
+  const heads = { root: nodes, spent: 0, limit: HEAD_BUDGET_FLOOR, weighed: false, out: [] };
+  readHeads(heads, nodes, 0, null, "", 0, 0);
   return dedupePrefixes(heads.out);
 }
 
-// Read `ops` from `at`, then `then` (`{ ops, at, next }`: what follows
-// them), after the bytes `acc` (whose last whole segment ends at
+// Read `nodes` from `at`, then `then` (`{ nodes, at, next }`: what
+// follows them), after the bytes `acc` (whose last whole segment ends at
 // `boundary`), and record the head each expansion reaches.
-function readHeads(heads, ops, at, then, acc, boundary, depth) {
+function readHeads(heads, nodes, at, then, acc, boundary, depth) {
   let i = at;
   let end;
   for (;;) {
-    if (i === ops.length) {
+    if (i === nodes.length) {
       if (then === null) {
         end = acc.length; // all literal
         break;
       }
-      ops = then.ops;
+      nodes = then.nodes;
       i = then.at;
       then = then.next;
       continue;
     }
-    const op = ops[i++];
+    const node = nodes[i++];
     // An escaped `\` on Windows: the expansion matches nothing (§2.4), so
     // it has no head to seed.
-    if (op.kind === OP_LIT && IS_WINDOWS_SEP && op.str.includes("\\")) return;
-    if (op.kind === OP_LIT && afford(heads, op.str.length)) {
-      acc += op.str;
-    } else if (op.kind === OP_SEP && afford(heads, 1)) {
+    if (node.tag === N_LITERAL && IS_WINDOWS_SEP && node.str.includes("\\")) return;
+    if (node.tag === N_LITERAL && afford(heads, node.str.length)) {
+      acc += node.str;
+    } else if (node.tag === N_SEPARATOR && afford(heads, 1)) {
       acc += "/";
       boundary = acc.length;
     } else if (
-      op.kind === OP_ALTERNATION &&
+      node.tag === N_BRACE &&
       depth < MAX_HEAD_DEPTH &&
-      afford(heads, op.branches.length)
+      afford(heads, node.branches.length)
     ) {
-      const after = { ops, at: i, next: then };
-      for (const branch of op.branches) {
+      const after = { nodes, at: i, next: then };
+      for (const branch of node.branches) {
         // An empty head covers every other one: nothing more to read.
         if (heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0) break;
-        readHeads(heads, branch, 0, after, acc, boundary, depth + 1);
+        readHeads(heads, seq(branch), 0, after, acc, boundary, depth + 1);
       }
       return;
     } else {
-      // Every branch of an alternation opening a new segment leaves what
-      // came before whole.
-      end = op.kind === OP_ALTERNATION && opensSegment(op) ? acc.length : boundary;
+      // Every branch of a brace opening a new segment leaves what came
+      // before whole.
+      end = node.tag === N_BRACE && opensSegment(node) ? acc.length : boundary;
       break;
     }
   }
@@ -148,15 +157,15 @@ function readHeads(heads, ops, at, then, acc, boundary, depth) {
 function afford(heads, n) {
   if (heads.spent + n > heads.limit && !heads.weighed) {
     heads.weighed = true;
-    for (const op of heads.root) heads.limit += 2 * opWeight(op);
+    for (const node of heads.root) heads.limit += 2 * nodeWeight(node);
   }
   if (heads.spent + n > heads.limit) return false;
   heads.spent += n;
   return true;
 }
 
-function opensSegment(alt) {
-  return alt.branches.every((b) => b[0]?.kind === OP_SEP);
+function opensSegment(node) {
+  return node.branches.every((b) => seq(b)[0]?.tag === N_SEPARATOR);
 }
 
 function dedupePrefixes(prefixes) {

@@ -1,30 +1,9 @@
 use std::fmt::Write as _;
 
 use globstar::ast::{ClassItem, Node};
-use globstar::engine::ops::{Op, lower};
 use globstar::parser::parse;
 
 const CASES: &str = include_str!("../../../fixtures/compiler-stages.tsv");
-
-/// Lowering's output invariant, checked here over the golden corpus
-/// (the twin of `assertNormalizedProgram` in compiler-stages.mjs).
-fn is_normalized(ops: &[Op]) -> bool {
-    let mut previous_lit = false;
-    let mut previous_star = false;
-    for op in ops {
-        match op {
-            Op::Lit(_) if previous_lit => return false,
-            Op::Star if previous_star => return false,
-            Op::Alternation(branches) if !branches.iter().all(|b| is_normalized(b)) => {
-                return false;
-            }
-            _ => {}
-        }
-        previous_lit = matches!(op, Op::Lit(_));
-        previous_star = matches!(op, Op::Star);
-    }
-    true
-}
 
 fn bytes(out: &mut String, value: &[u8]) {
     for &b in value {
@@ -92,46 +71,13 @@ fn ast_dump(node: &Node, out: &mut String) {
     }
 }
 
-fn ops_dump(ops: &[Op], out: &mut String) {
-    for (i, op) in ops.iter().enumerate() {
-        if i != 0 {
-            out.push(',');
-        }
-        match op {
-            Op::Lit(value) => {
-                out.push_str("L(");
-                bytes(out, value);
-                out.push(')');
-            }
-            Op::AnyChar => out.push('Q'),
-            Op::Star => out.push('T'),
-            Op::Class(_) => out.push('K'),
-            Op::Sep => out.push('S'),
-            Op::OptSegmentsSlash => out.push('O'),
-            Op::GlobstarAny => out.push('Y'),
-            Op::Alternation(branches) => {
-                out.push_str("B(");
-                for (j, branch) in branches.iter().enumerate() {
-                    if j != 0 {
-                        out.push('|');
-                    }
-                    out.push('[');
-                    ops_dump(branch, out);
-                    out.push(']');
-                }
-                out.push(')');
-            }
-        }
-    }
-}
-
 #[test]
-fn parser_and_lowering_match_shared_golden_cases() {
+fn parser_matches_shared_golden_cases() {
     for (line_no, line) in CASES.lines().enumerate() {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let [pattern, expected_ast, expected_ops] = line
+        let [pattern, expected_ast] = line
             .split('\t')
             .collect::<Vec<_>>()
             .try_into()
@@ -140,11 +86,5 @@ fn parser_and_lowering_match_shared_golden_cases() {
         let mut actual_ast = String::new();
         ast_dump(&parsed.body, &mut actual_ast);
         assert_eq!(actual_ast, expected_ast, "AST for {pattern:?}");
-
-        let ops = lower(parsed.body);
-        assert!(is_normalized(&ops), "ops not normalized for {pattern:?}");
-        let mut actual_ops = String::new();
-        ops_dump(&ops, &mut actual_ops);
-        assert_eq!(actual_ops, expected_ops, "ops for {pattern:?}");
     }
 }

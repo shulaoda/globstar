@@ -1,17 +1,26 @@
 // In-segment mini NFA — the `WK_GENERIC` wild backend. JS port of the
 // Rust module `crates/globstar/src/engine/segment/seg_nfa.rs`: a
-// Thompson NFA over the in-segment ops, simulated with an int32 bit set
+// Thompson NFA over the in-segment nodes, simulated with an int32 bit set
 // for up to 32 states and Int32Array words beyond, so no in-segment
 // pattern is too large.
 //
-// Every ε-edge points to a later state (see `compileOp`), so one
+// Every ε-edge points to a later state (see `compileNode`), so one
 // ascending sweep closes a set. A step ORs per-state closures while they
 // fit MAX_CLOSURE_BYTES; past that (a dense set per state is quadratic in
 // the states) it closes its set as it goes, so memory stays linear in
 // the pattern.
 
-import { OP_LIT, OP_ANYCHAR, OP_STAR, OP_CLASS, OP_ALTERNATION, exact } from "../ops.js";
-import { CI_BYTE, ciLetter } from "../../ast.js";
+import {
+  CI_BYTE,
+  N_ANYCHAR,
+  N_BRACE,
+  N_CLASS,
+  N_LITERAL,
+  N_STAR,
+  ciLetter,
+  seq,
+} from "../../ast.js";
+import { exact } from "./elem.js";
 import { ctz32, IS_WINDOWS_SEP } from "../../bytes.js";
 import { wordsFor, bitTest, bitSet, bitsOr, bitsIsZero, bitsEqual, bitsForEach } from "./bits.js";
 
@@ -31,9 +40,9 @@ const UNSET = -1;
 // its budget is bigger.)
 const MAX_CLOSURE_BYTES = 128 * 1024;
 
-export function compileSegNfa(ops, dot, ci) {
+export function compileSegNfa(nodes, dot, ci) {
   const b = new SegBuilder(ci);
-  const entry = b.compileOps(ops);
+  const entry = b.compileNodes(nodes);
   const accept = b.alloc(S_MATCH, 0, UNSET);
   for (const t of b.tails) b.patch(t, accept);
   return b.kinds.length <= 32 ? new SegNfaSmall(b, entry, dot) : new SegNfaWide(b, entry, dot);
@@ -109,7 +118,7 @@ function epsA(nfa, s, block) {
 }
 
 // Close `set` under ε-edges, keeping only consumers and S_MATCH. Every
-// ε-edge points to a later state (see `compileOp`), so one ascending
+// ε-edge points to a later state (see `compileNode`), so one ascending
 // sweep sees each state after all that reach it; the word being swept
 // stays in a local, where most edges land.
 function closeSmall(nfa, set, block) {
@@ -403,16 +412,16 @@ class SegBuilder {
     this.nexts[state] = target;
   }
 
-  compileOps(ops) {
-    if (ops.length === 0) {
+  compileNodes(nodes) {
+    if (nodes.length === 0) {
       const s = this.alloc(S_JUMP, 0, UNSET);
       this.tails.push(s);
       return s;
     }
     let entry = -1;
     let pending = [];
-    for (const op of ops) {
-      const [opEntry, opTails] = this.compileOp(op);
+    for (const node of nodes) {
+      const [opEntry, opTails] = this.compileNode(node);
       for (const t of pending) this.patch(t, opEntry);
       pending = opTails;
       if (entry === -1) entry = opEntry;
@@ -421,10 +430,10 @@ class SegBuilder {
     return entry;
   }
 
-  compileOp(op) {
-    switch (op.kind) {
-      case OP_LIT: {
-        const str = op.str;
+  compileNode(node) {
+    switch (node.tag) {
+      case N_LITERAL: {
+        const str = node.str;
         const entry = this.litState(str.charCodeAt(0));
         let prev = entry;
         for (let i = 1; i < str.length; i++) {
@@ -434,17 +443,17 @@ class SegBuilder {
         }
         return [entry, [prev]];
       }
-      case OP_ANYCHAR: {
+      case N_ANYCHAR: {
         this.countsBytes = true;
         const s = this.alloc(S_ANY, 0, UNSET);
         return [s, [s]];
       }
-      case OP_CLASS: {
-        if (op.cls.neg) this.countsBytes = true;
-        const s = this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(op.cls, this.ci));
+      case N_CLASS: {
+        if (node.neg) this.countsBytes = true;
+        const s = this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(node, this.ci));
         return [s, [s]];
       }
-      case OP_STAR: {
+      case N_STAR: {
         const entry = this.alloc(S_SPLIT, 0, UNSET);
         const body = this.alloc(S_ANY, 0, entry);
         // Under `dot` the guard is inert (blocked closures are never
@@ -454,17 +463,17 @@ class SegBuilder {
         this.splitBs[entry] = exit;
         return [entry, [exit]];
       }
-      case OP_ALTERNATION: {
+      case N_BRACE: {
         // The splits come before the branches, so every ε-edge points to
         // a later state (the closure passes rely on it).
         const first = this.kinds.length;
-        for (let i = 1; i < op.branches.length; i++) this.alloc(S_SPLIT, 0, UNSET);
+        for (let i = 1; i < node.branches.length; i++) this.alloc(S_SPLIT, 0, UNSET);
         // `this.tails` is empty here (every caller drains it), so the
         // branch tails can be collected straight out of it.
         const entries = [];
         const tails = [];
-        for (const branch of op.branches) {
-          entries.push(this.compileOps(branch));
+        for (const branch of node.branches) {
+          entries.push(this.compileNodes(seq(branch)));
           for (const t of this.tails) tails.push(t);
           this.tails = [];
         }
@@ -478,7 +487,7 @@ class SegBuilder {
         return [last === 0 ? entries[0] : first, tails];
       }
       default:
-        throw new Error("separator-crossing op inside a segment");
+        throw new Error("separator-crossing node inside a segment");
     }
   }
 

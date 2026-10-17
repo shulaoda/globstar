@@ -121,3 +121,24 @@ impl Node {
         }
     }
 }
+
+impl Node {
+    /// The node as a sequence: a `Concat`'s children, or the node alone.
+    pub(crate) fn seq(&self) -> &[Node] {
+        match self {
+            Node::Concat(xs) => xs,
+            other => std::slice::from_ref(other),
+        }
+    }
+
+    /// Does the node end in a `**` (in every expansion of a brace, in
+    /// some)? Such a `**` reads the `/` after the node as its `**/`.
+    pub(crate) fn ends_with_globstar(&self) -> bool {
+        match self {
+            Node::Globstar => true,
+            Node::Concat(xs) => xs.last().is_some_and(Node::ends_with_globstar),
+            Node::Brace(bs) => bs.iter().any(Node::ends_with_globstar),
+            _ => false,
+        }
+    }
+}

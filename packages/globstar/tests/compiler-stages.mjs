@@ -17,34 +17,9 @@ import {
 import { parse } from "../src/parser.js";
 import { buildEngine, compileMatcher } from "../src/glob.js";
 import { factorBranches } from "../src/factor.js";
-import {
-  OP_ALTERNATION,
-  OP_ANYCHAR,
-  OP_CLASS,
-  OP_GLOBSTAR_ANY,
-  OP_LIT,
-  OP_OPT_SEGMENTS_SLASH,
-  OP_SEP,
-  OP_STAR,
-  lower,
-} from "../src/engine/ops.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cases = readFileSync(resolve(here, "../../../fixtures/compiler-stages.tsv"), "utf8");
-
-function assertNormalizedProgram(ops) {
-  let previousLit = false;
-  let previousStar = false;
-  for (const op of ops) {
-    if (op.kind === OP_LIT && previousLit) throw new Error("adjacent literal ops");
-    if (op.kind === OP_STAR && previousStar) throw new Error("adjacent star ops");
-    if (op.kind === OP_ALTERNATION) {
-      for (const branch of op.branches) assertNormalizedProgram(branch);
-    }
-    previousLit = op.kind === OP_LIT;
-    previousStar = op.kind === OP_STAR;
-  }
-}
 
 // `value`: byte values, or a string holding bytes one char each.
 function bytes(value) {
@@ -87,46 +62,16 @@ function astDump(node) {
   }
 }
 
-function opsDump(ops) {
-  return ops
-    .map((op) => {
-      switch (op.kind) {
-        case OP_LIT:
-          return `L(${bytes(op.str)})`;
-        case OP_ANYCHAR:
-          return "Q";
-        case OP_STAR:
-          return "T";
-        case OP_CLASS:
-          return "K";
-        case OP_SEP:
-          return "S";
-        case OP_OPT_SEGMENTS_SLASH:
-          return "O";
-        case OP_GLOBSTAR_ANY:
-          return "Y";
-        case OP_ALTERNATION:
-          return `B(${op.branches.map((branch) => `[${opsDump(branch)}]`).join("|")})`;
-        default:
-          throw new Error(`unknown op ${op.kind}`);
-      }
-    })
-    .join(",");
-}
-
 for (const [index, line] of cases.split("\n").entries()) {
   if (!line || line.startsWith("#")) continue;
   const columns = line.split("\t");
-  assert.equal(columns.length, 3, `fixture line ${index + 1}`);
-  const [pattern, expectedAst, expectedOps] = columns;
+  assert.equal(columns.length, 2, `fixture line ${index + 1}`);
+  const [pattern, expectedAst] = columns;
   const parsed = parse(pattern);
   assert.equal(astDump(parsed.body), expectedAst, `AST for ${JSON.stringify(pattern)}`);
-  const ops = lower(parsed.body);
-  assertNormalizedProgram(ops);
-  assert.equal(opsDump(ops), expectedOps, `ops for ${JSON.stringify(pattern)}`);
 }
 
-console.log("✓ shared parser/lowering golden cases");
+console.log("✓ shared parser golden cases");
 
 // Static-prefix pinning, mirroring crates/globstar/tests/glob.rs prefixes_*.
 const prefixesOf = (patterns) =>

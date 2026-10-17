@@ -1,4 +1,4 @@
-//! Ops → segment graph → chains and NFA.
+//! AST → segment graph → chains and NFA.
 //!
 //! The walk keeps one *group* per distinct (boundary, partial segment)
 //! reaching a point of the pattern, so a brace whose branches end at
@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
-use crate::engine::ops::Op;
+use crate::ast::Node;
 use crate::error::GlobError;
 
 use super::bits::{Bits, Wide};
@@ -28,15 +28,15 @@ const ACCEPT: u32 = u32::MAX;
 const START: u32 = u32::MAX;
 
 /// The work the graph walk may take: 64 units per unit of pattern
-/// weight (`op_weight`), and never less than 2^20. Patterns of ordinary
+/// weight (`node_weight`), and never less than 2^20. Patterns of ordinary
 /// shape need one to three per unit; only a shape whose segments
 /// multiply (`a{a,/}` repeated, one node per pair of braces) reaches
 /// it, and it fails before it costs much.
 const BUDGET_PER_WEIGHT: usize = 64;
 const MIN_BUDGET: usize = 1 << 20;
 
-pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> Result<SegmentMatcher, GlobError> {
-    let graph = Graph::build(ops, dot, ci)?;
+pub(super) fn compile(body: &Node, dot: bool, ci: bool) -> Result<SegmentMatcher, GlobError> {
+    let graph = Graph::build(body, dot, ci)?;
     let mut chains = graph.chains();
     // A lone chain with several globstars is the graph: its NFA serves.
     if let [c] = &chains[..]
@@ -49,14 +49,14 @@ pub(super) fn compile(ops: &[Op], dot: bool, ci: bool) -> Result<SegmentMatcher,
         [_] => None,
         _ => Some(Box::new(graph.nfa())),
     };
-    let suffixes = facts::suffixes(ops);
+    let suffixes = facts::suffixes(body);
     Ok(SegmentMatcher {
         suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
         suffixes,
         chains,
         nfa,
         elems: graph.elems.into_boxed_slice(),
-        prefixes: facts::static_prefixes(ops),
+        prefixes: facts::static_prefixes(body),
         case_insensitive: ci,
         dot,
     })
@@ -85,13 +85,14 @@ impl Edges {
 }
 
 impl Graph {
-    fn build(ops: &[Op], dot: bool, ci: bool) -> Result<Self, GlobError> {
-        let (boundaries, linear, weight) = survey(ops);
+    fn build(body: &Node, dot: bool, ci: bool) -> Result<Self, GlobError> {
+        let nodes = body.seq();
+        let (boundaries, linear, weight) = survey(nodes);
         // Only a separator-crossing brace can need regrouping.
-        let ops = if linear {
-            Cow::Borrowed(ops)
+        let nodes = if linear {
+            Cow::Borrowed(nodes)
         } else {
-            choices(ops)
+            choices(nodes)
         };
         let mut b = Builder::new(boundaries, linear, dot, ci);
         // A linear walk keeps one group and takes a few units per weight,
@@ -99,7 +100,7 @@ impl Graph {
         if !linear {
             b.budget = MIN_BUDGET.max(weight.saturating_mul(BUDGET_PER_WEIGHT));
         }
-        let groups = b.walk(&ops, vec![Group::first()]);
+        let groups = b.walk(&nodes, false, vec![Group::first()]);
         for mut g in groups {
             b.settle(&mut g);
             if g.state == Boundary::Open {
@@ -405,48 +406,54 @@ pub(super) fn chain_nfa(m: &SegmentMatcher) -> AnyNfa {
     any_nfa(&m.elems, m.case_insensitive, None, path)
 }
 
-/// Elements a brace-free pattern needs (one per boundary op plus the
-/// last segment; with braces a floor), whether the pattern has a
-/// separator-crossing brace at all, and its weight (`op_weight`).
-fn survey(ops: &[Op]) -> (usize, bool, usize) {
+/// Elements a brace-free pattern needs (one per boundary plus the last
+/// segment; with braces a floor), whether the pattern has a
+/// separator-crossing brace at all, and its weight (`node_weight`).
+fn survey(nodes: &[Node]) -> (usize, bool, usize) {
     let mut boundaries = 0;
     let mut linear = true;
     let mut weight = 0;
-    for op in ops {
-        match op {
-            Op::Alternation(branches) => {
-                if crosses(op) {
+    for node in nodes {
+        match node {
+            Node::Brace(branches) => {
+                if crosses(node) {
                     linear = false;
                 }
                 weight += 1;
                 for b in branches {
-                    let (n, _, w) = survey(b);
+                    let (n, _, w) = survey(b.seq());
                     boundaries += n;
                     weight += w;
                 }
             }
-            Op::Lit(bytes) => weight += bytes.len(),
-            Op::AnyChar | Op::Star | Op::Class(_) => weight += 1,
-            _ => {
+            Node::Literal(bytes) => weight += bytes.len(),
+            Node::AnyChar | Node::Star | Node::Class(_) => weight += 1,
+            Node::Separator | Node::Globstar => {
                 boundaries += 1;
                 weight += 1;
             }
+            Node::Concat(_) => unreachable!("a sequence holds no sequence"),
         }
     }
     (boundaries, linear, weight)
 }
 
-/// What an op costs the walk to copy and compile: a literal its length,
-/// a brace one plus its branches, anything else one.
-pub(super) fn op_weight(op: &Op) -> usize {
-    match op {
-        Op::Lit(bytes) => bytes.len(),
-        Op::Alternation(branches) => 1 + branches.iter().flatten().map(op_weight).sum::<usize>(),
+/// What a node costs the walk to copy and compile: a literal its
+/// length, a brace one plus its branches, anything else one.
+pub(super) fn node_weight(node: &Node) -> usize {
+    match node {
+        Node::Literal(bytes) => bytes.len(),
+        Node::Brace(branches) => {
+            1 + branches
+                .iter()
+                .map(|b| b.seq().iter().map(node_weight).sum::<usize>())
+                .sum::<usize>()
+        }
         _ => 1,
     }
 }
 
-/// What the last op left behind for the next element.
+/// What the last node left behind for the next element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Boundary {
     /// Pattern start.
@@ -459,18 +466,21 @@ enum Boundary {
 
 /// Paths under construction that agree on everything still to come:
 /// the nodes awaiting a successor (`START` for the graph start), the
-/// boundary just crossed and the in-segment ops read since.
+/// boundary just crossed and the in-segment nodes read since.
 #[derive(Clone)]
 struct Group<'a> {
     tails: Vec<u32>,
     state: Boundary,
-    buf: Vec<&'a Op>,
+    buf: Vec<&'a Node>,
     /// A `**/` read but not yet emitted: a bare `**` right after it
     /// absorbs it (`x/**/**` ≡ `x/**`), anything else makes it real.
     /// More of them add nothing (`**/**/` ≡ `**/`). While set, `state`
     /// is the boundary before it and `buf` is empty.
     pending_oss: bool,
-    /// The `op_weight` of `buf`.
+    /// A `**` ending a brace branch took the `/` after the brace as its
+    /// `**/`: that separator closes nothing here.
+    took_sep: bool,
+    /// The `node_weight` of `buf`.
     weight: usize,
 }
 
@@ -481,6 +491,7 @@ impl Group<'_> {
             state: Boundary::Start,
             buf: Vec::new(),
             pending_oss: false,
+            took_sep: false,
             weight: 0,
         }
     }
@@ -670,26 +681,38 @@ impl Builder {
         self.cost > self.budget
     }
 
-    fn walk<'a>(&mut self, ops: &'a [Op], mut groups: Vec<Group<'a>>) -> Vec<Group<'a>> {
-        for op in ops {
+    /// Walk a sequence of nodes; `sep_after` tells whether a `/` follows
+    /// it outside (after the brace it is a branch of).
+    fn walk<'a>(
+        &mut self,
+        nodes: &'a [Node],
+        sep_after: bool,
+        mut groups: Vec<Group<'a>>,
+    ) -> Vec<Group<'a>> {
+        let mut i = 0;
+        while i < nodes.len() {
             if self.over() {
                 break;
             }
-            // Lowering never puts an op after an open globstar; should
+            let node = &nodes[i];
+            let sep_next = matches!(nodes.get(i + 1), Some(Node::Separator));
+            let last = i + 1 == nodes.len();
+            // Resolution never puts a node after an open globstar; should
             // one appear, the open paths absorb the rest of the path.
             debug_assert!(groups.iter().all(|g| g.state != Boundary::Open));
-            // Ops that may still be absorbed by a bare `**` keep the
-            // pending `**/` elements; anything else makes them real.
-            if !matches!(
-                op,
-                Op::GlobstarAny | Op::OptSegmentsSlash | Op::Alternation(_)
-            ) {
+            // Nodes that may still be absorbed by a bare `**` keep the
+            // pending `**/` elements; anything else makes them real (a
+            // `/` through `close_all`, which skips the groups it is the
+            // `**/` of).
+            if !matches!(node, Node::Globstar | Node::Brace(_) | Node::Separator) {
                 for g in groups.iter_mut() {
                     self.settle(g);
                 }
             }
-            match op {
-                Op::Alternation(branches) if crosses(op) => {
+            match node {
+                Node::Brace(branches) if crosses(node) => {
+                    // A `**` ending a branch reads the `/` after the brace.
+                    let after = sep_next || (last && sep_after);
                     let mut out = Merged::default();
                     for branch in branches {
                         self.cost += groups.iter().map(Group::cost).sum::<usize>();
@@ -697,7 +720,7 @@ impl Builder {
                             break;
                         }
                         let copies = groups.to_vec();
-                        for g in self.walk(branch, copies) {
+                        for g in self.walk(branch.seq(), after, copies) {
                             out.add(g);
                         }
                     }
@@ -706,19 +729,35 @@ impl Builder {
                         g.dedupe_tails();
                     }
                 }
-                Op::Sep => self.close_all(&mut groups, Boundary::Sep),
-                Op::OptSegmentsSlash => {
+                Node::Separator => {
+                    // The branches a `**` ended have this `/` already.
+                    let (mut taken, mut rest): (Vec<_>, Vec<_>) =
+                        groups.drain(..).partition(|g| g.took_sep);
+                    self.close_all(&mut rest, Boundary::Sep);
+                    for g in &mut taken {
+                        g.took_sep = false;
+                    }
+                    rest.append(&mut taken);
+                    groups = rest;
+                }
+                // `**/`: zero or more whole segments, empty ones included,
+                // so the separators around it are lenient (§12.3). It is
+                // emitted later, when it is known that no bare `**`
+                // absorbs it.
+                Node::Globstar if sep_next || (last && sep_after) => {
                     for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {
                         // The parser never glues a `**` to text.
                         debug_assert!(g.buf.is_empty());
                         g.pending_oss = true;
+                        g.took_sep = !sep_next;
                     }
+                    i += usize::from(sep_next);
                 }
-                Op::GlobstarAny => {
-                    // The bare `**` owns the rest of the path: pending
-                    // `**/` add nothing to it, and a separator before
-                    // them still needs a segment to follow (`x/**/**`
-                    // ≡ `x/**`), so only the pattern start gives `G0`.
+                // A bare `**` owns the rest of the path: pending `**/`
+                // add nothing to it, and a separator before them still
+                // needs a segment to follow (`x/**/**` ≡ `x/**`), so
+                // only the pattern start gives `G0`.
+                Node::Globstar => {
                     for g in groups.iter_mut() {
                         g.pending_oss = false;
                     }
@@ -730,14 +769,15 @@ impl Builder {
                         }
                     });
                 }
-                op => {
-                    let weight = op_weight(op);
+                node => {
+                    let weight = node_weight(node);
                     for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {
-                        g.buf.push(op);
+                        g.buf.push(node);
                         g.weight += weight;
                     }
                 }
             }
+            i += 1;
         }
         groups
     }
@@ -807,13 +847,13 @@ impl Builder {
         }
     }
 
-    fn close(&self, buf: &[&Op]) -> Elem {
+    fn close(&self, buf: &[&Node]) -> Elem {
         // An escaped `\` on Windows: no segment holds a separator, so a
         // segment with one is a silent miss (§2.4), kept as a wildcard
         // that wants more bytes than any segment has.
         if buf
             .iter()
-            .any(|op| matches!(op, Op::Lit(lit) if has_sep(lit)))
+            .any(|node| matches!(node, Node::Literal(lit) if has_sep(lit)))
         {
             return Elem::Wild(Wild {
                 kind: WildKind::Affix(Affix::new(Bytes::default(), Bytes::default())),
@@ -823,7 +863,7 @@ impl Builder {
                 any_seg: false,
             });
         }
-        if !buf.iter().all(|op| matches!(op, Op::Lit(_))) {
+        if !buf.iter().all(|node| matches!(node, Node::Literal(_))) {
             return Elem::Wild(compile_wild(buf, self.dot, self.ci));
         }
         // Empty, one literal, or literals glued across a brace edge.
@@ -875,6 +915,7 @@ impl Group<'_> {
     fn agrees(&self, other: &Self) -> bool {
         self.state == other.state
             && self.pending_oss == other.pending_oss
+            && self.took_sep == other.took_sep
             && self.buf.len() == other.buf.len()
             && self
                 .buf
@@ -883,14 +924,18 @@ impl Group<'_> {
                 .all(|(a, b)| std::ptr::eq(*a, *b) || a == b)
     }
 
-    /// A hash of what `agrees` compares: each op by kind, a literal by
-    /// its bytes too.
+    /// A hash of what `agrees` compares: each node by kind, a literal
+    /// by its bytes too.
     fn key(&self) -> u64 {
         let mut h = Fnv::default();
-        h.write(&[self.state as u8, self.pending_oss as u8]);
-        for op in &self.buf {
-            std::mem::discriminant(*op).hash(&mut h);
-            if let Op::Lit(bytes) = op {
+        h.write(&[
+            self.state as u8,
+            self.pending_oss as u8,
+            self.took_sep as u8,
+        ]);
+        for node in &self.buf {
+            std::mem::discriminant(*node).hash(&mut h);
+            if let Node::Literal(bytes) = node {
                 h.write(bytes);
             }
         }
@@ -898,59 +943,64 @@ impl Group<'_> {
     }
 }
 
-/// The ops with each crossing brace's in-segment branches as one choice:
-/// `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches give
-/// a group per partial segment, 2^k of them after k braces.
-fn choices(ops: &[Op]) -> Cow<'_, [Op]> {
-    if !ops.iter().any(splits_choices) {
-        return Cow::Borrowed(ops);
+/// The nodes with each crossing brace's in-segment branches as one
+/// choice: `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such
+/// branches give a group per partial segment, 2^k of them after k braces.
+fn choices(nodes: &[Node]) -> Cow<'_, [Node]> {
+    if !nodes.iter().any(splits_choices) {
+        return Cow::Borrowed(nodes);
     }
-    let regroup = |op: &Op| {
-        let Op::Alternation(branches) = op else {
-            return op.clone();
-        };
-        if !crosses(op) {
-            return op.clone();
-        }
-        let mut out: Vec<Vec<Op>> = Vec::with_capacity(branches.len());
-        let mut within: Vec<Vec<Op>> = Vec::new();
-        let mut at = None;
-        for b in branches {
-            if b.iter().any(crosses) {
-                out.push(choices(b).into_owned());
-            } else {
-                at.get_or_insert(out.len());
-                within.push(b.clone());
+    Cow::Owned(nodes.iter().map(regroup).collect())
+}
+
+/// `node` with its crossing braces' in-segment branches regrouped.
+fn regroup(node: &Node) -> Node {
+    match node {
+        Node::Concat(children) => Node::Concat(choices(children).into_owned()),
+        Node::Brace(branches) if crosses(node) => {
+            let mut out: Vec<Node> = Vec::with_capacity(branches.len());
+            let mut within: Vec<Node> = Vec::new();
+            let mut at = None;
+            for b in branches {
+                if crosses(b) {
+                    out.push(regroup(b));
+                } else {
+                    at.get_or_insert(out.len());
+                    within.push(b.clone());
+                }
             }
+            if let Some(at) = at {
+                let choice = match within.len() {
+                    1 => within.pop().unwrap(),
+                    _ => Node::Brace(within),
+                };
+                out.insert(at, choice);
+            }
+            Node::Brace(out)
         }
-        if let Some(at) = at {
-            let choice = match within.len() {
-                1 => within.pop().unwrap(),
-                _ => vec![Op::Alternation(within)],
-            };
-            out.insert(at, choice);
-        }
-        Op::Alternation(out)
-    };
-    Cow::Owned(ops.iter().map(regroup).collect())
+        other => other.clone(),
+    }
 }
 
-/// Does a crossing brace in `op` have two or more in-segment branches?
-fn splits_choices(op: &Op) -> bool {
-    let Op::Alternation(branches) = op else {
-        return false;
-    };
-    crosses(op)
-        && (branches.iter().filter(|b| !b.iter().any(crosses)).count() > 1
-            || branches.iter().any(|b| b.iter().any(splits_choices)))
+/// Does a crossing brace in `node` have two or more in-segment branches?
+fn splits_choices(node: &Node) -> bool {
+    match node {
+        Node::Brace(branches) => {
+            crosses(node)
+                && (branches.iter().filter(|b| !crosses(b)).count() > 1
+                    || branches.iter().any(splits_choices))
+        }
+        Node::Concat(children) => children.iter().any(splits_choices),
+        _ => false,
+    }
 }
 
-/// Does the op hold a segment boundary?
-fn crosses(op: &Op) -> bool {
-    match op {
-        Op::Lit(_) | Op::AnyChar | Op::Star | Op::Class(_) => false,
-        Op::Alternation(branches) => branches.iter().any(|b| b.iter().any(crosses)),
-        _ => true,
+/// Does the node hold a segment boundary?
+fn crosses(node: &Node) -> bool {
+    match node {
+        Node::Separator | Node::Globstar => true,
+        Node::Brace(xs) | Node::Concat(xs) => xs.iter().any(crosses),
+        _ => false,
     }
 }
 
@@ -975,35 +1025,38 @@ impl Hasher for Fnv {
     }
 }
 
-/// The bytes of a run of `Lit` ops, allocated once.
-fn concat_lits(ops: &[&Op]) -> Bytes {
-    fn lit(op: &Op) -> &[u8] {
-        match op {
-            Op::Lit(bytes) => bytes,
+/// The bytes of a run of literal nodes, allocated once.
+fn concat_lits(nodes: &[&Node]) -> Bytes {
+    fn lit(node: &Node) -> &[u8] {
+        match node {
+            Node::Literal(bytes) => bytes,
             _ => unreachable!("not a literal"),
         }
     }
-    match ops {
+    match nodes {
         [one] => Bytes::from(lit(one)),
         _ => {
-            let mut acc = Vec::with_capacity(ops.iter().map(|op| lit(op).len()).sum());
-            for op in ops {
-                acc.extend_from_slice(lit(op));
+            let mut acc = Vec::with_capacity(nodes.iter().map(|n| lit(n).len()).sum());
+            for node in nodes {
+                acc.extend_from_slice(lit(node));
             }
             acc.into_boxed_slice()
         }
     }
 }
 
-fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
-    let mut idx = ops.iter().take_while(|op| matches!(op, Op::Lit(_))).count();
-    let prefix = concat_lits(&ops[..idx]);
+fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
+    let mut idx = nodes
+        .iter()
+        .take_while(|n| matches!(n, Node::Literal(_)))
+        .count();
+    let prefix = concat_lits(&nodes[..idx]);
     let mut anychars = 0u32;
     let mut has_star = false;
-    while idx < ops.len() {
-        match ops[idx] {
-            Op::Star => has_star = true,
-            Op::AnyChar => anychars += 1,
+    while idx < nodes.len() {
+        match nodes[idx] {
+            Node::Star => has_star = true,
+            Node::AnyChar => anychars += 1,
             _ => break,
         }
         idx += 1;
@@ -1013,7 +1066,7 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
     // `*` or `?*` with nothing literal around it, up to the suffix.
     let any_head = prefix.is_empty() && has_star && anychars <= 1;
 
-    if idx == ops.len() {
+    if idx == nodes.len() {
         return Wild {
             min_len: prefix.len() as u32 + anychars,
             kind: WildKind::Affix(Affix::new(prefix, Bytes::default())),
@@ -1022,7 +1075,7 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
             any_seg: any_head,
         };
     }
-    if let Some(suffixes) = suffix_product(&ops[idx..]) {
+    if let Some(suffixes) = suffix_product(&nodes[idx..]) {
         let any_seg = any_head && suffixes.iter().any(|s| s.is_empty());
         if let [suffix] = &suffixes[..] {
             return Wild {
@@ -1041,7 +1094,7 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
             any_seg,
         };
     }
-    let nfa = SegNfa::compile(ops, dot, ci);
+    let nfa = SegNfa::compile(nodes, dot, ci);
     Wild {
         dot_protect: !dot && nfa.wild_led,
         any_seg: nfa.any_seg,
@@ -1058,21 +1111,21 @@ fn compile_wild(ops: &[&Op], dot: bool, ci: bool) -> Wild {
 /// whatever its length.
 const MAX_SUFFIX_PRODUCT: usize = 1024;
 /// The enumerated suffixes, one byte more each, may not take more than
-/// this or four times their ops: a long literal next to a product would
-/// be copied into every suffix.
+/// this or four times their nodes: a long literal next to a product
+/// would be copied into every suffix.
 const MAX_SUFFIX_BYTES: usize = 64 * 1024;
 
-fn suffix_product(ops: &[&Op]) -> Option<Vec<Vec<u8>>> {
-    if let [Op::Lit(bytes)] = ops {
+fn suffix_product(nodes: &[&Node]) -> Option<Vec<Vec<u8>>> {
+    if let [Node::Literal(bytes)] = nodes {
         return Some(vec![bytes.clone()]);
     }
     let mut parts: Vec<Vec<u8>> = vec![Vec::new()];
-    // Σ (part + 1) bytes, and what the ops themselves hold.
+    // Σ (part + 1) bytes, and what the nodes themselves hold.
     let (mut size, mut source) = (1usize, 1usize);
     let fits = |size: usize, source: usize| size <= MAX_SUFFIX_BYTES.max(source.saturating_mul(4));
-    for op in ops {
-        match op {
-            Op::Lit(bytes) => {
+    for node in nodes {
+        match node {
+            Node::Literal(bytes) => {
                 size = size.saturating_add(parts.len().saturating_mul(bytes.len()));
                 source += bytes.len();
                 if !fits(size, source) {
@@ -1082,12 +1135,12 @@ fn suffix_product(ops: &[&Op]) -> Option<Vec<Vec<u8>>> {
                     p.extend_from_slice(bytes);
                 }
             }
-            Op::Alternation(branches) => {
+            Node::Brace(branches) => {
                 let mut lits = Vec::with_capacity(branches.len());
                 for b in branches {
-                    match b.as_slice() {
+                    match b.seq() {
                         [] => lits.push(&b""[..]),
-                        [Op::Lit(bytes)] => lits.push(bytes.as_slice()),
+                        [Node::Literal(bytes)] => lits.push(bytes.as_slice()),
                         _ => return None,
                     }
                 }

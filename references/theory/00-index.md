@@ -17,7 +17,6 @@ The notes `02-thompson-nfa.md` and `04-pike-vm.md` described the byte-level Thom
 | ------------------------- | ----------- | ---------------------------------------------------------- |
 | `engine/literal.rs`       | —           | Byte-equality matcher for pure-literal patterns.           |
 | `engine/segment/`         | §07         | Segment-structured matcher for every non-literal pattern.  |
-| `engine/ops.rs`           | —           | IR and AST-to-linear lowering.                             |
 | `engine/segment/facts.rs` | §05, §06    | Suffix prefilter (§05) and static-prefix analysis (§06).   |
 
 ## Notation

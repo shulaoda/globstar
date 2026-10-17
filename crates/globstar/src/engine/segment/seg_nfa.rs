@@ -9,8 +9,7 @@
 //! is quadratic in the states) it closes its set as it goes, so memory
 //! stays linear in the pattern.
 
-use crate::ast::{CharClass, ClassItem};
-use crate::engine::ops::Op;
+use crate::ast::{CharClass, ClassItem, Node};
 
 use super::bits::{Bits, Wide};
 
@@ -42,13 +41,13 @@ enum Kind {
 }
 
 impl SegNfa {
-    pub(super) fn compile(ops: &[&Op], dot: bool, ci: bool) -> Self {
+    pub(super) fn compile(nodes: &[&Node], dot: bool, ci: bool) -> Self {
         let mut b = SegBuilder {
             states: Vec::with_capacity(16),
             tails: Vec::new(),
             ci,
         };
-        let entry = b.compile_ops(ops.iter().copied()) as usize;
+        let entry = b.compile_nodes(nodes.iter().copied()) as usize;
         let accept = b.alloc(SegState::Match);
         for t in std::mem::take(&mut b.tails) {
             b.patch(t, accept);
@@ -415,11 +414,11 @@ impl SegBuilder {
         }
     }
 
-    fn compile_ops<'a>(&mut self, ops: impl IntoIterator<Item = &'a Op>) -> u32 {
+    fn compile_nodes<'a>(&mut self, nodes: impl IntoIterator<Item = &'a Node>) -> u32 {
         let mut entry: Option<u32> = None;
         let mut pending: Vec<u32> = Vec::new();
-        for op in ops {
-            let (op_entry, mut op_tails) = self.compile_op(op);
+        for node in nodes {
+            let (op_entry, mut op_tails) = self.compile_node(node);
             for t in pending.drain(..) {
                 self.patch(t, op_entry);
             }
@@ -437,9 +436,9 @@ impl SegBuilder {
         })
     }
 
-    fn compile_op(&mut self, op: &Op) -> (u32, Vec<u32>) {
-        match op {
-            Op::Lit(bytes) => {
+    fn compile_node(&mut self, node: &Node) -> (u32, Vec<u32>) {
+        match node {
+            Node::Literal(bytes) => {
                 debug_assert!(!bytes.is_empty());
                 let entry = self.lit_state(bytes[0]);
                 let mut prev = entry;
@@ -450,15 +449,15 @@ impl SegBuilder {
                 }
                 (entry, vec![prev])
             }
-            Op::AnyChar => {
+            Node::AnyChar => {
                 let s = self.alloc(SegState::Any(UNSET));
                 (s, vec![s])
             }
-            Op::Class(cls) => {
+            Node::Class(cls) => {
                 let s = self.alloc(SegState::Class(Box::new(ByteSet::of(cls, self.ci)), UNSET));
                 (s, vec![s])
             }
-            Op::Star => {
+            Node::Star => {
                 let entry = self.alloc(SegState::Split(UNSET, UNSET));
                 let body = self.alloc(SegState::Any(entry));
                 // Under `dot` the guard is inert (blocked closures are
@@ -470,7 +469,7 @@ impl SegBuilder {
                 }
                 (entry, vec![exit])
             }
-            Op::Alternation(branches) => {
+            Node::Brace(branches) => {
                 debug_assert!(!branches.is_empty());
                 // The splits come before the branches, so every ε-edge
                 // points to a later state (`close` and `closures` rely on it).
@@ -483,7 +482,7 @@ impl SegBuilder {
                 let mut entries = Vec::with_capacity(branches.len());
                 let mut tails: Vec<u32> = Vec::new();
                 for branch in branches {
-                    entries.push(self.compile_ops(branch.iter()));
+                    entries.push(self.compile_nodes(branch.seq().iter()));
                     tails.append(&mut self.tails);
                 }
                 // Split `i` picks branch `i` or the rest: the next split,
@@ -499,8 +498,9 @@ impl SegBuilder {
                 }
                 (if last == 0 { entries[0] } else { first as u32 }, tails)
             }
-            // Separator-crossing ops never appear inside a segment.
-            _ => unreachable!("separator-crossing op inside a segment"),
+            // Separator-crossing nodes never appear inside a segment, and
+            // a sequence is walked as its nodes.
+            _ => unreachable!("separator-crossing node inside a segment"),
         }
     }
 

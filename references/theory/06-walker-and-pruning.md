@@ -64,9 +64,9 @@ The segment-boundary requirement matters because the walker uses `SP(P)` to seed
 
 ### 1.2 Extraction
 
-`static_prefixes(ops)` reads the ops left to right, accumulating bytes from `Op::Lit` and separator bytes from `Op::Sep`/`Op::SepRun`. A brace in the head is read branch by branch, each followed by what follows the brace (a continuation, so nothing is copied). At the first non-literal op the bytes are cut back to the last separator before it; a trailing `/**`, or a brace whose every branch starts with a separator, ends a whole segment instead. Trailing separators are dropped. Each path through the head braces records one head.
+`static_prefixes(body)` reads the AST left to right, accumulating bytes from literals and `/` from separators. A brace in the head is read branch by branch, each followed by what follows the brace (a continuation, so nothing is copied). At the first other node (a wildcard, a `**`) the bytes are cut back to the last separator before it; a brace whose every branch starts with a separator ends a whole segment instead. Trailing separators are dropped. Each path through the head braces records one head.
 
-Re-reading the continuation once per branch is what could cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal copies it once per branch. So every byte read and every branch taken costs one unit of a budget of `4096 + 2·weight(P)`, and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment — a shorter prefix, still sound. Reading every op once costs at most its weight, so the budget only ever cuts heads that re-read what a brace shares.
+Re-reading the continuation once per branch is what could cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal copies it once per branch. So every byte read and every branch taken costs one unit of a budget of `4096 + 2·weight(P)`, and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment — a shorter prefix, still sound. Reading every node once costs at most its weight, so the budget only ever cuts heads that re-read what a brace shares.
 
 When there are several prefixes, a dedupe step (`facts.rs::dedupe`) sorts them by (length, bytes) and drops any prefix that a shorter kept one already covers (`src` covers `src/a`); an empty prefix covers all.
 
@@ -90,7 +90,7 @@ a{b,c}d/x          →  ["abd/x", "acd/x"]
 
 **Proposition 4.** For every `w ∈ L(P)`, there exists `s ∈ SP(P)` such that `w` starts with `s`.
 
-_Proof sketch._ Every `w ∈ L(P)` lies in `L(e)` for some expansion `e`, and the read follows `e`'s branches through the head braces. The bytes it keeps come only from literal ops before the first non-literal one, cut back to a segment boundary, so they start every `w ∈ L(e)`. A head cut short by the budget is a segment-prefix of `head(e)` and starts every such `w` too, and the dedupe only drops a head when a shorter kept one covers it. ∎
+_Proof sketch._ Every `w ∈ L(P)` lies in `L(e)` for some expansion `e`, and the read follows `e`'s branches through the head braces. The bytes it keeps come only from literal and separator nodes before the first other one, cut back to a segment boundary, so they start every `w ∈ L(e)`. A head cut short by the budget is a segment-prefix of `head(e)` and starts every such `w` too, and the dedupe only drops a head when a shorter kept one covers it. ∎
 
 The corollary is that the walker may safely seed a separate traversal frame for each `s ∈ SP(P)`: paths that do not start with any `s` are excluded from `L(P)`, so they need not be visited.
 

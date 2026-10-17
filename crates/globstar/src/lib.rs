@@ -63,7 +63,6 @@ use std::collections::HashSet;
 
 use ast::{Ast, Node};
 use engine::literal::LiteralMatcher;
-use engine::ops::lower;
 use engine::segment::SegmentMatcher;
 use factor::factor_branches;
 
@@ -244,8 +243,7 @@ impl Glob {
             ),
             None => {
                 let tier = tier.unwrap_or_else(|| tier_of(&ast.body));
-                let ops = lower(ast.body);
-                let matcher = SegmentMatcher::build(&ops, opts.dot, opts.case_insensitive)?;
+                let matcher = SegmentMatcher::build(&ast.body, opts.dot, opts.case_insensitive)?;
                 (tier, Engine::Segment(matcher))
             }
         };

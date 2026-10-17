@@ -40,3 +40,10 @@ export const elemSatisfiable = (e) =>
 // Takes every non-empty segment (`matchDir`'s all-below).
 export const elemAnySeg = (e) =>
   e.kind === EL_LIT ? false : e.kind === EL_WILD ? e.wild.anySeg : true;
+
+// `a` copied to its length. V8 grows an array that `push` fills by half
+// again plus 16 slots and never gives the room back; a matcher keeps its
+// arrays as long as it lives, so the ones it stores are copied once.
+export function exact(a) {
+  return a.slice();
+}

@@ -1,4 +1,4 @@
-// Ops → segment graph → chains and NFA. JS twin of
+// AST → segment graph → chains and NFA. JS twin of
 // `crates/globstar/src/engine/segment/compile.rs`.
 //
 // The walk keeps one *group* per distinct (boundary, partial segment)
@@ -7,17 +7,19 @@
 // nothing is multiplied out.
 
 import {
-  OP_LIT,
-  OP_ANYCHAR,
-  OP_STAR,
-  OP_CLASS,
-  OP_SEP,
-  OP_OPT_SEGMENTS_SLASH,
-  OP_GLOBSTAR_ANY,
-  OP_ALTERNATION,
-  exact,
-} from "../ops.js";
-import { CI_BYTE } from "../../ast.js";
+  CI_BYTE,
+  brace,
+  concat,
+  N_ANYCHAR,
+  N_BRACE,
+  N_CLASS,
+  N_CONCAT,
+  N_GLOBSTAR,
+  N_LITERAL,
+  N_SEPARATOR,
+  N_STAR,
+  seq,
+} from "../../ast.js";
 import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { flat, isAscii } from "../../utf8.js";
 import {
@@ -37,6 +39,7 @@ import {
   NFA_SPARSE,
   elemSatisfiable,
   NEVER_LEN,
+  exact,
 } from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
 import { GlobError } from "../../error.js";
@@ -46,15 +49,15 @@ const ACCEPT = -1;
 // Tail marker for "the graph start".
 const START = -2;
 
-// What the last op left behind for the next element.
+// What the last node left behind for the next element.
 const B_START = 0; // pattern start
 const B_SEP = 1; // after a separator or a `**/`
 const B_OPEN = 2; // a bare `**` absorbs the rest of the path
 
 const EMPTY = "";
 
-export function compileSegment(ops, dot, ci, forceNfa) {
-  const graph = buildGraph(ops, dot, ci);
+export function compileSegment(body, dot, ci, forceNfa) {
+  const graph = buildGraph(body, dot, ci);
   let chainList = chains(graph);
   // A lone chain with several globstars is the graph: its NFA serves.
   if (chainList.length === 1 && chainList[0].globstar === MANY_G) chainList = [];
@@ -72,82 +75,72 @@ const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
 // Absorbs zero segments too.
 const nullable = (e) => e.kind === EL_G0;
 
-// The ops with each crossing brace's in-segment branches as one choice:
-// `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches give
-// a group per partial segment, 2^k of them after k braces.
-function choices(ops) {
-  if (!ops.some(splitsChoices)) return ops;
-  return ops.map((op) => {
-    if (op.kind !== OP_ALTERNATION || !crosses(op)) return op;
-    const out = [];
-    const within = [];
-    let at = -1;
-    for (const b of op.branches) {
-      if (b.some(crosses)) out.push(choices(b));
-      else {
-        if (at === -1) at = out.length;
-        within.push(b);
-      }
-    }
-    if (at !== -1) {
-      out.splice(
-        at,
-        0,
-        within.length === 1 ? within[0] : [{ kind: OP_ALTERNATION, branches: within }],
-      );
-    }
-    return { kind: OP_ALTERNATION, branches: out };
-  });
+// The nodes with each crossing brace's in-segment branches as one
+// choice: `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such
+// branches give a group per partial segment, 2^k of them after k braces.
+function choices(nodes) {
+  return nodes.some(splitsChoices) ? nodes.map(regroup) : nodes;
 }
 
-// Does a crossing brace in `op` have two or more in-segment branches?
-function splitsChoices(op) {
-  if (op.kind !== OP_ALTERNATION || !crosses(op)) return false;
+// `node` with its crossing braces' in-segment branches regrouped.
+function regroup(node) {
+  if (node.tag === N_CONCAT) return concat(choices(node.children));
+  if (node.tag !== N_BRACE || !crosses(node)) return node;
+  const out = [];
+  const within = [];
+  let at = -1;
+  for (const b of node.branches) {
+    if (crosses(b)) out.push(regroup(b));
+    else {
+      if (at === -1) at = out.length;
+      within.push(b);
+    }
+  }
+  if (at !== -1) out.splice(at, 0, within.length === 1 ? within[0] : brace(within));
+  return brace(out);
+}
+
+// Does a crossing brace in `node` have two or more in-segment branches?
+function splitsChoices(node) {
+  if (node.tag === N_CONCAT) return node.children.some(splitsChoices);
+  if (node.tag !== N_BRACE || !crosses(node)) return false;
   let within = 0;
-  for (const b of op.branches) {
-    if (!b.some(crosses)) within++;
-    else if (b.some(splitsChoices)) return true;
+  for (const b of node.branches) {
+    if (!crosses(b)) within++;
+    else if (splitsChoices(b)) return true;
   }
   return within > 1;
 }
 
-// Does the op hold a segment boundary?
-function crosses(op) {
-  switch (op.kind) {
-    case OP_LIT:
-    case OP_ANYCHAR:
-    case OP_STAR:
-    case OP_CLASS:
-      return false;
-    case OP_ALTERNATION:
-      for (const b of op.branches) for (const o of b) if (crosses(o)) return true;
-      return false;
-    default:
+// Does the node hold a segment boundary?
+function crosses(node) {
+  switch (node.tag) {
+    case N_SEPARATOR:
+    case N_GLOBSTAR:
       return true;
+    case N_BRACE:
+      return node.branches.some(crosses);
+    case N_CONCAT:
+      return node.children.some(crosses);
+    default:
+      return false;
   }
 }
 
-export function opsHaveNonAscii(ops) {
-  for (const op of ops) {
-    switch (op.kind) {
-      case OP_LIT:
-        if (!isAscii(op.str)) return true;
-        break;
-      case OP_CLASS:
-        for (const it of op.cls.items) {
-          if (it.tag === CI_BYTE ? it.b > 0x7f : it.hi > 0x7f) return true;
-        }
-        break;
-      case OP_ALTERNATION:
-        for (const b of op.branches) {
-          if (opsHaveNonAscii(b)) return true;
-        }
-        break;
-      default:
-        break;
-    }
+// Does the pattern hold a byte past ASCII (in a literal or a class)?
+export function hasNonAscii(node) {
+  switch (node.tag) {
+    case N_LITERAL:
+      return !isAscii(node.str);
+    case N_CLASS:
+      return node.items.some((it) => (it.tag === CI_BYTE ? it.b > 0x7f : it.hi > 0x7f));
+    case N_BRACE:
+      return node.branches.some(hasNonAscii);
+    case N_CONCAT:
+      return node.children.some(hasNonAscii);
+    default:
+      return false;
   }
-  return false;
 }
 
 // ── the graph ───────────────────────────────────────────────────────
@@ -155,25 +148,20 @@ export function opsHaveNonAscii(ops) {
 // The graph as the walk leaves it. A pattern without a
 // separator-crossing brace is one path, emitted in order: its edges
 // and start are implied and never stored.
-function buildGraph(ops, dot, ci) {
-  let linear = true;
-  for (const op of ops) {
-    if (op.kind === OP_ALTERNATION && crosses(op)) {
-      linear = false;
-      break;
-    }
-  }
+function buildGraph(body, dot, ci) {
+  const nodes = seq(body);
+  const linear = !nodes.some((n) => n.tag === N_BRACE && crosses(n));
   // A linear walk keeps one group and takes a few units per weight, so
   // only a separator-crossing brace can reach the budget.
   let budget = Infinity;
   if (!linear) {
     let weight = 0;
-    for (const op of ops) weight += opWeight(op);
+    for (const n of nodes) weight += nodeWeight(n);
     budget = Math.max(MIN_BUDGET, weight * BUDGET_PER_WEIGHT);
   }
   const b = new Builder(dot, ci, linear, budget);
   // Only a separator-crossing brace can need regrouping.
-  const groups = b.walk(linear ? ops : choices(ops), [firstGroup()]);
+  const groups = b.walk(linear ? nodes : choices(nodes), false, [firstGroup()]);
   for (const g of groups) {
     b.settle(g);
     if (g.state === B_OPEN) {
@@ -188,7 +176,7 @@ function buildGraph(ops, dot, ci) {
 }
 
 // The work the graph walk may take: 64 units per unit of pattern weight
-// (`opWeight`), and never less than 2^20. Patterns of ordinary shape
+// (`nodeWeight`), and never less than 2^20. Patterns of ordinary shape
 // need one to three per unit; only a shape whose segments multiply
 // (`a{a,/}` repeated, one node per pair of braces) reaches it, and it
 // fails before it costs much.
@@ -199,31 +187,31 @@ function tooComplex(max) {
   throw new GlobError("TooComplex", { max });
 }
 
-// What an op costs the walk to copy and compile: a literal its length, a
-// brace one plus its branches, anything else one.
-export function opWeight(op) {
-  if (op.kind === OP_LIT) return op.str.length;
-  return op.kind === OP_ALTERNATION ? braceWeight(op) : 1;
-}
-function braceWeight(op) {
+// What a node costs the walk to copy and compile: a literal its length,
+// a brace one plus its branches, anything else one.
+export function nodeWeight(node) {
+  if (node.tag === N_LITERAL) return node.str.length;
+  if (node.tag !== N_BRACE) return 1;
   let w = 1;
-  for (const b of op.branches) for (const o of b) w += opWeight(o);
+  for (const b of node.branches) for (const n of seq(b)) w += nodeWeight(n);
   return w;
 }
 
 // Paths under construction that agree on everything still to come:
 // the nodes awaiting a successor, the boundary just crossed, the
-// in-segment ops read since, and whether a `**/` was read but not yet
+// in-segment nodes read since, and whether a `**/` was read but not yet
 // emitted (a bare `**` right after it absorbs it, `x/**/**` ≡ `x/**`;
 // anything else makes it real; more of them add nothing, `**/**/` ≡
 // `**/` — while set, `state` is the boundary before it and `buf` is
-// empty).
-// `weight` is the `opWeight` of `buf`.
-function makeGroup(tails, state, buf, pendingOss, weight) {
-  return { tails, state, buf, pendingOss, weight };
+// empty). `tookSep`: a `**` ending a brace branch took the `/` after
+// the brace as its `**/`, so that separator closes nothing here.
+// `weight` is the `nodeWeight` of `buf`.
+function makeGroup(tails, state, buf, pendingOss, tookSep, weight) {
+  return { tails, state, buf, pendingOss, tookSep, weight };
 }
-const firstGroup = () => makeGroup([START], B_START, [], false, 0);
-const forkGroup = (g) => makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingOss, g.weight);
+const firstGroup = () => makeGroup([START], B_START, [], false, false, 0);
+const forkGroup = (g) =>
+  makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingOss, g.tookSep, g.weight);
 // What copying a group costs the walk.
 const groupCost = (g) => 1 + g.tails.length + g.weight;
 
@@ -247,38 +235,40 @@ function rebase(g, id, state) {
   g.pendingOss = false;
 }
 
-function opEqual(a, b) {
+function nodeEqual(a, b) {
   if (a === b) return true;
-  if (a.kind !== b.kind) return false;
-  switch (a.kind) {
-    case OP_LIT:
+  if (a.tag !== b.tag) return false;
+  switch (a.tag) {
+    case N_LITERAL:
       return a.str === b.str;
-    case OP_CLASS:
-      return a.cls === b.cls;
-    case OP_ALTERNATION:
-      return (
-        a.branches.length === b.branches.length &&
-        a.branches.every((x, i) => opsEqual(x, b.branches[i]))
-      );
+    case N_CLASS:
+      return false;
+    case N_BRACE:
+      return nodesEqual(a.branches, b.branches);
+    case N_CONCAT:
+      return nodesEqual(a.children, b.children);
     default:
       return true;
   }
 }
 
-const opsEqual = (a, b) => a.length === b.length && a.every((op, i) => opEqual(op, b[i]));
+const nodesEqual = (a, b) => a.length === b.length && a.every((n, i) => nodeEqual(n, b[i]));
 
 // Groups joined when they agree on boundary, pending `**/` and partial
 // segment: their continuations are the same nodes. A union leaves a
 // group per member, so past LINEAR_GROUPS they are found by a key of
-// each op's kind (and a literal's bytes).
+// each node's kind (and a literal's bytes).
 const LINEAR_GROUPS = 16;
 
 const agrees = (o, g) =>
-  o.state === g.state && o.pendingOss === g.pendingOss && opsEqual(o.buf, g.buf);
+  o.state === g.state &&
+  o.pendingOss === g.pendingOss &&
+  o.tookSep === g.tookSep &&
+  nodesEqual(o.buf, g.buf);
 
 function groupKey(g) {
-  let key = `${g.state},${g.pendingOss ? 1 : 0}`;
-  for (const op of g.buf) key += op.kind === OP_LIT ? `|${op.str}` : `|#${op.kind}`;
+  let key = `${g.state},${g.pendingOss ? 1 : 0},${g.tookSep ? 1 : 0}`;
+  for (const n of g.buf) key += n.tag === N_LITERAL ? `|${n.str}` : `|#${n.tag}`;
   return key;
 }
 
@@ -318,10 +308,10 @@ const LINEAR_NODES = 16;
 // `at` is a lone predecessor (a number) or the list joined (a string).
 const memoKey = (kind, lit, at) => `${kind}:${lit ?? ""}|${at}`;
 
-// The bytes of the literal ops `ops[from..to]`.
-function concatLits(ops, from, to) {
+// The bytes of the literal nodes `nodes[from..to]`.
+function concatLits(nodes, from, to) {
   let s = "";
-  for (let i = from; i < to; i++) s += ops[i].str;
+  for (let i = from; i < to; i++) s += nodes[i].str;
   return s;
 }
 
@@ -389,58 +379,85 @@ class Builder {
     else this.succs[tail].push(id);
   }
 
-  walk(ops, groups) {
-    for (const op of ops) {
+  // Walk a sequence of nodes; `sepAfter` tells whether a `/` follows it
+  // outside (after the brace it is a branch of).
+  walk(nodes, sepAfter, groups) {
+    for (let i = 0; i < nodes.length; i++) {
       if (this.cost > this.budget) break;
-      const k = op.kind;
-      // Ops that may still be absorbed by a bare `**` keep the pending
-      // `**/` elements; anything else makes them real.
-      if (k !== OP_GLOBSTAR_ANY && k !== OP_OPT_SEGMENTS_SLASH && k !== OP_ALTERNATION) {
+      const node = nodes[i];
+      const sepNext = nodes[i + 1]?.tag === N_SEPARATOR;
+      const last = i + 1 === nodes.length;
+      // Nodes that may still be absorbed by a bare `**` keep the pending
+      // `**/` elements; anything else makes them real (a `/` through
+      // `closeAll`, which skips the groups it is the `**/` of).
+      if (node.tag !== N_GLOBSTAR && node.tag !== N_BRACE && node.tag !== N_SEPARATOR) {
         for (const g of groups) this.settle(g);
       }
-      switch (k) {
-        case OP_ALTERNATION: {
-          if (!crosses(op)) {
-            this.push(groups, op);
+      switch (node.tag) {
+        case N_BRACE: {
+          if (!crosses(node)) {
+            this.push(groups, node);
             break;
           }
+          // A `**` ending a branch reads the `/` after the brace.
+          const after = sepNext || (last && sepAfter);
           const out = makeMerged();
-          for (const branch of op.branches) {
+          for (const branch of node.branches) {
             for (const g of groups) this.cost += groupCost(g);
             if (this.cost > this.budget) break;
-            for (const g of this.walk(branch, groups.map(forkGroup))) merge(out, g);
+            for (const g of this.walk(seq(branch), after, groups.map(forkGroup))) merge(out, g);
           }
           groups = out.groups;
           for (const g of groups) dedupeTails(g);
           break;
         }
-        case OP_SEP:
-          this.closeAll(groups, B_SEP);
+        case N_SEPARATOR: {
+          // The branches a `**` ended have this `/` already.
+          const taken = groups.filter((g) => g.tookSep);
+          if (taken.length > 0) {
+            const rest = groups.filter((g) => !g.tookSep);
+            this.closeAll(rest, B_SEP);
+            for (const g of taken) {
+              g.tookSep = false;
+              rest.push(g);
+            }
+            groups = rest;
+          } else this.closeAll(groups, B_SEP);
           break;
-        case OP_OPT_SEGMENTS_SLASH:
-          for (const g of groups) if (g.state !== B_OPEN) g.pendingOss = true;
-          break;
-        case OP_GLOBSTAR_ANY:
-          // The bare `**` owns the rest of the path: pending `**/` add
-          // nothing to it, and a separator before them still needs a
-          // segment to follow (`x/**/**` ≡ `x/**`), so only the pattern
-          // start gives G0.
-          for (const g of groups) g.pendingOss = false;
-          this.globstarAll(groups, (state) => (state === B_START ? EL_G0 : EL_G1));
+        }
+        case N_GLOBSTAR:
+          if (sepNext || (last && sepAfter)) {
+            // `**/`: zero or more whole segments, empty ones included, so
+            // the separators around it are lenient (§12.3). It is emitted
+            // later, when it is known that no bare `**` absorbs it.
+            for (const g of groups) {
+              if (g.state === B_OPEN) continue;
+              g.pendingOss = true;
+              g.tookSep = !sepNext;
+            }
+            if (sepNext) i++;
+          } else {
+            // A bare `**` owns the rest of the path: pending `**/` add
+            // nothing to it, and a separator before them still needs a
+            // segment to follow (`x/**/**` ≡ `x/**`), so only the pattern
+            // start gives G0.
+            for (const g of groups) g.pendingOss = false;
+            this.globstarAll(groups, (state) => (state === B_START ? EL_G0 : EL_G1));
+          }
           break;
         default:
-          this.push(groups, op);
+          this.push(groups, node);
       }
     }
     return groups;
   }
 
-  // Add an in-segment op to every group's partial segment.
-  push(groups, op) {
-    const weight = opWeight(op);
+  // Add an in-segment node to every group's partial segment.
+  push(groups, node) {
+    const weight = nodeWeight(node);
     for (const g of groups) {
       if (g.state === B_OPEN) continue;
-      g.buf.push(op);
+      g.buf.push(node);
       g.weight += weight;
     }
   }
@@ -498,11 +515,11 @@ class Builder {
     // An escaped `\` on Windows: no segment holds a separator, so a
     // segment with one is a silent miss (§2.4), kept as a wildcard that
     // wants more bytes than any segment has.
-    if (IS_WINDOWS_SEP && buf.some((op) => op.kind === OP_LIT && op.str.includes("\\"))) {
+    if (IS_WINDOWS_SEP && buf.some((n) => n.tag === N_LITERAL && n.str.includes("\\"))) {
       return makeElem(EL_WILD, null, makeWild(WK_AFFIX, { minLen: NEVER_LEN, variable: false }));
     }
-    for (const op of buf) {
-      if (op.kind !== OP_LIT) return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
+    for (const n of buf) {
+      if (n.tag !== N_LITERAL) return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
     }
     // Empty, one literal, or literals glued across a brace edge.
     return makeElem(EL_LIT, concatLits(buf, 0, buf.length), null);
@@ -763,16 +780,16 @@ function makeWild(kind, fields) {
   };
 }
 
-function compileWild(ops, dot, ci) {
+function compileWild(nodes, dot, ci) {
   let idx = 0;
-  while (idx < ops.length && ops[idx].kind === OP_LIT) idx++;
-  const prefix = concatLits(ops, 0, idx);
+  while (idx < nodes.length && nodes[idx].tag === N_LITERAL) idx++;
+  const prefix = concatLits(nodes, 0, idx);
   let anychars = 0;
   let hasStar = false;
-  while (idx < ops.length) {
-    const k = ops[idx].kind;
-    if (k === OP_STAR) hasStar = true;
-    else if (k === OP_ANYCHAR) anychars += 1;
+  while (idx < nodes.length) {
+    const t = nodes[idx].tag;
+    if (t === N_STAR) hasStar = true;
+    else if (t === N_ANYCHAR) anychars += 1;
     else break;
     idx += 1;
   }
@@ -781,7 +798,7 @@ function compileWild(ops, dot, ci) {
   // `*` or `?*` with nothing literal around it, up to the suffix.
   const anyHead = prefix.length === 0 && hasStar && anychars <= 1;
 
-  if (idx === ops.length) {
+  if (idx === nodes.length) {
     return makeWild(WK_AFFIX, {
       prefixStr: prefix,
       suffixStr: "",
@@ -792,7 +809,7 @@ function compileWild(ops, dot, ci) {
       anySeg: anyHead,
     });
   }
-  const suffixes = suffixProduct(ops, idx);
+  const suffixes = suffixProduct(nodes, idx);
   if (suffixes !== null) {
     const anySeg = anyHead && suffixes.some((s) => s.length === 0);
     if (suffixes.length === 1) {
@@ -820,7 +837,7 @@ function compileWild(ops, dot, ci) {
     const { set, runs } = indexSuffixes(suffixes, ci);
     return makeWild(WK_AFFIX_INDEX, { ...common, suffixSetStr: set, runs });
   }
-  const nfa = compileSegNfa(ops, dot, ci);
+  const nfa = compileSegNfa(nodes, dot, ci);
   return makeWild(WK_GENERIC, { dotProtect: !dot && nfa.wildLed, nfa, anySeg: nfa.anySeg });
 }
 
@@ -831,32 +848,33 @@ function compileWild(ops, dot, ci) {
 // whatever its length.
 const MAX_SUFFIX_PRODUCT = 1024;
 // The enumerated suffixes, one byte more each, may not take more than
-// this or four times their ops: a long literal next to a product would
-// be copied into every suffix.
+// this or four times their nodes: a long literal next to a product
+// would be copied into every suffix.
 const MAX_SUFFIX_BYTES = 64 * 1024;
 
-function suffixProduct(ops, from) {
-  if (from + 1 === ops.length && ops[from].kind === OP_LIT) {
-    return [ops[from].str];
+function suffixProduct(nodes, from) {
+  if (from + 1 === nodes.length && nodes[from].tag === N_LITERAL) {
+    return [nodes[from].str];
   }
   let parts = [""];
-  // Σ (part + 1) bytes, and what the ops themselves hold.
+  // Σ (part + 1) bytes, and what the nodes themselves hold.
   let size = 1;
   let source = 1;
   const fits = () => size <= Math.max(MAX_SUFFIX_BYTES, source * 4);
-  for (let i = from; i < ops.length; i++) {
-    const op = ops[i];
-    if (op.kind === OP_LIT) {
-      size += parts.length * op.str.length;
-      source += op.str.length;
+  for (let i = from; i < nodes.length; i++) {
+    const node = nodes[i];
+    if (node.tag === N_LITERAL) {
+      size += parts.length * node.str.length;
+      source += node.str.length;
       if (!fits()) return null;
-      parts = parts.map((p) => p + op.str);
-    } else if (op.kind === OP_ALTERNATION) {
+      parts = parts.map((p) => p + node.str);
+    } else if (node.tag === N_BRACE) {
       const lits = [];
       let branchBytes = 0;
-      for (const b of op.branches) {
+      for (const branch of node.branches) {
+        const b = seq(branch);
         if (b.length === 0) lits.push(EMPTY);
-        else if (b.length === 1 && b[0].kind === OP_LIT) lits.push(b[0].str);
+        else if (b.length === 1 && b[0].tag === N_LITERAL) lits.push(b[0].str);
         else return null;
         branchBytes += lits[lits.length - 1].length + 1;
       }

@@ -18,14 +18,14 @@ Element := Lit(bytes) | Wild(matcher) | G0 | G1
 ```
 
 with `G0` absorbing ≥ 0 path segments and `G1` ≥ 1. (A `G0` that may not
-begin with an empty segment, for a `**/` behind a strict `Sep`, is never
-needed: lowering makes the `/` before a `**/` a lenient `SepRun`, and
-folds a `**/` into the globstar before it.) Empty path segments are first-class
+begin with an empty segment is never needed: a `**/` absorbs empty
+segments too, which is what makes the separators around it lenient,
+§12.3.) Empty path segments are first-class
 (`a//b` = `[a, "", b]`), which yields the strict-`Sep` semantics for
 free as element-count equality.
 
 A separator-crossing brace does not multiply the pattern out: the
-compile walks the ops keeping one _group_ per distinct (boundary,
+compile walks the AST keeping one _group_ per distinct (boundary,
 partial segment) reaching a point of the pattern, so `{a/,b/}x` is
 three nodes with `x` shared, and `{a/,b/}` repeated k times is 2k+1
 nodes, not 2^k sequences. The in-segment branches of such a brace are
@@ -87,8 +87,8 @@ anchored compares), `AffixSet` (trailing all-literal alternation →
 suffix product of at most 8, scanned in pattern order), `AffixIndex`
 (the same past 8 — a list of any length, such as a factored union of
 names, or a product of up to 1024 suffixes, within 64 KiB or four
-times its ops — sorted by (length, bytes) and binary-searched per
-length), and `Generic` — a Thompson-lite NFA over the in-segment ops
+times its nodes — sorted by (length, bytes) and binary-searched per
+length), and `Generic` — a Thompson-lite NFA over the in-segment nodes
 (u64/int32 active set up to 64/32 states, a word slice beyond;
 offset-0 dot gates realizing the DotGuard semantics exactly). Every
 ε-edge points to a later state, so one ascending sweep closes a set.
@@ -98,8 +98,9 @@ step closes its set as it goes, so memory stays linear.
 
 ## Compile
 
-One walk over the ops: groups → graph nodes → classify each
-segment; then the chains (paths) are enumerated and the NFA tables
+One walk over the AST (a `**` followed by `/` is a pending `**/`, a
+`**` ending a brace branch reads the `/` after the brace as its own):
+groups → graph nodes → classify each segment; then the chains (paths) are enumerated and the NFA tables
 laid out. No subset construction, no byte-class tables; the one
 hash map lets a brace branch reuse a node another branch already
 made (JS scans its first 16 nodes before it keys them). Every pattern
@@ -116,7 +117,7 @@ representation, never reject one.
 
 ## Complexity and safety
 
-Compile is linear in the pattern: a brace-free pattern walks its ops
+Compile is linear in the pattern: a brace-free pattern walks its nodes
 once, a separator-crossing brace adds one node per branch rather than
 a product, and the walk's work is capped as above. Every table built
 from the graph — chains, suffix products, in-segment closures, NFA
