@@ -242,7 +242,7 @@ function nodeEqual(a, b) {
     case N_LITERAL:
       return a.str === b.str;
     case N_CLASS:
-      return false;
+      return classEqual(a, b);
     case N_BRACE:
       return nodesEqual(a.branches, b.branches);
     case N_CONCAT:
@@ -253,6 +253,16 @@ function nodeEqual(a, b) {
 }
 
 const nodesEqual = (a, b) => a.length === b.length && a.every((n, i) => nodeEqual(n, b[i]));
+
+// Classes equal by content, as Rust's derived `==` compares them.
+function classEqual(a, b) {
+  if (a.neg !== b.neg || a.items.length !== b.items.length) return false;
+  return a.items.every((x, i) => {
+    const y = b.items[i];
+    if (x.tag !== y.tag) return false;
+    return x.tag === CI_BYTE ? x.b === y.b : x.lo === y.lo && x.hi === y.hi;
+  });
+}
 
 // Groups joined when they agree on boundary, pending `**/` and partial
 // segment: their continuations are the same nodes. A union leaves a
@@ -683,45 +693,40 @@ function nfaSparse(graph, ci) {
   // A position reaches accept through ≥ 1 segment iff its element can
   // consume one and what it enters reaches accept: from the last
   // position back, as successors always lie ahead.
-  const r1 = [];
-  const ok = [];
-  for (let i = 0; i < n; i++) {
-    r1.push(false);
-    ok.push(false);
-  }
+  // The flags are bytes (1 or 0) and the offsets int32: a plain array
+  // takes 8 bytes per entry, booleans included.
+  const reach1 = new Uint8Array(n + 1);
+  const ok = new Uint8Array(n);
   for (let i = n - 1; i >= 0; i--) {
-    let o = false;
+    let o = 0;
     eachSucc(i, (t) => {
-      if (t === ACCEPT || r1[t] || (nullable(elems[t]) && ok[t])) o = true;
+      if (t === ACCEPT || reach1[t] || (nullable(elems[t]) && ok[t])) o = 1;
     });
     ok[i] = o;
-    r1[i] = o && elemSatisfiable(elems[i]);
+    reach1[i] = o && elemSatisfiable(elems[i]) ? 1 : 0;
   }
-  const reach1 = r1.concat([false]);
 
   const key = (t) => (ci ? asciiLower(elems[t].litStr) : elems[t].litStr);
-  const litAt = [];
+  const litAt = new Int32Array(n + 2);
+  const otherAt = new Int32Array(n + 2);
+  const nullAt = new Int32Array(n + 2);
+  const ends = new Uint8Array(n + 1);
+  const succReach1 = new Uint8Array(n + 1);
   const lits = [];
   const litKeys = [];
-  const otherAt = [];
   const others = [];
-  const nullAt = [];
   const nulls = [];
-  const ends = [];
-  const succReach1 = [];
   for (let p = 0; p <= n; p++) {
-    litAt.push(lits.length);
-    otherAt.push(others.length);
-    nullAt.push(nulls.length);
-    let end = false;
-    let reaches = false;
+    litAt[p] = lits.length;
+    otherAt[p] = others.length;
+    nullAt[p] = nulls.length;
     const litPos = [];
     eachSucc(p, (t) => {
       if (t === ACCEPT) {
-        end = true;
+        ends[p] = 1;
         return;
       }
-      if (r1[t]) reaches = true;
+      if (reach1[t]) succReach1[p] = 1;
       if (elems[t].kind === EL_LIT) litPos.push(t);
       else {
         others.push(t);
@@ -735,25 +740,23 @@ function nfaSparse(graph, ci) {
       lits.push(litPos[i]);
       litKeys.push(keys[i]);
     }
-    ends.push(end);
-    succReach1.push(reaches);
   }
-  litAt.push(lits.length);
-  otherAt.push(others.length);
-  nullAt.push(nulls.length);
+  litAt[n + 1] = lits.length;
+  otherAt[n + 1] = others.length;
+  nullAt[n + 1] = nulls.length;
   return {
     kind: NFA_SPARSE,
     n,
-    litAt: exact(litAt),
-    lits: exact(lits),
+    litAt,
+    lits: Int32Array.from(lits),
     litKeys: exact(litKeys),
-    otherAt: exact(otherAt),
-    others: exact(others),
-    nullAt: exact(nullAt),
-    nulls: exact(nulls),
-    ends: exact(ends),
-    reach1: exact(reach1),
-    succReach1: exact(succReach1),
+    otherAt,
+    others: Int32Array.from(others),
+    nullAt,
+    nulls: Int32Array.from(nulls),
+    ends,
+    reach1,
+    succReach1,
     accept,
     // Mark arrays reused across calls (see `nfaRunSparse`).
     scratch: null,
@@ -793,52 +796,37 @@ function compileWild(nodes, dot, ci) {
     else break;
     idx += 1;
   }
-  const hasWilds = hasStar || anychars > 0;
-  const dotProtect = !dot && prefix.length === 0 && hasWilds;
-  // `*` or `?*` with nothing literal around it, up to the suffix.
-  const anyHead = prefix.length === 0 && hasStar && anychars <= 1;
-
-  if (idx === nodes.length) {
-    return makeWild(WK_AFFIX, {
-      prefixStr: prefix,
-      suffixStr: "",
-      minLen: prefix.length + anychars,
-      variable: hasStar,
-      dotProtect,
-      anychars,
-      anySeg: anyHead,
-    });
-  }
+  // A literal product after the wildcards (one empty suffix when nothing
+  // follows them) keeps the segment anchored at both ends; anything else
+  // runs the NFA.
   const suffixes = suffixProduct(nodes, idx);
-  if (suffixes !== null) {
-    const anySeg = anyHead && suffixes.some((s) => s.length === 0);
-    if (suffixes.length === 1) {
-      return makeWild(WK_AFFIX, {
-        prefixStr: prefix,
-        suffixStr: suffixes[0],
-        minLen: prefix.length + suffixes[0].length + anychars,
-        variable: hasStar,
-        dotProtect,
-        anychars,
-        anySeg,
-      });
-    }
-    const common = {
-      prefixStr: prefix,
-      minLen: prefix.length + anychars,
-      variable: hasStar,
-      dotProtect,
-      anychars,
-      anySeg,
-    };
-    if (suffixes.length <= LINEAR_SUFFIXES) {
-      return makeWild(WK_AFFIX_SET, { ...common, suffixSetStr: suffixes });
-    }
-    const { set, runs } = indexSuffixes(suffixes, ci);
-    return makeWild(WK_AFFIX_INDEX, { ...common, suffixSetStr: set, runs });
+  if (suffixes === null) {
+    const nfa = compileSegNfa(nodes, dot, ci);
+    return makeWild(WK_GENERIC, { dotProtect: !dot && nfa.wildLed, nfa, anySeg: nfa.anySeg });
   }
-  const nfa = compileSegNfa(nodes, dot, ci);
-  return makeWild(WK_GENERIC, { dotProtect: !dot && nfa.wildLed, nfa, anySeg: nfa.anySeg });
+  const fields = {
+    prefixStr: prefix,
+    minLen: prefix.length + anychars,
+    variable: hasStar,
+    dotProtect: !dot && prefix.length === 0 && (hasStar || anychars > 0),
+    anychars,
+    // `*` or `?*` with nothing literal around it, up to a suffix that
+    // may be empty.
+    anySeg: prefix.length === 0 && hasStar && anychars <= 1 && suffixes.some((s) => s.length === 0),
+  };
+  if (suffixes.length === 1) {
+    fields.suffixStr = suffixes[0];
+    fields.minLen += suffixes[0].length;
+    return makeWild(WK_AFFIX, fields);
+  }
+  if (suffixes.length <= LINEAR_SUFFIXES) {
+    fields.suffixSetStr = suffixes;
+    return makeWild(WK_AFFIX_SET, fields);
+  }
+  const { set, runs } = indexSuffixes(suffixes, ci);
+  fields.suffixSetStr = set;
+  fields.runs = runs;
+  return makeWild(WK_AFFIX_INDEX, fields);
 }
 
 // Literal suffix alternatives one segment enumerates (`*.{a,b,…}`, a

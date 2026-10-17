@@ -27,3 +27,4 @@ L G0 W:set | chains 1 | nfa none	src/**/test_*.{js,ts}
 W:nfa | chains 1 | nfa none	a*b*c*d*e*f
 W:nfa | chains 1 | nfa none	x*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b
 G0 L G1 | chains 0 | nfa small	**/node_modules/**
+L(4) W:nfa | chains 2 | nfa small	a/[ab]	.h/a/ab/[ab]

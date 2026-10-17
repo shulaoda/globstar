@@ -543,13 +543,16 @@ struct Builder {
 
 impl Builder {
     fn new(boundaries: usize, linear: bool, dot: bool, ci: bool) -> Self {
+        // A linear pattern stores no edges; a brace pattern has at least
+        // one node per boundary, each with a predecessor and a key.
+        let edges = if linear { 0 } else { boundaries + 1 };
         Builder {
             elems: Vec::with_capacity(boundaries + 1),
             linear,
-            preds: Vec::new(),
-            pred_at: Vec::new(),
+            preds: Vec::with_capacity(edges),
+            pred_at: Vec::with_capacity(edges),
             ends: Vec::new(),
-            memo: HashMap::default(),
+            memo: HashMap::with_capacity_and_hasher(edges, Default::default()),
             cost: 0,
             budget: usize::MAX,
             dot,
@@ -1061,46 +1064,38 @@ fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
         }
         idx += 1;
     }
-    let has_wilds = has_star || anychars > 0;
-    let dot_protect = !dot && prefix.is_empty() && has_wilds;
-    // `*` or `?*` with nothing literal around it, up to the suffix.
-    let any_head = prefix.is_empty() && has_star && anychars <= 1;
-
-    if idx == nodes.len() {
+    // A literal product after the wildcards (one empty suffix when
+    // nothing follows them) keeps the segment anchored at both ends;
+    // anything else runs the NFA.
+    let Some(mut suffixes) = suffix_product(&nodes[idx..]) else {
+        let nfa = SegNfa::compile(nodes, dot, ci);
         return Wild {
-            min_len: prefix.len() as u32 + anychars,
-            kind: WildKind::Affix(Affix::new(prefix, Bytes::default())),
-            variable: has_star,
-            dot_protect,
-            any_seg: any_head,
+            dot_protect: !dot && nfa.wild_led,
+            any_seg: nfa.any_seg,
+            kind: WildKind::Generic(Box::new(nfa)),
+            min_len: 0,
+            variable: true,
         };
-    }
-    if let Some(suffixes) = suffix_product(&nodes[idx..]) {
-        let any_seg = any_head && suffixes.iter().any(|s| s.is_empty());
-        if let [suffix] = &suffixes[..] {
-            return Wild {
-                min_len: (prefix.len() + suffix.len()) as u32 + anychars,
-                kind: WildKind::Affix(Affix::new(prefix, Bytes::from(&suffix[..]))),
-                variable: has_star,
-                dot_protect,
-                any_seg,
-            };
-        }
-        return Wild {
-            min_len: prefix.len() as u32 + anychars,
-            kind: affix_set(prefix, suffixes, ci),
-            variable: has_star,
-            dot_protect,
-            any_seg,
-        };
-    }
-    let nfa = SegNfa::compile(nodes, dot, ci);
+    };
+    let dot_protect = !dot && prefix.is_empty() && (has_star || anychars > 0);
+    // `*` or `?*` with nothing literal around it, up to a suffix that
+    // may be empty.
+    let any_seg =
+        prefix.is_empty() && has_star && anychars <= 1 && suffixes.iter().any(|s| s.is_empty());
+    let mut min_len = prefix.len() as u32 + anychars;
+    let kind = if suffixes.len() == 1 {
+        let suffix = suffixes.pop().unwrap();
+        min_len += suffix.len() as u32;
+        WildKind::Affix(Affix::new(prefix, suffix.into_boxed_slice()))
+    } else {
+        affix_set(prefix, suffixes, ci)
+    };
     Wild {
-        dot_protect: !dot && nfa.wild_led,
-        any_seg: nfa.any_seg,
-        kind: WildKind::Generic(Box::new(nfa)),
-        min_len: 0,
-        variable: true,
+        min_len,
+        kind,
+        variable: has_star,
+        dot_protect,
+        any_seg,
     }
 }
 
