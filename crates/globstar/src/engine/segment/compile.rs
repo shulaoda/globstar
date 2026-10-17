@@ -426,7 +426,7 @@ fn survey(ops: &[Op]) -> (usize, bool, usize) {
                 }
             }
             Op::Lit(bytes) => weight += bytes.len(),
-            Op::AnyChar | Op::Star | Op::Class(_) | Op::LeadingSeps => weight += 1,
+            Op::AnyChar | Op::Star | Op::Class(_) => weight += 1,
             _ => {
                 boundaries += 1;
                 weight += 1;
@@ -682,7 +682,7 @@ impl Builder {
             // pending `**/` elements; anything else makes them real.
             if !matches!(
                 op,
-                Op::GlobstarAny | Op::OptSegmentsSlash | Op::LeadingSeps | Op::Alternation(_)
+                Op::GlobstarAny | Op::OptSegmentsSlash | Op::Alternation(_)
             ) {
                 for g in groups.iter_mut() {
                     self.settle(g);
@@ -706,19 +706,13 @@ impl Builder {
                         g.dedupe_tails();
                     }
                 }
-                Op::Sep | Op::SepRun => self.close_all(&mut groups, Boundary::Sep),
-                // `/*`: it only keeps a pending `**/` pending.
-                Op::LeadingSeps => {}
+                Op::Sep => self.close_all(&mut groups, Boundary::Sep),
                 Op::OptSegmentsSlash => {
                     for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {
                         // The parser never glues a `**` to text.
                         debug_assert!(g.buf.is_empty());
                         g.pending_oss = true;
                     }
-                }
-                Op::SlashAnything => {
-                    self.close_all(&mut groups, Boundary::Sep);
-                    self.globstar_all(&mut groups, |_| Elem::G1);
                 }
                 Op::GlobstarAny => {
                     // The bare `**` owns the rest of the path: pending
@@ -748,9 +742,8 @@ impl Builder {
         groups
     }
 
-    /// Emit a group's pending `**/`. It is always a `G0`: lowering gives
-    /// the `/` before a `**/` a lenient `SepRun`, and folds a `**/` into
-    /// the globstar before it, so none is left behind a strict boundary.
+    /// Emit a group's pending `**/`. It is always a `G0`: it absorbs
+    /// empty segments too, which makes the separators around it lenient.
     fn settle(&mut self, g: &mut Group<'_>) {
         if !g.pending_oss || g.state == Boundary::Open {
             return;

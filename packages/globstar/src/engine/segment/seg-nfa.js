@@ -43,12 +43,21 @@ export function compileSegNfa(ops, dot, ci) {
 // its negation applied and the separators left out: a test is one
 // lookup, however many items the class lists. `neg` stays for dot
 // protection, where a negated class counts as a wildcard.
-function byteSet(cls) {
+// Case-insensitively (`ci`) a listed ASCII letter lists its other case
+// too, before the negation (§11.2).
+function byteSet(cls, ci) {
   const bits = [0, 0, 0, 0, 0, 0, 0, 0];
   for (const it of cls.items) {
     const lo = it.tag === CI_BYTE ? it.b : it.lo;
     const hi = it.tag === CI_BYTE ? it.b : it.hi;
     for (let b = lo; b <= hi; b++) bits[b >> 5] |= 1 << (b & 31);
+  }
+  const has = (b) => ((bits[b >> 5] >>> (b & 31)) & 1) === 1;
+  for (let b = 0x41; b <= 0x5a; b++) {
+    if (ci && (has(b) || has(b | 0x20))) {
+      bits[b >> 5] |= 1 << (b & 31);
+      bits[(b | 0x20) >> 5] |= 1 << ((b | 0x20) & 31);
+    }
   }
   if (cls.neg) for (let w = 0; w < 8; w++) bits[w] = ~bits[w];
   bits[0x2f >> 5] &= ~(1 << (0x2f & 31));
@@ -415,11 +424,11 @@ class SegBuilder {
   compileOp(op) {
     switch (op.kind) {
       case OP_LIT: {
-        const bytes = op.bytes;
-        const entry = this.litState(bytes[0]);
+        const str = op.str;
+        const entry = this.litState(str.charCodeAt(0));
         let prev = entry;
-        for (let i = 1; i < bytes.length; i++) {
-          const s = this.litState(bytes[i]);
+        for (let i = 1; i < str.length; i++) {
+          const s = this.litState(str.charCodeAt(i));
           this.patch(prev, s);
           prev = s;
         }
@@ -432,7 +441,7 @@ class SegBuilder {
       }
       case OP_CLASS: {
         if (op.cls.neg) this.countsBytes = true;
-        const s = this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(op.cls));
+        const s = this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(op.cls, this.ci));
         return [s, [s]];
       }
       case OP_STAR: {
@@ -476,7 +485,7 @@ class SegBuilder {
   litState(b) {
     if (this.ci) {
       const cls = ciLetter(b);
-      if (cls !== null) return this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(cls));
+      if (cls !== null) return this.alloc(S_CLASS, 0, UNSET, UNSET, byteSet(cls, false));
     }
     return this.alloc(S_BYTE, b, UNSET);
   }

@@ -107,11 +107,8 @@ fn ops_dump(ops: &[Op], out: &mut String) {
             Op::Star => out.push('T'),
             Op::Class(_) => out.push('K'),
             Op::Sep => out.push('S'),
-            Op::SepRun => out.push('R'),
             Op::OptSegmentsSlash => out.push('O'),
-            Op::SlashAnything => out.push('A'),
             Op::GlobstarAny => out.push('Y'),
-            Op::LeadingSeps => out.push('H'),
             Op::Alternation(branches) => {
                 out.push_str("B(");
                 for (j, branch) in branches.iter().enumerate() {
@@ -144,13 +141,10 @@ fn parser_and_lowering_match_shared_golden_cases() {
         ast_dump(&parsed.body, &mut actual_ast);
         assert_eq!(actual_ast, expected_ast, "AST for {pattern:?}");
 
-        let program = lower(parsed.body, false);
-        assert!(
-            is_normalized(program.ops()),
-            "ops not normalized for {pattern:?}"
-        );
+        let ops = lower(parsed.body);
+        assert!(is_normalized(&ops), "ops not normalized for {pattern:?}");
         let mut actual_ops = String::new();
-        ops_dump(program.ops(), &mut actual_ops);
+        ops_dump(&ops, &mut actual_ops);
         assert_eq!(actual_ops, expected_ops, "ops for {pattern:?}");
     }
 }

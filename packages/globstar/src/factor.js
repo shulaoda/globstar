@@ -43,13 +43,7 @@ export function factorBranches(branches) {
 const at = (s, k, front) => (front ? s[k] : s[s.length - 1 - k]);
 
 function nodeEq(a, b) {
-  if (a === b) return true;
-  if (a.tag !== b.tag || a.tag !== N_LITERAL) return false;
-  if (a.bytes.length !== b.bytes.length) return false;
-  for (let i = 0; i < a.bytes.length; i++) {
-    if (a.bytes[i] !== b.bytes[i]) return false;
-  }
-  return true;
+  return a === b || (a.tag === N_LITERAL && b.tag === N_LITERAL && a.str === b.str);
 }
 
 // How many nodes from `k` on stay together: `**/`, `/**/` and `/**` are
@@ -97,14 +91,14 @@ function liftTokens(seqs, front) {
 // them, as one literal; `null` when there are none.
 function liftBytes(seqs, front) {
   if (!seqs.every((s) => s.length > 0 && at(s, 0, front).tag === N_LITERAL)) return null;
-  const lits = seqs.map((s) => at(s, 0, front).bytes);
+  const lits = seqs.map((s) => at(s, 0, front).str);
   const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
-  const byte = (l, i) => (front ? l[i] : l[l.length - 1 - i]);
+  const byte = (l, i) => l.charCodeAt(front ? i : l.length - 1 - i);
   let n = 0;
   while (n < min && lits.every((l) => byte(l, n) === byte(lits[0], n))) n++;
   if (n === 0) return null;
   for (const s of seqs) {
-    const b = at(s, 0, front).bytes;
+    const b = at(s, 0, front).str;
     const rest = front ? b.slice(n) : b.slice(0, b.length - n);
     const k = front ? 0 : s.length - 1;
     if (rest.length > 0) s[k] = lit(rest);

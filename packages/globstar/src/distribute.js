@@ -226,7 +226,7 @@ function attach(seq, other, front, budget) {
 function weight(items) {
   let n = 0;
   for (const item of items) {
-    if (item.tag === N_LITERAL) n += item.bytes.length;
+    if (item.tag === N_LITERAL) n += item.str.length;
     else if (item.tag === N_CLASS) n += 1 + item.items.length;
     else if (item.tag !== N_BRACE) n += 1;
     else for (const branch of item.branches) n += 1 + weight(branch.items);

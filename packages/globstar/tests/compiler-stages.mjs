@@ -22,12 +22,9 @@ import {
   OP_ANYCHAR,
   OP_CLASS,
   OP_GLOBSTAR_ANY,
-  OP_LEADING_SEPS,
   OP_LIT,
   OP_OPT_SEGMENTS_SLASH,
   OP_SEP,
-  OP_SEP_RUN,
-  OP_SLASH_ANYTHING,
   OP_STAR,
   lower,
 } from "../src/engine/ops.js";
@@ -49,9 +46,11 @@ function assertNormalizedProgram(ops) {
   }
 }
 
+// `value`: byte values, or a string holding bytes one char each.
 function bytes(value) {
   let out = "";
-  for (const b of value) {
+  for (let b of value) {
+    if (typeof b === "string") b = b.charCodeAt(0);
     if (b === 0x5c) out += "\\\\";
     else if (b === 0x28 || b === 0x29 || b === 0x2c || b === 0x7c || b === 0x5b || b === 0x5d)
       out += `\\x${b.toString(16).padStart(2, "0")}`;
@@ -66,7 +65,7 @@ function astDump(node) {
     case N_CONCAT:
       return `C(${node.children.map(astDump).join(",")})`;
     case N_LITERAL:
-      return `L(${bytes(node.bytes)})`;
+      return `L(${bytes(node.str)})`;
     case N_SEPARATOR:
       return "S";
     case N_ANYCHAR:
@@ -93,7 +92,7 @@ function opsDump(ops) {
     .map((op) => {
       switch (op.kind) {
         case OP_LIT:
-          return `L(${bytes(op.bytes)})`;
+          return `L(${bytes(op.str)})`;
         case OP_ANYCHAR:
           return "Q";
         case OP_STAR:
@@ -102,16 +101,10 @@ function opsDump(ops) {
           return "K";
         case OP_SEP:
           return "S";
-        case OP_SEP_RUN:
-          return "R";
         case OP_OPT_SEGMENTS_SLASH:
           return "O";
-        case OP_SLASH_ANYTHING:
-          return "A";
         case OP_GLOBSTAR_ANY:
           return "Y";
-        case OP_LEADING_SEPS:
-          return "H";
         case OP_ALTERNATION:
           return `B(${op.branches.map((branch) => `[${opsDump(branch)}]`).join("|")})`;
         default:
@@ -128,9 +121,9 @@ for (const [index, line] of cases.split("\n").entries()) {
   const [pattern, expectedAst, expectedOps] = columns;
   const parsed = parse(pattern);
   assert.equal(astDump(parsed.body), expectedAst, `AST for ${JSON.stringify(pattern)}`);
-  const program = lower(parsed.body, false);
-  assertNormalizedProgram(program.ops);
-  assert.equal(opsDump(program.ops), expectedOps, `ops for ${JSON.stringify(pattern)}`);
+  const ops = lower(parsed.body);
+  assertNormalizedProgram(ops);
+  assert.equal(opsDump(ops), expectedOps, `ops for ${JSON.stringify(pattern)}`);
 }
 
 console.log("✓ shared parser/lowering golden cases");

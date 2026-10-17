@@ -15,113 +15,63 @@ pub enum Op {
     Class(CharClass),
     /// Match exactly one path separator.
     Sep,
-    /// Match one or more path separators at a lenient globstar boundary.
-    SepRun,
-    /// `(?:[^/]+/+)*`, used for leading and middle `**/`. Every absorbed
-    /// segment is nonempty, empty segments come from the boundary ops.
+    /// `**/`: zero or more whole segments, empty ones included, so the
+    /// separators around it are lenient (§12.3).
     OptSegmentsSlash,
-    /// `/.*`, used for strict trailing `/**`.
-    SlashAnything,
-    /// `.*`, used for a bare `**`.
+    /// A `**` that ends the pattern: the rest of the path.
     GlobstarAny,
-    /// Zero or more platform separators: for pattern-head `**/`, and for a
-    /// `**/` that opens a brace branch after a brace that took the `/`.
-    LeadingSeps,
     /// Brace alternation. Branches remain nested rather than cartesian-expanded.
     Alternation(Vec<Vec<Op>>),
 }
 
-#[derive(Debug, Clone)]
-pub struct OpProgram {
-    pub(crate) ops: Vec<Op>,
-    pub(crate) case_insensitive: bool,
-}
-
-impl OpProgram {
-    pub fn ops(&self) -> &[Op] {
-        &self.ops
-    }
-}
-
-/// Lower an AST into one normalized [`OpProgram`].
-pub fn lower(node: Node, case_insensitive: bool) -> OpProgram {
+/// Lower an AST into ops: adjacent literals joined, a `*` run one `*`,
+/// and every `**` folded with the `/` after it.
+pub fn lower(node: Node) -> Vec<Op> {
     let mut ops = Vec::with_capacity(match &node {
-        Node::Concat(children) => children.len() + 1,
-        _ => 2,
+        Node::Concat(children) => children.len(),
+        _ => 1,
     });
-    lower_into(node, &mut ops, case_insensitive);
-    lead_seps(&mut ops);
-    OpProgram {
-        ops,
-        case_insensitive,
-    }
+    lower_into(node, &mut ops);
+    ops
 }
 
-fn lower_into(node: Node, out: &mut Vec<Op>, case_insensitive: bool) {
+fn lower_into(node: Node, out: &mut Vec<Op>) {
     match node {
         Node::Literal(bytes) => push_op(out, Op::Lit(bytes)),
         Node::Separator => push_op(out, Op::Sep),
         Node::AnyChar => push_op(out, Op::AnyChar),
         Node::Star => push_op(out, Op::Star),
         Node::Globstar => out.push(Op::GlobstarAny),
-        Node::Class(class) => {
-            let class = if case_insensitive {
-                class.expanded_ascii_case_insensitive()
-            } else {
-                class
-            };
-            push_op(out, Op::Class(class));
-        }
+        Node::Class(class) => push_op(out, Op::Class(class)),
         Node::Concat(children) => {
             let mut children = children.into_iter().peekable();
-            while let Some(mut child) = children.next() {
-                if matches!(child, Node::Globstar) {
-                    // `**/` is `OptSegmentsSlash`, and the `/` before it (a
-                    // brace's trailing ones too: `{src/,lib/}**/x`, §7.0 +
-                    // §12.3) is lenient; `/**` is `SlashAnything`; a bare
-                    // `**` is `GlobstarAny`.
-                    if children.next_if(|n| matches!(n, Node::Separator)).is_some() {
-                        match out.last_mut() {
-                            Some(op @ Op::Sep) => *op = Op::SepRun,
-                            Some(Op::Alternation(branches)) => upgrade_trailing_seps(branches),
-                            _ => {}
-                        }
+            while let Some(child) = children.next() {
+                let sep_next = matches!(children.peek(), Some(Node::Separator));
+                match child {
+                    // `**/` is `OptSegmentsSlash`, a bare `**` `GlobstarAny`.
+                    Node::Globstar if sep_next => {
+                        children.next();
                         out.push(Op::OptSegmentsSlash);
-                    } else if let Some(op @ Op::Sep) = out.last_mut() {
-                        *op = Op::SlashAnything;
-                    } else {
-                        out.push(Op::GlobstarAny);
                     }
-                    continue;
-                }
-                let Node::Brace(branches) = &child else {
-                    lower_into(child, out, case_insensitive);
-                    continue;
-                };
-                // A brace with a `**` at an edge takes the `/` beside it
-                // into every branch, so the `**/` or `/**` fold happens
-                // inside the branch: `{a/**,b}/x` lowers as `{a/**/,b/}x`.
-                let prev =
-                    matches!(out.last(), Some(Op::Sep)) && branches.iter().any(leads_globstar);
-                let next = matches!(children.peek(), Some(Node::Separator))
-                    && branches.iter().any(trails_globstar);
-                if prev {
-                    out.pop();
-                }
-                if next {
-                    children.next();
-                }
-                if prev || next {
-                    child = with_seps(child, prev, next);
-                }
-                // Two braces around one `/`, both with a `**` at that edge:
-                // the first took the `/`, so a `**/` opening a branch of
-                // the second keeps its lenient boundary (§12.3) by taking
-                // any further separators itself.
-                let after_brace = matches!(out.last(), Some(Op::Alternation(_)));
-                lower_into(child, out, case_insensitive);
-                if after_brace && let Some(Op::Alternation(branches)) = out.last_mut() {
-                    branches.iter_mut().for_each(lead_seps);
+                    // A brace with a `**` at its end takes the `/` after it
+                    // into every branch, so that `**` folds there too:
+                    // `{a/**,b}/x` lowers as `{a/**/,b/}x`.
+                    Node::Brace(branches) if sep_next && branches.iter().any(trails_globstar) => {
+                        children.next();
+                        let with_sep = |branch| {
+                            let mut seq = match branch {
+                                Node::Concat(children) => children,
+                                other => vec![other],
+                            };
+                            seq.push(Node::Separator);
+                            Node::Concat(seq)
+                        };
+                        lower_into(
+                            Node::Brace(branches.into_iter().map(with_sep).collect()),
+                            out,
+                        );
+                    }
+                    child => lower_into(child, out),
                 }
             }
         }
@@ -129,34 +79,12 @@ fn lower_into(node: Node, out: &mut Vec<Op>, case_insensitive: bool) {
             let mut lowered = Vec::with_capacity(branches.len());
             for branch in branches {
                 let mut branch_ops = Vec::new();
-                lower_into(branch, &mut branch_ops, case_insensitive);
+                lower_into(branch, &mut branch_ops);
                 lowered.push(branch_ops);
             }
             push_op(out, Op::Alternation(lowered));
         }
     }
-}
-
-/// `brace` with a `/` before and/or after every branch.
-fn with_seps(brace: Node, prev: bool, next: bool) -> Node {
-    let Node::Brace(branches) = brace else {
-        unreachable!("only a brace takes a `/`")
-    };
-    let wrap = |branch| {
-        let mut seq = Vec::with_capacity(3);
-        if prev {
-            seq.push(Node::Separator);
-        }
-        match branch {
-            Node::Concat(children) => seq.extend(children),
-            other => seq.push(other),
-        }
-        if next {
-            seq.push(Node::Separator);
-        }
-        Node::Concat(seq)
-    };
-    Node::Brace(branches.into_iter().map(wrap).collect())
 }
 
 fn push_op(out: &mut Vec<Op>, op: Op) {
@@ -173,40 +101,11 @@ fn push_op(out: &mut Vec<Op>, op: Op) {
     }
 }
 
-fn leads_globstar(node: &Node) -> bool {
-    match node {
-        Node::Globstar => true,
-        Node::Concat(children) => children.first().is_some_and(leads_globstar),
-        Node::Brace(branches) => branches.iter().any(leads_globstar),
-        _ => false,
-    }
-}
-
 fn trails_globstar(node: &Node) -> bool {
     match node {
         Node::Globstar => true,
         Node::Concat(children) => children.last().is_some_and(trails_globstar),
         Node::Brace(branches) => branches.iter().any(trails_globstar),
         _ => false,
-    }
-}
-
-/// A `**/` that opens the program, or a branch at its head, also takes
-/// the leading separators (§8.5).
-fn lead_seps(ops: &mut Vec<Op>) {
-    match ops.first_mut() {
-        Some(Op::OptSegmentsSlash) => ops.insert(0, Op::LeadingSeps),
-        Some(Op::Alternation(branches)) => branches.iter_mut().for_each(lead_seps),
-        _ => {}
-    }
-}
-
-fn upgrade_trailing_seps(branches: &mut [Vec<Op>]) {
-    for branch in branches {
-        match branch.last_mut() {
-            Some(op) if matches!(op, Op::Sep) => *op = Op::SepRun,
-            Some(Op::Alternation(inner)) => upgrade_trailing_seps(inner),
-            _ => {}
-        }
     }
 }

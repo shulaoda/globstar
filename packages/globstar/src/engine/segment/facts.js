@@ -3,8 +3,7 @@
 // `crates/globstar/src/engine/segment/facts.rs`.
 
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../../bytes.js";
-import { latin1 } from "../../utf8.js";
-import { OP_ALTERNATION, OP_LIT, OP_SEP, OP_SEP_RUN, OP_SLASH_ANYTHING } from "../ops.js";
+import { OP_ALTERNATION, OP_LIT, OP_SEP } from "../ops.js";
 import { opWeight } from "./compile.js";
 
 // Literal suffixes one of which every match ends with: the trailing
@@ -12,8 +11,8 @@ import { opWeight } from "./compile.js";
 // brace, one per branch. Empty when nothing is guaranteed. One char per
 // byte, like the path strings they are compared with.
 export function suffixes(ops) {
-  const suffix = suffixArray(ops, ops.length);
-  if (suffix.length > 0) return [latin1(suffix)];
+  const suffix = trailingLiteral(ops, ops.length);
+  if (suffix.length > 0) return [suffix];
   return extractSuffixSet(ops);
 }
 
@@ -36,19 +35,15 @@ export function endsWithSepAware(str, suffix, ci) {
   return true;
 }
 
-function suffixArray(ops, end) {
-  const acc = [];
+// The bytes of the `Lit`/`Sep` run that ends `ops[..end]`.
+function trailingLiteral(ops, end) {
+  let acc = "";
   for (let i = end - 1; i >= 0; i--) {
     const op = ops[i];
-    if (op.kind === OP_LIT) {
-      for (let j = op.bytes.length - 1; j >= 0; j--) acc.push(op.bytes[j]);
-    } else if (op.kind === OP_SEP) {
-      acc.push(0x2f);
-    } else {
-      break;
-    }
+    if (op.kind === OP_LIT) acc = op.str + acc;
+    else if (op.kind === OP_SEP) acc = "/" + acc;
+    else break;
   }
-  acc.reverse();
   return acc;
 }
 
@@ -61,20 +56,13 @@ function extractSuffixSet(ops) {
   const last = ops[ops.length - 1];
   if (last.kind !== OP_ALTERNATION || last.branches.length > MAX_SUFFIX_SET) return [];
 
-  const commonTail = suffixArray(ops, ops.length - 1);
+  const commonTail = trailingLiteral(ops, ops.length - 1);
 
   const set = [];
   for (const branch of last.branches) {
-    const branchSuffix = suffixArray(branch, branch.length);
-    let allLiteral = true;
-    for (const op of branch) {
-      if (op.kind !== OP_LIT && op.kind !== OP_SEP) {
-        allLiteral = false;
-        break;
-      }
-    }
-
-    const full = latin1(allLiteral ? commonTail.concat(branchSuffix) : branchSuffix);
+    const branchSuffix = trailingLiteral(branch, branch.length);
+    const allLiteral = branch.every((op) => op.kind === OP_LIT || op.kind === OP_SEP);
+    const full = allLiteral ? commonTail + branchSuffix : branchSuffix;
     if (full.length === 0) return [];
     set.push(full);
   }
@@ -102,7 +90,7 @@ const HEAD_BUDGET_FLOOR = 4096;
 // times, not once per branch.
 export function computeStaticPrefixes(ops) {
   const heads = { root: ops, spent: 0, limit: HEAD_BUDGET_FLOOR, weighed: false, out: [] };
-  readHeads(heads, ops, 0, null, [], 0, 0);
+  readHeads(heads, ops, 0, null, "", 0, 0);
   return dedupePrefixes(heads.out);
 }
 
@@ -110,7 +98,6 @@ export function computeStaticPrefixes(ops) {
 // them), after the bytes `acc` (whose last whole segment ends at
 // `boundary`), and record the head each expansion reaches.
 function readHeads(heads, ops, at, then, acc, boundary, depth) {
-  const mark = acc.length;
   let i = at;
   let end;
   for (;;) {
@@ -127,19 +114,12 @@ function readHeads(heads, ops, at, then, acc, boundary, depth) {
     const op = ops[i++];
     // An escaped `\` on Windows: the expansion matches nothing (§2.4), so
     // it has no head to seed.
-    if (op.kind === OP_LIT && IS_WINDOWS_SEP && op.bytes.includes(0x5c)) {
-      acc.length = mark;
-      return;
-    }
-    if (op.kind === OP_LIT && afford(heads, op.bytes.length)) {
-      for (let k = 0; k < op.bytes.length; k++) acc.push(op.bytes[k]);
-    } else if ((op.kind === OP_SEP || op.kind === OP_SEP_RUN) && afford(heads, 1)) {
-      acc.push(0x2f);
+    if (op.kind === OP_LIT && IS_WINDOWS_SEP && op.str.includes("\\")) return;
+    if (op.kind === OP_LIT && afford(heads, op.str.length)) {
+      acc += op.str;
+    } else if (op.kind === OP_SEP && afford(heads, 1)) {
+      acc += "/";
       boundary = acc.length;
-    } else if (op.kind === OP_SLASH_ANYTHING) {
-      // `/**`: the segment before it is whole.
-      end = acc.length;
-      break;
     } else if (
       op.kind === OP_ALTERNATION &&
       depth < MAX_HEAD_DEPTH &&
@@ -151,7 +131,6 @@ function readHeads(heads, ops, at, then, acc, boundary, depth) {
         if (heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0) break;
         readHeads(heads, branch, 0, after, acc, boundary, depth + 1);
       }
-      acc.length = mark;
       return;
     } else {
       // Every branch of an alternation opening a new segment leaves what
@@ -160,9 +139,8 @@ function readHeads(heads, ops, at, then, acc, boundary, depth) {
       break;
     }
   }
-  while (end > 0 && acc[end - 1] === 0x2f) end--;
-  heads.out.push(latin1(acc.slice(0, end)));
-  acc.length = mark;
+  while (end > 0 && acc.charCodeAt(end - 1) === 0x2f) end--;
+  heads.out.push(acc.slice(0, end));
 }
 
 // Spend `n` units, unless that passes the limit (the floor until it is
@@ -178,10 +156,7 @@ function afford(heads, n) {
 }
 
 function opensSegment(alt) {
-  return alt.branches.every((b) => {
-    const k = b[0]?.kind;
-    return k === OP_SEP || k === OP_SEP_RUN || k === OP_SLASH_ANYTHING;
-  });
+  return alt.branches.every((b) => b[0]?.kind === OP_SEP);
 }
 
 function dedupePrefixes(prefixes) {

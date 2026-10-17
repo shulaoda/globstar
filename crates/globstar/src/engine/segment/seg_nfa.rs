@@ -163,29 +163,41 @@ struct ByteSet {
 }
 
 impl ByteSet {
-    fn of(cls: &CharClass) -> Self {
-        let mut bits = [0u64; 4];
+    /// Case-insensitively (`ci`) a listed ASCII letter lists its other
+    /// case too, before the negation (§11.2).
+    fn of(cls: &CharClass, ci: bool) -> Self {
+        let mut set = ByteSet {
+            bits: [0; 4],
+            negated: cls.negated,
+        };
         for &item in &cls.items {
             let (lo, hi) = match item {
                 ClassItem::Byte(b) => (b, b),
                 ClassItem::Range(lo, hi) => (lo, hi),
             };
-            for b in lo..=hi {
-                bits[usize::from(b >> 6)] |= 1 << (b & 63);
+            (lo..=hi).for_each(|b| set.add(b));
+        }
+        if ci {
+            for b in b'A'..=b'Z' {
+                if set.has(b) || set.has(b | 0x20) {
+                    set.add(b);
+                    set.add(b | 0x20);
+                }
             }
         }
         if cls.negated {
-            bits = bits.map(|w| !w);
+            set.bits = set.bits.map(|w| !w);
         }
         for &b in b"/\\" {
             if std::path::is_separator(char::from(b)) {
-                bits[usize::from(b >> 6)] &= !(1 << (b & 63));
+                set.bits[usize::from(b >> 6)] &= !(1 << (b & 63));
             }
         }
-        ByteSet {
-            bits,
-            negated: cls.negated,
-        }
+        set
+    }
+
+    fn add(&mut self, b: u8) {
+        self.bits[usize::from(b >> 6)] |= 1 << (b & 63);
     }
 
     #[inline]
@@ -443,7 +455,7 @@ impl SegBuilder {
                 (s, vec![s])
             }
             Op::Class(cls) => {
-                let s = self.alloc(SegState::Class(Box::new(ByteSet::of(cls)), UNSET));
+                let s = self.alloc(SegState::Class(Box::new(ByteSet::of(cls, self.ci)), UNSET));
                 (s, vec![s])
             }
             Op::Star => {
@@ -495,7 +507,7 @@ impl SegBuilder {
     fn lit_state(&mut self, b: u8) -> u32 {
         let class = self.ci.then(|| CharClass::ci_letter(b)).flatten();
         match class {
-            Some(cls) => self.alloc(SegState::Class(Box::new(ByteSet::of(&cls)), UNSET)),
+            Some(cls) => self.alloc(SegState::Class(Box::new(ByteSet::of(&cls, false)), UNSET)),
             None => self.alloc(SegState::Byte(b, UNSET)),
         }
     }
@@ -531,7 +543,7 @@ mod tests {
             let Node::Class(cls) = &ast.body else {
                 panic!("{pattern} is not one class: {:?}", ast.body);
             };
-            let set = ByteSet::of(cls);
+            let set = ByteSet::of(cls, false);
             for b in 0..=255u8 {
                 assert_eq!(set.has(b), cls.matches(b), "{pattern} at byte {b:#04x}");
             }

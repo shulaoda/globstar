@@ -80,39 +80,6 @@ impl CharClass {
             items: vec![ClassItem::Byte(b), ClassItem::Byte(alt)],
         })
     }
-
-    pub fn expanded_ascii_case_insensitive(&self) -> Self {
-        let mut items = Vec::with_capacity(self.items.len() * 2);
-        for item in &self.items {
-            items.push(*item);
-            match *item {
-                ClassItem::Byte(b) => {
-                    let alt = ascii_case_alt(b);
-                    if alt != b {
-                        items.push(ClassItem::Byte(alt));
-                    }
-                }
-                ClassItem::Range(lo, hi) => {
-                    if lo >= b'A' && hi <= b'Z' {
-                        items.push(ClassItem::Range(lo | 0x20, hi | 0x20));
-                    } else if lo >= b'a' && hi <= b'z' {
-                        items.push(ClassItem::Range(lo & !0x20, hi & !0x20));
-                    } else {
-                        for b in lo..=hi {
-                            let alt = ascii_case_alt(b);
-                            if alt != b {
-                                items.push(ClassItem::Byte(alt));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Self {
-            negated: self.negated,
-            items,
-        }
-    }
 }
 
 impl Node {

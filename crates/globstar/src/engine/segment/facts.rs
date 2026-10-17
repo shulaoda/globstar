@@ -14,25 +14,35 @@ const MAX_SUFFIX_SET: usize = 16;
 /// `Lit`/`Sep` run (separators as `/`), or when the pattern ends in a
 /// brace, one per branch. Empty when nothing is guaranteed.
 pub(super) fn suffixes(ops: &[Op]) -> Box<[Bytes]> {
-    let mut acc = Vec::new();
-    push_suffix(ops, &mut acc);
-    if !acc.is_empty() {
-        return Box::new([acc.into_boxed_slice()]);
+    let run = trailing(ops);
+    if run.is_empty() {
+        return suffix_set(ops);
     }
-    suffix_set(ops)
+    let mut acc = Vec::with_capacity(run.iter().map(op_weight).sum());
+    push_run(run, &mut acc);
+    Box::new([acc.into_boxed_slice()])
 }
 
-fn push_suffix(ops: &[Op], acc: &mut Vec<u8>) {
+/// The `Lit`/`Sep` run that ends `ops`.
+fn trailing(ops: &[Op]) -> &[Op] {
     let from = ops
         .iter()
         .rposition(|op| !matches!(op, Op::Lit(_) | Op::Sep))
         .map_or(0, |i| i + 1);
-    for op in &ops[from..] {
+    &ops[from..]
+}
+
+fn push_run(run: &[Op], acc: &mut Vec<u8>) {
+    for op in run {
         match op {
             Op::Lit(bytes) => acc.extend_from_slice(bytes),
             _ => acc.push(b'/'),
         }
     }
+}
+
+fn push_suffix(ops: &[Op], acc: &mut Vec<u8>) {
+    push_run(trailing(ops), acc);
 }
 
 /// When the pattern ends in a brace: one guaranteed suffix per branch,
@@ -162,12 +172,10 @@ impl Heads<'_> {
                     return;
                 }
                 Op::Lit(bytes) if self.afford(bytes.len()) => acc.extend_from_slice(bytes),
-                Op::Sep | Op::SepRun if self.afford(1) => {
+                Op::Sep if self.afford(1) => {
                     acc.push(b'/');
                     boundary = acc.len();
                 }
-                // `/**`: the segment before it is whole.
-                Op::SlashAnything => break acc.len(),
                 Op::Alternation(bs) if depth < MAX_HEAD_DEPTH && self.afford(bs.len()) => {
                     let after = Then {
                         ops: rest,
@@ -184,11 +192,7 @@ impl Heads<'_> {
                 }
                 // Every branch opening a new segment leaves what came
                 // before whole.
-                Op::Alternation(bs)
-                    if bs.iter().all(|b| {
-                        matches!(b.first(), Some(Op::Sep | Op::SepRun | Op::SlashAnything))
-                    }) =>
-                {
+                Op::Alternation(bs) if bs.iter().all(|b| matches!(b.first(), Some(Op::Sep))) => {
                     break acc.len();
                 }
                 _ => break boundary,

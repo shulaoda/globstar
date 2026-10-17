@@ -240,15 +240,13 @@ impl Glob {
         let (tier, engine) = match ast.body.to_literal_bytes() {
             Some(lit) => (
                 tier.unwrap_or(Tier::Literal),
-                Engine::Literal(LiteralMatcher::new(lit, opts.case_insensitive)),
+                Engine::Literal(LiteralMatcher::new(lit.into(), opts.case_insensitive)),
             ),
             None => {
                 let tier = tier.unwrap_or_else(|| tier_of(&ast.body));
-                let program = lower(ast.body, opts.case_insensitive);
-                (
-                    tier,
-                    Engine::Segment(SegmentMatcher::build(program, opts.dot)?),
-                )
+                let ops = lower(ast.body);
+                let matcher = SegmentMatcher::build(&ops, opts.dot, opts.case_insensitive)?;
+                (tier, Engine::Segment(matcher))
             }
         };
         Ok(Self {

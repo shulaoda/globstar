@@ -1,16 +1,15 @@
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../bytes.js";
 import { DirMatch } from "../dir-match.js";
-import { latin1, utf8Latin1 } from "../utf8.js";
+import { flat, isAscii, latin1Bytes, utf8Latin1 } from "../utf8.js";
 
 export class LiteralMatcher {
-  constructor(literal, caseInsensitive) {
-    this.literal = literal;
+  // `litStr` holds the literal's bytes, one char each (see `utf8Latin1`).
+  // An ASCII literal is compared against the raw path string: a
+  // non-ASCII char equals no ASCII byte either way.
+  constructor(litStr, caseInsensitive) {
     this.caseInsensitive = caseInsensitive;
-    // One char per literal byte (see `utf8Latin1`). An ASCII literal is
-    // compared against the raw path string: a non-ASCII char equals no
-    // ASCII byte either way.
-    this.litStr = latin1(literal);
-    this.ascii = literal.every((b) => b <= 0x7f);
+    this.litStr = flat(litStr);
+    this.ascii = isAscii(litStr);
     this.exact = this.ascii && !caseInsensitive && !IS_WINDOWS_SEP;
   }
 
@@ -40,10 +39,10 @@ export class LiteralMatcher {
   }
 
   staticPrefixes() {
-    const bytes = this.literal;
-    let end = bytes.length;
-    while (end > 0 && bytes[end - 1] === 0x2f) end--;
-    return [bytes.slice(0, end)];
+    const lit = this.litStr;
+    let end = lit.length;
+    while (end > 0 && lit.charCodeAt(end - 1) === 0x2f) end--;
+    return [latin1Bytes(lit.slice(0, end))];
   }
 }
 

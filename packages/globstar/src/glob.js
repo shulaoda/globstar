@@ -2,7 +2,7 @@ import { parse } from "./parser.js";
 import { lower } from "./engine/ops.js";
 import { LiteralMatcher } from "./engine/literal.js";
 import { SegmentMatcher } from "./engine/segment/index.js";
-import { nodeToLiteralBytes } from "./ast.js";
+import { nodeToLiteral } from "./ast.js";
 import { factorBranches } from "./factor.js";
 import { GlobError, MAX_EXPANSION } from "./error.js";
 import { DirMatch } from "./dir-match.js";
@@ -107,10 +107,9 @@ export function buildEngine(asts, opts) {
   // Members that only differ in spelling factor into one, which may be
   // a literal again.
   const body = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
-  const literalBytes = nodeToLiteralBytes(body);
-  if (literalBytes !== null) return new LiteralMatcher(literalBytes, ci);
-  const program = lower(body, ci);
-  return SegmentMatcher.build(program, dot, {
+  const literal = nodeToLiteral(body);
+  if (literal !== null) return new LiteralMatcher(literal, ci);
+  return SegmentMatcher.build(lower(body), dot, ci, {
     forceNfa: opts.__engine === "nfa",
     byteOnly: opts.__engine === "bytes",
   });

@@ -12,17 +12,14 @@ import {
   OP_STAR,
   OP_CLASS,
   OP_SEP,
-  OP_SEP_RUN,
   OP_OPT_SEGMENTS_SLASH,
-  OP_SLASH_ANYTHING,
   OP_GLOBSTAR_ANY,
-  OP_LEADING_SEPS,
   OP_ALTERNATION,
   exact,
 } from "../ops.js";
 import { CI_BYTE } from "../../ast.js";
 import { IS_WINDOWS_SEP } from "../../bytes.js";
-import { latin1 } from "../../utf8.js";
+import { flat, isAscii } from "../../utf8.js";
 import {
   EL_LIT,
   EL_WILD,
@@ -54,7 +51,7 @@ const B_START = 0; // pattern start
 const B_SEP = 1; // after a separator or a `**/`
 const B_OPEN = 2; // a bare `**` absorbs the rest of the path
 
-const EMPTY_BYTES = new Uint8Array(0);
+const EMPTY = "";
 
 export function compileSegment(ops, dot, ci, forceNfa) {
   const graph = buildGraph(ops, dot, ci);
@@ -67,8 +64,8 @@ export function compileSegment(ops, dot, ci, forceNfa) {
   return { elems: exact(graph.elems), chains: exact(chainList), nfa };
 }
 
-function makeElem(kind, litBytes, wild) {
-  return { kind, litStr: litBytes !== null ? latin1(litBytes) : null, wild };
+function makeElem(kind, litStr, wild) {
+  return { kind, litStr: litStr === null ? null : flat(litStr), wild };
 }
 
 const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
@@ -134,9 +131,7 @@ export function opsHaveNonAscii(ops) {
   for (const op of ops) {
     switch (op.kind) {
       case OP_LIT:
-        for (let i = 0; i < op.bytes.length; i++) {
-          if (op.bytes[i] > 0x7f) return true;
-        }
+        if (!isAscii(op.str)) return true;
         break;
       case OP_CLASS:
         for (const it of op.cls.items) {
@@ -207,7 +202,7 @@ function tooComplex(max) {
 // What an op costs the walk to copy and compile: a literal its length, a
 // brace one plus its branches, anything else one.
 export function opWeight(op) {
-  if (op.kind === OP_LIT) return op.bytes.length;
+  if (op.kind === OP_LIT) return op.str.length;
   return op.kind === OP_ALTERNATION ? braceWeight(op) : 1;
 }
 function braceWeight(op) {
@@ -252,18 +247,12 @@ function rebase(g, id, state) {
   g.pendingOss = false;
 }
 
-function bytesEqual(a, b) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 function opEqual(a, b) {
   if (a === b) return true;
   if (a.kind !== b.kind) return false;
   switch (a.kind) {
     case OP_LIT:
-      return bytesEqual(a.bytes, b.bytes);
+      return a.str === b.str;
     case OP_CLASS:
       return a.cls === b.cls;
     case OP_ALTERNATION:
@@ -289,7 +278,7 @@ const agrees = (o, g) =>
 
 function groupKey(g) {
   let key = `${g.state},${g.pendingOss ? 1 : 0}`;
-  for (const op of g.buf) key += op.kind === OP_LIT ? `|${latin1(op.bytes)}` : `|#${op.kind}`;
+  for (const op of g.buf) key += op.kind === OP_LIT ? `|${op.str}` : `|#${op.kind}`;
   return key;
 }
 
@@ -331,12 +320,9 @@ const memoKey = (kind, lit, at) => `${kind}:${lit ?? ""}|${at}`;
 
 // The bytes of the literal ops `ops[from..to]`.
 function concatLits(ops, from, to) {
-  if (to - from === 1) return ops[from].bytes;
-  let len = 0;
-  for (let i = from; i < to; i++) len += ops[i].bytes.length;
-  const bytes = new Uint8Array(len);
-  for (let i = from, at = 0; i < to; at += ops[i].bytes.length, i++) bytes.set(ops[i].bytes, at);
-  return bytes;
+  let s = "";
+  for (let i = from; i < to; i++) s += ops[i].str;
+  return s;
 }
 
 class Builder {
@@ -409,12 +395,7 @@ class Builder {
       const k = op.kind;
       // Ops that may still be absorbed by a bare `**` keep the pending
       // `**/` elements; anything else makes them real.
-      if (
-        k !== OP_GLOBSTAR_ANY &&
-        k !== OP_OPT_SEGMENTS_SLASH &&
-        k !== OP_LEADING_SEPS &&
-        k !== OP_ALTERNATION
-      ) {
+      if (k !== OP_GLOBSTAR_ANY && k !== OP_OPT_SEGMENTS_SLASH && k !== OP_ALTERNATION) {
         for (const g of groups) this.settle(g);
       }
       switch (k) {
@@ -434,18 +415,10 @@ class Builder {
           break;
         }
         case OP_SEP:
-        case OP_SEP_RUN:
           this.closeAll(groups, B_SEP);
-          break;
-        case OP_LEADING_SEPS:
-          // `/*`: it only keeps a pending `**/` pending.
           break;
         case OP_OPT_SEGMENTS_SLASH:
           for (const g of groups) if (g.state !== B_OPEN) g.pendingOss = true;
-          break;
-        case OP_SLASH_ANYTHING:
-          this.closeAll(groups, B_SEP);
-          this.globstarAll(groups, () => EL_G1);
           break;
         case OP_GLOBSTAR_ANY:
           // The bare `**` owns the rest of the path: pending `**/` add
@@ -472,9 +445,8 @@ class Builder {
     }
   }
 
-  // Emit a group's pending `**/`. It is always a G0: lowering gives the
-  // `/` before a `**/` a lenient `SepRun`, and folds a `**/` into the
-  // globstar before it, so none is left behind a strict boundary.
+  // Emit a group's pending `**/`. It is always a G0: it absorbs empty
+  // segments too, which makes the separators around it lenient.
   settle(g) {
     if (!g.pendingOss || g.state === B_OPEN) return;
     rebase(g, this.emit(makeElem(EL_G0, null, null), g.tails), B_SEP);
@@ -526,15 +498,14 @@ class Builder {
     // An escaped `\` on Windows: no segment holds a separator, so a
     // segment with one is a silent miss (§2.4), kept as a wildcard that
     // wants more bytes than any segment has.
-    if (IS_WINDOWS_SEP && buf.some((op) => op.kind === OP_LIT && op.bytes.includes(0x5c))) {
+    if (IS_WINDOWS_SEP && buf.some((op) => op.kind === OP_LIT && op.str.includes("\\"))) {
       return makeElem(EL_WILD, null, makeWild(WK_AFFIX, { minLen: NEVER_LEN, variable: false }));
     }
     for (const op of buf) {
       if (op.kind !== OP_LIT) return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
     }
     // Empty, one literal, or literals glued across a brace edge.
-    const bytes = buf.length === 0 ? EMPTY_BYTES : concatLits(buf, 0, buf.length);
-    return makeElem(EL_LIT, bytes, null);
+    return makeElem(EL_LIT, concatLits(buf, 0, buf.length), null);
   }
 }
 
@@ -777,9 +748,9 @@ function nfaSparse(graph, ci) {
 function makeWild(kind, fields) {
   return {
     kind,
-    prefixStr: fields.prefixStr ?? "",
-    suffixStr: fields.suffixStr ?? "",
-    suffixSetStr: fields.suffixSetStr ?? null,
+    prefixStr: flat(fields.prefixStr ?? ""),
+    suffixStr: flat(fields.suffixStr ?? ""),
+    suffixSetStr: fields.suffixSetStr?.map(flat) ?? null,
     runs: fields.runs ?? null,
     minLen: fields.minLen ?? 0,
     variable: fields.variable ?? true,
@@ -795,7 +766,7 @@ function makeWild(kind, fields) {
 function compileWild(ops, dot, ci) {
   let idx = 0;
   while (idx < ops.length && ops[idx].kind === OP_LIT) idx++;
-  const prefix = idx === 0 ? EMPTY_BYTES : concatLits(ops, 0, idx);
+  const prefix = concatLits(ops, 0, idx);
   let anychars = 0;
   let hasStar = false;
   while (idx < ops.length) {
@@ -812,7 +783,7 @@ function compileWild(ops, dot, ci) {
 
   if (idx === ops.length) {
     return makeWild(WK_AFFIX, {
-      prefixStr: latin1(prefix),
+      prefixStr: prefix,
       suffixStr: "",
       minLen: prefix.length + anychars,
       variable: hasStar,
@@ -826,8 +797,8 @@ function compileWild(ops, dot, ci) {
     const anySeg = anyHead && suffixes.some((s) => s.length === 0);
     if (suffixes.length === 1) {
       return makeWild(WK_AFFIX, {
-        prefixStr: latin1(prefix),
-        suffixStr: latin1(suffixes[0]),
+        prefixStr: prefix,
+        suffixStr: suffixes[0],
         minLen: prefix.length + suffixes[0].length + anychars,
         variable: hasStar,
         dotProtect,
@@ -836,7 +807,7 @@ function compileWild(ops, dot, ci) {
       });
     }
     const common = {
-      prefixStr: latin1(prefix),
+      prefixStr: prefix,
       minLen: prefix.length + anychars,
       variable: hasStar,
       dotProtect,
@@ -844,7 +815,7 @@ function compileWild(ops, dot, ci) {
       anySeg,
     };
     if (suffixes.length <= LINEAR_SUFFIXES) {
-      return makeWild(WK_AFFIX_SET, { ...common, suffixSetStr: suffixes.map(latin1) });
+      return makeWild(WK_AFFIX_SET, { ...common, suffixSetStr: suffixes });
     }
     const { set, runs } = indexSuffixes(suffixes, ci);
     return makeWild(WK_AFFIX_INDEX, { ...common, suffixSetStr: set, runs });
@@ -866,9 +837,9 @@ const MAX_SUFFIX_BYTES = 64 * 1024;
 
 function suffixProduct(ops, from) {
   if (from + 1 === ops.length && ops[from].kind === OP_LIT) {
-    return [ops[from].bytes];
+    return [ops[from].str];
   }
-  let parts = [[]];
+  let parts = [""];
   // Σ (part + 1) bytes, and what the ops themselves hold.
   let size = 1;
   let source = 1;
@@ -876,18 +847,16 @@ function suffixProduct(ops, from) {
   for (let i = from; i < ops.length; i++) {
     const op = ops[i];
     if (op.kind === OP_LIT) {
-      size += parts.length * op.bytes.length;
-      source += op.bytes.length;
+      size += parts.length * op.str.length;
+      source += op.str.length;
       if (!fits()) return null;
-      for (const p of parts) {
-        for (let j = 0; j < op.bytes.length; j++) p.push(op.bytes[j]);
-      }
+      parts = parts.map((p) => p + op.str);
     } else if (op.kind === OP_ALTERNATION) {
       const lits = [];
       let branchBytes = 0;
       for (const b of op.branches) {
-        if (b.length === 0) lits.push(EMPTY_BYTES);
-        else if (b.length === 1 && b[0].kind === OP_LIT) lits.push(b[0].bytes);
+        if (b.length === 0) lits.push(EMPTY);
+        else if (b.length === 1 && b[0].kind === OP_LIT) lits.push(b[0].str);
         else return null;
         branchBytes += lits[lits.length - 1].length + 1;
       }
@@ -897,26 +866,20 @@ function suffixProduct(ops, from) {
       source += branchBytes;
       if (!fits()) return null;
       const next = [];
-      for (const p of parts) {
-        for (const l of lits) {
-          const v = p.slice();
-          for (let j = 0; j < l.length; j++) v.push(l[j]);
-          next.push(v);
-        }
-      }
+      for (const p of parts) for (const l of lits) next.push(p + l);
       parts = next;
     } else {
       return null;
     }
   }
-  return parts.map((p) => Uint8Array.from(p));
+  return parts;
 }
 
 // Past LINEAR_SUFFIXES the set is sorted by (length, bytes), ASCII-
 // lowercased when case-insensitive, and indexed per length so
 // wildConsumes can binary-search it. Latin-1 strings order by byte.
 function indexSuffixes(suffixes, ci) {
-  let set = suffixes.map(latin1);
+  let set = suffixes;
   if (ci) set = set.map(asciiLower);
   set.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
   set = set.filter((s, i) => i === 0 || s !== set[i - 1]);

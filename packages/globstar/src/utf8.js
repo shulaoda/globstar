@@ -58,6 +58,22 @@ export function utf8Latin1(input) {
   return input;
 }
 
+// `s` as a flat string of its own. V8 keeps a string of 13 or more chars
+// joined from parts as a tree of them, and a slice as a view that keeps
+// its source alive; the strings a matcher stores live as long as it does.
+export function flat(s) {
+  if (s.length < 13) return s;
+  const codes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) codes[i] = s.charCodeAt(i);
+  return latin1(codes);
+}
+
+// Is every char of `s` ASCII?
+export function isAscii(s) {
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 0x7f) return false;
+  return true;
+}
+
 // Inverse of `latin1`: a Latin-1 string back to its bytes.
 export function latin1Bytes(str) {
   const out = new Uint8Array(str.length);

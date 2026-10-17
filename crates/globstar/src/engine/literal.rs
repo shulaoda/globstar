@@ -2,12 +2,12 @@ use crate::dir_match::DirMatch;
 
 #[derive(Debug, Clone)]
 pub struct LiteralMatcher {
-    literal: Vec<u8>,
+    literal: Box<[u8]>,
     case_insensitive: bool,
 }
 
 impl LiteralMatcher {
-    pub fn new(literal: Vec<u8>, case_insensitive: bool) -> Self {
+    pub fn new(literal: Box<[u8]>, case_insensitive: bool) -> Self {
         Self {
             literal,
             case_insensitive,
@@ -15,11 +15,11 @@ impl LiteralMatcher {
     }
 
     pub fn static_prefixes(&self) -> Vec<Vec<u8>> {
-        let mut bytes = self.literal.clone();
-        while bytes.last() == Some(&b'/') {
-            bytes.pop();
+        let mut bytes = &self.literal[..];
+        while let [rest @ .., b'/'] = bytes {
+            bytes = rest;
         }
-        vec![bytes]
+        vec![bytes.to_vec()]
     }
 
     pub fn is_match(&self, path: &[u8]) -> bool {

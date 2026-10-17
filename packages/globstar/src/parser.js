@@ -17,7 +17,7 @@ import {
 } from "./ast.js";
 import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } from "./error.js";
 import { resolveGlobstars } from "./resolve.js";
-import { toBytes, utf8Length } from "./utf8.js";
+import { utf8Latin1, utf8Length } from "./utf8.js";
 
 const BACKSLASH = 0x5c;
 const SLASH = 0x2f;
@@ -34,13 +34,16 @@ const DASH = 0x2d;
 
 // `budget` is the expansion budget (§7.7): the patterns of one matcher share
 // it, so together they may copy `MAX_EXPANSION`, not each.
+//
+// The pattern is read as its UTF-8 bytes, one char per byte (see
+// `utf8Latin1`), and a literal keeps its bytes as such a string.
 export function parse(input, budget = { left: MAX_EXPANSION }) {
   // UTF-8 is never shorter than the UTF-16 string, so a string past the
   // limit is refused before it is copied.
   if (input.length > MAX_PATTERN_LEN) {
     throw new GlobError("TooLong", { len: utf8Length(input), max: MAX_PATTERN_LEN });
   }
-  const bytes = toBytes(input);
+  const bytes = utf8Latin1(input);
   if (bytes.length === 0) throw new GlobError("Empty");
   if (bytes.length > MAX_PATTERN_LEN) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
@@ -50,7 +53,7 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
   const state = { input: bytes, pos: 0, pending: false };
 
   let negationCount = 0;
-  while (state.pos < bytes.length && bytes[state.pos] === BANG) {
+  while (state.pos < bytes.length && bytes.charCodeAt(state.pos) === BANG) {
     negationCount++;
     state.pos++;
   }
@@ -68,17 +71,16 @@ function parseSequence(state, depth) {
   const inBrace = depth > 0;
   const { input } = state;
   const nodes = [];
-  const litBuf = [];
-
-  function flushLit() {
-    if (litBuf.length > 0) {
-      nodes.push(lit(new Uint8Array(litBuf)));
-      litBuf.length = 0;
+  let text = "";
+  const flush = () => {
+    if (text.length > 0) {
+      nodes.push(lit(text));
+      text = "";
     }
-  }
+  };
 
   while (state.pos < input.length) {
-    const b = input[state.pos];
+    const b = input.charCodeAt(state.pos);
 
     if (inBrace && (b === COMMA || b === RBRACE)) break;
 
@@ -86,27 +88,27 @@ function parseSequence(state, depth) {
       case BACKSLASH: {
         state.pos++;
         if (state.pos >= input.length) throw new GlobError("TrailingBackslash");
-        if (input[state.pos] === SLASH) {
+        if (input.charCodeAt(state.pos) === SLASH) {
           throw new GlobError("EscapedSeparator", { at: state.pos - 1 });
         }
-        litBuf.push(input[state.pos]);
+        text += input[state.pos];
         state.pos++;
         break;
       }
       case SLASH:
-        flushLit();
+        flush();
         nodes.push(sep());
         state.pos++;
         break;
       case QUESTION:
-        flushLit();
+        flush();
         nodes.push(anyChar());
         state.pos++;
         break;
       case STAR: {
-        flushLit();
+        flush();
         let run = 0;
-        while (input[state.pos] === STAR) {
+        while (input.charCodeAt(state.pos) === STAR) {
           run++;
           state.pos++;
         }
@@ -115,21 +117,38 @@ function parseSequence(state, depth) {
         break;
       }
       case LBRACK:
-        flushLit();
+        flush();
         nodes.push(parseClass(state));
         break;
-      case LBRACE:
-        parseBraceInto(state, depth + 1, nodes, litBuf, flushLit);
+      case LBRACE: {
+        const branches = parseBrace(state, depth + 1);
+        if (branches.length > 1) {
+          flush();
+          nodes.push(brace(branches));
+          break;
+        }
+        // One branch is no brace (§7.4): its text, braces included.
+        text += "{";
+        const single = branches[0];
+        for (const node of single.tag === N_CONCAT ? single.children : [single]) {
+          if (node.tag === N_LITERAL) text += node.str;
+          else {
+            flush();
+            nodes.push(node);
+          }
+        }
+        text += "}";
         break;
+      }
       default:
-        litBuf.push(b);
+        text += input[state.pos];
         state.pos++;
     }
   }
 
   // Most brace branches are one literal, which needs no node list.
-  if (nodes.length === 0 && litBuf.length > 0) return lit(new Uint8Array(litBuf));
-  flushLit();
+  if (nodes.length === 0 && text.length > 0) return lit(text);
+  flush();
 
   if (nodes.length === 1) return nodes[0];
   return concat(nodes);
@@ -146,7 +165,7 @@ function doubleStar(state, nodes, inBrace) {
   if (last === undefined) before = inBrace ? undefined : true;
   else if (last.tag === N_BRACE) before = undefined;
   else before = last.tag === N_SEPARATOR;
-  const next = state.input[state.pos];
+  const next = state.pos < state.input.length ? state.input.charCodeAt(state.pos) : undefined;
   let after;
   if (next === undefined || next === SLASH) after = true;
   else if (next === LBRACE || (inBrace && (next === COMMA || next === RBRACE))) after = undefined;
@@ -164,7 +183,8 @@ function parseClass(state) {
   state.pos++;
 
   let negated = false;
-  if (input[state.pos] === BANG || input[state.pos] === CARET) {
+  const opener = input.charCodeAt(state.pos);
+  if (opener === BANG || opener === CARET) {
     negated = true;
     state.pos++;
   }
@@ -175,7 +195,7 @@ function parseClass(state) {
   let first = true;
   while (true) {
     if (state.pos >= input.length) throw new GlobError("UnterminatedClass", { at: startPos });
-    const b = input[state.pos];
+    const b = input.charCodeAt(state.pos);
     if (b === RBRACK && !first) {
       state.pos++;
       return klass(negated, items);
@@ -183,7 +203,7 @@ function parseClass(state) {
     first = false;
     const rangeAt = state.pos;
     const lo = parseClassByte(state, startPos);
-    if (input[state.pos] === DASH && input[state.pos + 1] !== RBRACK) {
+    if (input.charCodeAt(state.pos) === DASH && input.charCodeAt(state.pos + 1) !== RBRACK) {
       state.pos++;
       const hi = parseClassByte(state, startPos);
       if (hi < lo) throw new GlobError("InvalidRange", { at: rangeAt, low: lo, high: hi });
@@ -197,12 +217,12 @@ function parseClass(state) {
 function parseClassByte(state, classStart) {
   const { input } = state;
   if (state.pos >= input.length) throw new GlobError("UnterminatedClass", { at: classStart });
-  const b = input[state.pos];
+  const b = input.charCodeAt(state.pos);
   let resolved;
   if (b === BACKSLASH) {
     state.pos++;
     if (state.pos >= input.length) throw new GlobError("TrailingBackslash");
-    resolved = input[state.pos];
+    resolved = input.charCodeAt(state.pos);
     state.pos++;
   } else {
     resolved = b;
@@ -210,26 +230,6 @@ function parseClassByte(state, classStart) {
   }
   if (resolved === SLASH) throw new GlobError("UnterminatedClass", { at: classStart });
   return resolved;
-}
-
-function parseBraceInto(state, depth, nodes, litBuf, flushLit) {
-  const branches = parseBrace(state, depth);
-  if (branches.length === 1) {
-    litBuf.push(LBRACE);
-    const single = branches[0];
-    for (const node of single.tag === N_CONCAT ? single.children : [single]) {
-      if (node.tag === N_LITERAL) {
-        for (let i = 0; i < node.bytes.length; i++) litBuf.push(node.bytes[i]);
-      } else {
-        flushLit();
-        nodes.push(node);
-      }
-    }
-    litBuf.push(RBRACE);
-  } else {
-    flushLit();
-    nodes.push(brace(branches));
-  }
 }
 
 // The brace at `pos`, the `depth`th one open.
@@ -243,7 +243,7 @@ function parseBrace(state, depth) {
   const branches = [];
   while (true) {
     branches.push(parseSequence(state, depth));
-    const next = input[state.pos];
+    const next = input.charCodeAt(state.pos);
     if (next === COMMA) {
       state.pos++;
       continue;
