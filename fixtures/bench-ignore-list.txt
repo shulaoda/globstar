@@ -1,7 +1,8 @@
 # The `ignore-list-40` bench set: an ignore list of the shapes real
-# projects write, 40 members of unlike structure, so the union compiles
-# to the sparse graph NFA (the uniform lists factor into one chain and
-# never reach it). Read by crates/globstar/benches/matcher_multi.rs,
+# projects write, 40 members of unlike structure, so the union keeps a
+# graph NFA past 64 states (dense rows in Rust, sparse in JS; the
+# uniform lists factor into one chain and never reach it). Read by
+# crates/globstar/benches/matcher_multi.rs,
 # tools/memory-check/src/matcher_multi_memory.rs and
 # packages/bench/benches/matcher_multi.js. No member matches a bench
 # path's miss, `target/debug/build/foo`.

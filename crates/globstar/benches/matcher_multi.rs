@@ -35,7 +35,8 @@ const IGNORE_LIST: &str = include_str!("../../../fixtures/bench-ignore-list.txt"
 
 /// The `file-list-100` set: 100 literal files over 10 folders, as a
 /// generated manifest lists them. Two segments vary, so the union does
-/// not factor into one chain and compiles to the sparse graph NFA.
+/// not factor into one chain and runs on the graph NFA (dense rows here,
+/// sparse in JS).
 fn file_list() -> Vec<&'static str> {
     const AREAS: [&str; 10] = [
         "cli", "server", "client", "core", "shared", "utils", "hooks", "store", "api", "ui",
