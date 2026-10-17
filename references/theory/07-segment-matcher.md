@@ -89,11 +89,15 @@ suffix product of at most 8, scanned in pattern order), `AffixIndex`
 names, or a product of up to 1024 suffixes, within 64 KiB or four
 times its nodes — sorted by (length, bytes) and binary-searched per
 length), and `Generic` — a Thompson-lite NFA over the in-segment nodes
-(u64/int32 active set up to 64/32 states, a word slice beyond;
-offset-0 dot gates realizing the DotGuard semantics exactly). Every
-ε-edge points to a later state, so one ascending sweep closes a set.
-Per-state closures are kept while they fit 1 MiB in Rust and 128 KiB
-in JS, about where the sweep becomes the faster step; past that each
+(u64/int32 active set up to 64/32 states, a word slice beyond), one
+state per node: a `*` takes any byte and stays, with an ε-edge out.
+Under dot=false a protected leading `.` is taken only by a literal `.`
+or a positive class listing it: the entry closure of a dot-led segment
+drops `*`, `?` and negated classes and passes no `*`. Every ε-edge
+points to a later state, so one ascending sweep closes a set.
+Per-state closures are kept while they fit 128 KiB (about 1,000
+states) in both runtimes, about where the sweep becomes the faster
+step; past that each
 step closes its set as it goes, so memory stays linear.
 
 ## Compile
@@ -137,7 +141,7 @@ The JS port runs the same algorithm directly on JS strings
 per-call allocation). Byte-exactness is preserved by construction:
 literal compares and `*`/globstar absorption are UTF-16-unit-count
 independent, and the only counting constructs — `?` (one byte) and
-negated classes (one byte) — **bail to byte mode** when they meet a
-char code > 0x7F. Patterns containing non-ASCII bytes compile to
-byte mode outright. The string↔byte equivalence is fuzzed by
+negated classes (one byte) — read a non-ASCII segment's UTF-8 length,
+or run on that one segment's bytes, so nothing is matched twice.
+Patterns containing non-ASCII bytes compile to byte mode outright. The string↔byte equivalence is fuzzed by
 `packages/globstar/tests/string-mode.mjs`.
