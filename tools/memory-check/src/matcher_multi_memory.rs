@@ -72,7 +72,26 @@ fn median(samples: &mut [usize]) -> usize {
     samples[samples.len() / 2]
 }
 
+/// The `ignore-list-40` set, shared with the benches.
+const IGNORE_LIST: &str = include_str!("../../../fixtures/bench-ignore-list.txt");
+
+/// The `file-list-100` set of the benches: 100 literal files over 10
+/// folders.
+fn file_list() -> Vec<&'static str> {
+    const AREAS: [&str; 10] = [
+        "cli", "server", "client", "core", "shared", "utils", "hooks", "store", "api", "ui",
+    ];
+    (0..100)
+        .map(|i| &*Box::leak(format!("src/{}/mod_{i}.ts", AREAS[i % AREAS.len()]).into_boxed_str()))
+        .collect()
+}
+
 fn main() {
+    let ignore_list: Vec<&str> = IGNORE_LIST
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    let file_list = file_list();
     let pattern_sets: &[(&str, &[&str])] = &[
         ("solo-globstar", &["**/*.ts"]),
         (
@@ -105,6 +124,8 @@ fn main() {
                 "docs/**/*.md",
             ],
         ),
+        ("ignore-list-40", &ignore_list),
+        ("file-list-100", &file_list),
     ];
 
     fn build_globset(patterns: &[&str]) -> globset::GlobSet {

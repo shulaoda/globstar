@@ -48,6 +48,8 @@ const MULTI_SETS = [
   "brace-equiv-8",
   "mixed-roots",
   "huge-set-pos",
+  "ignore-list-40",
+  "file-list-100",
 ];
 
 // Walker row labels — `<scale>_<pattern-set>`.
@@ -568,6 +570,8 @@ sections.push(`## Test corpus
 | \`brace-equiv-8\` | 8 ext variants |
 | \`mixed-roots\` | \`["src/**/*.ts", "tests/**/*.ts", "lib/**/*.js"]\` (different roots) |
 | \`huge-set-pos\` | 10 positives spanning roots / extensions |
+| \`ignore-list-40\` | 40 ignore entries of unlike shapes (\`fixtures/bench-ignore-list.txt\`): the sparse graph NFA with chains |
+| \`file-list-100\` | 100 literal files over 10 folders (\`src/<area>/mod_<i>.ts\`): the sparse graph NFA alone |
 
 ### Match input — 11 paths (identical on both runtimes)
 

@@ -2,6 +2,7 @@
 // picomatch / minimatch / micromatch (per-pattern matchers OR'd at
 // runtime). Output is consumed by `scripts/bench.mjs`.
 
+import { readFileSync } from "node:fs";
 import { bench, run, group, summary, do_not_optimize } from "mitata";
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
@@ -13,6 +14,23 @@ if (!global.gc) {
   console.error("Run with --expose-gc");
   process.exit(1);
 }
+
+// The `ignore-list-40` set, shared with the Rust bench and memory tool.
+const IGNORE_LIST = readFileSync(
+  new URL("../../../fixtures/bench-ignore-list.txt", import.meta.url),
+  "utf8",
+)
+  .split("\n")
+  .filter((l) => l !== "" && !l.startsWith("#"));
+
+// The `file-list-100` set: 100 literal files over 10 folders, as a
+// generated manifest lists them. Two segments vary, so the union does
+// not factor into one chain and compiles to the sparse graph NFA.
+const AREAS = ["cli", "server", "client", "core", "shared", "utils", "hooks", "store", "api", "ui"];
+const FILE_LIST = Array.from(
+  { length: 100 },
+  (_, i) => `src/${AREAS[i % AREAS.length]}/mod_${i}.ts`,
+);
 
 /** @type {Array<[string, string[]]>} */
 const PATTERN_SETS = [
@@ -43,6 +61,8 @@ const PATTERN_SETS = [
       "docs/**/*.md",
     ],
   ],
+  ["ignore-list-40", IGNORE_LIST],
+  ["file-list-100", FILE_LIST],
 ];
 
 const PATHS = [

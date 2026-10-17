@@ -30,6 +30,21 @@ const PATHS: &[&str] = &[
     "src/a/bigger/path/to/the/crazy/needle.txt",
 ];
 
+/// The `ignore-list-40` set, shared with the JS bench and the memory tool.
+const IGNORE_LIST: &str = include_str!("../../../fixtures/bench-ignore-list.txt");
+
+/// The `file-list-100` set: 100 literal files over 10 folders, as a
+/// generated manifest lists them. Two segments vary, so the union does
+/// not factor into one chain and compiles to the sparse graph NFA.
+fn file_list() -> Vec<&'static str> {
+    const AREAS: [&str; 10] = [
+        "cli", "server", "client", "core", "shared", "utils", "hooks", "store", "api", "ui",
+    ];
+    (0..100)
+        .map(|i| &*Box::leak(format!("src/{}/mod_{i}.ts", AREAS[i % AREAS.len()]).into_boxed_str()))
+        .collect()
+}
+
 fn pattern_sets() -> Vec<(&'static str, Vec<&'static str>)> {
     vec![
         ("solo-globstar", vec!["**/*.ts"]),
@@ -63,6 +78,14 @@ fn pattern_sets() -> Vec<(&'static str, Vec<&'static str>)> {
                 "docs/**/*.md",
             ],
         ),
+        (
+            "ignore-list-40",
+            IGNORE_LIST
+                .lines()
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .collect(),
+        ),
+        ("file-list-100", file_list()),
     ]
 }
 

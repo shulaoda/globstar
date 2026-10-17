@@ -1,0 +1,47 @@
+# The `ignore-list-40` bench set: an ignore list of the shapes real
+# projects write, 40 members of unlike structure, so the union compiles
+# to the sparse graph NFA (the uniform lists factor into one chain and
+# never reach it). Read by crates/globstar/benches/matcher_multi.rs,
+# tools/memory-check/src/matcher_multi_memory.rs and
+# packages/bench/benches/matcher_multi.js. No member matches a bench
+# path's miss, `target/debug/build/foo`.
+**/node_modules/**
+**/.git/**
+**/dist/**
+**/.turbo/**
+**/coverage/**
+**/.cache/**
+**/*.log
+**/*.tmp
+**/*.swp
+**/*.bak
+**/*.orig
+**/*.min.js
+**/*.map
+**/.DS_Store
+**/Thumbs.db
+**/.env
+**/.env.*
+**/npm-debug.log*
+**/yarn-error.log
+src/**/*.test.ts
+src/**/*.spec.ts
+src/**/__tests__/**
+src/**/__mocks__/**
+src/**/*.stories.tsx
+tests/fixtures/**
+tests/**/*.snap
+docs/**/*.md
+docs/api/**
+examples/**/*.js
+packages/*/dist/**
+packages/*/node_modules/**
+packages/*/coverage/**
+packages/*/*.tsbuildinfo
+apps/*/.next/**
+apps/*/.nuxt/**
+apps/*/out/**
+apps/*/storybook-static/**
+**/*.d.ts
+**/tsconfig*.json
+**/vite.config.*
