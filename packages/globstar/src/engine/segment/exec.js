@@ -13,7 +13,6 @@ import {
   WK_AFFIX_INDEX,
   NO_G,
   MANY_G,
-  elemSatisfiable,
   elemAnySeg,
 } from "./elem.js";
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
@@ -184,14 +183,10 @@ export function chainDir(m, str) {
   const n = chainLen(elems, ids);
   const g = chain.globstar === NO_G ? n : chain.globstar;
   const tl = g < n ? n - g - 1 : 0;
-  // Every element from `i` on takes some segment: a token there still
-  // reaches accept.
-  const open = (i) => {
-    for (let j = i; j < n; j++) if (!elemSatisfiable(elemAt(elems, ids, j))) return false;
-    return true;
-  };
-  let tailAny = true;
-  for (let j = n - tl; j < n; j++) if (!elemAnySeg(elemAt(elems, ids, j))) tailAny = false;
+  // Every element from `openFrom` on takes some segment: a token there
+  // still reaches accept; from `anyFrom` on, any non-empty one.
+  const openFrom = m.openFrom;
+  const tailAny = n - tl >= m.anyFrom;
   if (str.length === 0) {
     // The walk root: nothing consumed yet. All below iff a leading
     // globstar is followed by at most one any-segment.
@@ -210,7 +205,7 @@ export function chainDir(m, str) {
       // any-segment.
       const k = i + 1;
       const all = m.dot && g < n && k === g && tl <= 1 && tailAny;
-      return DirMatch.from(k === n, k < n && open(k), all);
+      return DirMatch.from(k === n, k < n && k >= openFrom, all);
     }
     midStart = end + 1;
   }
@@ -220,7 +215,7 @@ export function chainDir(m, str) {
   const exact = tailAndGlobstar(m, ids, g, str, midStart);
   // The globstar took everything after the head.
   const gAlive = absorbs(m, kind, str, midStart, str.length + 1);
-  let prefix = gAlive && open(g + 1);
+  let prefix = gAlive && g + 1 >= openFrom;
   let all = m.dot && gAlive && tailAny;
   // Tail tokens: the tail's first `j` elements on the last `j` segments
   // with the globstar released before them. A dead globstar may leave
@@ -228,9 +223,6 @@ export function chainDir(m, str) {
   // compares are budgeted.
   if ((!prefix || all) && tl > 1) {
     const dotAt = firstDot(m, str, midStart);
-    // `open(i)` for every `i` at once.
-    let openFrom = n;
-    while (openFrom > g + 1 && elemSatisfiable(elemAt(elems, ids, openFrom - 1))) openFrom--;
     let checks = MAX_TAIL_CHECKS;
     let end = str.length;
     for (let j = 1; j < tl; j++) {

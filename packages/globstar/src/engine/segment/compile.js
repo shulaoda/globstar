@@ -70,6 +70,10 @@ export function compileSegment(body, dot, ci, forceNfa) {
 function makeElem(kind, litStr, wild) {
   return { kind, litStr: litStr === null ? null : flat(litStr), wild };
 }
+// A globstar element holds nothing of its own: every node of a kind
+// shares one.
+const G0_ELEM = makeElem(EL_G0, null, null);
+const G1_ELEM = makeElem(EL_G1, null, null);
 
 const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
 // Absorbs zero segments too.
@@ -452,7 +456,7 @@ class Builder {
             // segment to follow (`x/**/**` ≡ `x/**`), so only the pattern
             // start gives G0.
             for (const g of groups) g.pendingOss = false;
-            this.globstarAll(groups, (state) => (state === B_START ? EL_G0 : EL_G1));
+            this.globstarAll(groups, (state) => (state === B_START ? G0_ELEM : G1_ELEM));
           }
           break;
         default:
@@ -476,7 +480,7 @@ class Builder {
   // segments too, which makes the separators around it lenient.
   settle(g) {
     if (!g.pendingOss || g.state === B_OPEN) return;
-    rebase(g, this.emit(makeElem(EL_G0, null, null), g.tails), B_SEP);
+    rebase(g, this.emit(G0_ELEM, g.tails), B_SEP);
   }
 
   // Close every group's segment into one node per group; they all
@@ -495,8 +499,8 @@ class Builder {
   // One globstar node per group, its kind chosen by the boundary the
   // group crossed; they continue as one open group. (The parser never
   // glues a `**` to text, so there is no segment to close.)
-  globstarAll(groups, kindOf) {
-    this.joinAll(groups, B_OPEN, (g) => this.emit(makeElem(kindOf(g.state), null, null), g.tails));
+  globstarAll(groups, elemOf) {
+    this.joinAll(groups, B_OPEN, (g) => this.emit(elemOf(g.state), g.tails));
   }
 
   // Emit one node per group through `node`, then continue as one group

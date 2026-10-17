@@ -156,8 +156,10 @@ impl SegmentMatcher {
     #[inline]
     fn chain_matches_on<E: ChainElems>(&self, chain: &Chain, elems: &E, path: &[u8]) -> bool {
         match &chain.shape {
-            Shape::Fixed => self.fixed_run(elems, 0..elems.len(), path, 0),
-            Shape::Single(g) => {
+            Shape::Line { g, .. } if *g as usize == elems.len() => {
+                self.fixed_run(elems, 0..elems.len(), path, 0)
+            }
+            Shape::Line { g, .. } => {
                 let g = *g as usize;
                 self.head(elems, g, path)
                     .is_some_and(|mid_start| self.tail_and_globstar(elems, g, path, mid_start))
@@ -316,19 +318,23 @@ impl SegmentMatcher {
     /// NFA.
     pub(super) fn chain_dir(&self, dir: &[u8]) -> DirMatch {
         let chain = &self.chains[0];
-        let g = match &chain.shape {
-            Shape::Fixed => None,
-            Shape::Single(g) => Some(*g as usize),
-            Shape::Many(_) => unreachable!("a chain with several globstars keeps the NFA"),
+        let Shape::Line {
+            g,
+            open_from,
+            any_from,
+        } = chain.shape
+        else {
+            unreachable!("a chain with several globstars keeps the NFA")
         };
+        let line = (g as usize, open_from as usize, any_from as usize);
         if chain.nodes.is_empty() {
-            self.chain_dir_on(g, &&self.elems[..], dir)
+            self.chain_dir_on(line, &&self.elems[..], dir)
         } else {
             let elems = Mapped {
                 nodes: &chain.nodes,
                 elems: &self.elems,
             };
-            self.chain_dir_on(g, &elems, dir)
+            self.chain_dir_on(line, &elems, dir)
         }
     }
 
@@ -337,16 +343,20 @@ impl SegmentMatcher {
     /// globstar when it has taken everything after the head, and a
     /// tail position when the tail's first elements take the last
     /// segments.
-    fn chain_dir_on<E: ChainElems>(&self, g: Option<usize>, elems: &E, dir: &[u8]) -> DirMatch {
+    fn chain_dir_on<E: ChainElems>(
+        &self,
+        (g, open_from, any_from): (usize, usize, usize),
+        elems: &E,
+        dir: &[u8],
+    ) -> DirMatch {
         let n = elems.len();
         // A fixed chain: the globstar sits past the end, the tail is
         // empty.
-        let g = g.unwrap_or(n);
         let tl = n - g - usize::from(g < n);
         // Every element from `i` on takes some segment: a token there
         // still reaches accept.
-        let open = |i: usize| (i..n).all(|j| elems.at(j).satisfiable());
-        let tail_any = (n - tl..n).all(|j| elems.at(j).any_seg());
+        let open = |i: usize| i >= open_from;
+        let tail_any = n - tl >= any_from;
         if dir.is_empty() {
             // The walk root: nothing consumed yet. All below iff a
             // leading globstar is followed by at most one any-segment.
@@ -379,7 +389,7 @@ impl SegmentMatcher {
         let mut prefix = g_alive && open(g + 1);
         let mut all = self.dot && g_alive && tail_any;
         if (!prefix || all) && tl > 1 {
-            (prefix, all) = self.tail_tokens(elems, g, dir, mid_start, prefix, all);
+            (prefix, all) = self.tail_tokens(elems, (g, open_from), dir, mid_start, prefix, all);
         }
         DirMatch::new(exact, prefix, all)
     }
@@ -394,7 +404,7 @@ impl SegmentMatcher {
     fn tail_tokens<E: ChainElems>(
         &self,
         elems: &E,
-        g: usize,
+        (g, open_from): (usize, usize),
         dir: &[u8],
         mid_start: usize,
         mut prefix: bool,
@@ -404,11 +414,6 @@ impl SegmentMatcher {
         let tl = n - g - 1;
         let kind = elems.at(g);
         let dot_at = Some(self.first_dot(dir, mid_start));
-        // Every element from `open_from` on takes some segment.
-        let open_from = (g + 1..n)
-            .rev()
-            .find(|&j| !elems.at(j).satisfiable())
-            .map_or(0, |j| j + 1);
         let mut checks = MAX_TAIL_CHECKS;
         let mut end = dir.len();
         for j in 1..tl {
@@ -673,10 +678,10 @@ const POS: u32 = 1 << 31;
 
 impl Active {
     fn new(nfa: &SparseNfa) -> Self {
-        let pos_base = nfa.nodes.len() + 1;
+        let pos_base = nfa.n as usize + 1;
         Active {
             items: Vec::new(),
-            has: Wide::zero(Wide::words(pos_base + nfa.nodes.len() + 1)),
+            has: Wide::zero(Wide::words(pos_base + nfa.n as usize + 1)),
             pos_base,
         }
     }
@@ -723,7 +728,7 @@ impl Active {
 impl SparseNfa {
     #[inline]
     fn accept(&self) -> u32 {
-        self.nodes.len() as u32
+        self.n
     }
 
     fn lits(&self, p: usize) -> &[u32] {
@@ -762,7 +767,7 @@ impl SparseNfa {
     /// The start's closure.
     fn init(&self, todo: &mut Vec<u32>) -> Active {
         let mut active = Active::new(self);
-        self.enter(self.nodes.len(), &mut active, todo);
+        self.enter(self.n as usize, &mut active, todo);
         active
     }
 
@@ -794,7 +799,7 @@ impl SparseNfa {
     ) {
         next.clear();
         let absorb_ok = m.dot || seg.first() != Some(&b'.');
-        let consumes = |s: u32| match &m.elems[self.nodes[s as usize] as usize] {
+        let consumes = |s: u32| match &m.elems[s as usize] {
             Elem::Lit(lit) => m.lit_eq(lit, seg),
             Elem::Wild(w) => m.wild_consumes(w, seg),
             Elem::G0 | Elem::G1 => absorb_ok,
@@ -823,13 +828,13 @@ impl SparseNfa {
     }
 
     fn lit_of<'m>(&self, m: &'m SegmentMatcher, s: u32) -> &'m [u8] {
-        m.elems[self.nodes[s as usize] as usize].as_lit()
+        m.elems[s as usize].as_lit()
     }
 
     /// State `s` took a segment: a globstar stays, and its position's
     /// successors are entered.
     fn fire(&self, m: &SegmentMatcher, s: u32, next: &mut Active, todo: &mut Vec<u32>) {
-        if m.elems[self.nodes[s as usize] as usize].is_globstar() {
+        if m.elems[s as usize].is_globstar() {
             next.add(s);
         }
         self.enter(s as usize, next, todo);
@@ -864,8 +869,8 @@ impl SparseNfa {
         let mut next = Active::new(self);
         let mut todo = Vec::new();
         let accept = self.accept();
-        let any_seg = |s: u32| m.elems[self.nodes[s as usize] as usize].any_seg();
-        for _ in 0..=(self.nodes.len() + 1).min(MAX_COVER_SEGMENTS) {
+        let any_seg = |s: u32| m.elems[s as usize].any_seg();
+        for _ in 0..=(self.n as usize + 1).min(MAX_COVER_SEGMENTS) {
             next.clear();
             for &item in &active.items {
                 if item & POS == 0 {

@@ -164,9 +164,11 @@ impl Graph {
         let n = path.as_ref().map_or(self.elems.len(), Vec::len);
         let elem = |i: usize| &self.elems[path.as_ref().map_or(i, |p| p[i] as usize)];
         let mut globstars = (0..n).filter(|&i| elem(i).is_globstar());
+        // The first index from which every element passes `ok`.
+        let from = |ok: fn(&Elem) -> bool| {
+            (0..n).rev().find(|&j| !ok(elem(j))).map_or(0, |j| j + 1) as u32
+        };
         let shape = match (globstars.next(), globstars.next()) {
-            (None, _) => Shape::Fixed,
-            (Some(g), None) => Shape::Single(g as u32),
             // A union member gets an NFA over its nodes alone.
             (Some(_), Some(_)) => {
                 let p = path.as_deref()?;
@@ -175,6 +177,11 @@ impl Graph {
                 }
                 Shape::Many(Box::new(nfa_over::<u64>(&self.elems, None, Some(p))))
             }
+            (g, _) => Shape::Line {
+                g: g.unwrap_or(n) as u32,
+                open_from: from(Elem::satisfiable),
+                any_from: from(Elem::any_seg),
+            },
         };
         Some(Chain {
             nodes: path.map_or_else(Default::default, Vec::into_boxed_slice),
@@ -184,23 +191,22 @@ impl Graph {
 
     /// The NFA over the whole graph: a `u64` active set when it fits.
     fn nfa(&self) -> AnyNfa {
-        any_nfa(&self.elems, self.ci, self.edges.as_ref(), None)
+        any_nfa(&self.elems, self.ci, self.edges.as_ref())
     }
 }
 
-/// The NFA over the positions of a path (`None`: the graph itself):
-/// dense rows in a `u64`, or past 64 states within `MAX_ROW_BYTES` and
-/// `MAX_DENSE_LITS`; sparse beyond.
-fn any_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>, path: Option<&[u32]>) -> AnyNfa {
-    let states = path.map_or(elems.len(), <[u32]>::len) + 1;
+/// The NFA over the graph: dense rows in a `u64`, or past 64 states
+/// within `MAX_ROW_BYTES` and `MAX_DENSE_LITS`; sparse beyond.
+fn any_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> AnyNfa {
+    let states = elems.len() + 1;
     if states <= 64 {
-        AnyNfa::Small(nfa_over(elems, edges, path))
+        AnyNfa::Small(nfa_over(elems, edges, None))
     } else if states * Wide::words(states) * 8 <= MAX_ROW_BYTES
         && edges.is_none_or(|e| lit_fanout(elems, e) <= MAX_DENSE_LITS)
     {
-        AnyNfa::Wide(Box::new(nfa_over(elems, edges, path)))
+        AnyNfa::Wide(Box::new(nfa_over(elems, edges, None)))
     } else {
-        AnyNfa::Sparse(Box::new(sparse_over(elems, ci, edges, path)))
+        AnyNfa::Sparse(Box::new(sparse_over(elems, ci, edges)))
     }
 }
 
@@ -292,15 +298,11 @@ fn nfa_over<B: Bits>(elems: &[Elem], edges: Option<&Edges>, path: Option<&[u32]>
     }
 }
 
-/// The sparse NFA over the positions of a path (`None`: the graph
-/// itself): each position keeps its successors, the start's last, the
-/// literal ones sorted by literal.
-fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>, path: Option<&[u32]>) -> SparseNfa {
-    let n = path.map_or(elems.len(), <[u32]>::len);
-    let node_at = |i: usize| path.map_or(i as u32, |p| p[i]);
-    let elem = |i: usize| &elems[node_at(i) as usize];
-    // Positions of a path follow one another.
-    let edges = if path.is_some() { None } else { edges };
+/// The sparse NFA over the graph: each position keeps its successors,
+/// the start's last, the literal ones sorted by literal.
+fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
+    let n = elems.len();
+    let elem = |i: usize| &elems[i];
     // The start is position `n`.
     let succ_of = |p: usize| {
         let (next, stored): (Option<u32>, &[u32]) = match edges {
@@ -312,7 +314,6 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>, path: Option<&[u
         next.into_iter().chain(stored.iter().copied())
     };
 
-    let nodes: Vec<u32> = (0..n).map(node_at).collect();
     let n_states = n + 1;
 
     // A position reaches accept through ≥ 1 segment iff its element
@@ -359,7 +360,7 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>, path: Option<&[u
                 }
             }
         }
-        sort_by_literal(&mut lit_pos, elems, path, ci);
+        sort_by_literal(&mut lit_pos, elems, None, ci);
         lits.extend(lit_pos);
     }
     lit_at.push(lits.len() as u32);
@@ -367,7 +368,7 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>, path: Option<&[u
     null_at.push(nulls.len() as u32);
 
     SparseNfa {
-        nodes: nodes.into_boxed_slice(),
+        n: n as u32,
         lit_at: lit_at.into_boxed_slice(),
         lits: lits.into_boxed_slice(),
         other_at: other_at.into_boxed_slice(),
@@ -398,12 +399,19 @@ pub(super) fn lit_cmp(a: &[u8], b: &[u8], ci: bool) -> std::cmp::Ordering {
         .cmp(b.iter().map(u8::to_ascii_lowercase))
 }
 
-/// The NFA over the lone chain a matcher kept instead of one (test
-/// hook).
-pub(super) fn chain_nfa(m: &SegmentMatcher) -> AnyNfa {
+/// The NFA over the lone chain a matcher kept instead of one, and the
+/// matcher it runs on: the chain's elements in path order (test hook).
+pub(super) fn chain_nfa(m: &SegmentMatcher) -> (Cow<'_, SegmentMatcher>, AnyNfa) {
     let nodes = &m.chains[0].nodes;
-    let path = (!nodes.is_empty()).then_some(&nodes[..]);
-    any_nfa(&m.elems, m.case_insensitive, None, path)
+    let m = if nodes.is_empty() {
+        Cow::Borrowed(m)
+    } else {
+        let mut lone = m.clone();
+        lone.elems = nodes.iter().map(|&i| m.elems[i as usize].clone()).collect();
+        Cow::Owned(lone)
+    };
+    let nfa = any_nfa(&m.elems, m.case_insensitive, None);
+    (m, nfa)
 }
 
 /// Elements a brace-free pattern needs (one per boundary plus the last

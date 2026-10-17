@@ -29,6 +29,8 @@ import {
   WK_AFFIX,
   WK_AFFIX_SET,
   WK_AFFIX_INDEX,
+  elemAnySeg,
+  elemSatisfiable,
 } from "./elem.js";
 
 export class SegmentMatcher {
@@ -47,6 +49,22 @@ export class SegmentMatcher {
     this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
     const suf = suffixes(body);
     this.suffixes = suf.length > 0 ? suf.map(flat) : null;
+    // What `chainDir` reads off a lone chain: every element from
+    // `openFrom` on takes some segment, from `anyFrom` on any non-empty
+    // one.
+    this.openFrom = 0;
+    this.anyFrom = 0;
+    if (this.nfa === null) {
+      const ids = this.chains[0].nodes;
+      const n = ids === null ? this.elems.length : ids.length;
+      const at = (i) => (ids === null ? this.elems[i] : this.elems[ids[i]]);
+      let i = n;
+      while (i > 0 && elemSatisfiable(at(i - 1))) i--;
+      this.openFrom = i;
+      i = n;
+      while (i > 0 && elemAnySeg(at(i - 1))) i--;
+      this.anyFrom = i;
+    }
   }
 
   // How compilation laid the pattern out (a test hook, twin of Rust's

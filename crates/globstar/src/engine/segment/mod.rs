@@ -236,11 +236,15 @@ struct Chain {
 /// Where a chain's globstars are, which decides how it is matched.
 #[derive(Debug, Clone)]
 enum Shape {
-    /// None: one element per segment.
-    Fixed,
-    /// One, at this index: the head and the tail are anchored around
-    /// it.
-    Single(u32),
+    /// At most one globstar, at `g` (past the end for none): the head
+    /// and the tail are anchored around it. Every element from
+    /// `open_from` on takes some segment, from `any_from` on any
+    /// non-empty one: what `match_dir` reads off the chain.
+    Line {
+        g: u32,
+        open_from: u32,
+        any_from: u32,
+    },
     /// Several: the NFA over this chain alone (a union member; a lone
     /// chain with several globstars is the graph, whose NFA serves).
     Many(Box<Nfa<u64>>),
@@ -275,9 +279,9 @@ struct State<B: Bits> {
 /// square.
 #[derive(Debug, Clone)]
 struct SparseNfa {
-    /// Per position (= its state; the accept state is `nodes.len()`),
-    /// its node.
-    nodes: Box<[u32]>,
+    /// Positions, one per node (state `i` is position `i` is node `i`);
+    /// the accept state is `n`.
+    n: u32,
     /// Per position (the start last), its successors: the literal
     /// ones sorted by literal (case-folded when
     /// insensitive), the other positions, and the nullable ones (`**/`)
@@ -417,7 +421,10 @@ impl SegmentMatcher {
         }
         match &self.nfa {
             Some(nfa) => nfa.is_match(self, path),
-            None => compile::chain_nfa(self).is_match(self, path),
+            None => {
+                let (m, nfa) = compile::chain_nfa(self);
+                nfa.is_match(&m, path)
+            }
         }
     }
 
