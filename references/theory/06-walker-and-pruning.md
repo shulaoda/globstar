@@ -26,21 +26,23 @@ This note formalizes both and documents how the walker (`references/spec/WALKER_
 
 Walker startup:
    for each prefix p in matcher.static_prefixes():
-       seed = cwd ++ p
-       fs.statSync(seed):
-         missing      → silently drop this branch
-         file & match → push as result
-         directory    → push frame {absolute=seed, relative=p}
+       walk p part by part from cwd, each part judged by the per-entry
+       rule below as its folder's only entry (lstat stands in for the
+       listing); a part that gives no frame drops the seed, the last
+       part's result is the seed's: a file to emit, or a frame to read
 
 Walker per directory frame (absolute, relative):
    for each entry in fs.readdir(absolute):
        child_rel = relative ++ "/" ++ entry.name
        if ignore.match(child_rel):     skip
-       else if entry is directory:
+       else if entry is directory:     # a symlink takes its target's type
+           if ignore_dirs.match(child_rel ++ "/"):             skip
            dm = matcher.match_dir(child_rel)
-           if DirMatch::may_match_below(dm):
-               enqueue child frame
-           # Match flag is unused: walker emits files only
+           if not DirMatch::may_match_below(dm):              skip
+           if dot and ignore.match_dir(child_rel) covers all below: skip
+           enqueue child frame        # unless the link closes a cycle
+           # the JS walker emits files only; Rust also yields the folder
+           # when DirMatch::matches(dm)
        else if matcher.match(child_rel):
            emit child path
 ```
@@ -198,10 +200,10 @@ One corner is not provable: branches that split the names by length — `?/**/?`
 
 The walker's responsibilities relative to this module are documented in `references/spec/WALKER_SPEC.md`. From the matcher's side:
 
-- `static_prefixes()` is consumed once at construction time (`prepare()` → `initFromPrefixes`) to produce seed frames.
-- `match_dir(child_rel)` is consulted once per discovered directory during `processDirents`. The return value gates the descend decision; the `Match` flag is unused because the walker is hard-wired to emit only file paths.
+- `static_prefixes()` is consumed once at construction time (`prepare()` → `initFromPrefixes`) to produce seed frames, each reached part by part through the per-entry rule.
+- `match_dir(child_rel)` is consulted once per discovered directory during `processDirents`. The return value gates the descend decision; the JS walker emits files only and leaves the `Match` flag unused, while the Rust walker yields a matching folder too.
 - `is_match(child_rel)` is consulted once per discovered file.
-- `ignore.is_match(child_rel)` is consulted once per discovered entry of either kind, before any other matcher work.
+- `ignore.is_match(child_rel)` is consulted once per discovered entry of either kind, before any other matcher work; `ignore_dirs.is_match(child_rel ++ "/")` once per directory (entries that end in `/`, WALKER_SPEC §3.2); and under `dot: true`, `ignore.match_dir(child_rel)` once per directory worth descending, whose `DescendAll…` verdict skips the subtree (§2.5).
 
 ## 4. Properties
 
@@ -252,9 +254,9 @@ Pattern: `src/**/*.ts`. Compiled matcher has `static_prefixes = [b"src"]` (the l
 matcher.static_prefixes() = [ b"src" ]
 
 walker iterates:
-  prefix = b"src"
-  seed   = "/proj/src"
-  statSync(seed) → directory
+  prefix = b"src", one part: "src"
+  lstatSync("/proj/src") → directory, judged as the only entry of "/proj"
+  ignore.match("src") = false (no ignores)
   DirMatch.mayMatchBelow(matcher.match_dir(b"src")) = true
   push frame { absolute: "/proj/src", relative: "src" }
 ```
@@ -328,7 +330,7 @@ The walker performed exactly 3 `readdir` calls (one per directory under `src/`).
 
 ### 5.5 With an ignore: `glob("src/**/*.ts", { ignore: ["**/*.test.ts"] })`
 
-Same setup, plus `tests/foo.test.ts`. The walker compiles a second matcher (`ignore`) for `**/*.test.ts`. At each entry the walker calls `ignore.match(child_rel)` first; matching paths skip without recursion. For directories the walker uses `match` (not `match_dir`) on the ignore matcher because ignore patterns are evaluated on entry, not as subtree predicates.
+Same setup, plus `tests/foo.test.ts`. The walker compiles a second matcher (`ignore`) for `**/*.test.ts`. At each entry the walker calls `ignore.match(child_rel)` first; matching paths skip without recursion.
 
 ```
 For "tests/foo.test.ts":
@@ -337,7 +339,7 @@ For "src/cli/run.ts":
   ignore.match("src/cli/run.ts")    = false → continue (emitted via main matcher)
 ```
 
-If `**/*.test.ts` were instead routed through `match_dir`, a directory where `matches_all_below` holds (§2.5) could be skipped whole. The walker does not do this: it still tests ignore patterns per entry with `match`.
+Under `dot: true` the walker also asks `ignore.match_dir(d)` for each directory it would descend: one where `matches_all_below` holds (§2.5) is skipped whole, so `**/node_modules/**` prunes `node_modules` as cheaply as `node_modules` does. `**/*.test.ts` covers no directory (every path below must end in `.test.ts`), so here each entry is still tested with `match`. Under `dot: false` the check is not made: a `**` never covers the dot-led names below (GLOB_SPEC §13.6), and a positive pattern may still name one.
 
 ## 6. Source map
 

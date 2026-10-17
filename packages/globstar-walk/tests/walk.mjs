@@ -659,6 +659,37 @@ if (process.platform === "win32") {
       assert.ok(only.startsWith("\\\\?\\") && !only.includes("/"), only);
     }
   });
+
+  // Twin of `windows_seeds_reach_what_a_root_walk_lists` in walk.rs.
+  await check("seeds reach what a root walk lists", async () => {
+    const root = tmpTree("win-seeds", ["src/a.ts", "src/sub/b.ts", "secret/key.pem"]);
+    // One spelling per file, whatever the pattern's shape; an escaped
+    // `\` is no separator, so its member adds no second copy.
+    for (const patterns of [
+      ["**/b.ts"],
+      ["src/sub/*.ts"],
+      ["src/sub/b.ts"],
+      ["src\\\\sub/*.ts", "src/sub/*.ts"],
+    ]) {
+      assert.deepEqual(globSync(patterns, { cwd: root }), [root + "/src/sub/b.ts"], patterns);
+      await expectBoth(root, patterns, {}, ["src/sub/b.ts"], String(patterns));
+    }
+    // A drive is never below cwd, and a name Win32 rewrites (`src.`,
+    // `src `, `nul`, `con.txt`) reaches no folder a root walk lists: no
+    // match, no error, nothing past the ignore rules.
+    const drive = root.replaceAll("\\", "/") + "/src/*.ts";
+    for (const patterns of [
+      [drive],
+      ["src./*.ts"],
+      ["src /*.ts"],
+      ["src/a.ts."],
+      ["nul"],
+      ["con.txt"],
+      ["secret./*.pem"],
+    ]) {
+      await expectBoth(root, patterns, { ignore: ["secret"] }, [], String(patterns));
+    }
+  });
 }
 
 if (failures > 0) {

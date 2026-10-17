@@ -62,9 +62,13 @@
 //!
 //! By default (`follow_links: true`, matching `tinyglobby`), symlinks
 //! are followed: the target is `stat`-ed, and if it's a directory the
-//! walker descends into it. Cycles are broken by canonicalizing each
-//! symlink-target and checking against the ancestor chain — the
-//! offending descent is dropped, the rest of the walk continues.
+//! walker descends into it. Cycles are broken by remembering, along
+//! each way down, the folders reached through a link: on Unix by their
+//! `(dev, ino)`, which the `stat` that typed the link gives for free,
+//! with a hit confirmed by canonical path (inode numbers are not unique
+//! on every file system); on Windows by canonical path. A link to a
+//! folder already on the way down is not descended (it is still yielded
+//! when it matches), and the rest of the walk continues.
 //!
 //! Set `WalkOptions::follow_links = false` to drop symlinks entirely:
 //! they are NEITHER emitted NOR descended (matches `fdir`'s
@@ -87,12 +91,14 @@
 //! `read_dir` gives with the platform's separator (`\` on Windows), so
 //! one file has one spelling whatever the pattern's shape.
 //!
-//! On Windows a seed (a pattern's literal head) stops before a part
-//! Win32 would open as something else — one ending in `.` or a space, a
-//! device name such as `NUL` or `con.txt` — and the walk starts from its
-//! parent, where `read_dir` decides; a part with `:` (a drive letter, a
-//! stream) is never below `base`, so `C:/proj/src/*.ts` matches nothing,
-//! as on other platforms. Patterns are relative to `base`.
+//! A seed (a pattern's literal head) is reached part by part, and a
+//! part whose spelling could open another entry must be in its folder's
+//! listing as written: a non-ASCII name (APFS opens an NFC spelling of a
+//! name stored NFD), and on Windows a name Win32 rewrites — one ending in
+//! `.` or a space, a device name such as `NUL` or `con.txt`, one with a
+//! `:` (a drive letter, a stream). Otherwise the seed is dropped, as a
+//! root walk never lists such a spelling: `C:/proj/src/*.ts` matches
+//! nothing, as on other platforms. Patterns are relative to `base`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -105,6 +111,7 @@ pub use entry::DirEntry;
 pub use error::WalkError;
 pub use options::WalkOptions;
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path;
@@ -137,18 +144,24 @@ pub struct Walk {
     /// The seeds' entries and errors, yielded before any folder is
     /// read (popped, so stored in reverse).
     ready: Vec<Result<DirEntry, WalkError>>,
+
+    /// Scratch: the relative path of the entry being judged.
+    rel: Vec<u8>,
 }
 
 /// A folder being read: its entries stream out as `read_dir` yields
-/// them, and its child folders wait until it is done, so the walk stays
-/// depth-first with each folder's own entries first. Memory follows the
-/// folders found, not the entries read.
+/// them, and its child folders go on the stack as they are found, to be
+/// read after it, so the walk stays depth-first with each folder's own
+/// entries first. Memory follows the folders found, not the entries
+/// read.
 #[derive(Debug)]
 struct Reading {
     frame: Frame,
     entries: fs::ReadDir,
-    /// Child folders to walk, in reading order.
-    children: Vec<Frame>,
+    /// Where this folder's children start on the stack. They are in
+    /// reading order until the folder is done, then turned, so the first
+    /// child is read first.
+    mark: usize,
 }
 
 #[derive(Debug)]
@@ -165,13 +178,26 @@ struct Frame {
     /// [`DirEntry`]s don't have to recompute from path bytes.
     depth: usize,
 
-    /// Canonicalized targets of every symlink we descended through to
-    /// reach this frame. A new symlink-to-dir descent canonicalizes its
-    /// target and skips the descent if the target is already in this
-    /// chain — that's our cycle break (matches `fdir`'s `isRecursive`).
-    /// Inherited unchanged by a non-symlink descent; a seed starts with
-    /// the links on its prefix.
-    symlink_ancestors: Vec<PathBuf>,
+    /// The symlinks descended through to reach this frame, for the
+    /// cycle break (see [`link_to_descend`]; it matches `fdir`'s
+    /// `isRecursive`). Inherited unchanged by a plain descent; a seed
+    /// starts with the links on its prefix.
+    links: Vec<Link>,
+}
+
+/// A symlink descended through: the identity of its target, so a link
+/// back to it on the way down is found.
+#[derive(Debug, Clone)]
+struct Link {
+    /// The target's `(dev, ino)`, from the `stat` that typed the link.
+    #[cfg(unix)]
+    id: (u64, u64),
+    /// The link as walked, to confirm an identity hit by canonical path.
+    #[cfg(unix)]
+    path: PathBuf,
+    /// The target's canonical path.
+    #[cfg(not(unix))]
+    canonical: PathBuf,
 }
 
 impl Walk {
@@ -286,6 +312,7 @@ impl Walk {
             stack: Vec::new(),
             reading: None,
             ready: Vec::new(),
+            rel: Vec::new(),
         })
     }
 
@@ -346,7 +373,7 @@ impl Walk {
                 absolute: self.base.clone(),
                 relative: Vec::new(),
                 depth: 0,
-                symlink_ancestors: Vec::new(),
+                links: Vec::new(),
             };
             if prefix.is_empty() {
                 self.stack.push(frame);
@@ -369,7 +396,7 @@ impl Walk {
                 if opens_as_another(name) && !listed(&frame.absolute, name) {
                     break;
                 }
-                let path = frame.absolute.join(name);
+                let path = join(&frame.absolute, name.as_ref());
                 // Defense-in-depth: a part that replaces the base (a
                 // drive, a root) is never listed, so never gets here.
                 if !path.starts_with(&self.base) {
@@ -390,7 +417,7 @@ impl Walk {
                     metadata: meta,
                 };
                 let mut below = Vec::new();
-                let item = rules.judge(&frame, listed, &mut below);
+                let item = rules.judge(&frame, listed, &mut self.rel, &mut below);
                 if i + 1 == parts.len() {
                     self.ready.extend(item.map(Ok));
                     self.stack.extend(below);
@@ -410,20 +437,21 @@ impl Walk {
     }
 
     /// The next item of the folder being read; `None` once it is done,
-    /// when its child folders go on the stack, first child on top.
+    /// when its child folders on the stack are turned, first child on
+    /// top.
     fn read_next(&mut self) -> Option<Result<DirEntry, WalkError>> {
         let reading = self.reading.as_mut()?;
         let rules = self.rules.as_ref()?;
         for entry in reading.entries.by_ref() {
             if let Some(item) = rules
-                .visit(entry, &reading.frame, &mut reading.children)
+                .visit(entry, &reading.frame, &mut self.rel, &mut self.stack)
                 .transpose()
             {
                 return Some(item);
             }
         }
         let done = self.reading.take()?;
-        self.stack.extend(done.children.into_iter().rev());
+        self.stack[done.mark..].reverse();
         None
     }
 }
@@ -459,6 +487,7 @@ impl Rules {
         &self,
         entry: io::Result<fs::DirEntry>,
         frame: &Frame,
+        rel: &mut Vec<u8>,
         children: &mut Vec<Frame>,
     ) -> Result<Option<DirEntry>, WalkError> {
         let entry = entry.map_err(|source| WalkError::Io {
@@ -470,56 +499,61 @@ impl Rules {
             source,
         };
         let name = entry.file_name();
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            // Typed by its own `lstat` where the listing keeps no types,
+            // and gone since the read: as if it had gone before it.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(fail(source)),
+        };
         let listed = Listed {
             name: &name,
-            file_type: entry.file_type().map_err(fail)?,
+            file_type,
             // Free on Windows: `FindFirstFileW` filled it in.
             #[cfg(windows)]
             metadata: entry.metadata().map_err(fail)?,
         };
-        Ok(self.judge(frame, listed, children))
+        Ok(self.judge(frame, listed, rel, children))
     }
 
     /// The entry `name` of the folder `frame`: what it yields, if
-    /// anything. A folder to walk goes to `children`.
-    fn judge(&self, frame: &Frame, listed: Listed, children: &mut Vec<Frame>) -> Option<DirEntry> {
+    /// anything. A folder to walk goes to `children`; `rel` is scratch.
+    fn judge(
+        &self,
+        frame: &Frame,
+        listed: Listed,
+        rel: &mut Vec<u8>,
+        children: &mut Vec<Frame>,
+    ) -> Option<DirEntry> {
         let Listed {
             name, file_type, ..
         } = listed;
-        // Built only when needed, as `fs::DirEntry::path` builds it.
-        let path = || frame.absolute.join(name);
         // `follow_links: false` drops symlinks entirely.
         if file_type.is_symlink() && !self.follow_links {
             return None;
         }
-        let name_str = name.to_string_lossy();
-        let mut child_rel = Vec::with_capacity(frame.relative.len() + 1 + name_str.len());
-        child_rel.extend_from_slice(&frame.relative);
+        rel.clear();
+        rel.extend_from_slice(&frame.relative);
         if !frame.relative.is_empty() {
-            child_rel.push(b'/');
+            rel.push(b'/');
         }
-        child_rel.extend_from_slice(name_str.as_bytes());
+        rel.extend_from_slice(name.to_string_lossy().as_bytes());
 
         // Ignore-filter before any stat, so an ignored symlink never
         // costs a metadata resolution (WALKER_SPEC §7.1 order).
-        if self
-            .ignore
-            .as_ref()
-            .is_some_and(|ig| ig.is_match(&child_rel))
-        {
+        if self.ignore.as_ref().is_some_and(|ig| ig.is_match(rel)) {
             return None;
         }
+        // Built only when needed, as `fs::DirEntry::path` builds it.
+        let path = || join(&frame.absolute, name);
         // A symlink takes its target's type; one that resolves to nothing
         // (dangling, looping) stays a link, emitted like a file.
-        let (is_dir, special) = if file_type.is_symlink() {
-            match fs::metadata(path()) {
-                Ok(m) => (m.is_dir(), is_special(m.file_type())),
-                Err(_) => (false, false),
-            }
-        } else {
-            (file_type.is_dir(), is_special(file_type))
-        };
-        if special {
+        let target = file_type
+            .is_symlink()
+            .then(|| fs::metadata(path()).ok())
+            .flatten();
+        let typed = target.as_ref().map_or(file_type, fs::Metadata::file_type);
+        if is_special(typed) {
             return None;
         }
         let depth = frame.depth + 1;
@@ -530,43 +564,40 @@ impl Rules {
             #[cfg(windows)]
             metadata: listed.metadata.clone(),
         };
-        if !is_dir {
-            return self.matcher.is_match(&child_rel).then(|| entry(path()));
+        if !typed.is_dir() {
+            return self.matcher.is_match(rel).then(|| entry(path()));
         }
-        if folder_matches(self.ignore_dirs.as_ref(), &child_rel) {
+        if folder_matches(self.ignore_dirs.as_ref(), rel) {
             return None;
         }
-        let dm = self.matcher.match_dir(&child_rel);
+        let dm = self.matcher.match_dir(rel);
         let emitted =
-            (dm.matches() || folder_matches(self.dirs.as_ref(), &child_rel)).then(|| entry(path()));
+            (dm.matches() || folder_matches(self.dirs.as_ref(), rel)).then(|| entry(path()));
         // An ignore that covers everything below skips the subtree
         // (`**/node_modules/**` and `node_modules`).
         let covered = self.prune_ignored
             && self
                 .ignore
                 .as_ref()
-                .is_some_and(|ig| ig.match_dir(&child_rel).matches_all_below());
+                .is_some_and(|ig| ig.match_dir(rel).matches_all_below());
         if !dm.may_match_below() || covered {
             return emitted;
         }
-        // Cycle break: a link to a target already on the way down, or a
-        // broken or unreadable one, is not descended (still emitted).
+        // Cycle break: a link to a folder already on the way down is not
+        // descended (still emitted).
         let path = path();
-        let mut symlink_ancestors = frame.symlink_ancestors.clone();
-        if file_type.is_symlink() {
-            let Ok(resolved) = fs::canonicalize(&path) else {
-                return emitted;
-            };
-            if symlink_ancestors.contains(&resolved) {
-                return emitted;
+        let mut links = frame.links.clone();
+        if let Some(target) = &target {
+            match link_to_descend(&links, &path, target) {
+                Some(link) => links.push(link),
+                None => return emitted,
             }
-            symlink_ancestors.push(resolved);
         }
         children.push(Frame {
             absolute: path,
-            relative: child_rel,
+            relative: rel.clone(),
             depth,
-            symlink_ancestors,
+            links,
         });
         emitted
     }
@@ -584,15 +615,12 @@ impl Iterator for Walk {
             self.seeded = true;
             self.init_from_prefixes();
         }
+        if let Some(item) = self.ready.pop() {
+            return Some(item);
+        }
         loop {
-            if let Some(item) = self.ready.pop() {
+            if let Some(item) = self.read_next() {
                 return Some(item);
-            }
-            if self.reading.is_some() {
-                if let Some(item) = self.read_next() {
-                    return Some(item);
-                }
-                continue;
             }
             let frame = self.stack.pop()?;
             match fs::read_dir(&frame.absolute) {
@@ -600,7 +628,7 @@ impl Iterator for Walk {
                     self.reading = Some(Reading {
                         frame,
                         entries,
-                        children: Vec::new(),
+                        mark: self.stack.len(),
                     });
                 }
                 Err(source) => {
@@ -747,8 +775,51 @@ fn folders_only(entries: &[(String, String)]) -> Vec<(String, String)> {
 }
 
 /// Does a folder-only matcher match the folder `rel`, asked with its `/`?
-fn folder_matches(dirs: Option<&Glob>, rel: &[u8]) -> bool {
-    dirs.is_some_and(|d| d.is_match(&[rel, b"/"].concat()))
+fn folder_matches(dirs: Option<&Glob>, rel: &mut Vec<u8>) -> bool {
+    dirs.is_some_and(|d| {
+        rel.push(b'/');
+        let hit = d.is_match(rel);
+        rel.pop();
+        hit
+    })
+}
+
+/// `dir/name` in one allocation (`Path::join` takes two).
+fn join(dir: &Path, name: &OsStr) -> PathBuf {
+    let mut path = PathBuf::with_capacity(dir.as_os_str().len() + 1 + name.len());
+    path.push(dir);
+    path.push(name);
+    path
+}
+
+/// The link `path`, whose target `target` typed, as a frame's [`Link`];
+/// `None` when descending it would close a cycle, its target being on
+/// the way down already (`links`). A folder has one `(dev, ino)`, which
+/// the `stat` gave for free; a hit is confirmed by canonical path, since
+/// some file systems hand out inode numbers that are not unique.
+#[cfg(unix)]
+fn link_to_descend(links: &[Link], path: &Path, target: &fs::Metadata) -> Option<Link> {
+    use std::os::unix::fs::MetadataExt;
+    let id = (target.dev(), target.ino());
+    let mut same = links.iter().filter(|l| l.id == id).peekable();
+    if same.peek().is_some() {
+        let here = fs::canonicalize(path).ok()?;
+        if same.any(|l| fs::canonicalize(&l.path).is_ok_and(|p| p == here)) {
+            return None;
+        }
+    }
+    Some(Link {
+        id,
+        path: path.to_path_buf(),
+    })
+}
+
+/// Windows has no cheap identity in a `stat`: the canonical path is
+/// compared, as before.
+#[cfg(not(unix))]
+fn link_to_descend(links: &[Link], path: &Path, _target: &fs::Metadata) -> Option<Link> {
+    let canonical = fs::canonicalize(path).ok()?;
+    (!links.iter().any(|l| l.canonical == canonical)).then_some(Link { canonical })
 }
 
 /// A FIFO, a socket or a device: not a file to read, so never emitted (a

@@ -54,12 +54,9 @@ The walker layer adds the following on top of the glob matcher:
 ### 2.1 Function signatures
 
 ```ts
-export function glob(
-  patterns: string | readonly string[],
-  options?: GlobOptions,
-): Promise<string[]>;
+export function glob(patterns: string | Iterable<string>, options?: GlobOptions): Promise<string[]>;
 
-export function globSync(patterns: string | readonly string[], options?: GlobOptions): string[];
+export function globSync(patterns: string | Iterable<string>, options?: GlobOptions): string[];
 ```
 
 ### 2.2 Choosing async vs sync
@@ -115,7 +112,7 @@ Forwarded to the matcher (ASCII-only). See GLOB_SPEC.md §11.2 for the precise s
 
 Default is **`true`**, matching `tinyglobby`'s `followSymbolicLinks` default. Vite's `import.meta.glob` relies on this (e.g. pnpm-style `node_modules/<pkg>` symlinks must be traversed for the glob to see the real package contents).
 
-When `true`, the walker resolves symbolic-link directory entries via `fs.statSync` to determine whether the link target is a directory and should be descended. To prevent infinite descent on cyclic symlinks, the walker MUST also `fs.realpathSync` each symlink target and check the resolved path against the chain of symlink-target ancestors that lead to the current frame; if it's already in the chain, the descent is skipped. The link names a directory, so it is never emitted itself (the output is files only, §8.1); the rest of the walk goes on. See §7.1 step 6 below.
+When `true`, the walker resolves symbolic-link directory entries via `fs.statSync` to determine whether the link target is a directory and should be descended. To prevent infinite descent on cyclic symlinks, the walker MUST also remember, along each way down, the folders it reached through a link, and skip the descent through a link whose target is one of them. The link names a directory, so it is never emitted itself (the output is files only, §8.1); the rest of the walk goes on. See §7.1 step 6 and §10 below.
 
 When `false`, symlinks are dropped entirely: NOT emitted as files, NOT descended. This matches `fdir`'s `excludeSymlinks` mode and `tinyglobby`'s `followSymbolicLinks: false`.
 
@@ -150,7 +147,7 @@ The walker exposes 5 options. The following toggles, common in other walkers, ar
 
 ### 4.1 Input shape
 
-`patterns` MAY be a single string or an array of strings. A single string is processed as if it were a one-element array. An empty array, OR an array whose elements all reduce to ignore-only entries, results in the walker emitting an empty result without traversing. `cwd` is still checked and the `ignore` patterns still compile first, so their errors surface (§9).
+`patterns` MAY be a single string or an iterable of strings (an array, a `Set`, …), read once. A single string is processed as if it were a one-element array. An empty array, OR an array whose elements all reduce to ignore-only entries, results in the walker emitting an empty result without traversing. `cwd` is still checked and the `ignore` patterns still compile first, so their errors surface (§9).
 
 ### 4.2 `!`-prefix split (parity rule)
 
@@ -195,10 +192,11 @@ The leading-`/` strip guarantees that the matcher's static prefixes (used for tr
 
 ### 4.4 Compilation
 
-After preprocessing, the walker compiles two matchers:
+After preprocessing, the walker compiles three matchers:
 
 - `matcher` — the OR-union of the (preprocessed) positive set;
-- `ignore` — the OR-union of the (preprocessed) `opts.ignore` plus the `!`-routed negative set, or `null` when both are empty.
+- `ignore` — the OR-union of the (preprocessed) `opts.ignore` plus the `!`-routed negative set, or `null` when both are empty;
+- `ignoreDirs` — the OR-union of the `ignore` entries that end in `/`, which match folders only (§3.2), or `null` when there are none.
 
 If the positive set is empty after preprocessing (e.g. `glob(["!foo"])` with no other inputs), the walker MUST short-circuit and return an empty result without attempting any traversal.
 
@@ -240,7 +238,7 @@ The walker uses these to skip directories that no branch of the pattern can poss
 
 1. **Guards.** Skip the prefix outright when any of its segments is `..`, `.` or empty (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields none of them, so no root walk reaches such a path, and a joined `..` would escape `cwd`. A brace branch that starts with `/` gives one: `{a,/b}/x` has the prefixes `a` and `/b`, and `/b` is dropped.
 2. **Walks the parts.** For each part, from `cwd` down:
-   - A part with a non-ASCII name must be in its folder's listing as written (one `readdir` per such part): a file system that ignores Unicode normalization (APFS) opens an NFC spelling of a name stored NFD, which a root walk, comparing names as listed, never matches. Otherwise the seed is dropped.
+   - A part whose spelling could open another entry must be in its folder's listing as written (one `readdir` per such part), or the seed is dropped: a root walk, comparing names as listed, never matches such a spelling. That is a non-ASCII name — a file system that ignores Unicode normalization (APFS) opens an NFC spelling of a name stored NFD — and, on Windows, a name Win32 rewrites: one ending in `.` or a space, a device name (`NUL`, `com1`, `con.txt`), one with a `:` (a drive, a stream; `C:/proj/src/*.ts` is never below `cwd`, so it matches nothing, as on other platforms).
    - `lstatSync` the part. If nothing can be there (§9.4: ENOENT, ENOTDIR, ELOOP, ENAMETOOLONG, EINVAL, a NUL in the name), the seed is silently dropped — this is NOT an error: `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch. Any other failure (EACCES, …) is thrown, as the walk would (§9.3).
    - Judge the entry with §7.1. A part before the last must give a child frame, which the next part continues from; otherwise the seed is dropped, as a root walk would not descend there. The last part's result is the seed's: a matching file goes to the output, a folder worth walking to the seed frames.
 
@@ -254,21 +252,18 @@ The empty prefix (an empty `Uint8Array`, produced by patterns that begin with `*
 
 ### 7.1 Common per-frame loop
 
-Each frame carries a list `symlinkAncestors` of `realpath`-resolved paths of every symlink the walker descended through to reach it. Seed frames carry the targets of the symlinks on their prefix, gathered as §6 step 2 walks it; the frame for `cwd` itself starts empty. Both sync and async share the same per-dirent matching logic. For each `{ name, isDirectory, isSymbolicLink }` returned from a `readdir` of the frame's absolute path:
+Each frame carries a list `links` of the symlinks the walker descended through to reach it, each with the identity of its target (§10). Seed frames carry the links on their prefix, gathered as §6 step 2 walks it; the frame for `cwd` itself starts empty. Both sync and async share the same per-dirent matching logic. A child's paths are its folder's heads and its name — `childRel = relHead + name` with `relHead = parentRel === "" ? "" : parentRel + "/"`, and `childAbs = withSep(parentAbs) + name` (§7.4) — and the heads are made once per folder. For each `{ name, isDirectory, isSymbolicLink }` returned from a `readdir` of the frame's absolute path:
 
 1. **Symlink drop** — if the entry is a symbolic link AND `followSymlinks` is `false`, skip the entry (NOT emitted, NOT descended). Performed before any other work.
-2. Compute `childRel = parentRel === "" ? name : parentRel + "/" + name`. A name that came back with U+FFFD and does not exist under that spelling is skipped: it was not valid UTF-8 (Linux allows any bytes), so no string names the path, and no folder can be read through it.
-3. **Ignore filter** — if `ignore !== null` AND `ignore.match(childRel)`, skip the entry. (Performed before any stat to avoid paying for resolution of ignored symlinks.)
-4. Compute `childAbs = joinAbs(parentAbs, name)` — see §7.4 for the rationale of bypassing `path.join`.
-5. Resolve `isDir`:
-   - If the entry is a regular directory, `isDir = true`.
-   - If the entry is a symbolic link (which by step 1 means `followSymlinks: true`), `fs.statSync` the link and use the target's `isDirectory()` result (silently treating stat failures as `false`). See §10.
-   - Otherwise `isDir = false`.
-6. Branch on `isDir`:
-   - **Directory.** Walker emits files only, so the directory result of `matcher.match_dir(childRel)` is consulted only for the descend decision. If `dm.may_match_below()` is true, and the ignore set does not cover the whole subtree (`ignore.match_dir(childRel).matches_all_below()`), push a child frame into the descend list. The second check lets `**/node_modules/**` skip `node_modules` as cheaply as `node_modules` does; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §13.6) and a positive pattern may still name one. The child frame's `symlinkAncestors` is determined by:
-     - **non-symlink dir** — copy the parent's `symlinkAncestors` unchanged;
-     - **symlink-to-dir** — `fs.realpathSync.native(childAbs)` to get `resolved`, the on-disk spelling (as Rust's `canonicalize`; the non-native `realpathSync` keeps a link's own spelling, so on a case-insensitive disk `../A` and `../a` looked like two folders). If `resolved ∈ frame.symlinkAncestors`, this is a cycle; skip the descent. Otherwise the child's `symlinkAncestors` is `frame.symlinkAncestors ++ [resolved]`. `realpath` failures (broken / inaccessible link) MUST also skip the descent silently.
+2. Compute `childAbs`. A name that came back with U+FFFD and does not exist under that spelling is skipped: it was not valid UTF-8 (Linux allows any bytes), so no string names the path, and no folder can be read through it.
+3. Compute `childRel`. **Ignore filter** — if `ignore !== null` AND `ignore.match(childRel)`, skip the entry. (Performed before any stat to avoid paying for resolution of ignored symlinks.)
+4. **Type the entry.** A regular entry has its own type. A symbolic link (which by step 1 means `followSymlinks: true`) takes its target's: `fs.statSync` the link; when that fails (dangling, looping) the entry stays a link, a non-directory. See §10.
+5. **Special files** — a FIFO, a socket or a device (neither a directory nor a file nor a link) is skipped (§8.1).
+6. Branch on the type:
    - **Non-directory.** If `matcher.match(childRel)` is true, push `childAbs` into the result array. Output is always the absolute form (§8.2).
+   - **Directory.** The walker emits files only, so `matcher.match_dir(childRel)` is consulted for the descend decision alone. The folder is skipped when `ignoreDirs !== null` AND `ignoreDirs.match(childRel + "/")` (§3.2), when `may_match_below()` is false, or when the ignore set covers the whole subtree (`ignore.match_dir(childRel).matches_all_below()`). The last check lets `**/node_modules/**` skip `node_modules` as cheaply as `node_modules` does; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §13.6) and a positive pattern may still name one. Otherwise push a child frame into the descend list, whose `links` is:
+     - **non-symlink dir** — the parent's `links`, unchanged;
+     - **symlink-to-dir** — the parent's `links` plus this link, unless its target is the target of one of them already (§10): then this is a cycle, and the descent is skipped.
 
 ### 7.2 Sync DFS
 
@@ -296,19 +291,19 @@ The "drop late callback after failure" rule MUST hold so that in-flight readdirs
 
 ### 7.4 Path joining
 
-`joinAbs(parent, child)` is the only path-concatenation primitive used inside the walker:
+A child's absolute path is `withSep(parent) + child`, the only path concatenation inside the walker; a folder's `withSep(parent)` is made once for all its entries:
 
 ```js
-function joinAbs(parent, child) {
+function withSep(parent) {
   const last = parent.charCodeAt(parent.length - 1);
-  if (last === 0x2f /* '/' */) return parent + child;
-  if (!WINDOWS) return parent + "/" + child;
-  if (last === 0x5c /* '\\' */) return parent + child; // a drive root, `C:\`
-  return parent + (parent.startsWith("\\\\?\\") ? "\\" : "/") + child;
+  if (last === 0x2f /* '/' */) return parent;
+  if (!WINDOWS) return parent + "/";
+  if (last === 0x5c /* '\\' */) return parent; // a drive root, `C:\`
+  return parent + (parent.startsWith("\\\\?\\") ? "\\" : "/");
 }
 ```
 
-This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous `joinAbs` result — and, for seed frames, a §4.3-normalized static prefix. §4.3's normalization (leading-`/` strip, `//` collapse, `.`-segment removal) plus §6's guard against `..`, `.` and empty seed segments are what make this premise hold for the seed join; without them, pattern spellings leaked into output paths. Measured: `path.join` is ~100 µs slower per walk than `joinAbs` on a small Vite project tree.
+This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous child path — and, for seed frames, a §4.3-normalized static prefix. §4.3's normalization (leading-`/` strip, `//` collapse, `.`-segment removal) plus §6's guard against `..`, `.` and empty seed segments are what make this premise hold for the seed join; without them, pattern spellings leaked into output paths. Measured: `path.join` is ~100 µs slower per walk than this concatenation on a small Vite project tree.
 
 ### 7.5 Result-order guarantees
 
@@ -401,7 +396,9 @@ Symbolic-link entries are surfaced by `readdir`'s `withFileTypes` result with `i
 - `followSymlinks: false`: the symlink is dropped entirely — NOT emitted as a file, NOT descended. Matches `fdir`'s `excludeSymlinks` mode. Each entry is judged when its parent is read: a folder replaced by a symlink after that is read through the link (Node and Rust's `std` read a folder by path, with no `O_NOFOLLOW`), so this option is no guard against a tree that changes during the walk.
 - `followSymlinks: true` (default): the walker calls `fs.statSync` on the symlink (NOT `lstatSync`), which follows it. If the result is a directory, the walker treats the symlink as a directory entry and descends into the target's contents. If the stat fails (broken link, permission error), `isDir` is silently set to `false` and the entry continues as a non-directory. Stat failures here do NOT throw `WalkError("Io")` — broken symlinks are too common in real trees to make them fatal, even in the loud-error default.
 
-**Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles by resolving each symlink-target via `fs.realpathSync.native` (Rust: `fs::canonicalize`) and checking the resolved path against the chain of symlink-target ancestors that reached the current frame (see §7.1 step 6). If the resolved path is already in the chain, the descent is suppressed for that entry only; the link names a directory, so it is not emitted (§8.1), and the rest of the walk continues. `realpathSync` failures (broken / inaccessible) silently skip the descent without throwing. Algorithm parity: `fdir`'s `isRecursive` plus its `state.symlinks` map.
+**Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles: a frame carries the links descended through to reach it (§7.1), each with the identity of its target, and a link to a folder already among them is not descended. The descent is suppressed for that entry only; the link names a directory, so it is not emitted (§8.1), and the rest of the walk continues. Algorithm parity: `fdir`'s `isRecursive` plus its `state.symlinks` map.
+
+A folder's identity is its `(dev, ino)`, which the `statSync` of step 4 gave for free (Rust: `MetadataExt::dev`/`ino`); a hit is confirmed by comparing the two links' `fs.realpathSync.native` paths (Rust: `fs::canonicalize`), since some file systems hand out inode numbers that are not unique, and a link whose path cannot be resolved then is not descended. So a walk without a cycle costs no `realpath` at all — a pnpm `node_modules` holds one symlink per package. On Windows a stat carries no such identity, and the walker compares `realpathSync.native` paths alone: the on-disk spelling (the non-native `realpathSync` keeps a link's own spelling, so on a case-insensitive disk `../A` and `../a` looked like two folders); a link whose path cannot be resolved is not descended.
 
 Output paths preserve the symlink path as discovered through `readdir`. `fs.realpath` is called purely for cycle detection — the resolved path is NEVER substituted into the output.
 
@@ -420,7 +417,7 @@ Output paths preserve the symlink path as discovered through `readdir`. `fs.real
 | `withFileTypes` option            | ❌ (drop entirely)                  | ✅                            | ❌                           | ✅                           | ✅           |
 | `onError` callback                | ❌ (errors throw)                   | ❌                            | ❌                           | ❌                           | ❌           |
 | `followSymlinks` default          | `true`                              | `true`                        | `true`                       | `true`                       | `true`       |
-| Symlink cycle detection           | ✅ (`realpath` + ancestor chain)    | ❌                            | ✅ (`fdir`'s `isRecursive`)  | ❌                           | ❌           |
+| Symlink cycle detection           | ✅ (target identity + ancestor chain) | ❌                          | ✅ (`fdir`'s `isRecursive`)  | ❌                           | ❌           |
 | `followSymlinks: false` semantics | drop entirely (no emit, no descend) | emit-as-file                  | drop entirely                | emit-as-file                 | varies       |
 | Dangling symlink                  | emitted as a file when it matches   | dropped                       | dropped                      | dropped                      | not measured |
 
@@ -437,6 +434,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **v0.3.7** (2026-10-16): §6: a seed part with a non-ASCII name must appear in its folder's listing as written (APFS opens an NFC spelling of an NFD name); §10: `followSymlinks: false` judges an entry when its parent is read, which a tree changing during the walk can get around.
 - **v0.3.8** (2026-10-16): §3.2: a pattern or ignore entry that ends in `/` matches folders only (`node_modules/` prunes the folder). §8.1: FIFOs, sockets and devices are never emitted.
 - **v0.3.9** (2026-10-16): §6: a seed is reached part by part through the walk's own per-entry rule (§7.1), so it follows every rule of a root walk by construction; this also prunes a seed below a folder the ignore set covers, which used to be read.
+- **v0.3.10** (2026-10-17): §10: symlink cycles are found by the target's `(dev, ino)` from the stat that typed the link, confirmed by `realpath` on a hit (Windows: `realpath` alone), so a walk without a cycle resolves no path. §7.1 lists the steps as the walker takes them (paths from per-folder heads, special files, folder-only ignores) and §4.4 the third matcher. §6: on Windows a seed part Win32 would rewrite must be listed as written. §2.1: patterns are any iterable.
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §7.7); seed stat failures probe `lstat` (§9.4).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.
@@ -464,5 +462,5 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **Seed frame.** A frame produced from the matcher's static prefixes during initialization, before any `readdir` has been issued.
 - **Auto-split.** The walker's preprocessing of a `patterns` array that routes `!`-prefixed entries to the ignore set (§4.2).
 - **Static prefix.** The literal head of one expansion of the pattern's braces, up to its last whole segment (GLOB_SPEC.md §13.5). Walker uses these to skip directories no expansion can match.
-- **`joinAbs`.** The walker's path-concatenation primitive that bypasses `path.join`'s normalization for measurable speedup (§7.4).
+- **`withSep`.** A folder's absolute path with a separator after it; a child's path is that and its name, bypassing `path.join`'s normalization for measurable speedup (§7.4).
 - **Late callback.** An `fs.readdir` callback that fires after the walker has already rejected its returned Promise. The async traversal MUST drop these (§7.3).

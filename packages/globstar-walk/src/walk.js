@@ -16,12 +16,12 @@
 // `absolute: true` to tinyglobby and post-relativizes itself).
 //
 // Symlinks: `followSymlinks: true` (default, matching tinyglobby)
-// follows the link via `fs.statSync` to detect dir-vs-file targets,
-// and breaks cycles by `fs.realpathSync.native`-ing each target (the
-// on-disk spelling, as Rust's `canonicalize`) and checking the ancestor
-// chain — the offending descent is dropped, the rest of
-// the walk continues. `followSymlinks: false` drops symlinks entirely
-// (neither emitted nor descended; matches `fdir`'s `excludeSymlinks`).
+// follows the link via `fs.statSync` to detect dir-vs-file targets, and
+// breaks cycles by remembering, along each way down, the folders reached
+// through a link (`linkToDescend`): a link to one of them is not
+// descended, the rest of the walk continues. `followSymlinks: false`
+// drops symlinks entirely (neither emitted nor descended; matches
+// `fdir`'s `excludeSymlinks`).
 //
 // Errors are thrown, never swallowed. Compile failures land as
 // `WalkError("InvalidPattern")`; readdir failures (EACCES, ENOENT,
@@ -226,7 +226,7 @@ function prepare(patterns, optsInput) {
 // the seed; the last part's file and frame are the seed's.
 function initFromPrefixes(ctx) {
   for (const bytes of ctx.matcher.staticPrefixes()) {
-    let frame = { absolute: ctx.cwd, relative: "", symlinkAncestors: [] };
+    let frame = { absolute: ctx.cwd, relative: "", links: [] };
     const prefix = bytesToString(bytes);
     if (prefix === "") {
       ctx.seedFrames.push(frame);
@@ -238,8 +238,8 @@ function initFromPrefixes(ctx) {
     if (parts.some((p) => p === "" || p === ".." || p === ".")) continue;
     for (let i = 0; i < parts.length && frame !== undefined; i++) {
       const name = parts[i];
-      if (isNonAscii(name) && !listed(frame.absolute, name)) break;
-      const abs = joinAbs(frame.absolute, name);
+      if (opensAsAnother(name) && !listed(frame.absolute, name)) break;
+      const abs = withSep(frame.absolute) + name;
       let entry;
       try {
         entry = fs.lstatSync(abs);
@@ -281,10 +281,11 @@ function nothingThere(err) {
 function processDirents(ctx, dirents, frame, results, descend) {
   const matcher = ctx.matcher;
   const ignore = ctx.ignore;
-  const parentRel = frame.relative;
-  const parentAbs = frame.absolute;
   const followSymlinks = ctx.followSymlinks;
-  const ancestors = frame.symlinkAncestors;
+  const links = frame.links;
+  // A child is a head and its name; the folder's heads are made once.
+  const relHead = frame.relative === "" ? "" : frame.relative + "/";
+  const absHead = withSep(frame.absolute);
 
   for (let i = 0; i < dirents.length; i++) {
     const dirent = dirents[i];
@@ -296,64 +297,81 @@ function processDirents(ctx, dirents, frame, results, descend) {
     if (isSymlink && !followSymlinks) continue;
 
     const name = dirent.name;
-    const childAbs = joinAbs(parentAbs, name);
+    const childAbs = absHead + name;
     // A name that is not valid UTF-8 comes back with U+FFFD, a spelling
     // no file has: there is no path to report, nor a folder to read.
     if (name.includes("\uFFFD") && !exists(childAbs)) continue;
-    const childRel = parentRel === "" ? name : parentRel + "/" + name;
+    const childRel = relHead + name;
 
     // Ignore-filter early so an ignored symlink never costs a stat.
     if (ignore !== null && ignore.match(childRel)) continue;
 
-    let isDir = dirent.isDirectory();
-    let special = isSpecial(dirent);
+    // A symlink takes its target's type (a Dirent only flags "is
+    // symlink"); one that resolves to nothing (dangling, looping) stays
+    // a link, emitted like a file.
+    let target = null;
     if (isSymlink) {
-      // Node's Dirent only flags "is symlink", not the target type;
-      // resolve on demand. (followSymlinks=true here since the off
-      // case continued above.) One that resolves to nothing (dangling,
-      // looping) stays a link, emitted like a file.
       try {
-        const target = fs.statSync(childAbs);
-        isDir = target.isDirectory();
-        special = isSpecial(target);
+        target = fs.statSync(childAbs);
       } catch {
-        isDir = false;
-        special = false;
+        // stays a link
       }
     }
-    if (special) continue;
+    const typed = target ?? dirent;
+    if (isSpecial(typed)) continue;
 
-    if (isDir) {
-      if (ctx.ignoreDirs !== null && ctx.ignoreDirs.match(childRel + "/")) continue;
-      // An ignore that covers everything below skips the subtree
-      // (`**/node_modules/**` and `node_modules`).
-      const covered = ctx.pruneIgnored && DirMatch.matchesAllBelow(ignore.matchDir(childRel));
-      if (!covered && DirMatch.mayMatchBelow(matcher.matchDir(childRel))) {
-        // Cycle break: when descending through a symlink target,
-        // realpath and check against the ancestor chain. Already-
-        // seen target → skip descent.
-        let childAncestors;
-        if (isSymlink) {
-          let resolved;
-          try {
-            resolved = fs.realpathSync.native(childAbs);
-          } catch {
-            continue; // broken / inaccessible
-          }
-          if (ancestors.indexOf(resolved) !== -1) continue; // cycle
-          childAncestors = ancestors.concat(resolved);
-        } else {
-          childAncestors = ancestors;
-        }
-        descend.push({
-          absolute: childAbs,
-          relative: childRel,
-          symlinkAncestors: childAncestors,
-        });
-      }
-    } else if (matcher.match(childRel)) {
-      results.push(childAbs);
+    if (!typed.isDirectory()) {
+      if (matcher.match(childRel)) results.push(childAbs);
+      continue;
     }
+    if (ctx.ignoreDirs !== null && ctx.ignoreDirs.match(childRel + "/")) continue;
+    if (!DirMatch.mayMatchBelow(matcher.matchDir(childRel))) continue;
+    // An ignore that covers everything below skips the subtree
+    // (`**/node_modules/**` and `node_modules`).
+    if (ctx.pruneIgnored && DirMatch.matchesAllBelow(ignore.matchDir(childRel))) continue;
+    // Cycle break: a link to a folder already on the way down is not
+    // descended.
+    let childLinks = links;
+    if (target !== null) {
+      const link = linkToDescend(links, childAbs, target);
+      if (link === null) continue;
+      childLinks = links.concat(link);
+    }
+    descend.push({ absolute: childAbs, relative: childRel, links: childLinks });
+  }
+}
+
+// The link `abs`, whose target `stat` typed, as an entry of a frame's
+// `links`; `null` when descending it would close a cycle, its target
+// being on the way down already. A folder has one `(dev, ino)`, which
+// the stat gave for free; a hit is confirmed by canonical path, since
+// some file systems hand out inode numbers that are not unique. Windows
+// has no cheap identity in a stat: the canonical path is compared.
+function linkToDescend(links, abs, stat) {
+  if (WINDOWS) {
+    const canonical = realpath(abs);
+    if (canonical === null) return null;
+    for (let i = 0; i < links.length; i++) if (links[i].canonical === canonical) return null;
+    return { canonical };
+  }
+  const { dev, ino } = stat;
+  let here;
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    if (link.dev !== dev || link.ino !== ino) continue;
+    here ??= realpath(abs);
+    if (here === null || here === realpath(link.path)) return null;
+  }
+  return { dev, ino, path: abs };
+}
+
+// The on-disk spelling of `p` (as Rust's `canonicalize`; the non-native
+// `realpathSync` keeps a link's own spelling), or `null`.
+function realpath(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return null;
   }
 }
 
@@ -457,10 +475,11 @@ const vanishedDuringRead = (err) => err?.code === "ENOENT" && err?.syscall === "
 // in between is left out, as if it had gone before the read.
 function readEachEntry(dir) {
   const out = [];
+  const head = withSep(dir);
   for (const name of fs.readdirSync(dir)) {
     let entry;
     try {
-      entry = fs.lstatSync(joinAbs(dir, name));
+      entry = fs.lstatSync(head + name);
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       throw err;
@@ -471,10 +490,18 @@ function readEachEntry(dir) {
   return out;
 }
 
-// Is `name` in the listing of `dir` as written? A file system that
-// ignores Unicode normalization (APFS) opens an NFC spelling of a name
-// stored NFD, which a root walk, comparing names as listed, never
-// matches. A folder that cannot be read leaves it to the lstat.
+// Can opening `name` reach an entry its folder lists under another
+// name? A file system that ignores Unicode normalization (APFS) opens an
+// NFC spelling of a name stored NFD; Win32 drops a trailing `.` or
+// space, opens `NUL`, `con.txt` and the other device names as devices,
+// and reads `C:` as a drive. A root walk, comparing names as listed,
+// never matches such a spelling.
+function opensAsAnother(name) {
+  return isNonAscii(name) || (WINDOWS && win32Rewrites(name));
+}
+
+// Is `name` in the listing of `dir` as written? A folder that cannot be
+// read leaves it to the lstat.
 function listed(dir, name) {
   try {
     return fs.readdirSync(dir).includes(name);
@@ -483,10 +510,17 @@ function listed(dir, name) {
   }
 }
 
+// Does Win32 open this name as something else: a trailing `.` or space,
+// a device name (`NUL`, `com1`, `con.txt`), or a `:` (a drive, a stream)?
+function win32Rewrites(name) {
+  if (name.endsWith(".") || name.endsWith(" ") || name.includes(":")) return true;
+  return /^(?:CON|PRN|AUX|NUL|COM\d|LPT\d)[ \t\n\f\r]*$/i.test(name.split(".", 1)[0]);
+}
+
 // A FIFO, a socket or a device: not a file to read, so never emitted (a
 // reader would block on a FIFO).
 function isSpecial(s) {
-  return s.isFIFO() || s.isSocket() || s.isCharacterDevice() || s.isBlockDevice();
+  return !s.isDirectory() && !s.isFile() && !s.isSymbolicLink();
 }
 
 function isNonAscii(s) {
@@ -494,20 +528,20 @@ function isNonAscii(s) {
   return false;
 }
 
-// §7.4: `parent`, a separator, `child`, bypassing `path.join`'s
-// normalization (`..` / `.` / repeated `/`) — we only ever append a
-// dirent name, or a seed part the seeding checks for `..`, `.` and
-// empty, to a `path.resolve`'d cwd or a previous `joinAbs` result, so
-// neither input ever holds those. The separator is `/` (§8.2), but `\`
-// under a verbatim Windows path (`\\?\C:\…`), which Win32 reads with no
-// `/` in it; a parent that already ends in one (a drive root, `C:\`)
-// gets none.
-function joinAbs(parent, child) {
+// §7.4: `parent` with a separator after it, so a child is `withSep(parent)
+// + name` — bypassing `path.join`'s normalization (`..` / `.` / repeated
+// `/`): we only ever append a dirent name, or a seed part the seeding
+// checks for `..`, `.` and empty, to a `path.resolve`'d cwd or a previous
+// child, so neither input ever holds those. The separator is `/` (§8.2),
+// but `\` under a verbatim Windows path (`\\?\C:\…`), which Win32 reads
+// with no `/` in it; a parent that already ends in one (a drive root,
+// `C:\`) gets none.
+function withSep(parent) {
   const last = parent.charCodeAt(parent.length - 1);
-  if (last === 0x2f) return parent + child;
-  if (!WINDOWS) return parent + "/" + child;
-  if (last === 0x5c) return parent + child;
-  return parent + (parent.startsWith("\\\\?\\") ? "\\" : "/") + child;
+  if (last === 0x2f) return parent;
+  if (!WINDOWS) return parent + "/";
+  if (last === 0x5c) return parent;
+  return parent + (parent.startsWith("\\\\?\\") ? "\\" : "/");
 }
 
 // Static prefixes are ASCII / valid UTF-8 bytes (parser-produced from

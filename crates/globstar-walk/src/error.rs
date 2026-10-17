@@ -32,7 +32,9 @@ pub enum WalkError {
         source: Option<globstar::GlobError>,
     },
 
-    /// An I/O error while reading a directory entry.
+    /// An I/O error, yielded in place while the walk goes on: the base
+    /// is missing or not a folder, a seed's part or a folder could not
+    /// be read, or an entry could not be typed.
     Io {
         /// Path where the error occurred.
         path: PathBuf,
