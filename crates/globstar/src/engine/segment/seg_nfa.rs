@@ -177,12 +177,6 @@ impl ByteSet {
     fn is_empty(&self) -> bool {
         self.bits == [0; 4]
     }
-
-    /// A byte as a class (a letter, both cases, when `ci`), or `None`.
-    fn of_byte(b: u8, ci: bool) -> Option<Self> {
-        let cls = ci.then(|| CharClass::ci_letter(b)).flatten()?;
-        Some(Self::of(&cls, false))
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -313,24 +307,16 @@ fn satisfiable<B: Bits>(states: &[SegState], entry: usize, words: usize) -> bool
         if !reach.test(s) {
             continue;
         }
-        match state {
+        let (a, b) = match state {
             SegState::Match => return true,
-            SegState::Split(a, b) => {
-                reach.set(*a as usize);
-                reach.set(*b as usize);
+            SegState::Class(cls, _) if cls.is_empty() => continue,
+            SegState::Split(a, b) | SegState::Any(a, b) => (*a, *b),
+            SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Jump(n) => (*n, UNSET),
+        };
+        for t in [a, b] {
+            if t != UNSET {
+                reach.set(t as usize);
             }
-            SegState::Class(cls, nx) => {
-                if !cls.is_empty() {
-                    reach.set(*nx as usize);
-                }
-            }
-            SegState::Any(nx, exit) => {
-                reach.set(*nx as usize);
-                if *exit != UNSET {
-                    reach.set(*exit as usize);
-                }
-            }
-            SegState::Byte(_, nx) | SegState::Jump(nx) => reach.set(*nx as usize),
         }
     }
     false
@@ -529,10 +515,17 @@ impl SegBuilder {
     }
 
     fn lit_state(&mut self, b: u8) -> u32 {
-        match ByteSet::of_byte(b, self.ci) {
-            Some(cls) => self.alloc(SegState::Class(Box::new(cls), UNSET)),
-            None => self.alloc(SegState::Byte(b, UNSET)),
+        if !(self.ci && b.is_ascii_alphabetic()) {
+            return self.alloc(SegState::Byte(b, UNSET));
         }
+        // Case-insensitively a letter is the class of its two cases.
+        let mut set = ByteSet {
+            bits: [0; 4],
+            negated: false,
+        };
+        set.add(b.to_ascii_lowercase());
+        set.add(b.to_ascii_uppercase());
+        self.alloc(SegState::Class(Box::new(set), UNSET))
     }
 }
 

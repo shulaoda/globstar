@@ -11,16 +11,7 @@
 // quadratic in the states) it closes its set as it goes, so memory stays
 // linear in the pattern.
 
-import {
-  CI_BYTE,
-  N_ANYCHAR,
-  N_BRACE,
-  N_CLASS,
-  N_LITERAL,
-  N_STAR,
-  ciLetter,
-  seq,
-} from "../../ast.js";
+import { CI_BYTE, N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, seq } from "../../ast.js";
 import { ctz32, IS_WINDOWS_SEP } from "../../bytes.js";
 import { exact } from "./elem.js";
 import { wordsFor, bitTest, bitSet, bitsIsZero, bitsEqual } from "./bits.js";
@@ -79,11 +70,14 @@ function byteSet(cls, ci) {
 const setHas = (set, c) => ((set.bits[c >> 5] >>> (c & 31)) & 1) === 1;
 const setEmpty = (set) => set.bits.every((w) => w === 0);
 
-// A byte as a class (a letter, both cases, when `ci`), or null.
-function byteClass(b, ci) {
-  if (!ci) return null;
-  const cls = ciLetter(b);
-  return cls === null ? null : byteSet(cls, false);
+// A letter as the class of both its cases, or null. (Its own function:
+// `litState` stays small enough to inline into the build loop.)
+function letterClass(b) {
+  const lower = b | 0x20;
+  if (lower < 0x61 || lower > 0x7a) return null;
+  const bits = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (const c of [lower - 0x20, lower]) bits[c >> 5] |= 1 << (c & 31);
+  return { neg: false, bits };
 }
 
 // Shared post-construction facts: a protected leading `.` can only be
@@ -508,7 +502,7 @@ class SegBuilder {
   }
 
   litState(b) {
-    const cls = byteClass(b, this.ci);
+    const cls = this.ci ? letterClass(b) : null;
     if (cls !== null) return this.alloc(S_CLASS, 0, UNSET, UNSET, cls);
     return this.alloc(S_BYTE, b, UNSET);
   }

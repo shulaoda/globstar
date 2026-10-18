@@ -29,11 +29,11 @@ export const MANY_G = -2;
 export const NFA_SMALL = 0;
 export const NFA_SPARSE = 1;
 
-// Can the element take some segment?
 // The `minLen` of a segment no path segment can fill: one with an
 // escaped `\` on Windows, where a segment never holds a separator.
 export const NEVER_LEN = 0x7fffffff;
 
+// Can the element take some segment?
 export const elemSatisfiable = (e) =>
   e.kind !== EL_WILD ||
   (e.wild.minLen !== NEVER_LEN && (e.wild.kind !== WK_GENERIC || e.wild.nfa.satisfiable));

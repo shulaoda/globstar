@@ -1,17 +1,17 @@
 const ENCODER = new TextEncoder();
 
-// How many UTF-8 bytes `input` takes, without making them. A lone
-// surrogate encodes as U+FFFD, three bytes.
-export function utf8Length(input) {
-  let n = 0;
-  for (let i = 0; i < input.length; i++) {
-    const c = input.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c < 0xdc00 && (input.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
-      n += 4;
+// How many UTF-8 bytes `str[s, t)` takes, without making them (what `?`
+// counts). A lone surrogate encodes as U+FFFD, three bytes.
+export function utf8Length(str, s = 0, t = str.length) {
+  let n = t - s;
+  for (let i = s; i < t; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 0x80) continue;
+    if (c < 0x800) n += 1;
+    else if ((c & 0xfc00) === 0xd800 && i + 1 < t && (str.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      n += 2;
       i++;
-    } else n += 3;
+    } else n += 2;
   }
   return n;
 }
@@ -56,9 +56,9 @@ export function flat(s) {
   return latin1(codes);
 }
 
-// Is every char of `s` ASCII?
-export function isAscii(s) {
-  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 0x7f) return false;
+// Is every char of `str[s, t)` ASCII?
+export function isAscii(str, s = 0, t = str.length) {
+  for (let i = s; i < t; i++) if (str.charCodeAt(i) > 0x7f) return false;
   return true;
 }
 

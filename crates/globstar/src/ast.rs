@@ -55,15 +55,6 @@ impl ClassItem {
     }
 }
 
-#[inline]
-fn ascii_case_alt(b: u8) -> u8 {
-    match b {
-        b'A'..=b'Z' => b | 0x20,
-        b'a'..=b'z' => b & !0x20,
-        _ => b,
-    }
-}
-
 impl CharClass {
     pub fn matches(&self, b: u8) -> bool {
         if std::path::is_separator(b as char) {
@@ -71,14 +62,6 @@ impl CharClass {
         }
         let listed = self.items.iter().any(|it| it.matches(b));
         listed ^ self.negated
-    }
-
-    pub(crate) fn ci_letter(b: u8) -> Option<Self> {
-        let alt = ascii_case_alt(b);
-        (alt != b).then(|| CharClass {
-            negated: false,
-            items: vec![ClassItem::Byte(b), ClassItem::Byte(alt)],
-        })
     }
 }
 

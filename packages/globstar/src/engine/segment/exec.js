@@ -17,6 +17,7 @@ import {
 } from "./elem.js";
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP, ctz32 } from "../../bytes.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
+import { isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
 
 // A chain's element: `ids === null` is the identity (the lone path of
 // a brace-free pattern).
@@ -39,8 +40,6 @@ function lastSepBefore(str, end) {
   const j = str.lastIndexOf("\\", end - 1);
   return i > j ? i : j;
 }
-
-import { utf8Latin1 } from "../../utf8.js";
 
 // The wildcard-only segments `coversBelow` feeds before it gives up: a
 // pattern needs about one more than its longest run of them, and "not
@@ -551,34 +550,6 @@ function affixEq(part, str, at, ci) {
   return true;
 }
 
-function segHasNonAscii(str, s, t) {
-  for (let i = s; i < t; i++) {
-    if (str.charCodeAt(i) > 0x7f) return true;
-  }
-  return false;
-}
-
-// The UTF-8 length of `str[s, t)`: what `?` counts. A lone surrogate
-// encodes as U+FFFD, three bytes.
-function segBytes(str, s, t) {
-  let n = t - s;
-  for (let i = s; i < t; i++) {
-    const c = str.charCodeAt(i);
-    if (c < 0x80) continue;
-    if (c < 0x800) n += 1;
-    else if (
-      c >= 0xd800 &&
-      c < 0xdc00 &&
-      (str.charCodeAt(i + 1) & 0xfc00) === 0xdc00 &&
-      i + 1 < t
-    ) {
-      n += 2;
-      i++;
-    } else n += 2;
-  }
-  return n;
-}
-
 // Binary search of `set[lo, hi)` (sorted, one length) for the segment
 // tail `str[at, at + len)`, folding the tail's ASCII case when `ci`.
 function setHas(set, lo, hi, str, at, len, ci) {
@@ -610,7 +581,7 @@ function wildConsumes(m, w, str, s, t) {
   if (w.dotProtect && t > s && str.charCodeAt(s) === 0x2e) return false;
   const ci = m.ci;
   // The in-segment NFA has none: it counts on its own.
-  const len = w.anychars > 0 && !m.byteOnly ? segBytes(str, s, t) : t - s;
+  const len = w.anychars > 0 && !m.byteOnly ? utf8Length(str, s, t) : t - s;
   switch (w.kind) {
     case WK_AFFIX: {
       const need = w.minLen;
@@ -650,7 +621,7 @@ function wildConsumes(m, w, str, s, t) {
     }
     default: {
       const nfa = w.nfa;
-      if (nfa.countsBytes && !m.byteOnly && segHasNonAscii(str, s, t)) {
+      if (nfa.countsBytes && !m.byteOnly && !isAscii(str, s, t)) {
         const b = utf8Latin1(str.slice(s, t));
         return nfa.matches(b, 0, b.length);
       }

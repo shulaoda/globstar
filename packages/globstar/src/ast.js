@@ -54,17 +54,6 @@ export function classItemRange(lo, hi) {
   return { tag: CI_RANGE, lo, hi };
 }
 
-function asciiCaseAlt(b) {
-  if (b >= 0x41 && b <= 0x5a) return b | 0x20;
-  if (b >= 0x61 && b <= 0x7a) return b & ~0x20;
-  return b;
-}
-
-export function ciLetter(b) {
-  const alt = asciiCaseAlt(b);
-  return alt !== b ? klass(false, [classItemByte(b), classItemByte(alt)]) : null;
-}
-
 export function classMatches(cls, b) {
   if (isPathSep(b)) return false;
   const items = cls.items;
