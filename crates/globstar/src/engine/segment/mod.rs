@@ -239,7 +239,8 @@ enum Shape {
     /// At most one globstar, at `g` (past the end for none): the head
     /// and the tail are anchored around it. Every element from
     /// `open_from` on takes some segment, from `any_from` on any
-    /// non-empty one: what `match_dir` reads off the chain.
+    /// non-empty one: what `match_dir` reads off a lone chain (both 0
+    /// on a union member's, which `match_dir` never reads).
     Line {
         g: u32,
         open_from: u32,

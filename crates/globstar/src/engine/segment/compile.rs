@@ -41,7 +41,7 @@ pub(super) fn compile(body: &Node, dot: bool, ci: bool) -> Result<SegmentMatcher
     // A lone chain serves `match_dir` too; anything else needs the NFA.
     let nfa = match &chains[..] {
         [_] => None,
-        _ => Some(Box::new(graph.nfa())),
+        _ => Some(Box::new(any_nfa(&graph.elems, ci, graph.edges.as_ref()))),
     };
     let suffixes = facts::suffixes(body);
     Ok(SegmentMatcher {
@@ -62,7 +62,6 @@ pub(super) fn compile(body: &Node, dot: bool, ci: bool) -> Result<SegmentMatcher
 struct Graph {
     elems: Vec<Elem>,
     edges: Option<Edges>,
-    ci: bool,
 }
 
 /// Successor lists in CSR form, and the start's successors.
@@ -82,13 +81,15 @@ impl Graph {
     fn build(body: &Node, dot: bool, ci: bool) -> Result<Self, GlobError> {
         let nodes = body.seq();
         let (mut boundaries, linear, weight) = survey(nodes);
-        // The `/` of a `**/` makes no element: a linear pattern then
-        // gets its elements' exact count.
+        // The `/` of a `**/` makes no element, nor does the empty last
+        // segment after a bare `**`: a linear pattern then gets its
+        // elements' exact count.
         if linear {
             boundaries -= nodes
                 .windows(2)
                 .filter(|w| matches!(w, [Node::Globstar, Node::Separator]))
                 .count();
+            boundaries -= usize::from(matches!(nodes.last(), Some(Node::Globstar)));
         }
         // Only a separator-crossing brace can need regrouping.
         let nodes = if linear {
@@ -181,21 +182,18 @@ impl Graph {
                 let p = path.as_deref();
                 Shape::Many(Box::new(nfa_over::<u64>(&self.elems, None, p)))
             }
+            // `match_dir` reads `open_from` and `any_from` off the lone
+            // chain only.
             (g, _) => Shape::Line {
                 g: g.unwrap_or(n) as u32,
-                open_from: from(Elem::satisfiable),
-                any_from: from(Elem::any_seg),
+                open_from: if lone { from(Elem::satisfiable) } else { 0 },
+                any_from: if lone { from(Elem::any_seg) } else { 0 },
             },
         };
         Some(Chain {
             nodes: path.map_or_else(Default::default, Vec::into_boxed_slice),
             shape,
         })
-    }
-
-    /// The NFA over the whole graph: a `u64` active set when it fits.
-    fn nfa(&self) -> AnyNfa {
-        any_nfa(&self.elems, self.ci, self.edges.as_ref())
     }
 }
 
@@ -234,23 +232,25 @@ fn lit_fanout(elems: &[Elem], edges: &Edges) -> usize {
         .fold(lits(&edges.start), usize::max)
 }
 
-/// The NFA over the positions of a path (`None`: the graph itself,
-/// whose `edges` a brace pattern stores; a linear one has none).
+/// The successors of position `p` (`n`: the start): the stored ones
+/// of a brace pattern's graph, else the next position.
+fn succ_of(edges: Option<&Edges>, n: usize, p: usize) -> impl Iterator<Item = u32> + '_ {
+    let (next, stored): (Option<u32>, &[u32]) = match edges {
+        Some(e) if p == n => (None, &e.start),
+        Some(e) => (None, e.succ(p)),
+        None if p == n => (Some(0), &[]),
+        None => (Some(if p + 1 < n { p as u32 + 1 } else { ACCEPT }), &[]),
+    };
+    next.into_iter().chain(stored.iter().copied())
+}
+
+/// The NFA over the positions of a path, which follow one another
+/// (`None`: the graph itself, whose `edges` a brace pattern stores).
 /// State `i` is position `i`, the accept state last.
 fn nfa_over<B: Bits>(elems: &[Elem], edges: Option<&Edges>, path: Option<&[u32]>) -> Nfa<B> {
     let n = path.map_or(elems.len(), <[u32]>::len);
     let node_at = |i: usize| path.map_or(i as u32, |p| p[i]);
     let elem = |i: usize| &elems[node_at(i) as usize];
-    // Positions of a path follow one another.
-    let edges = if path.is_some() { None } else { edges };
-    let succs = |i: usize| {
-        let (next, stored): (Option<u32>, &[u32]) = match edges {
-            Some(e) => (None, e.succ(i)),
-            None => (Some(if i + 1 < n { i as u32 + 1 } else { ACCEPT }), &[]),
-        };
-        next.into_iter().chain(stored.iter().copied())
-    };
-    let start: &[u32] = edges.map_or(&[0], |e| &e.start);
     let accept = n;
     let words = B::words(n + 1);
     // The rows are filled below; the accept state's is never read.
@@ -283,7 +283,7 @@ fn nfa_over<B: Bits>(elems: &[Elem], edges: Option<&Edges>, path: Option<&[u32]>
     for i in (0..n).rev() {
         let el = elem(i);
         states[i].node = node_at(i);
-        let mut c = closure_of(&mut succs(i), &states);
+        let mut c = closure_of(&mut succ_of(edges, n, i), &states);
         // A state reaches accept through ≥ 1 segment iff its element
         // can consume one and what follows reaches accept.
         if el.satisfiable() && (c.test(accept) || c.intersects(&reach1)) {
@@ -295,7 +295,7 @@ fn nfa_over<B: Bits>(elems: &[Elem], edges: Option<&Edges>, path: Option<&[u32]>
         }
         states[i].after = c;
     }
-    let init = closure_of(&mut start.iter().copied(), &states);
+    let init = closure_of(&mut succ_of(edges, n, n), &states);
     Nfa {
         states: states.into_boxed_slice(),
         init,
@@ -306,33 +306,21 @@ fn nfa_over<B: Bits>(elems: &[Elem], edges: Option<&Edges>, path: Option<&[u32]>
 /// The sparse NFA over the graph: each position keeps its successors,
 /// the start's last, the literal ones sorted by literal.
 fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
-    let n = elems.len();
-    let elem = |i: usize| &elems[i];
     // The start is position `n`.
-    let succ_of = |p: usize| {
-        let (next, stored): (Option<u32>, &[u32]) = match edges {
-            Some(e) if p == n => (None, &e.start),
-            Some(e) => (None, e.succ(p)),
-            None if p == n => (Some(0), &[]),
-            None => (Some(if p + 1 < n { p as u32 + 1 } else { ACCEPT }), &[]),
-        };
-        next.into_iter().chain(stored.iter().copied())
-    };
-
-    let n_states = n + 1;
+    let n = elems.len();
 
     // A position reaches accept through ≥ 1 segment iff its element
     // can consume one and what it enters reaches accept: from the last
     // position back, as successors always lie ahead.
     // (A nullable successor is a `**/`, which reaches accept through
     // one segment whenever it reaches it at all.)
-    let mut r1 = vec![false; n];
+    let mut reach1 = Wide::zero(Wide::words(n + 1));
     for i in (0..n).rev() {
-        r1[i] = elem(i).satisfiable() && succ_of(i).any(|t| t == ACCEPT || r1[t as usize]);
-    }
-    let mut reach1 = Wide::zero(Wide::words(n_states));
-    for i in (0..n).filter(|&i| r1[i]) {
-        reach1.set(i);
+        if elems[i].satisfiable()
+            && succ_of(edges, n, i).any(|t| t == ACCEPT || reach1.test(t as usize))
+        {
+            reach1.set(i);
+        }
     }
 
     let (mut lit_at, mut lits) = (Vec::with_capacity(n + 2), Vec::new());
@@ -345,15 +333,15 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         other_at.push(others.len() as u32);
         null_at.push(nulls.len() as u32);
         let mut lit_pos = Vec::new();
-        for t in succ_of(p) {
+        for t in succ_of(edges, n, p) {
             if t == ACCEPT {
                 ends.set(p);
                 continue;
             }
-            if r1[t as usize] {
+            if reach1.test(t as usize) {
                 succ_reach1.set(p);
             }
-            let e = elem(t as usize);
+            let e = &elems[t as usize];
             if matches!(e, Elem::Lit(_)) {
                 lit_pos.push(t);
             } else {
@@ -363,7 +351,12 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
                 }
             }
         }
-        sort_by_literal(&mut lit_pos, elems, None, ci);
+        // By literal, then position; a list holds no repeats, as the
+        // walk deduplicates tails before it emits after them.
+        lit_pos.sort_unstable_by(|&a, &b| {
+            let lit = |t: u32| elems[t as usize].as_lit();
+            lit_cmp(lit(a), lit(b), ci).then(a.cmp(&b))
+        });
         lits.extend(lit_pos);
     }
     lit_at.push(lits.len() as u32);
@@ -382,14 +375,6 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         reach1,
         succ_reach1,
     }
-}
-
-/// Positions holding literals, by literal (case-folded when
-/// insensitive) then position, duplicates dropped.
-fn sort_by_literal(positions: &mut Vec<u32>, elems: &[Elem], path: Option<&[u32]>, ci: bool) {
-    let lit = |t: u32| elems[path.map_or(t as usize, |p| p[t as usize] as usize)].as_lit();
-    positions.sort_unstable_by(|&a, &b| lit_cmp(lit(a), lit(b), ci).then(a.cmp(&b)));
-    positions.dedup();
 }
 
 /// Byte order, ASCII case folded when insensitive.
@@ -577,7 +562,6 @@ impl Builder {
         Graph {
             elems: self.elems,
             edges,
-            ci: self.ci,
         }
     }
 
@@ -712,8 +696,8 @@ impl Builder {
             let node = &nodes[i];
             let sep_next = matches!(nodes.get(i + 1), Some(Node::Separator));
             let last = i + 1 == nodes.len();
-            // Resolution never puts a node after an open globstar; should
-            // one appear, the open paths absorb the rest of the path.
+            // Resolution puts a bare `**` only at the end of the pattern,
+            // so no group is open here.
             debug_assert!(groups.iter().all(|g| g.state != Boundary::Open));
             // Nodes that may still be absorbed by a bare `**` keep the
             // pending `**/` elements; anything else makes them real (a
@@ -744,13 +728,13 @@ impl Builder {
                         g.dedupe_tails();
                     }
                 }
-                Node::Separator => self.close_all(&mut groups, Boundary::Sep),
+                Node::Separator => self.close_all(&mut groups),
                 // `**/`: zero or more whole segments, empty ones included,
                 // so the separators around it are lenient (§12.3). It is
                 // emitted later, when it is known that no bare `**`
                 // absorbs it.
                 Node::Globstar if sep_next || (last && sep_after) => {
-                    for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {
+                    for g in groups.iter_mut() {
                         // The parser never glues a `**` to text.
                         debug_assert!(g.buf.is_empty());
                         g.pending_oss = true;
@@ -759,24 +743,14 @@ impl Builder {
                     i += usize::from(sep_next);
                 }
                 // A bare `**` owns the rest of the path: pending `**/`
-                // add nothing to it, and a separator before them still
-                // needs a segment to follow (`x/**/**` ≡ `x/**`), so
-                // only the pattern start gives `G0`.
-                Node::Globstar => {
-                    for g in groups.iter_mut() {
-                        g.pending_oss = false;
-                    }
-                    self.globstar_all(&mut groups, |state| {
-                        if state == Boundary::Start {
-                            Elem::G0
-                        } else {
-                            Elem::G1
-                        }
-                    });
-                }
+                // add nothing to it (the group continues without them),
+                // and a separator before them still needs a segment to
+                // follow (`x/**/**` ≡ `x/**`), so only the pattern start
+                // gives `G0`.
+                Node::Globstar => self.globstar_all(&mut groups),
                 node => {
                     let weight = node_weight(node);
-                    for g in groups.iter_mut().filter(|g| g.state != Boundary::Open) {
+                    for g in groups.iter_mut() {
                         g.buf.push(node);
                         g.weight += weight;
                     }
@@ -790,7 +764,7 @@ impl Builder {
     /// Emit a group's pending `**/`. It is always a `G0`: it absorbs
     /// empty segments too, which makes the separators around it lenient.
     fn settle(&mut self, g: &mut Group<'_>) {
-        if !g.pending_oss || g.state == Boundary::Open {
+        if !g.pending_oss {
             return;
         }
         let id = self.emit(Elem::G0, &g.tails);
@@ -798,10 +772,9 @@ impl Builder {
     }
 
     /// Close every group's segment into one node per group; they all
-    /// continue as one group at the new boundary (the first group's
-    /// vectors carry on, in the same list).
-    fn close_all<'a>(&mut self, groups: &mut Vec<Group<'a>>, state: Boundary) {
-        self.join_all(groups, state, |b, g| {
+    /// continue as one group after the separator.
+    fn close_all(&mut self, groups: &mut Vec<Group<'_>>) {
+        self.join_all(groups, Boundary::Sep, |b, g| {
             b.settle(g);
             b.cost += g.weight;
             let elem = b.close(&g.buf);
@@ -811,19 +784,25 @@ impl Builder {
         });
     }
 
-    /// One globstar node per group, its kind chosen by the boundary
-    /// the group crossed; they continue as one open group.
-    fn globstar_all<'a>(&mut self, groups: &mut Vec<Group<'a>>, kind: impl Fn(Boundary) -> Elem) {
+    /// One globstar node per group, `G0` only at the pattern start;
+    /// they continue as one open group.
+    fn globstar_all(&mut self, groups: &mut Vec<Group<'_>>) {
         self.join_all(groups, Boundary::Open, |b, g| {
             // The parser never glues a `**` to text.
             debug_assert!(g.buf.is_empty());
-            b.emit(kind(g.state), &g.tails)
+            let elem = if g.state == Boundary::Start {
+                Elem::G0
+            } else {
+                Elem::G1
+            };
+            b.emit(elem, &g.tails)
         });
     }
 
     /// Emit one node per group through `node`, then continue as one
-    /// group at `state`. Open groups pass through untouched, and so do
-    /// the branches a `**` ended, which took this `/` already.
+    /// group at `state` (the first group's vectors carry on, in the
+    /// same list). The branches a `**` ended pass through: they took
+    /// this `/` already.
     fn join_all<'a>(
         &mut self,
         groups: &mut Vec<Group<'a>>,
@@ -831,13 +810,8 @@ impl Builder {
         node: impl Fn(&mut Self, &mut Group<'a>) -> u32,
     ) {
         let mut joined: Option<Group<'a>> = None;
-        let mut open = Merged::default();
         let mut taken = Vec::new();
         for mut g in groups.drain(..) {
-            if g.state == Boundary::Open {
-                open.add(g);
-                continue;
-            }
             if g.took_sep {
                 g.took_sep = false;
                 taken.push(g);
@@ -852,7 +826,6 @@ impl Builder {
                 }
             }
         }
-        groups.extend(open.groups);
         groups.extend(joined);
         groups.append(&mut taken);
         for g in groups.iter_mut() {
@@ -897,6 +870,9 @@ struct Merged<'a> {
 const LINEAR_GROUPS: usize = 16;
 
 impl<'a> Merged<'a> {
+    // Kept out of the recursive walk: inlined there, it costs the
+    // unions of many branches 3–5% of their compile time.
+    #[inline(never)]
     fn add(&mut self, g: Group<'a>) {
         let n = self.groups.len();
         if n == LINEAR_GROUPS {

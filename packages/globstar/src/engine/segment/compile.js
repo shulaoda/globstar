@@ -384,9 +384,11 @@ class Builder {
       const node = nodes[i];
       const sepNext = nodes[i + 1]?.tag === N_SEPARATOR;
       const last = i + 1 === nodes.length;
-      // Nodes that may still be absorbed by a bare `**` keep the pending
-      // `**/` elements; anything else makes them real (a `/` through
-      // `closeAll`, which skips the groups it is the `**/` of).
+      // Resolution puts a bare `**` only at the end of the pattern, so no
+      // group is open here. Nodes that may still be absorbed by a bare
+      // `**` keep the pending `**/` elements; anything else makes them
+      // real (a `/` through `closeAll`, which skips the groups it is the
+      // `**/` of).
       if (node.tag !== N_GLOBSTAR && node.tag !== N_BRACE && node.tag !== N_SEPARATOR) {
         for (const g of groups) this.settle(g);
       }
@@ -409,7 +411,7 @@ class Builder {
           break;
         }
         case N_SEPARATOR:
-          this.closeAll(groups, B_SEP);
+          this.closeAll(groups);
           break;
         case N_GLOBSTAR:
           if (sepNext || (last && sepAfter)) {
@@ -417,18 +419,16 @@ class Builder {
             // the separators around it are lenient (§12.3). It is emitted
             // later, when it is known that no bare `**` absorbs it.
             for (const g of groups) {
-              if (g.state === B_OPEN) continue;
               g.pendingOss = true;
               g.tookSep = !sepNext;
             }
             if (sepNext) i++;
           } else {
             // A bare `**` owns the rest of the path: pending `**/` add
-            // nothing to it, and a separator before them still needs a
-            // segment to follow (`x/**/**` ≡ `x/**`), so only the pattern
-            // start gives G0.
-            for (const g of groups) g.pendingOss = false;
-            this.globstarAll(groups, (state) => (state === B_START ? G0_ELEM : G1_ELEM));
+            // nothing to it (the group continues without them), and a
+            // separator before them still needs a segment to follow
+            // (`x/**/**` ≡ `x/**`), so only the pattern start gives G0.
+            this.globstarAll(groups);
           }
           break;
         default:
@@ -442,7 +442,6 @@ class Builder {
   push(groups, node) {
     const weight = nodeWeight(node);
     for (const g of groups) {
-      if (g.state === B_OPEN) continue;
       g.buf.push(node);
       g.weight += weight;
     }
@@ -451,14 +450,14 @@ class Builder {
   // Emit a group's pending `**/`. It is always a G0: it absorbs empty
   // segments too, which makes the separators around it lenient.
   settle(g) {
-    if (!g.pendingOss || g.state === B_OPEN) return;
+    if (!g.pendingOss) return;
     rebase(g, this.emit(G0_ELEM, g.tails), B_SEP);
   }
 
   // Close every group's segment into one node per group; they all
-  // continue as one group at the new boundary.
-  closeAll(groups, state) {
-    this.joinAll(groups, state, (g) => {
+  // continue as one group after the separator.
+  closeAll(groups) {
+    this.joinAll(groups, B_SEP, (g) => {
       this.settle(g);
       this.cost += g.weight;
       const buf = g.buf;
@@ -468,25 +467,22 @@ class Builder {
     });
   }
 
-  // One globstar node per group, its kind chosen by the boundary the
-  // group crossed; they continue as one open group. (The parser never
-  // glues a `**` to text, so there is no segment to close.)
-  globstarAll(groups, elemOf) {
-    this.joinAll(groups, B_OPEN, (g) => this.emit(elemOf(g.state), g.tails));
+  // One globstar node per group, G0 only at the pattern start; they
+  // continue as one open group. (The parser never glues a `**` to text,
+  // so there is no segment to close.)
+  globstarAll(groups) {
+    this.joinAll(groups, B_OPEN, (g) =>
+      this.emit(g.state === B_START ? G0_ELEM : G1_ELEM, g.tails),
+    );
   }
 
   // Emit one node per group through `node`, then continue as one group
-  // at `state`, in the same list. Open groups pass through untouched,
-  // and so do the branches a `**` ended, which took this `/` already.
+  // at `state`, in the same list. The branches a `**` ended pass
+  // through: they took this `/` already.
   joinAll(groups, state, node) {
     let joined = null;
-    const open = makeMerged();
     const taken = [];
     for (const g of groups) {
-      if (g.state === B_OPEN) {
-        merge(open, g);
-        continue;
-      }
       if (g.tookSep) {
         g.tookSep = false;
         taken.push(g);
@@ -499,7 +495,6 @@ class Builder {
       } else joined.tails.push(id);
     }
     groups.length = 0;
-    for (const g of open.groups) groups.push(g);
     if (joined !== null) groups.push(joined);
     for (const g of taken) groups.push(g);
     for (const g of groups) dedupeTails(g);
