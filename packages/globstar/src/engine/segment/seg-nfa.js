@@ -115,62 +115,58 @@ function satisfiable(b, entry) {
   return false;
 }
 
-// What closing a set does with state `s`: [stays, a, b] — whether the
-// state is kept (a consumer or S_MATCH; a `*` is kept and leaves too)
-// and its ε-successors (-1 for none). Under `block` the consumers that
-// refuse a protected leading `.` (`*`, `?`, negated classes) are dropped,
-// and no `*` is passed.
-function eps(nfa, s, block) {
-  const k = nfa.kinds[s];
-  if (k === S_SPLIT) return [false, nfa.nexts[s], nfa.splitBs[s]];
-  if (k === S_JUMP) return [false, nfa.nexts[s], -1];
-  if (k === S_ANY) {
-    if (block) return [false, -1, -1];
-    // A `*`: its way out is in `splitBs`.
-    return nfa.nexts[s] === s ? [true, nfa.splitBs[s], -1] : [true, -1, -1];
-  }
-  if (k === S_CLASS && block && nfa.clsRefs[s].neg) return [false, -1, -1];
-  return [true, -1, -1];
+// Close an int32 `set` under ε-edges, as `closeWide` (compile only).
+function closeSmall(nfa, set, block) {
+  const one = Int32Array.of(set);
+  closeWide(nfa, one, block);
+  return one[0];
 }
 
 // Close `set` under ε-edges, keeping only consumers and S_MATCH. Every
 // ε-edge points to a later state (see `compileNode`), so one ascending
 // sweep sees each state after all that reach it; the word being swept
-// stays in a local, where most edges land.
-function closeSmall(nfa, set, block) {
-  let todo = set;
-  while (todo !== 0) {
-    const bit = todo & -todo;
-    todo ^= bit;
-    const [stays, a, b] = eps(nfa, ctz32(bit), block);
-    if (!stays) set ^= bit;
-    if (a !== -1) {
-      set |= 1 << a;
-      todo |= 1 << a;
-    }
-    if (b !== -1) {
-      set |= 1 << b;
-      todo |= 1 << b;
-    }
-  }
-  return set;
-}
-
+// stays in a local, where most edges land. Under `block` the consumers
+// that refuse a protected leading `.` (`*`, `?`, negated classes) are
+// dropped, and no `*` is passed.
 function closeWide(nfa, set, block) {
+  const kinds = nfa.kinds;
+  const nexts = nfa.nexts;
+  const splitBs = nfa.splitBs;
   for (let w = 0; w < set.length; w++) {
     let word = set[w];
     let todo = word;
     while (todo !== 0) {
       const bit = todo & -todo;
       todo ^= bit;
-      const [stays, a, b] = eps(nfa, w * 32 + ctz32(bit), block);
-      if (!stays) word ^= bit;
-      for (const t of [a, b]) {
-        if (t === -1) continue;
-        if (t >>> 5 === w) {
-          word |= 1 << (t & 31);
-          todo |= 1 << (t & 31);
-        } else set[t >>> 5] |= 1 << (t & 31);
+      const s = w * 32 + ctz32(bit);
+      // As `eps`, without its array: the ε-targets `a`, `b` (-1: none).
+      const k = kinds[s];
+      let a = -1;
+      let b = -1;
+      if (k === S_SPLIT) {
+        a = nexts[s];
+        b = splitBs[s];
+        word ^= bit;
+      } else if (k === S_JUMP) {
+        a = nexts[s];
+        word ^= bit;
+      } else if (k === S_ANY) {
+        if (block) word ^= bit;
+        else if (nexts[s] === s) a = splitBs[s];
+      } else if (k === S_CLASS && block && nfa.clsRefs[s].neg) {
+        word ^= bit;
+      } else continue;
+      if (a !== -1) {
+        if (a >>> 5 === w) {
+          word |= 1 << (a & 31);
+          todo |= 1 << (a & 31);
+        } else set[a >>> 5] |= 1 << (a & 31);
+      }
+      if (b !== -1) {
+        if (b >>> 5 === w) {
+          word |= 1 << (b & 31);
+          todo |= 1 << (b & 31);
+        } else set[b >>> 5] |= 1 << (b & 31);
       }
     }
     set[w] = word;

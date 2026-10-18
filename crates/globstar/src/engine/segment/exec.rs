@@ -664,64 +664,46 @@ impl<B: Bits> Nfa<B> {
     }
 }
 
-/// A sparse state set: states and whole positions (every successor of
-/// the position entered), in one list to walk (a position tagged by
-/// `POS`) and one bit set to dedupe (positions after the states).
+/// A sparse state set: states (`0..=n`, the accept state `n`) and whole
+/// positions (every successor of position `p` entered, as `n + 1 + p`),
+/// in one list to walk and one bit set to dedupe.
 struct Active {
     items: Vec<u32>,
     has: Wide,
-    /// Bit index of position 0 in `has`.
-    pos_base: usize,
 }
-
-const POS: u32 = 1 << 31;
 
 impl Active {
     fn new(nfa: &SparseNfa) -> Self {
-        let pos_base = nfa.n as usize + 1;
         Active {
             items: Vec::new(),
-            has: Wide::zero(Wide::words(pos_base + nfa.n as usize + 1)),
-            pos_base,
+            has: Wide::zero(Wide::words(2 * nfa.n as usize + 2)),
         }
     }
 
-    fn bit(&self, item: u32) -> usize {
-        if item & POS != 0 {
-            self.pos_base + (item & !POS) as usize
-        } else {
-            item as usize
-        }
-    }
-
-    fn has_state(&self, s: u32) -> bool {
-        self.has.test(s as usize)
+    fn has(&self, item: u32) -> bool {
+        self.has.test(item as usize)
     }
 
     /// Empty it, touching only what it holds.
     fn clear(&mut self) {
-        for i in 0..self.items.len() {
-            let bit = self.bit(self.items[i]);
-            self.has.unset(bit);
+        for &i in &self.items {
+            self.has.unset(i as usize);
         }
         self.items.clear();
     }
 
-    /// Add a state, or a position tagged by `POS`; `false` when it was
-    /// there already.
+    /// Add a state or a position; `false` when it was there already.
     fn add(&mut self, item: u32) -> bool {
-        let bit = self.bit(item);
-        if self.has.test(bit) {
+        if self.has(item) {
             return false;
         }
-        self.has.set(bit);
+        self.has.set(item as usize);
         self.items.push(item);
         true
     }
 
     fn same(&self, other: &Active) -> bool {
-        self.items.len() == other.items.len()
-            && self.items.iter().all(|&i| other.has.test(other.bit(i)))
+        self.items.len() == other.items.len() && self.items.iter().all(|&i| other.has(i))
     }
 }
 
@@ -740,24 +722,27 @@ impl SparseNfa {
     }
 
     pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
-        self.run(m, path).has_state(self.accept())
+        self.run(m, path).has(self.accept())
     }
 
     pub(super) fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
         // The empty dir is the walk root: nothing consumed yet.
         let root = dir_path.is_empty();
         let (mut active, exact) = if root {
-            (self.init(&mut Vec::new()), m.is_match(dir_path))
+            (self.init(), m.is_match(dir_path))
         } else {
             let active = self.run(m, dir_path);
-            let exact = active.has_state(self.accept());
+            let exact = active.has(self.accept());
             (active, exact)
         };
         let prefix = root
-            || active.items.iter().any(|&i| match i & POS {
-                0 => self.reach1.test(i as usize),
-                _ => self.succ_reach1.test((i & !POS) as usize),
-            });
+            || active
+                .items
+                .iter()
+                .any(|&i| match i.checked_sub(self.n + 1) {
+                    None => self.reach1.test(i as usize),
+                    Some(p) => self.succ_reach1.test(p as usize),
+                });
         // `dot=false` never covers a subtree: no wildcard matches the
         // dot-led names below.
         let all = m.dot && prefix && self.covers_below(m, &mut active);
@@ -765,21 +750,20 @@ impl SparseNfa {
     }
 
     /// The start's closure.
-    fn init(&self, todo: &mut Vec<u32>) -> Active {
+    fn init(&self) -> Active {
         let mut active = Active::new(self);
-        self.enter(self.n as usize, &mut active, todo);
+        self.enter(self.n as usize, &mut active);
         active
     }
 
     /// The active set after every segment of `path`.
     fn run(&self, m: &SegmentMatcher, path: &[u8]) -> Active {
-        let mut todo = Vec::new();
-        let mut active = self.init(&mut todo);
+        let mut active = self.init();
         let mut next = Active::new(self);
         let mut pos = 0;
         while !active.items.is_empty() {
             let end = seg_end(path, pos);
-            self.step(m, &active, &path[pos..end], &mut next, &mut todo);
+            self.step(m, &active, &path[pos..end], &mut next);
             std::mem::swap(&mut active, &mut next);
             if end == path.len() {
                 break;
@@ -789,14 +773,7 @@ impl SparseNfa {
         active
     }
 
-    fn step(
-        &self,
-        m: &SegmentMatcher,
-        active: &Active,
-        seg: &[u8],
-        next: &mut Active,
-        todo: &mut Vec<u32>,
-    ) {
+    fn step(&self, m: &SegmentMatcher, active: &Active, seg: &[u8], next: &mut Active) {
         next.clear();
         let absorb_ok = m.dot || seg.first() != Some(&b'.');
         let consumes = |s: u32| match &m.elems[s as usize] {
@@ -805,23 +782,23 @@ impl SparseNfa {
             Elem::G0 | Elem::G1 => absorb_ok,
         };
         for &item in &active.items {
-            if item & POS == 0 {
+            let Some(p) = item.checked_sub(self.n + 1) else {
                 if item != self.accept() && consumes(item) {
-                    self.fire(m, item, next, todo);
+                    self.fire(m, item, next);
                 }
                 continue;
-            }
-            let p = (item & !POS) as usize;
+            };
+            let p = p as usize;
             // Equal literals sit together, one binary search away.
             let lits = self.lits(p);
             let order = |s: u32| lit_cmp(self.lit_of(m, s), seg, m.case_insensitive);
             let first = lits.partition_point(|&s| order(s).is_lt());
             for &s in lits[first..].iter().take_while(|&&s| order(s).is_eq()) {
-                self.fire(m, s, next, todo);
+                self.fire(m, s, next);
             }
             for &s in self.others(p) {
                 if consumes(s) {
-                    self.fire(m, s, next, todo);
+                    self.fire(m, s, next);
                 }
             }
         }
@@ -833,33 +810,34 @@ impl SparseNfa {
 
     /// State `s` took a segment: a globstar stays, and its position's
     /// successors are entered.
-    fn fire(&self, m: &SegmentMatcher, s: u32, next: &mut Active, todo: &mut Vec<u32>) {
+    fn fire(&self, m: &SegmentMatcher, s: u32, next: &mut Active) {
         if m.elems[s as usize].is_globstar() {
             next.add(s);
         }
-        self.enter(s as usize, next, todo);
+        self.enter(s as usize, next);
     }
 
     /// Enter every successor of position `p`: the position itself
     /// stands for them, and through a nullable one (`**/`) its
-    /// successors are entered too.
-    fn enter(&self, p: usize, next: &mut Active, todo: &mut Vec<u32>) {
-        if !next.add(p as u32 | POS) {
+    /// successors are entered too. The positions this adds are the
+    /// work list: each is expanded once, as the walk reaches it.
+    fn enter(&self, p: usize, next: &mut Active) {
+        let base = self.n + 1;
+        let mut i = next.items.len();
+        if !next.add(base + p as u32) {
             return;
         }
-        let mut p = p;
-        loop {
+        while let Some(&item) = next.items.get(i) {
+            i += 1;
+            let Some(p) = item.checked_sub(base) else {
+                continue;
+            };
+            let p = p as usize;
             if self.ends.test(p) {
                 next.add(self.accept());
             }
             for &t in &self.nulls[self.null_at[p] as usize..self.null_at[p + 1] as usize] {
-                if next.add(t | POS) {
-                    todo.push(t);
-                }
-            }
-            match todo.pop() {
-                Some(t) => p = t as usize,
-                None => break,
+                next.add(base + t);
             }
         }
     }
@@ -867,26 +845,25 @@ impl SparseNfa {
     /// Does every path below the directory match? As `Nfa::covers_below`.
     fn covers_below(&self, m: &SegmentMatcher, active: &mut Active) -> bool {
         let mut next = Active::new(self);
-        let mut todo = Vec::new();
         let accept = self.accept();
         let any_seg = |s: u32| m.elems[s as usize].any_seg();
         for _ in 0..=(self.n as usize + 1).min(MAX_COVER_SEGMENTS) {
             next.clear();
             for &item in &active.items {
-                if item & POS == 0 {
+                let Some(p) = item.checked_sub(self.n + 1) else {
                     if item != accept && any_seg(item) {
-                        self.fire(m, item, &mut next, &mut todo);
+                        self.fire(m, item, &mut next);
                     }
                     continue;
-                }
+                };
                 // Literals never take a wildcard-only segment.
-                for &s in self.others((item & !POS) as usize) {
+                for &s in self.others(p as usize) {
                     if any_seg(s) {
-                        self.fire(m, s, &mut next, &mut todo);
+                        self.fire(m, s, &mut next);
                     }
                 }
             }
-            if !next.has_state(accept) {
+            if !next.has(accept) {
                 return false;
             }
             if next.same(active) {

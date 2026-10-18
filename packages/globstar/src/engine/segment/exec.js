@@ -344,14 +344,14 @@ export function coversBelow(m, active) {
 function sparseScratch(g) {
   if (g.scratch === null) {
     const size = 2 * g.n + 2;
-    const set = () => ({ items: [], stamp: new Int32Array(size), gen: 1 });
-    g.scratch = { a: set(), b: set(), todo: [] };
+    const set = () => ({ items: [], len: 0, stamp: new Int32Array(size), gen: 1 });
+    g.scratch = { a: set(), b: set() };
   }
   return g.scratch;
 }
 
 function clearSet(set) {
-  set.items.length = 0;
+  set.len = 0;
   if (++set.gen === 0x7fffffff) {
     set.stamp.fill(0);
     set.gen = 1;
@@ -361,41 +361,41 @@ function clearSet(set) {
 function addTo(set, i) {
   if (set.stamp[i] === set.gen) return false;
   set.stamp[i] = set.gen;
-  set.items.push(i);
+  set.items[set.len++] = i;
   return true;
 }
 
 export const sparseHas = (set, i) => set.stamp[i] === set.gen;
 
 // Enter every successor of position `p`: the position stands for them,
-// and through a nullable one (`**/`) its successors are entered too.
-function enterSparse(g, p, next, todo) {
+// and through a nullable one (`**/`) its successors are entered too. The
+// positions this adds are the work list: each is expanded once.
+function enterSparse(g, p, next) {
   const base = g.n + 1;
+  let i = next.len;
   if (!addTo(next, base + p)) return;
-  for (;;) {
-    if (g.ends[p]) addTo(next, g.accept);
-    for (let k = g.nullAt[p]; k < g.nullAt[p + 1]; k++) {
-      const t = g.nulls[k];
-      if (addTo(next, base + t)) todo.push(t);
-    }
-    if (todo.length === 0) return;
-    p = todo.pop();
+  while (i < next.len) {
+    const item = next.items[i++];
+    if (item < base) continue;
+    const q = item - base;
+    if (g.ends[q]) addTo(next, g.accept);
+    for (let k = g.nullAt[q]; k < g.nullAt[q + 1]; k++) addTo(next, base + g.nulls[k]);
   }
 }
 
 // State `s` took a segment: a globstar stays, and its position's
 // successors are entered.
-function fireSparse(m, g, s, next, todo) {
+function fireSparse(m, g, s, next) {
   const k = m.elems[s].kind;
   if (k === EL_G0 || k === EL_G1) addTo(next, s);
-  enterSparse(g, s, next, todo);
+  enterSparse(g, s, next);
 }
 
 // The start's closure, in the first scratch set.
 export function initSparse(g) {
-  const { a, todo } = sparseScratch(g);
+  const { a } = sparseScratch(g);
   clearSet(a);
-  enterSparse(g, g.n, a, todo);
+  enterSparse(g, g.n, a);
   return a;
 }
 
@@ -420,11 +420,11 @@ export function nfaRunSparse(m, str) {
   let next = scratch.b;
   let pos = 0;
   for (;;) {
-    if (active.items.length === 0) return active;
+    if (active.len === 0) return active;
     let end = nextSep(str, pos);
     const last = end === -1;
     if (last) end = str.length;
-    stepSparse(m, g, active, next, scratch.todo, str, pos, end);
+    stepSparse(m, g, active, next, str, pos, end);
     const t = active;
     active = next;
     next = t;
@@ -433,15 +433,17 @@ export function nfaRunSparse(m, str) {
   }
 }
 
-function stepSparse(m, g, active, next, todo, str, s0, e0) {
+function stepSparse(m, g, active, next, str, s0, e0) {
   clearSet(next);
   const ci = m.ci;
   const base = g.n + 1;
   const absorbOk = m.dot || e0 === s0 || str.charCodeAt(s0) !== 0x2e;
-  for (const item of active.items) {
+  const items = active.items;
+  for (let k = 0, n = active.len; k < n; k++) {
+    const item = items[k];
     if (item < base) {
       if (item === g.accept) continue;
-      if (sparseConsumes(m, item, str, s0, e0, absorbOk)) fireSparse(m, g, item, next, todo);
+      if (sparseConsumes(m, item, str, s0, e0, absorbOk)) fireSparse(m, g, item, next);
       continue;
     }
     const p = item - base;
@@ -455,11 +457,11 @@ function stepSparse(m, g, active, next, todo, str, s0, e0) {
       else top = mid;
     }
     for (; lo < hi && cmpKey(g.litKeys[lo], str, s0, e0, ci) === 0; lo++) {
-      fireSparse(m, g, g.lits[lo], next, todo);
+      fireSparse(m, g, g.lits[lo], next);
     }
     for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {
       const s = g.others[k];
-      if (sparseConsumes(m, s, str, s0, e0, absorbOk)) fireSparse(m, g, s, next, todo);
+      if (sparseConsumes(m, s, str, s0, e0, absorbOk)) fireSparse(m, g, s, next);
     }
   }
 }
@@ -480,7 +482,8 @@ function sparseConsumes(m, s, str, s0, e0, absorbOk) {
 // May a state of the set still consume ≥ 1 segment on a path to accept?
 export function sparseReach1(g, set) {
   const base = g.n + 1;
-  for (const item of set.items) {
+  for (let k = 0; k < set.len; k++) {
+    const item = set.items[k];
     if (item < base ? g.reach1[item] : g.succReach1[item - base]) return true;
   }
   return false;
@@ -496,30 +499,31 @@ export function coversBelowSparse(m, active) {
   const limit = Math.min(g.n + 1, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
     clearSet(next);
-    for (const item of active.items) {
+    for (let k = 0; k < active.len; k++) {
+      const item = active.items[k];
       if (item < base) {
-        if (item !== g.accept && anySeg(item)) fireSparse(m, g, item, next, scratch.todo);
+        if (item !== g.accept && anySeg(item)) fireSparse(m, g, item, next);
         continue;
       }
       // Literals never take a wildcard-only segment.
       const p = item - base;
       for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {
         const s = g.others[k];
-        if (anySeg(s)) fireSparse(m, g, s, next, scratch.todo);
+        if (anySeg(s)) fireSparse(m, g, s, next);
       }
     }
     if (!sparseHas(next, g.accept)) return false;
-    if (
-      next.items.length === active.items.length &&
-      next.items.every((i) => sparseHas(active, i))
-    ) {
-      return true;
-    }
+    if (next.len === active.len && sameSet(next, active)) return true;
     const t = active;
     active = next;
     next = t;
   }
   return false;
+}
+
+function sameSet(a, b) {
+  for (let k = 0; k < a.len; k++) if (!sparseHas(b, a.items[k])) return false;
+  return true;
 }
 
 // ── element predicates ──────────────────────────────────────────────
