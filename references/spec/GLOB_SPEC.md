@@ -815,7 +815,7 @@ Two shapes cover a subtree without the reference rule seeing it, and get the saf
 
 The rule asks a single element to take every name, and neither shape has one.
 
-The reference implementations also bound the proof. They feed at most 64 wildcard-only segments, and a matcher whose state has not settled by then leaves all-below unset: the union of `**` and `**/` + `*/` × 100 + `x` covers everything below `a`, and is not proven. For a single path with one `**`, they spend at most 4096 element compares on the tail positions a directory may leave; past that they set may-below and leave all-below unset, which are the safe answers of both flags.
+The reference implementations also bound the proof. They feed at most 65 wildcard-only segments (64 states' worth and the step that shows the set has settled), and a matcher whose state has not settled by then leaves all-below unset: the union of `**` and `**/` + `*/` × 100 + `x` covers everything below `a`, and is not proven. For a single path with one `**`, they spend at most 4096 element compares on the tail positions a directory may leave; past that they set may-below and leave all-below unset, which are the safe answers of both flags.
 
 ---
 
@@ -835,8 +835,8 @@ impl Glob {
 
 ```ts
 // JS
-function globstar(patterns: string | readonly string[], opts?: GlobstarOptions): (input: string) => boolean;
-function compileMatcher(patterns: string | readonly string[], opts?: GlobstarOptions): Matcher;
+function globstar(patterns: string | Iterable<string>, opts?: GlobstarOptions): (input: string) => boolean;
+function compileMatcher(patterns: string | Iterable<string>, opts?: GlobstarOptions): Matcher;
 ```
 
 A union answers the boolean questions only (`is_match`, `match_dir`, `static_prefixes`); which member matched is not part of the API. An empty list is `EmptyPatternSet`. A pattern given twice counts once. All members share one expansion budget (§7.7).

@@ -139,6 +139,6 @@ A `\` in a path counts as a separator only on Windows. `matchDir` tells a walker
 
 ## Summary
 
-Of these tools, picomatch is the closest. It is stricter about input (patterns must use `/`), it treats directory matching as a first-class operation, and it is stricter about syntax errors: an unclosed class or brace is always an error, never silently turned into literal text.
+Of these tools, picomatch is the closest. globstar is stricter about input (patterns must use `/`), treats directory matching as a first-class operation, and is stricter about syntax errors: an unclosed class or brace is always an error, never silently turned into literal text.
 
 Spec: [GLOB_SPEC §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

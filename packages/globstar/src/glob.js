@@ -92,11 +92,11 @@ function matcherOptions(input) {
     }
     return v;
   };
-  return {
-    dot: flag("dot"),
-    caseInsensitive: flag("caseInsensitive"),
-    __engine: Object.hasOwn(input, "__engine") ? input.__engine : undefined,
-  };
+  const engine = Object.hasOwn(input, "__engine") ? input.__engine : undefined;
+  if (engine !== undefined && engine !== "nfa" && engine !== "bytes") {
+    throw new TypeError(`__engine must be "nfa" or "bytes", got ${String(engine)}`);
+  }
+  return { dot: flag("dot"), caseInsensitive: flag("caseInsensitive"), __engine: engine };
 }
 
 // Exported for the tests, which read how a pattern compiled.

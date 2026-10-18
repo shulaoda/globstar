@@ -200,10 +200,10 @@ No anchor: `suffixes` is empty. `accept(path)` always returns `true`; the prefil
 AST              : [ Literal("src"), Separator, Literal("main."),
                      Brace([ Literal("ts"), Literal("rs") ]) ]
 
-push_suffix: tail Alternation halts → ε
+trailing: the tail Brace halts the run → the nodes before it
 suffix_set:
-  common_tail = push_suffix([Lit("src"), Sep, Lit("main.")])
-              = "src/main."   (a Sep is collected as '/', so the walk
+  common_tail = push_run(trailing([Lit("src"), Sep, Lit("main.")]))
+              = "src/main."   (a Sep is collected as '/', so the run
                                goes on through it to Lit("src"))
   branch[0] → "src/main." + "ts" = "src/main.ts"
   branch[1] → "src/main." + "rs" = "src/main.rs"

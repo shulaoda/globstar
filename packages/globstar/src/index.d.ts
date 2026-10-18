@@ -43,7 +43,8 @@ export interface GlobstarOptions {
  * ```
  *
  * Throws a {@link GlobError} if any pattern fails to compile, and a
- * `TypeError` if a pattern is not a string or holds a lone surrogate.
+ * `TypeError` if a pattern is not a string or holds a lone surrogate, or
+ * the options are not a plain object of known boolean flags.
  */
 export function globstar(
   patterns: string | Iterable<string>,
@@ -59,9 +60,9 @@ export function globstar(
  */
 export type DirMatchValue = 0 | 1 | 2 | 3 | 4 | 5;
 
-/** Directory matches; yield it (no descendant can match further). */
+/** The directory matches; nothing below it can (a selecting walker yields it and stops). */
 export declare const MATCH: 0;
-/** Nothing under this directory can match; prune the subtree. */
+/** Neither the directory nor anything below it matches (a selecting walker prunes it; an excluding one stops testing here). */
 export declare const PRUNED: 1;
 /** Directory itself doesn't match, but some descendant might; descend. */
 export declare const DESCEND: 2;
@@ -112,9 +113,10 @@ export interface Matcher {
   /**
    * Directory-level verdict for walker pruning (see {@link DirMatch}).
    * Ask about a directory without a trailing separator (`src`, not
-   * `src/`; `""` for the root). A negated member makes it say only
-   * whether the directory itself matches, and that something below may.
-   * Throws a `TypeError` on non-string input.
+   * `src/`; `""` for the root). A negated member matches every directory
+   * outside its sublanguage and always lets the walk go on, so with one
+   * the verdict is never `PRUNED` or `MATCH`; the positive members still
+   * give the all-below bit. Throws a `TypeError` on non-string input.
    */
   matchDir(input: string): DirMatchValue;
   /**
@@ -137,7 +139,8 @@ export interface Matcher {
  * predicate. `@globstar/walk` is built on this.
  *
  * Throws a {@link GlobError} if any pattern fails to compile, and a
- * `TypeError` if a pattern is not a string or holds a lone surrogate.
+ * `TypeError` if a pattern is not a string or holds a lone surrogate, or
+ * the options are not a plain object of known boolean flags.
  */
 export function compileMatcher(
   patterns: string | Iterable<string>,

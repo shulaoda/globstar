@@ -149,7 +149,7 @@ all    ← dot and prefix and covers_below(S)      (§2.5)
 verdict ← combine(exact, prefix, all)
 ```
 
-This is the production path. It answers the directory query without rebuilding a byte-level automaton. The chain path and the one-word NFA allocate nothing per call; past 64 states the NFA allocates its few word-slice sets per call.
+This is the production path. It answers the directory query without rebuilding a byte-level automaton. The chain path and the one-word NFA (64 states in Rust, 32 in JS) allocate nothing per call. Past that Rust allocates the NFA's few sets per call (dense rows up to 170 states, sparse lists beyond); JS keeps its sparse sets on the matcher and allocates nothing.
 
 ### 2.3 The suffix prefilter is not used
 
@@ -157,16 +157,16 @@ Unlike `is_match`, `match_dir` does not consult the suffix prefilter (§05; Rust
 
 ### 2.4 Negated patterns
 
-A lone negated pattern always returns `Descend`, in both runtimes (`references/spec/GLOB_SPEC.md` §13.4). A negated pattern matches paths _not_ in some sublanguage, and the walker has not yet seen the deeper paths; it cannot rule out their membership in the complement.
+A lone negated pattern returns `DescendAndMatch` when the directory itself matches and `Descend` otherwise, in both runtimes (`references/spec/GLOB_SPEC.md` §13.4). A negated pattern matches paths _not_ in some sublanguage, and the walker has not yet seen the deeper paths; it cannot rule out their membership in the complement.
 
-Rust's `Glob::union` rejects `!` members (`NegatedInUnion`). The JS multi-pattern matcher (`compileMatcher` in `packages/globstar/src/glob.js`, built by `makeMatcher`) accepts them, and each negated member contributes `Descend` (GLOB_SPEC §14.3). So when any member is negated, may-below is forced true, while the positive members still give the `matches` and all-below bits:
+Rust's `Glob::union` rejects `!` members (`NegatedInUnion`). The JS multi-pattern matcher (`compileMatcher` in `packages/globstar/src/glob.js`, built by `makeMatcher`) accepts them: a negated member matches every directory outside its sublanguage and contributes may-below (GLOB_SPEC §14.3). So when any member is negated, `matches` is the union's own answer (a negated member counts), may-below is forced true, and the positive members alone give the all-below bit:
 
 ```
-match_dir(P with negations, d) = combine(positive matches, true, positive all-below)
+match_dir(P with negations, d) = combine(any member matches d, true, positive all-below)
                                ∈ {Descend, DescendAndMatch, DescendAll, DescendAllAndMatch}
 ```
 
-i.e. pruning is suppressed: the verdict is never `Pruned` or `Match`. For example `compileMatcher(["a/**", "!b"]).matchDir("a")` is `DescendAll`. Pruning is restored only when no negative member exists.
+i.e. pruning is suppressed: the verdict is never `Pruned` or `Match`. For example `compileMatcher(["a/**", "!b"]).matchDir("a")` is `DescendAllAndMatch` (`a` is not `b`, so the negated member matches it), and `compileMatcher(["!b"]).matchDir("b")` is `Descend`. Pruning is restored only when no negative member exists.
 
 This is the formal counterpart of `references/spec/GLOB_SPEC.md` §13.4 and §14.3. The walker (§ `references/spec/WALKER_SPEC.md` §4) splits `!`-prefixed input patterns into its own ignore set, so the matcher receives only positive patterns at the walker layer; the conservative case applies only to direct standalone callers.
 

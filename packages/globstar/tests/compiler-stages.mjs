@@ -145,9 +145,18 @@ const folded = parse("\\a").body;
 assert.deepEqual(factorBranches([folded, parse("a").body]), folded);
 console.log("✓ members spelled differently fold into one");
 
-// Options: booleans only, own keys only, no unknown keys; `undefined`
-// keeps the default. `"false"` turned case folding on.
-for (const bad of [{ caseInsensitive: "false" }, { dot: 0 }, { nocase: true }, "x", [true]]) {
+// Options: booleans only, own keys only, no unknown keys, the engine
+// hook one of its two values; `undefined` keeps the default. `"false"`
+// turned case folding on.
+for (const bad of [
+  { caseInsensitive: "false" },
+  { dot: 0 },
+  { nocase: true },
+  { __engine: 42 },
+  { __engine: "NFA" },
+  "x",
+  [true],
+]) {
   assert.throws(() => compileMatcher("*.txt", bad), TypeError, JSON.stringify(bad));
 }
 assert.equal(compileMatcher("*.TXT", { caseInsensitive: undefined }).match("a.txt"), false);

@@ -65,6 +65,7 @@ assert!(!glob.is_match(b".env"));
 ## `DirMatch`
 
 ```rust
+#[non_exhaustive]
 pub enum DirMatch {
     Match,              // the directory matches; nothing below it can
     Pruned,             // neither the directory nor anything below matches
@@ -75,6 +76,7 @@ pub enum DirMatch {
 }
 
 impl DirMatch {
+    pub fn new(matches: bool, may_below: bool, all_below: bool) -> Self;
     pub fn matches(self) -> bool;
     pub fn may_match_below(self) -> bool;
     pub fn matches_all_below(self) -> bool;
@@ -101,7 +103,7 @@ pub trait Matcher {
 }
 ```
 
-The surface a walker consumes, implemented by `Glob`. It is object-safe, so a walker can hold `Box<dyn Matcher>` when it mixes matcher sources.
+The matching surface as a trait, implemented by `Glob` (`globstar-walk` uses `Glob` directly). It is object-safe, so a caller can hold `Box<dyn Matcher>` when it mixes matcher sources.
 
 ## `GlobError`
 
@@ -136,4 +138,4 @@ match Glob::new("src/[a") {
 
 ## Walker
 
-The filesystem walker is the `globstar-walk` crate: an iterator over matched entries that seeds from `static_prefixes`, prunes with `match_dir`, and takes a separate ignore set. It yields matching folders as well as files (the JS walker yields files only), never FIFOs, sockets or devices; a pattern or ignore entry that ends in `/` matches folders only. Its behavior is governed by its own crate documentation.
+The filesystem walker is the `globstar-walk` crate: an iterator over matched entries that seeds from `static_prefixes`, prunes with `match_dir`, and takes a separate ignore set. Its options are the JS walker's under Rust names (`base` for `cwd`, `follow_links` for `followSymlinks`). It yields matching folders as well as files (the JS walker yields files only), never FIFOs, sockets or devices; a pattern or ignore entry that ends in `/` matches folders only. Its behavior is governed by its own crate documentation.

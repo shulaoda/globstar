@@ -1,6 +1,6 @@
 # Compile-time errors and limits
 
-This page lists every way a pattern can fail to compile, the three size limits, and how to catch the error in JS and in Rust. Errors only happen when you compile. Once a pattern compiles, matching a path never fails with a glob error.
+This page lists every way a pattern can fail to compile, the four size limits, and how to catch the error in JS and in Rust. Errors only happen when you compile. Once a pattern compiles, matching a path never fails with a glob error.
 
 ## When errors happen
 

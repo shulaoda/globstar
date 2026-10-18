@@ -1,6 +1,6 @@
 # JavaScript API
 
-`@globstar/core` exports two factory functions, the `DirMatch` helpers, and the `GlobError` class. It has no runtime dependencies, no filesystem access and no `node:` imports, so it runs in Node 18+, Deno, Bun and browsers. Types ship with the package.
+`@globstar/core` exports two factory functions, the `DirMatch` helpers, and the `GlobError` class. It has no runtime dependencies, no filesystem access and no `node:` imports, so it runs in Node 20+ (it needs `String.prototype.isWellFormed`; the package asks for Node 22), Deno, Bun and browsers. Types ship with the package.
 
 ```js
 import { globstar, compileMatcher, DirMatch, GlobError } from "@globstar/core";

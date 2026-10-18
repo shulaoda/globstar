@@ -105,9 +105,10 @@ step closes its set as it goes, so memory stays linear.
 One walk over the AST (a `**` followed by `/` is a pending `**/`, a
 `**` ending a brace branch reads the `/` after the brace as its own):
 groups → graph nodes → classify each segment; then the chains (paths) are enumerated and the NFA tables
-laid out. No subset construction, no byte-class tables; the one
-hash map lets a brace branch reuse a node another branch already
-made (JS scans its first 16 nodes before it keys them). Every pattern
+laid out. No subset construction, no byte-class tables; two hash
+maps: one lets a brace branch reuse a node another branch already
+made, one finds a group by its key past the first 16 (JS scans its
+first 16 nodes before it keys them). Every pattern
 the parser accepts compiles unless its separator-crossing braces make
 its segments multiply: the walk counts its work — a unit per node and
 edge, plus each group it copies and each segment it closes by their
@@ -128,8 +129,9 @@ from the graph — chains, suffix products, in-segment closures, NFA
 rows — has a size budget past which a linear representation takes
 over, so memory is linear too. Match O(n·m) worst case — the NFA over
 the graph is the non-backtracking floor that rules out ReDoS — and
-O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 64
-wildcard-only segments for the all-below proof and 4096 element
+O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 65
+wildcard-only segments for the all-below proof (64 and the step that
+shows the set has settled) and 4096 element
 compares for a chain's tail tokens; past them it gives the safe
 answer (GLOB_SPEC §13.6). The engine answers `is_match`, `match_dir`,
 and `static_prefixes` natively.

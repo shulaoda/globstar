@@ -5,6 +5,8 @@
 # Format: SHAPE<TAB>PATTERN[<TAB>PATTERN...] (several patterns: one union).
 # Keep NFA rows within 32 states or past 170: JS keeps 32 in an int32 and
 # steps the rest sparsely; Rust keeps 64 in a u64 and 170 in dense rows (4 KiB).
+# A union member with several `**` keeps an NFA of its own up to 64 states in
+# Rust and 32 in JS; past that the graph NFA takes the whole union.
 literal	src/main.rs
 L W:affix | chains 1 | nfa none	src/*.ts
 L G0 W:affix | chains 1 | nfa none	src/**/*.ts

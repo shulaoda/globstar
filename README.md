@@ -12,9 +12,11 @@ packages/globstar-walk   — JavaScript walker published as @globstar/walk
 Both `globstar` implementations compile every non-literal pattern to
 the segment-structured matcher: a graph of per-segment elements,
 matched by anchored compares along each path through the graph, or by
-an NFA over the graph when there are too many paths or a path needs too
-many states. There is no fallback engine; the only caps are the parser's
-limits on pattern length, brace nesting and the expansion around `**`. See
+an NFA over the graph when there are too many paths, a path has several
+`**`, or a path needs too many states. There is no fallback engine; the
+only caps are the parser's limits on pattern length, brace nesting and
+the expansion around `**`, and a budget on the work a separator-crossing
+brace adds. See
 [`references/theory/07-segment-matcher.md`](./references/theory/07-segment-matcher.md).
 
 ## Why this exists
