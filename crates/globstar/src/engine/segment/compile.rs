@@ -37,13 +37,7 @@ const MIN_BUDGET: usize = 1 << 20;
 
 pub(super) fn compile(body: &Node, dot: bool, ci: bool) -> Result<SegmentMatcher, GlobError> {
     let graph = Graph::build(body, dot, ci)?;
-    let mut chains = graph.chains();
-    // A lone chain with several globstars is the graph: its NFA serves.
-    if let [c] = &chains[..]
-        && matches!(c.shape, Shape::Many(_))
-    {
-        chains = Box::default();
-    }
+    let chains = graph.chains();
     // A lone chain serves `match_dir` too; anything else needs the NFA.
     let nfa = match &chains[..] {
         [_] => None,
@@ -87,7 +81,15 @@ impl Edges {
 impl Graph {
     fn build(body: &Node, dot: bool, ci: bool) -> Result<Self, GlobError> {
         let nodes = body.seq();
-        let (boundaries, linear, weight) = survey(nodes);
+        let (mut boundaries, linear, weight) = survey(nodes);
+        // The `/` of a `**/` makes no element: a linear pattern then
+        // gets its elements' exact count.
+        if linear {
+            boundaries -= nodes
+                .windows(2)
+                .filter(|w| matches!(w, [Node::Globstar, Node::Separator]))
+                .count();
+        }
         // Only a separator-crossing brace can need regrouping.
         let nodes = if linear {
             Cow::Borrowed(nodes)
@@ -125,7 +127,7 @@ impl Graph {
     /// those).
     fn chains(&self) -> Box<[Chain]> {
         let Some(edges) = &self.edges else {
-            return self.chain(None).into_iter().collect();
+            return self.chain(None, true).into_iter().collect();
         };
         let mut paths: Vec<Vec<u32>> = Vec::new();
         // Depth-first, first branch first, along one path: a level per
@@ -150,17 +152,19 @@ impl Graph {
             path.push(id);
             levels.push((edges.succ(id as usize), 0));
         }
+        let lone = paths.len() == 1;
         paths
             .into_iter()
-            .map(|p| self.chain(Some(p)))
+            .map(|p| self.chain(Some(p), lone))
             .collect::<Option<_>>()
             .unwrap_or_default()
     }
 
     /// The chain of a path (`None`: the lone path of a brace-free
     /// pattern, whose nodes are `0..elems.len()`); `None` when it has
-    /// several globstars and is that lone path or would not fit a `u64`.
-    fn chain(&self, path: Option<Vec<u32>>) -> Option<Chain> {
+    /// several globstars and is the graph's `lone` path (the graph's
+    /// NFA serves) or would not fit a `u64`.
+    fn chain(&self, path: Option<Vec<u32>>, lone: bool) -> Option<Chain> {
         let n = path.as_ref().map_or(self.elems.len(), Vec::len);
         let elem = |i: usize| &self.elems[path.as_ref().map_or(i, |p| p[i] as usize)];
         let mut globstars = (0..n).filter(|&i| elem(i).is_globstar());
@@ -171,11 +175,11 @@ impl Graph {
         let shape = match (globstars.next(), globstars.next()) {
             // A union member gets an NFA over its nodes alone.
             (Some(_), Some(_)) => {
-                let p = path.as_deref()?;
-                if n + 1 > 64 {
+                if lone || n + 1 > 64 {
                     return None;
                 }
-                Shape::Many(Box::new(nfa_over::<u64>(&self.elems, None, Some(p))))
+                let p = path.as_deref();
+                Shape::Many(Box::new(nfa_over::<u64>(&self.elems, None, p)))
             }
             (g, _) => Shape::Line {
                 g: g.unwrap_or(n) as u32,
@@ -249,9 +253,10 @@ fn nfa_over<B: Bits>(elems: &[Elem], edges: Option<&Edges>, path: Option<&[u32]>
     let start: &[u32] = edges.map_or(&[0], |e| &e.start);
     let accept = n;
     let words = B::words(n + 1);
+    // The rows are filled below; the accept state's is never read.
     let mut states: Vec<State<B>> = (0..=n)
         .map(|_| State {
-            after: B::zero(words),
+            after: B::zero(0),
             node: 0,
         })
         .collect();
@@ -319,13 +324,11 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
     // A position reaches accept through ≥ 1 segment iff its element
     // can consume one and what it enters reaches accept: from the last
     // position back, as successors always lie ahead.
+    // (A nullable successor is a `**/`, which reaches accept through
+    // one segment whenever it reaches it at all.)
     let mut r1 = vec![false; n];
-    let mut ok = vec![false; n];
     for i in (0..n).rev() {
-        ok[i] = succ_of(i).any(|t| {
-            t == ACCEPT || r1[t as usize] || (elem(t as usize).nullable() && ok[t as usize])
-        });
-        r1[i] = elem(i).satisfiable() && ok[i];
+        r1[i] = elem(i).satisfiable() && succ_of(i).any(|t| t == ACCEPT || r1[t as usize]);
     }
     let mut reach1 = Wide::zero(Wide::words(n_states));
     for i in (0..n).filter(|&i| r1[i]) {
@@ -483,7 +486,8 @@ struct Group<'a> {
     /// A `**/` read but not yet emitted: a bare `**` right after it
     /// absorbs it (`x/**/**` ≡ `x/**`), anything else makes it real.
     /// More of them add nothing (`**/**/` ≡ `**/`). While set, `state`
-    /// is the boundary before it and `buf` is empty.
+    /// is the boundary before it and `buf` holds at most the in-segment
+    /// braces read since (`**/{a,b}x`), settled with the next node.
     pending_oss: bool,
     /// A `**` ending a brace branch took the `/` after the brace as its
     /// `**/`: that separator closes nothing here.
@@ -740,17 +744,7 @@ impl Builder {
                         g.dedupe_tails();
                     }
                 }
-                Node::Separator => {
-                    // The branches a `**` ended have this `/` already.
-                    let (mut taken, mut rest): (Vec<_>, Vec<_>) =
-                        groups.drain(..).partition(|g| g.took_sep);
-                    self.close_all(&mut rest, Boundary::Sep);
-                    for g in &mut taken {
-                        g.took_sep = false;
-                    }
-                    rest.append(&mut taken);
-                    groups = rest;
-                }
+                Node::Separator => self.close_all(&mut groups, Boundary::Sep),
                 // `**/`: zero or more whole segments, empty ones included,
                 // so the separators around it are lenient (§12.3). It is
                 // emitted later, when it is known that no bare `**`
@@ -828,7 +822,8 @@ impl Builder {
     }
 
     /// Emit one node per group through `node`, then continue as one
-    /// group at `state`. Open groups pass through untouched.
+    /// group at `state`. Open groups pass through untouched, and so do
+    /// the branches a `**` ended, which took this `/` already.
     fn join_all<'a>(
         &mut self,
         groups: &mut Vec<Group<'a>>,
@@ -837,9 +832,15 @@ impl Builder {
     ) {
         let mut joined: Option<Group<'a>> = None;
         let mut open = Merged::default();
+        let mut taken = Vec::new();
         for mut g in groups.drain(..) {
             if g.state == Boundary::Open {
                 open.add(g);
+                continue;
+            }
+            if g.took_sep {
+                g.took_sep = false;
+                taken.push(g);
                 continue;
             }
             let id = node(self, &mut g);
@@ -853,6 +854,7 @@ impl Builder {
         }
         groups.extend(open.groups);
         groups.extend(joined);
+        groups.append(&mut taken);
         for g in groups.iter_mut() {
             g.dedupe_tails();
         }

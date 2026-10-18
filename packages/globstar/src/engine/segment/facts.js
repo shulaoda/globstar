@@ -168,18 +168,31 @@ function opensSegment(node) {
   return node.branches.every((b) => seq(b)[0]?.tag === N_SEPARATOR);
 }
 
+// Drop prefixes a shorter one already covers; an empty one covers all.
+// Shortest first, so a prefix is only ever covered by one kept before,
+// found by a binary search at each of its `/`.
 function dedupePrefixes(prefixes) {
   if (prefixes.length <= 1) return prefixes;
-  const order = (a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
-  prefixes.sort(order);
-  const accepted = new Set();
-  for (const prefix of prefixes) {
-    if (prefix.length === 0) return [prefix];
-    let covered = false;
-    for (let i = 0; !covered && i < prefix.length; i++) {
-      if (prefix.charCodeAt(i) === 0x2f && accepted.has(prefix.slice(0, i))) covered = true;
+  prefixes.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+  const kept = [];
+  const covered = (p) => {
+    for (let i = p.indexOf("/"); i !== -1; i = p.indexOf("/", i + 1)) {
+      let lo = 0;
+      let hi = kept.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        const k = kept[mid];
+        const c = k.length - i || (p.startsWith(k) ? 0 : k < p ? -1 : 1);
+        if (c === 0) return true;
+        if (c < 0) lo = mid + 1;
+        else hi = mid;
+      }
     }
-    if (!covered) accepted.add(prefix);
+    return false;
+  };
+  for (const p of prefixes) {
+    if (p.length === 0) return [p];
+    if (p !== kept[kept.length - 1] && !covered(p)) kept.push(p);
   }
-  return [...accepted].sort(order);
+  return kept;
 }

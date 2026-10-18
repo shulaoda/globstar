@@ -233,9 +233,11 @@ fn dedupe(mut prefixes: Vec<Bytes>) -> Vec<Bytes> {
         if p.is_empty() {
             return vec![p];
         }
-        let covered = kept
-            .iter()
-            .any(|k| p.len() > k.len() && p[k.len()] == b'/' && p[..k.len()] == k[..]);
+        // A cover ends where `p` has a `/`; `kept` is in the same order.
+        let covered = (0..p.len()).filter(|&j| p[j] == b'/').any(|j| {
+            kept.binary_search_by(|k| k.len().cmp(&j).then_with(|| k[..].cmp(&p[..j])))
+                .is_ok()
+        });
         if !covered {
             kept.push(p);
         }

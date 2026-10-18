@@ -58,9 +58,7 @@ const EMPTY = "";
 
 export function compileSegment(body, dot, ci, forceNfa) {
   const graph = buildGraph(body, dot, ci);
-  let chainList = chains(graph);
-  // A lone chain with several globstars is the graph: its NFA serves.
-  if (chainList.length === 1 && chainList[0].globstar === MANY_G) chainList = [];
+  const chainList = chains(graph);
   // A lone chain serves `matchDir` too; anything else needs the NFA
   // (the test hook always does).
   const nfa = forceNfa || chainList.length !== 1 ? anyNfa(graph, ci) : null;
@@ -206,8 +204,9 @@ export function nodeWeight(node) {
 // in-segment nodes read since, and whether a `**/` was read but not yet
 // emitted (a bare `**` right after it absorbs it, `x/**/**` ≡ `x/**`;
 // anything else makes it real; more of them add nothing, `**/**/` ≡
-// `**/` — while set, `state` is the boundary before it and `buf` is
-// empty). `tookSep`: a `**` ending a brace branch took the `/` after
+// `**/` — while set, `state` is the boundary before it and `buf` holds
+// at most the in-segment braces read since, `**/{a,b}x`, settled with
+// the next node). `tookSep`: a `**` ending a brace branch took the `/` after
 // the brace as its `**/`, so that separator closes nothing here.
 // `weight` is the `nodeWeight` of `buf`.
 function makeGroup(tails, state, buf, pendingOss, tookSep, weight) {
@@ -425,20 +424,9 @@ class Builder {
           for (const g of groups) dedupeTails(g);
           break;
         }
-        case N_SEPARATOR: {
-          // The branches a `**` ended have this `/` already.
-          const taken = groups.filter((g) => g.tookSep);
-          if (taken.length > 0) {
-            const rest = groups.filter((g) => !g.tookSep);
-            this.closeAll(rest, B_SEP);
-            for (const g of taken) {
-              g.tookSep = false;
-              rest.push(g);
-            }
-            groups = rest;
-          } else this.closeAll(groups, B_SEP);
+        case N_SEPARATOR:
+          this.closeAll(groups, B_SEP);
           break;
-        }
         case N_GLOBSTAR:
           if (sepNext || (last && sepAfter)) {
             // `**/`: zero or more whole segments, empty ones included, so
@@ -504,13 +492,20 @@ class Builder {
   }
 
   // Emit one node per group through `node`, then continue as one group
-  // at `state`, in the same list. Open groups pass through untouched.
+  // at `state`, in the same list. Open groups pass through untouched,
+  // and so do the branches a `**` ended, which took this `/` already.
   joinAll(groups, state, node) {
     let joined = null;
     const open = makeMerged();
+    const taken = [];
     for (const g of groups) {
       if (g.state === B_OPEN) {
         merge(open, g);
+        continue;
+      }
+      if (g.tookSep) {
+        g.tookSep = false;
+        taken.push(g);
         continue;
       }
       const id = node(g);
@@ -522,6 +517,7 @@ class Builder {
     groups.length = 0;
     for (const g of open.groups) groups.push(g);
     if (joined !== null) groups.push(joined);
+    for (const g of taken) groups.push(g);
     for (const g of groups) dedupeTails(g);
   }
 
@@ -547,7 +543,7 @@ class Builder {
 // globstars has more than 32 states (the NFA takes those).
 function chains(graph) {
   if (graph.linear) {
-    const chain = makeChain(graph, null);
+    const chain = makeChain(graph, null, true);
     return chain === null ? [] : [chain];
   }
   // Depth-first, first branch first, along one path: a level per node
@@ -577,7 +573,7 @@ function chains(graph) {
   }
   const out = [];
   for (const nodes of paths) {
-    const chain = makeChain(graph, nodes);
+    const chain = makeChain(graph, nodes, paths.length === 1);
     if (chain === null) return [];
     out.push(chain);
   }
@@ -585,9 +581,10 @@ function chains(graph) {
 }
 
 // The chain of a path (`null`: the lone path of a brace-free pattern,
-// whose nodes are `0..elems.length`), or `null` when its
-// several-globstar NFA would not fit an int32.
-function makeChain(graph, nodes) {
+// whose nodes are `0..elems.length`), or `null` when it has several
+// globstars and is the graph's `lone` path (the graph's NFA serves) or
+// its NFA would not fit an int32.
+function makeChain(graph, nodes, lone) {
   const elems = graph.elems;
   const n = nodes === null ? elems.length : nodes.length;
   const elem = (i) => elems[nodes === null ? i : nodes[i]];
@@ -601,11 +598,10 @@ function makeChain(graph, nodes) {
     globstar = i;
   }
 
-  // Several globstars: the NFA over this path alone; the lone path of
-  // a linear pattern is the graph, whose NFA serves.
+  // Several globstars: the NFA over this path alone.
   let nfa = null;
   if (globstar === MANY_G) {
-    if (nodes === null || n + 1 > 32) return null;
+    if (lone || n + 1 > 32) return null;
     nfa = nfaSmall(graph, nodes);
   }
   // What a path must end with, read off the last element: a cheap
@@ -699,14 +695,14 @@ function nfaSparse(graph, ci) {
   // position back, as successors always lie ahead.
   // The flags are bytes (1 or 0) and the offsets int32: a plain array
   // takes 8 bytes per entry, booleans included.
+  // (A nullable successor is a `**/`, which reaches accept through one
+  // segment whenever it reaches it at all.)
   const reach1 = new Uint8Array(n + 1);
-  const ok = new Uint8Array(n);
   for (let i = n - 1; i >= 0; i--) {
     let o = 0;
     eachSucc(i, (t) => {
-      if (t === ACCEPT || reach1[t] || (nullable(elems[t]) && ok[t])) o = 1;
+      if (t === ACCEPT || reach1[t]) o = 1;
     });
-    ok[i] = o;
     reach1[i] = o && elemSatisfiable(elems[i]) ? 1 : 0;
   }
 
