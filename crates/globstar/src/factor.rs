@@ -8,13 +8,7 @@ use crate::ast::Node;
 /// not; `src/mod{1,2}/index.ts` is fine.
 #[inline(never)]
 pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
-    let mut seqs: Vec<Vec<Node>> = branches
-        .into_iter()
-        .map(|n| match n {
-            Node::Concat(xs) => xs,
-            other => vec![other],
-        })
-        .collect();
+    let mut seqs: Vec<Vec<Node>> = branches.into_iter().map(Node::into_seq).collect();
     let mut out = lift_tokens(&mut seqs, true);
     let bytes = !out.is_empty();
     let head = bytes.then(|| lift_bytes(&mut seqs, true)).flatten();
@@ -27,14 +21,14 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut empty = false;
     let mut branches: Vec<Node> = seqs
         .into_iter()
-        .filter_map(|mut seq| match seq.len() {
-            0 if empty => None,
-            0 => {
-                empty = true;
-                Some(Node::Concat(Vec::new())) // epsilon branch
+        .filter_map(|seq| {
+            if seq.is_empty() {
+                if empty {
+                    return None;
+                }
+                empty = true; // the epsilon branch
             }
-            1 => seq.pop(),
-            _ => Some(Node::Concat(seq)),
+            Some(Node::of_seq(seq))
         })
         .collect();
     let inner = if branches.len() == 1 {
@@ -50,11 +44,7 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     }
     out.extend(tail);
     out.append(&mut suffix);
-    if out.len() == 1 {
-        out.pop().unwrap()
-    } else {
-        Node::Concat(out)
-    }
+    Node::of_seq(out)
 }
 
 /// The `k`th node of `seq` from the front, or from the back.

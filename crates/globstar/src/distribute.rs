@@ -122,10 +122,7 @@ fn group(mut seqs: Vec<Seq>) -> Seq {
 
 /// The sequence `node` stands for, with every junction merged.
 fn rewrite(node: Node, budget: &mut usize) -> Result<Seq, GlobError> {
-    let nodes = match node {
-        Node::Concat(nodes) => nodes,
-        node => vec![node],
-    };
+    let nodes = node.into_seq();
     let mut out = seq_of(Vec::with_capacity(nodes.len()));
     let mut nodes = nodes.into_iter().peekable();
     while let Some(node) = nodes.next() {
@@ -288,9 +285,5 @@ fn node_of(seq: Seq) -> Node {
         Item::Token(node) => node,
         Item::Brace { branches, .. } => Node::Brace(branches.into_iter().map(node_of).collect()),
     };
-    let mut nodes: Vec<Node> = seq.items.into_iter().map(node).collect();
-    match nodes.len() {
-        1 => nodes.pop().unwrap(),
-        _ => Node::Concat(nodes),
-    }
+    Node::of_seq(seq.items.into_iter().map(node).collect())
 }

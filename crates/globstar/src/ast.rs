@@ -91,43 +91,55 @@ impl Node {
         }
     }
 
+    /// Literals and separators only. A sequence holds no sequence, so
+    /// this and [`Node::to_literal_bytes`] read one level.
     pub fn is_pure_literal(&self) -> bool {
-        match self {
-            Node::Literal(_) | Node::Separator => true,
-            Node::Concat(xs) => xs.iter().all(Node::is_pure_literal),
-            _ => false,
-        }
+        self.seq()
+            .iter()
+            .all(|n| matches!(n, Node::Literal(_) | Node::Separator))
     }
 
+    /// The bytes of a pure literal, `/` for a separator, sized once.
     pub fn to_literal_bytes(&self) -> Option<Vec<u8>> {
-        if !self.is_pure_literal() {
-            return None;
+        let mut len = 0;
+        for node in self.seq() {
+            match node {
+                Node::Literal(bytes) => len += bytes.len(),
+                Node::Separator => len += 1,
+                _ => return None,
+            }
         }
-        let mut out = Vec::new();
-        self.append_literal_bytes(&mut out);
+        let mut out = Vec::with_capacity(len);
+        for node in self.seq() {
+            match node {
+                Node::Literal(bytes) => out.extend_from_slice(bytes),
+                _ => out.push(b'/'),
+            }
+        }
         Some(out)
     }
 
-    fn append_literal_bytes(&self, out: &mut Vec<u8>) {
-        match self {
-            Node::Literal(bytes) => out.extend_from_slice(bytes),
-            Node::Separator => out.push(b'/'),
-            Node::Concat(xs) => {
-                for x in xs {
-                    x.append_literal_bytes(out);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Node {
     /// The node as a sequence: a `Concat`'s children, or the node alone.
     pub(crate) fn seq(&self) -> &[Node] {
         match self {
             Node::Concat(xs) => xs,
             other => std::slice::from_ref(other),
+        }
+    }
+
+    /// [`Node::seq`], owned.
+    pub(crate) fn into_seq(self) -> Vec<Node> {
+        match self {
+            Node::Concat(xs) => xs,
+            other => vec![other],
+        }
+    }
+
+    /// A sequence as one node: its only node, or a `Concat`.
+    pub(crate) fn of_seq(mut nodes: Vec<Node>) -> Node {
+        match nodes.len() {
+            1 => nodes.pop().unwrap(),
+            _ => Node::Concat(nodes),
         }
     }
 

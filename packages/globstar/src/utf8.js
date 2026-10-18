@@ -1,19 +1,7 @@
 const ENCODER = new TextEncoder();
 
-// A string's UTF-8 bytes.
-export function toBytes(input) {
-  const n = input.length;
-  for (let i = 0; i < n; i++) {
-    if (input.charCodeAt(i) > 0x7f) return ENCODER.encode(input);
-  }
-  // ASCII fast path: each char is its own byte, skip TextEncoder.
-  const out = new Uint8Array(n);
-  for (let i = 0; i < n; i++) out[i] = input.charCodeAt(i);
-  return out;
-}
-
-// How many bytes `toBytes(input)` would return, without making them. A
-// lone surrogate encodes as U+FFFD, three bytes.
+// How many UTF-8 bytes `input` takes, without making them. A lone
+// surrogate encodes as U+FFFD, three bytes.
 export function utf8Length(input) {
   let n = 0;
   for (let i = 0; i < input.length; i++) {
@@ -52,7 +40,7 @@ export function utf8Latin1(input) {
     if (input.charCodeAt(i) > 0x7f) {
       return typeof Buffer !== "undefined"
         ? Buffer.from(input, "utf8").toString("latin1")
-        : latin1(toBytes(input));
+        : latin1(ENCODER.encode(input));
     }
   }
   return input;
@@ -63,8 +51,8 @@ export function utf8Latin1(input) {
 // its source alive; the strings a matcher stores live as long as it does.
 export function flat(s) {
   if (s.length < 13) return s;
-  const codes = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) codes[i] = s.charCodeAt(i);
+  const codes = [];
+  for (let i = 0; i < s.length; i++) codes.push(s.charCodeAt(i));
   return latin1(codes);
 }
 

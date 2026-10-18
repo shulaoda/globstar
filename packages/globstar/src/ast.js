@@ -79,16 +79,15 @@ export function classMatches(cls, b) {
   return cls.neg ? !listed : listed;
 }
 
-// The bytes of a pure-literal body, one char each, or `null`.
+// The bytes of a pure-literal body, one char each, or `null`. A sequence
+// holds no sequence.
 export function nodeToLiteral(n) {
   if (n.tag === N_LITERAL) return n.str;
-  if (n.tag === N_SEPARATOR) return "/";
-  if (n.tag !== N_CONCAT) return null;
   let out = "";
-  for (const x of n.children) {
-    const s = nodeToLiteral(x);
-    if (s === null) return null;
-    out += s;
+  for (const x of seq(n)) {
+    if (x.tag === N_LITERAL) out += x.str;
+    else if (x.tag === N_SEPARATOR) out += "/";
+    else return null;
   }
   return out;
 }

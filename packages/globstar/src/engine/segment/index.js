@@ -7,7 +7,7 @@
 import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
-import { compileSegment, hasNonAscii } from "./compile.js";
+import { compileSegment } from "./compile.js";
 import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
 import {
   chainMatches,
@@ -95,13 +95,14 @@ export class SegmentMatcher {
     return `${runs.join(" ")} | chains ${this.chains.length} | nfa ${nfa}`;
   }
 
-  // `opts.forceNfa` bypasses the chains, `opts.byteOnly` the string
-  // mode: test hooks that cross-check the code paths.
+  // `opts.forceNfa` bypasses the chains (a test hook); `opts.byteOnly`
+  // the string mode, for a pattern with a byte past ASCII (and as a
+  // test hook that cross-checks the code paths).
   static build(body, dot, ci, opts = {}) {
     const forceNfa = !!opts.forceNfa;
     const compiled = compileSegment(body, dot, ci, forceNfa);
     if (forceNfa) compiled.chains = [];
-    const byteOnly = !!opts.byteOnly || hasNonAscii(body);
+    const byteOnly = !!opts.byteOnly;
     return new SegmentMatcher(compiled, body, ci, byteOnly, dot);
   }
 

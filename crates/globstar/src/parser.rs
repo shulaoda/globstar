@@ -124,11 +124,7 @@ impl<'a> Parser<'a> {
                 b'{' => match <[Node; 1]>::try_from(self.parse_brace(depth + 1)?) {
                     Ok([single]) => {
                         lit_buf.push(b'{');
-                        let inner = match single {
-                            Node::Concat(inner) => inner,
-                            node => vec![node],
-                        };
-                        for node in inner {
+                        for node in single.into_seq() {
                             match node {
                                 Node::Literal(bytes) => lit_buf.extend_from_slice(&bytes),
                                 node => {
@@ -155,11 +151,7 @@ impl<'a> Parser<'a> {
             return Ok(Node::Literal(lit_buf));
         }
         flush_literal(&mut lit_buf, &mut nodes);
-
-        Ok(match <[Node; 1]>::try_from(nodes) {
-            Ok([single]) => single,
-            Err(nodes) => Node::Concat(nodes),
-        })
+        Ok(Node::of_seq(nodes))
     }
 
     /// A `**` is a globstar with a separator, or the end of the pattern, on

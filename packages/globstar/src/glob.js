@@ -106,11 +106,12 @@ export function buildEngine(asts, opts) {
   // Members that only differ in spelling factor into one, which may be
   // a literal again.
   const body = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
+  const ascii = asts.every((a) => a.ascii);
   const literal = nodeToLiteral(body);
-  if (literal !== null) return new LiteralMatcher(literal, ci);
+  if (literal !== null) return new LiteralMatcher(literal, ci, ascii);
   return SegmentMatcher.build(body, dot, ci, {
     forceNfa: opts.__engine === "nfa",
-    byteOnly: opts.__engine === "bytes",
+    byteOnly: opts.__engine === "bytes" || !ascii,
   });
 }
 

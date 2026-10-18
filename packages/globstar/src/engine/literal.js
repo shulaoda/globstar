@@ -1,15 +1,15 @@
 import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../bytes.js";
 import { DirMatch } from "../dir-match.js";
-import { flat, isAscii, latin1Bytes, utf8Latin1 } from "../utf8.js";
+import { flat, latin1Bytes, utf8Latin1 } from "../utf8.js";
 
 export class LiteralMatcher {
   // `litStr` holds the literal's bytes, one char each (see `utf8Latin1`).
   // An ASCII literal is compared against the raw path string: a
   // non-ASCII char equals no ASCII byte either way.
-  constructor(litStr, caseInsensitive) {
+  constructor(litStr, caseInsensitive, ascii) {
     this.caseInsensitive = caseInsensitive;
     this.litStr = flat(litStr);
-    this.ascii = isAscii(litStr);
+    this.ascii = ascii;
     this.exact = this.ascii && !caseInsensitive && !IS_WINDOWS_SEP;
   }
 

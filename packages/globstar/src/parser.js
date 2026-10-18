@@ -31,6 +31,10 @@ const COMMA = 0x2c;
 const BANG = 0x21;
 const CARET = 0x5e;
 const DASH = 0x2d;
+// The bytes `parseSequence` has a case for (`,` and `}` only in a brace):
+// a run of any other bytes joins the text as one slice.
+const SPECIAL = new Uint8Array(256);
+for (const b of [BACKSLASH, SLASH, QUESTION, STAR, LBRACK, LBRACE, COMMA, RBRACE]) SPECIAL[b] = 1;
 
 // `budget` is the expansion budget (§7.7): the patterns of one matcher share
 // it, so together they may copy `MAX_EXPANSION`, not each.
@@ -62,7 +66,8 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
 
   let body = parseSequence(state, 0);
   if (state.pending) body = resolveGlobstars(body, budget);
-  return { body, isNegated: (negationCount & 1) === 1 };
+  // `ascii`: no byte past ASCII anywhere, so none in a literal or a class.
+  return { body, isNegated: (negationCount & 1) === 1, ascii: bytes === input };
 }
 
 // The sequence up to the end, or (`depth` > 0, inside that many braces)
@@ -140,9 +145,12 @@ function parseSequence(state, depth) {
         text += "}";
         break;
       }
-      default:
-        text += input[state.pos];
-        state.pos++;
+      default: {
+        const start = state.pos;
+        do state.pos++;
+        while (state.pos < input.length && SPECIAL[input.charCodeAt(state.pos)] === 0);
+        text += input.slice(start, state.pos);
+      }
     }
   }
 

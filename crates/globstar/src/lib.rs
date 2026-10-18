@@ -48,8 +48,7 @@
 pub mod ast;
 mod dir_match;
 mod distribute;
-#[doc(hidden)]
-pub mod engine;
+mod engine;
 pub mod error;
 mod factor;
 #[doc(hidden)]
@@ -61,7 +60,7 @@ pub use error::GlobError;
 
 use std::collections::HashSet;
 
-use ast::{Ast, Node};
+use ast::Node;
 use engine::literal::LiteralMatcher;
 use engine::segment::SegmentMatcher;
 use factor::factor_branches;
@@ -161,7 +160,7 @@ impl Glob {
     /// Compile a pattern with explicit [`CompileOptions`].
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
         let ast = parser::parse(pattern.as_bytes())?;
-        Self::from_ast(ast, opts, None)
+        Self::from_body(&ast.body, ast.is_negated(), opts, None)
     }
 
     /// Compile the boolean-OR union of several patterns into one `Glob`
@@ -193,13 +192,13 @@ impl Glob {
         // once and counts once against the expansion budget. Members that
         // only differ in spelling fold into one when factored.
         let patterns: Vec<S> = patterns.into_iter().collect();
-        let mut seen = HashSet::with_capacity(patterns.len());
+        let mut seen = (patterns.len() > 1).then(|| HashSet::with_capacity(patterns.len()));
         let mut bodies: Vec<Node> = Vec::with_capacity(patterns.len());
         let mut budget = error::MAX_EXPANSION;
         let mut tier = Tier::Literal;
         for (index, pattern) in patterns.iter().enumerate() {
             let pattern = pattern.as_ref();
-            if !seen.insert(pattern) {
+            if seen.as_mut().is_some_and(|seen| !seen.insert(pattern)) {
                 continue;
             }
             let parsed = parser::parse_within(pattern.as_bytes(), &mut budget).map_err(|e| {
@@ -222,28 +221,25 @@ impl Glob {
             1 => bodies.pop().unwrap(),
             _ => factor_branches(bodies),
         };
-        Self::from_ast(
-            Ast {
-                negation_count: 0,
-                body,
-            },
-            opts,
-            Some(tier),
-        )
+        Self::from_body(&body, false, opts, Some(tier))
     }
 
     /// `tier` is a union's, from its members; a single pattern's comes
     /// from its body here.
-    fn from_ast(ast: Ast, opts: CompileOptions, tier: Option<Tier>) -> Result<Self, GlobError> {
-        let negated = ast.is_negated();
-        let (tier, engine) = match ast.body.to_literal_bytes() {
+    fn from_body(
+        body: &Node,
+        negated: bool,
+        opts: CompileOptions,
+        tier: Option<Tier>,
+    ) -> Result<Self, GlobError> {
+        let (tier, engine) = match body.to_literal_bytes() {
             Some(lit) => (
                 tier.unwrap_or(Tier::Literal),
                 Engine::Literal(LiteralMatcher::new(lit.into(), opts.case_insensitive)),
             ),
             None => {
-                let tier = tier.unwrap_or_else(|| tier_of(&ast.body));
-                let matcher = SegmentMatcher::build(&ast.body, opts.dot, opts.case_insensitive)?;
+                let tier = tier.unwrap_or_else(|| tier_of(body));
+                let matcher = SegmentMatcher::build(body, opts.dot, opts.case_insensitive)?;
                 (tier, Engine::Segment(matcher))
             }
         };
@@ -340,25 +336,18 @@ impl Glob {
     }
 }
 
-/// A body's syntactic tier.
+/// A body's syntactic tier, read off its sequence (which holds no
+/// sequence; a `**` in a brace is in a brace).
 fn tier_of(body: &Node) -> Tier {
-    if body.is_pure_literal() {
-        Tier::Literal
-    } else if has_globstar_or_brace(body) {
-        Tier::Globstar
-    } else {
-        Tier::SimpleWildcard
+    let mut tier = Tier::Literal;
+    for node in body.seq() {
+        match node {
+            Node::Literal(_) | Node::Separator => {}
+            Node::Globstar | Node::Brace(_) => return Tier::Globstar,
+            _ => tier = Tier::SimpleWildcard,
+        }
     }
-}
-
-/// A `**` or a brace anywhere, in one walk (a `**` in a brace is in a
-/// brace).
-fn has_globstar_or_brace(node: &Node) -> bool {
-    match node {
-        Node::Globstar | Node::Brace(_) => true,
-        Node::Concat(xs) => xs.iter().any(has_globstar_or_brace),
-        _ => false,
-    }
+    tier
 }
 
 /// The matcher surface, implemented by [`Glob`]. Object-safe, so a

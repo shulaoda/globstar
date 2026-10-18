@@ -21,7 +21,7 @@ import {
   seq,
 } from "../../ast.js";
 import { IS_WINDOWS_SEP } from "../../bytes.js";
-import { flat, isAscii } from "../../utf8.js";
+import { flat } from "../../utf8.js";
 import {
   EL_LIT,
   EL_WILD,
@@ -124,22 +124,6 @@ function crosses(node) {
       return node.branches.some(crosses);
     case N_CONCAT:
       return node.children.some(crosses);
-    default:
-      return false;
-  }
-}
-
-// Does the pattern hold a byte past ASCII (in a literal or a class)?
-export function hasNonAscii(node) {
-  switch (node.tag) {
-    case N_LITERAL:
-      return !isAscii(node.str);
-    case N_CLASS:
-      return node.items.some((it) => (it.tag === CI_BYTE ? it.b > 0x7f : it.hi > 0x7f));
-    case N_BRACE:
-      return node.branches.some(hasNonAscii);
-    case N_CONCAT:
-      return node.children.some(hasNonAscii);
     default:
       return false;
   }

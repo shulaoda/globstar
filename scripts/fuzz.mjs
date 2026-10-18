@@ -224,7 +224,7 @@ function escapeBytes(bytes) {
   return out;
 }
 // PATTERN and PATH both travel as UTF-8 — identical bytes to what the JS
-// side's internal toBytes() sees and to what Rust receives. The public JS
+// side's UTF-8 encoder sees and to what Rust receives. The public JS
 // API is string-only, so the shared input domain is UTF-8 strings; raw
 // non-UTF-8 byte paths are Rust-only territory the differential can't reach.
 const patternWire = (s) => escapeBytes(ENC.encode(s));
