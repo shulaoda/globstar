@@ -1054,6 +1054,76 @@ fn walker_follow_links_off_drops_symlinks() {
 
 #[cfg(unix)]
 #[test]
+fn walker_is_dir_follows_the_link() {
+    // `is_dir` says what the walk took the entry for: a link to a folder
+    // is a folder (and is descended), while `file_type` keeps the link.
+    use std::os::unix::fs::symlink;
+    let t = TmpTree::new("is_dir");
+    t.touch("real/a.txt");
+    symlink(t.root().join("real"), t.root().join("link")).expect("create dir symlink");
+
+    let mut dirs = BTreeSet::new();
+    let mut files = BTreeSet::new();
+    for entry in Walk::new("**", WalkOptions::new(t.root())).expect("compile") {
+        let entry = entry.expect("no walker error in test");
+        let rel = entry
+            .path()
+            .strip_prefix(t.root())
+            .expect("strip root prefix")
+            .to_string_lossy()
+            .into_owned();
+        if entry.is_dir() {
+            assert!(
+                entry.file_type().is_dir() || entry.file_type().is_symlink(),
+                "{rel}"
+            );
+            dirs.insert(rel);
+        } else {
+            files.insert(rel);
+        }
+    }
+    assert_eq!(
+        dirs,
+        ["link", "real"].into_iter().map(String::from).collect()
+    );
+    assert_eq!(
+        files,
+        ["link/a.txt", "real/a.txt"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn walker_skips_a_name_that_is_not_utf8() {
+    // Linux keeps any bytes in a name; such a name is skipped, folder or
+    // file, as the JS walker skips it (WALKER_SPEC §7.1).
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let t = TmpTree::new("nonutf8");
+    t.touch("src/ok.txt");
+    let bad = t.root().join(OsStr::from_bytes(b"caf\xe9"));
+    if fs::create_dir(&bad).is_err() {
+        return; // the file system refuses such names
+    }
+    fs::File::create(bad.join("inner.txt")).expect("create file");
+    fs::File::create(t.root().join(OsStr::from_bytes(b"caf\xe9.txt"))).expect("create file");
+
+    for patterns in [&["**/*.txt"][..], &["*/*.txt"], &["*.txt", "*/*.txt"]] {
+        let walker = Walk::from_patterns(patterns.iter().copied(), WalkOptions::new(t.root()));
+        let got = collect_rel(walker.expect("compile"), t.root());
+        assert_eq!(
+            got,
+            BTreeSet::from(["src/ok.txt".to_string()]),
+            "{patterns:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn walker_follow_links_on_breaks_cycles() {
     // A directory symlink that loops back to its own ancestor would
     // cause infinite descent without cycle detection. Walker must

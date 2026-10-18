@@ -6,10 +6,12 @@ use std::path::PathBuf;
 /// Errors produced by [`Walk`](crate::Walk).
 ///
 /// `InvalidPattern` surfaces at construction when any main or ignore
-/// pattern fails to compile. `Io` errors are yielded lazily during
+/// pattern fails to compile, and so does `Io` when `base` cannot be made
+/// absolute (no current directory). Every other `Io` is yielded during
 /// iteration — the base check and the seeds' stats too, which run on the
 /// first `next()`; the walker continues after yielding an I/O error so
-/// consumers can log and keep going.
+/// consumers can log and keep going. A folder that cannot be read, or an
+/// entry of it that cannot be typed, is reported with the folder's path.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum WalkError {

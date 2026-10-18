@@ -53,9 +53,9 @@ pub struct WalkOptions {
     /// casing, or make it non-literal with a class like `[Ss]rc/...`.
     pub case_insensitive: bool,
 
-    /// Follow symbolic links when descending. A link to a folder already
-    /// on the way down (a cycle) is not descended; the rest of the walk
-    /// goes on. Folders are told apart by `(dev, ino)` on Unix, confirmed
+    /// Follow symbolic links when descending. A link to a folder the walk
+    /// already reached through a link on the way down (a cycle) is not
+    /// descended; the rest of the walk goes on. Folders are told apart by `(dev, ino)` on Unix, confirmed
     /// by canonical path, and by canonical path on Windows. When
     /// `false`, symlinks are dropped entirely — neither emitted nor
     /// descended (matches `tinyglobby` / `fdir`'s `excludeSymlinks`).

@@ -297,10 +297,9 @@ function processDirents(ctx, dirents, frame, results, descend) {
     if (isSymlink && !followSymlinks) continue;
 
     const name = dirent.name;
-    const childAbs = absHead + name;
     // A name that is not valid UTF-8 comes back with U+FFFD, a spelling
     // no file has: there is no path to report, nor a folder to read.
-    if (name.includes("\uFFFD") && !exists(childAbs)) continue;
+    if (name.includes("\uFFFD") && !exists(absHead + name)) continue;
     const childRel = relHead + name;
 
     // Ignore-filter early so an ignored symlink never costs a stat.
@@ -312,7 +311,7 @@ function processDirents(ctx, dirents, frame, results, descend) {
     let target = null;
     if (isSymlink) {
       try {
-        target = fs.statSync(childAbs);
+        target = fs.statSync(absHead + name);
       } catch {
         // stays a link
       }
@@ -320,8 +319,9 @@ function processDirents(ctx, dirents, frame, results, descend) {
     const typed = target ?? dirent;
     if (isSpecial(typed)) continue;
 
+    // The absolute path is built only for an entry that needs it.
     if (!typed.isDirectory()) {
-      if (matcher.match(childRel)) results.push(childAbs);
+      if (matcher.match(childRel)) results.push(absHead + name);
       continue;
     }
     if (ctx.ignoreDirs !== null && ctx.ignoreDirs.match(childRel + "/")) continue;
@@ -329,6 +329,7 @@ function processDirents(ctx, dirents, frame, results, descend) {
     // An ignore that covers everything below skips the subtree
     // (`**/node_modules/**` and `node_modules`).
     if (ctx.pruneIgnored && DirMatch.matchesAllBelow(ignore.matchDir(childRel))) continue;
+    const childAbs = absHead + name;
     // Cycle break: a link to a folder already on the way down is not
     // descended.
     let childLinks = links;

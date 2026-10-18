@@ -20,9 +20,9 @@ export interface GlobOptions {
   /** ASCII-case-insensitive byte comparison. Default `false`. */
   caseInsensitive?: boolean | undefined;
   /**
-   * Follow symlinks when walking directories. A link to a folder already
-   * on the way down (a cycle) is not descended; the rest of the walk goes
-   * on. Folders are told apart by `(dev, ino)`, confirmed by
+   * Follow symlinks when walking directories. A link to a folder the walk
+   * already reached through a link on the way down (a cycle) is not
+   * descended; the rest of the walk goes on. Folders are told apart by `(dev, ino)`, confirmed by
    * `fs.realpathSync.native`, and by that path alone on Windows. When
    * `false`, symlinks are dropped entirely (neither emitted nor
    * descended); each entry is judged when its folder is read, so a folder
@@ -91,12 +91,16 @@ export function globSync(patterns: string | Iterable<string>, options?: GlobOpti
  *
  * - `"InvalidPattern"` — a pattern failed to compile. `.pattern` is
  *   the offending pattern, `.reason` is the parser's message and
- *   `.cause` the `GlobError` itself. When the members of a list each
- *   compile alone but not together (they share one expansion budget),
- *   `.pattern` is the whole list, formatted like `["a", "b"]`.
+ *   `.cause` the `GlobError` itself (its `index` and offsets refer to
+ *   the member as the walker compiled it, not to your list). When the
+ *   members of a list each compile alone but not together (they share
+ *   one expansion budget), `.pattern` is the whole list, formatted like
+ *   `["a", "b"]`. An ignore entry that starts with `!` is refused with
+ *   no `.cause`.
  * - `"Io"` — a `readdir` / `stat` failed during traversal (missing
  *   `cwd`, EACCES, ENOENT on a vanished dir, …). `.path` is the
- *   directory we tried to read, `.cause` is the underlying Node error.
+ *   directory we tried to read (for a seed's `lstat`, the path it
+ *   tried), `.cause` is the underlying Node error.
  *
  * The async path rejects the returned Promise; the sync path throws.
  *
@@ -121,7 +125,7 @@ export class WalkError extends Error {
   readonly pattern?: string;
   /** Compile reason (set when `kind === "InvalidPattern"`). */
   readonly reason?: string;
-  /** Underlying error: the Node error for `"Io"`, the `GlobError` for `"InvalidPattern"`. */
+  /** Underlying error: the Node error for `"Io"`, the `GlobError` for `"InvalidPattern"` (none for a refused `!` ignore entry). */
   readonly cause?: Error;
   constructor(kind: "InvalidPattern" | "Io", info?: Record<string, unknown>);
   /** The fields worth logging: `name`, `kind`, `message` and the set ones of `pattern`, `reason`, `path` (not `cause`). */

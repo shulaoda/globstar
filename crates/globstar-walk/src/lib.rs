@@ -23,9 +23,9 @@
 //! # What is yielded
 //!
 //! Files that match, and also the folders that match (unlike the JS
-//! walker, which yields files only): `**` yields `d` and `d/x.txt`. A
-//! yielded [`DirEntry`]'s [`file_type`](DirEntry::file_type) tells them
-//! apart; filter on `!entry.file_type().is_dir()` for files only.
+//! walker, which yields files only): `**` yields `d` and `d/x.txt`.
+//! [`DirEntry::is_dir`] tells them apart, a link by its target; filter on
+//! `!entry.is_dir()` for what the JS walker yields.
 //! FIFOs, sockets and devices are never yielded (a reader would block on
 //! a FIFO); a symlink takes its target's type, and one that resolves to
 //! nothing (dangling, looping) is yielded like a file when it matches.
@@ -40,8 +40,9 @@
 //!
 //! Yielded paths are always absolute, rooted at the walker's `base`.
 //! `base` is locked to an absolute path at construction (via
-//! [`std::path::absolute`], with `.` and `..` then taken out as text) —
-//! pure path manipulation, no syscall, no symlink resolution.
+//! [`std::path::absolute`], with `.` and `..` then taken out as text):
+//! path manipulation, reading the current directory for a relative
+//! `base` and nothing else, no symlink resolution.
 //! Subsequent `std::env::set_current_dir` calls do NOT redirect the
 //! walk.
 //!
@@ -67,8 +68,9 @@
 //! `(dev, ino)`, which the `stat` that typed the link gives for free,
 //! with a hit confirmed by canonical path (inode numbers are not unique
 //! on every file system); on Windows by canonical path. A link to a
-//! folder already on the way down is not descended (it is still yielded
-//! when it matches), and the rest of the walk continues.
+//! folder already reached that way is not descended (it is still
+//! yielded when it matches), and the rest of the walk continues; a link
+//! back to a plain ancestor is walked once more before it is caught.
 //!
 //! Set `WalkOptions::follow_links = false` to drop symlinks entirely:
 //! they are NEITHER emitted NOR descended (matches `fdir`'s
@@ -76,10 +78,9 @@
 //!
 //! # Path encoding
 //!
-//! File names are converted via `to_string_lossy()` before matching,
-//! which is free on valid UTF-8 and replaces any non-UTF-8 bytes with
-//! U+FFFD. Non-UTF-8 paths (rare, Unix-only) may therefore not match
-//! exactly.
+//! A name that is not valid UTF-8 (Linux allows any bytes) is skipped,
+//! as the JS walker skips it (WALKER_SPEC §7.1): it is neither yielded
+//! nor read as a folder.
 //!
 //! # Separators
 //!
@@ -379,29 +380,25 @@ impl Walk {
                 self.stack.push(frame);
                 continue;
             }
-            // A walked path never holds `..`, `.` or an empty segment, so
-            // no root walk reaches such a prefix (and `..` would escape
-            // `base`). Split on every platform separator.
-            if prefix
-                .split(|&b| path::is_separator(b as char))
-                .any(|seg| seg.is_empty() || seg == b".." || seg == b".")
-            {
-                continue;
-            }
             let Ok(text) = std::str::from_utf8(&prefix) else {
                 continue;
             };
-            let parts: Vec<&str> = text.split('/').collect();
+            // A walked path never holds `..`, `.` or an empty segment, so
+            // no root walk reaches such a prefix (and `..` would escape
+            // `base`). Split on every platform separator, as the JS walker
+            // does: a root walk lists `a\b` on Windows as `a`, then `b`.
+            let parts: Vec<&str> = text.split(path::is_separator).collect();
+            if parts
+                .iter()
+                .any(|&seg| seg.is_empty() || seg == ".." || seg == ".")
+            {
+                continue;
+            }
             for (i, name) in parts.iter().enumerate() {
                 if opens_as_another(name) && !listed(&frame.absolute, name) {
                     break;
                 }
                 let path = join(&frame.absolute, name.as_ref());
-                // Defense-in-depth: a part that replaces the base (a
-                // drive, a root) is never listed, so never gets here.
-                if !path.starts_with(&self.base) {
-                    break;
-                }
                 let meta = match fs::symlink_metadata(&path) {
                     Ok(m) => m,
                     Err(e) if nothing_there(&e) => break, // §9.4
@@ -490,14 +487,12 @@ impl Rules {
         rel: &mut Vec<u8>,
         children: &mut Vec<Frame>,
     ) -> Result<Option<DirEntry>, WalkError> {
-        let entry = entry.map_err(|source| WalkError::Io {
+        // An error names the folder being read, as the JS walker's does.
+        let fail = |source| WalkError::Io {
             path: frame.absolute.clone(),
             source,
-        })?;
-        let fail = |source| WalkError::Io {
-            path: entry.path(),
-            source,
         };
+        let entry = entry.map_err(fail)?;
         let name = entry.file_name();
         let file_type = match entry.file_type() {
             Ok(t) => t,
@@ -532,12 +527,14 @@ impl Rules {
         if file_type.is_symlink() && !self.follow_links {
             return None;
         }
+        // A name that is not UTF-8 is skipped (§7.1): no pattern names it.
+        let text = name.to_str()?;
         rel.clear();
         rel.extend_from_slice(&frame.relative);
         if !frame.relative.is_empty() {
             rel.push(b'/');
         }
-        rel.extend_from_slice(name.to_string_lossy().as_bytes());
+        rel.extend_from_slice(text.as_bytes());
 
         // Ignore-filter before any stat, so an ignored symlink never
         // costs a metadata resolution (WALKER_SPEC §7.1 order).
@@ -560,6 +557,7 @@ impl Rules {
         let entry = |path| DirEntry {
             path,
             file_type,
+            is_dir: typed.is_dir(),
             depth,
             #[cfg(windows)]
             metadata: listed.metadata.clone(),

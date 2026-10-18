@@ -38,6 +38,7 @@ use std::path::{Path, PathBuf};
 pub struct DirEntry {
     pub(crate) path: PathBuf,
     pub(crate) file_type: std::fs::FileType,
+    pub(crate) is_dir: bool,
     pub(crate) depth: usize,
     #[cfg(windows)]
     pub(crate) metadata: std::fs::Metadata,
@@ -72,6 +73,13 @@ impl DirEntry {
     /// duplicate those as direct methods on `DirEntry`.
     pub fn file_type(&self) -> std::fs::FileType {
         self.file_type
+    }
+
+    /// Whether the walk took this entry for a folder: a folder, or a
+    /// symlink to one (where [`file_type`](Self::file_type) says
+    /// symlink). No syscall.
+    pub fn is_dir(&self) -> bool {
+        self.is_dir
     }
 
     /// Depth below the walker's `base`. `base` itself is depth 0; its
