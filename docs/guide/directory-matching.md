@@ -119,13 +119,7 @@ Spec: [GLOB_SPEC §15.4](https://github.com/shulaoda/globstar/blob/main/referenc
 
 ## Union of patterns
 
-For a matcher built from several patterns, the verdict is computed on the union, not per member. If any member may match below, the union may. "All below" is a property of the whole set, so members that each cover a part can cover together. See [Multi-pattern matchers](./multi-pattern.md).
-
-| Patterns        | Directory | Verdict      |
-| --------------- | --------- | ------------ |
-| `a/*`           | `a`       | `Descend`    |
-| `a/*/**`        | `a`       | `Descend`    |
-| `a/*`, `a/*/**` | `a`       | `DescendAll` |
+For a matcher built from several patterns, the verdict is computed on the union, not per member. If any member may match below, the union may. "All below" is a property of the whole set, so members that each cover a part can cover together. The examples are on [Directory verdicts on a union](./multi-pattern.md#directory-verdicts-on-a-union).
 
 ## How a path is queried
 

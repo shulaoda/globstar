@@ -16,7 +16,7 @@ By the Kleene–Rabin–Scott equivalence, the class so defined coincides with t
 
 ## 3. Translation table
 
-Each glob construct denotes a regular operation on Σ. Letting `Sep ⊆ Σ` denote the platform separator set (`{0x2f}` always; on Windows additionally `{0x5c}`; see `references/spec/GLOB_SPEC.md` §12.3), we have:
+Each glob construct denotes a regular operation on Σ. Letting `Sep ⊆ Σ` denote the platform separator set (`{0x2f}` always; on Windows additionally `{0x5c}`; see `references/spec/GLOB_SPEC.md` §14.2), we have:
 
 | Construct        | Language                                   |
 | ---------------- | ------------------------------------------ |

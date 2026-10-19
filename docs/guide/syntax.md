@@ -18,52 +18,9 @@ All examples use the default options (`dot: true`, `caseInsensitive: false`). Se
 | `\X`                  | the character `X` itself                          | `\*.md`       |
 | `!` at the very start | everything the rest of the pattern does not match | `!*.test.ts`  |
 
-## A pattern matches the whole path
+## Three rules behind every example
 
-A pattern must match the entire path, from the first character to the last. It never matches just a part of it. To match a file at any depth, start the pattern with `**/`.
-
-| Pattern        | Path                        | Match? |
-| -------------- | --------------------------- | ------ |
-| `*.ts`         | `index.ts`                  | ✅     |
-| `*.ts`         | `src/index.ts`              | ❌     |
-| `**/*.ts`      | `src/index.ts`              | ✅     |
-| `node_modules` | `packages/web/node_modules` | ❌     |
-| `src`          | `src/main.ts`               | ❌     |
-
-Spec: [GLOB_SPEC §14.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
-
-## Characters and bytes
-
-A pattern is a normal string. globstar compares it with the path byte by byte, using UTF-8. Characters outside ASCII are always plain literals, so `docs/日本語.md` matches only the path `docs/日本語.md`.
-
-Because matching is byte-based, `?` matches one **byte**, not one visible character. A character such as `日` takes three bytes in UTF-8, so you need `???` to match it:
-
-| Pattern     | Path       | Match? |
-| ----------- | ---------- | ------ |
-| `?.md`      | `日.md`    | ❌     |
-| `???.md`    | `日.md`    | ✅     |
-| `caf?.txt`  | `café.txt` | ❌     |
-| `caf??.txt` | `café.txt` | ✅     |
-
-The same rule applies to character classes. See [Character classes](./character-classes.md).
-
-Spec: [GLOB_SPEC §2.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
-
-## `/` is the only separator in a pattern
-
-Inside a pattern, `/` is the only path separator, on every platform, Windows included. A `\` in a pattern is always an escape, never a separator. So `src\main.rs` does not mean "`main.rs` inside `src`": it is `src`, then an escaped `m`, then `ain.rs`.
-
-| Pattern       | Path          | Match? |
-| ------------- | ------------- | ------ |
-| `src/main.rs` | `src/main.rs` | ✅     |
-| `src\main.rs` | `src/main.rs` | ❌     |
-| `src\main.rs` | `srcmain.rs`  | ✅     |
-
-If your tool takes patterns from a Windows shell, turn `\` into `/` before you compile them. The **path** you match is a different story: on Windows it may use `\`. See [How a path is matched](./matching.md).
-
-Each `/` in a pattern matches exactly one separator, so `a/b` does not match `a//b`. The one exception is a `/` next to `**`, which also accepts repeated separators (see [The `**` wildcard](./globstar.md)).
-
-Spec: [GLOB_SPEC §2.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+A pattern must match the whole path, never just a part of it; matching is byte by byte in UTF-8, so `?` and a class take one byte and a character outside ASCII is a plain literal (`docs/日本語.md` matches only that path); and inside a pattern `/` is the only separator on every platform, while `\` is always an escape. [How a path is matched](./matching.md) explains each rule with examples, and what `\` means on the path side.
 
 ## Meta-characters
 
@@ -83,7 +40,7 @@ These characters can have a special meaning: `*` `?` `[` `]` `{` `}` `,` `\`, pl
 
 So a stray closer is fine: `a]b` matches the path `a]b`, and `a}b` matches `a}b`. An opener with no closer is an error: `[a` and `{a` both fail to compile. See [Compile-time errors](./errors.md).
 
-Spec: [GLOB_SPEC §5.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §4.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Basic constructs
 
@@ -190,7 +147,7 @@ Note the last two rows: without escapes, `[draft]` is a class that matches one l
 In a JavaScript string, `\` is also an escape, so the pattern `\*.md` is written `'\\*.md'` (or `String.raw` with `` `\*.md` ``). In Rust, use a raw string: `r"\*.md"`.
 :::
 
-Spec: [GLOB_SPEC §4.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §4.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Negation with a leading `!`
 

@@ -117,7 +117,7 @@ Normally each `/` in a pattern matches exactly one separator. A `/` next to a re
 | `src/**/index.ts` | `src//index.ts` | ✅     |
 | `src/index.ts`    | `src//index.ts` | ❌     |
 
-Spec: [GLOB_SPEC §14.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §9.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Repeated `**/**/`
 
@@ -147,17 +147,7 @@ Spec: [GLOB_SPEC §12](https://github.com/shulaoda/globstar/blob/main/references
 
 ## `**` and braces
 
-### Each branch has its own `**`
-
-A brace branch may contain `**`. Each branch is a pattern of its own, and a `**` in one branch does not affect another.
-
-| Pattern                     | Path         | Match? |
-| --------------------------- | ------------ | ------ |
-| `{src/**/*.ts,lib/**/*.js}` | `src/a/b.ts` | ✅     |
-| `{src/**/*.ts,lib/**/*.js}` | `lib/x/y.js` | ✅     |
-| `{src/**/*.ts,lib/**/*.js}` | `src/a.js`   | ❌     |
-
-Spec: [GLOB_SPEC §10.7, §9.6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+A brace branch may contain its own `**`; each branch is a pattern of its own (see [Braces and `**`](./braces.md#braces-and)). What needs care is a `**` at the edge of a brace.
 
 ### `**` next to a brace
 

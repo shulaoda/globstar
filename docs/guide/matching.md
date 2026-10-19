@@ -16,7 +16,7 @@ A pattern matches a path only when the pattern covers every byte of the path, fr
 
 To match a name at any depth, start the pattern with `**/`. See [The `**` wildcard](./globstar.md).
 
-Spec: [GLOB_SPEC §16.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §14.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Paths are just strings
 
@@ -77,7 +77,7 @@ There are two exceptions, both about `**`. A `/` next to `**` (as in `/**/`) acc
 | `**/README.md` | `//server/share/README.md` | ✅     |
 | `src/**/*.ts`  | `/repo/src/a.ts`           | ❌     |
 
-Spec: [GLOB_SPEC §14.2, §9.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §9.4, §9.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ### Trailing separators
 

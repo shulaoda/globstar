@@ -115,7 +115,7 @@ A branch may contain its own `**`. Each branch is separate, so the `**` in one b
 
 A `**` right next to a brace, or at the edge of a branch, is judged on each expansion: `{**,dist}/*.js` expands to `**/*.js`, where `**` owns a segment, while `src{**,x}.ts` expands to `src**.ts`, where it acts as `*`. See [`**` next to a brace](./globstar.md#next-to-a-brace).
 
-Spec: [GLOB_SPEC §10.7](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.7, §9.6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Braces and character classes
 

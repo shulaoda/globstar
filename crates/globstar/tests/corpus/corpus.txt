@@ -739,7 +739,7 @@ a/{{**/c,x}d,y}	a/b/cd	match
 
 ## brace.trailing-sep.lenient-globstar-boundary
 # A branch-trailing / before **/ is **-adjacent and lenient (SepRun),
-# like the flat X/**/ form (§10.1 + §14.2). Pinned 2026-08.
+# like the flat X/**/ form (§10.1 + §9.5).
 {src/,lib/}**/*.ts	src//x.ts	match
 {src/,lib/}**/*.ts	src/x.ts	match
 {src/,lib/}**/*.ts	lib//deep//x.ts	match
@@ -749,7 +749,7 @@ a/{{**/c,x}d,y}	a/b/cd	match
 {{a/,b/},c/}**/x	a//x	match
 {{a/,b/},c/}**/x	c//x	match
 # Two braces around one `/`, each with a `**` at that edge: the `/` stays
-# lenient for every pair of branches (§10.1 + §14.2).
+# lenient for every pair of branches (§10.1 + §9.5).
 {a,/**}/{**/x,b}	a//x	match
 {a,/**}/{**/x,b}	a/x	match
 {a,/**}/{**/x,b}	a/b	match
@@ -799,7 +799,7 @@ a/*.txt	a/.txt	no-match	dot=false
 [a-z]	X	no-match
 .*	.hidden	match	dot=false
 
-## lenient.sep.through.braces (§14.2)
+## lenient.sep.through.braces (§9.5)
 # A `**` that opens or closes a brace branch keeps the `/` beside the
 # brace lenient (mutation testing, 2026-10 audit).
 {a/**,b}/{{**/x,y},z}	b//x	match
