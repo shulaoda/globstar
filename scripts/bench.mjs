@@ -15,7 +15,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PATTERNS, PATTERN_SETS } from "../packages/bench/benches/shared.js";
+import { PATHS, PATTERNS, PATTERN_SETS } from "../packages/bench/benches/shared.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 process.chdir(ROOT);
@@ -24,13 +24,8 @@ const args = new Set(process.argv.slice(2));
 const SKIP_RUST = args.has("--skip-rust");
 const SKIP_JS = args.has("--skip-js");
 
-// Number of paths in the matcher's `match` corpus. Rust criterion
-// times the whole batch per iter; we divide by this to bring it onto
-// the per-call basis JS mitata reports natively.
-const PATHS_PER_BATCH = 11;
-
 // The matcher row labels, from the fixtures both runtimes' benches read.
-const SINGLE_PATTERNS = PATTERNS.map(([, label]) => label);
+const SINGLE_PATTERNS = PATTERNS.map(([label]) => label);
 const MULTI_SETS = PATTERN_SETS.map(([label]) => label);
 
 // Walker row labels — `<scale>_<pattern-set>`.
@@ -289,177 +284,32 @@ function combinedTable(rowLabelHeader, rowLabels, sources) {
 
 const empty = {};
 
-const rustSingle = {
-  build: {
-    data: rust.matcherSingle ?? empty,
-    rowKey: (l) => `build_${l}`,
-    libCols: [
-      ["globstar (Rust)", "globstar"],
-      ["globset (Rust)", "globset"],
-      ["wax (Rust)", "wax"],
-    ],
-  },
-  compile: {
-    data: rust.matcherSingle ?? empty,
-    rowKey: (l) => `compile_${l}`,
-    libCols: [
-      ["globstar (Rust)", "globstar"],
-      ["globset (Rust)", "globset"],
-      ["wax (Rust)", "wax"],
-    ],
-  },
-  match: {
-    data: rust.matcherSingle ?? empty,
-    rowKey: (l) => `match_${l}`,
-    libCols: [
-      ["globstar (Rust)", "globstar"],
-      ["globset (Rust)", "globset"],
-      ["wax (Rust)", "wax"],
-      ["fast_glob (Rust)", "fast_glob"],
-    ],
-    cellOpts: { divideBy: PATHS_PER_BATCH },
-  },
-  mem: {
-    data: rust.singleMem ?? empty,
-    rowKey: (l) => l,
-    libCols: [
-      ["globstar (Rust)", "globstar"],
-      ["globset (Rust)", "globset"],
-      ["wax (Rust)", "wax"],
-    ],
-    cellOpts: { isMem: true },
-  },
-};
+// The four matcher tables of one runtime: `data` is its criterion or
+// mitata parse, `mem` its memory table, `key(phase, label)` the group
+// key of a row, `cols` the library columns (`match` adds fast_glob on
+// the Rust side). Rust criterion times the whole path batch per iter;
+// `divideBy` brings it onto the per-call basis mitata reports.
+function matcherTables(data, mem, key, cols, { match = cols, divideBy } = {}) {
+  const src = (d, rowKey, libCols, cellOpts) => ({ data: d ?? empty, rowKey, libCols, cellOpts });
+  return {
+    build: src(data, (l) => key("build", l), cols),
+    compile: src(data, (l) => key("compile", l), cols),
+    match: src(data, (l) => key("match", l), match, divideBy && { divideBy }),
+    mem: src(mem, (l) => l, cols, { isMem: true }),
+  };
+}
+const libCols = (runtime, names) => names.map((n) => [`${n} (${runtime})`, n]);
+const RUST_COLS = libCols("Rust", ["globstar", "globset", "wax"]);
+const RUST_MATCH_COLS = libCols("Rust", ["globstar", "globset", "wax", "fast_glob"]);
+const JS_COLS = libCols("JS", ["globstar", "picomatch", "minimatch", "micromatch"]);
+const rustKey = (phase, l) => `${phase}_${l}`;
+const jsKey = (phase, l) => `${phase}: ${l}`;
+const rustOpts = { match: RUST_MATCH_COLS, divideBy: PATHS.length };
 
-const jsSingle = {
-  build: {
-    data: js.matcherSingle ?? empty,
-    rowKey: (l) => `build: ${l}`,
-    libCols: [
-      ["globstar (JS)", "globstar"],
-      ["picomatch (JS)", "picomatch"],
-      ["minimatch (JS)", "minimatch"],
-      ["micromatch (JS)", "micromatch"],
-    ],
-  },
-  compile: {
-    data: js.matcherSingle ?? empty,
-    rowKey: (l) => `compile: ${l}`,
-    libCols: [
-      ["globstar (JS)", "globstar"],
-      ["picomatch (JS)", "picomatch"],
-      ["minimatch (JS)", "minimatch"],
-      ["micromatch (JS)", "micromatch"],
-    ],
-  },
-  match: {
-    data: js.matcherSingle ?? empty,
-    rowKey: (l) => `match: ${l}`,
-    libCols: [
-      ["globstar (JS)", "globstar"],
-      ["picomatch (JS)", "picomatch"],
-      ["minimatch (JS)", "minimatch"],
-      ["micromatch (JS)", "micromatch"],
-    ],
-  },
-  mem: {
-    data: js.singleMem ?? empty,
-    rowKey: (l) => l,
-    libCols: [
-      ["globstar (JS)", "globstar"],
-      ["picomatch (JS)", "picomatch"],
-      ["minimatch (JS)", "minimatch"],
-      ["micromatch (JS)", "micromatch"],
-    ],
-    cellOpts: { isMem: true },
-  },
-};
-
-const rustMulti = {
-  build: {
-    data: rust.matcherMulti ?? empty,
-    rowKey: (l) => `build_${l}`,
-    libCols: [
-      ["globstar (Rust)", "globstar"],
-      ["globset (Rust)", "globset"],
-      ["wax (Rust)", "wax_or"],
-    ],
-  },
-  compile: {
-    data: rust.matcherMulti ?? empty,
-    rowKey: (l) => `compile_${l}`,
-    libCols: [
-      ["globstar (Rust)", "globstar"],
-      ["globset (Rust)", "globset"],
-      ["wax (Rust)", "wax_or"],
-    ],
-  },
-  match: {
-    data: rust.matcherMulti ?? empty,
-    rowKey: (l) => `match_${l}`,
-    libCols: [
-      ["globstar (Rust)", "globstar"],
-      ["globset (Rust)", "globset"],
-      ["wax (Rust)", "wax_or"],
-      ["fast_glob (Rust)", "fast_glob_or"],
-    ],
-    cellOpts: { divideBy: PATHS_PER_BATCH },
-  },
-  mem: {
-    data: rust.multiMem ?? empty,
-    rowKey: (l) => l,
-    libCols: [
-      ["globstar (Rust)", "gs_union"],
-      ["globset (Rust)", "globset"],
-      ["wax (Rust)", "wax_per"],
-    ],
-    cellOpts: { isMem: true },
-  },
-};
-
-const jsMulti = {
-  build: {
-    data: js.matcherMulti ?? empty,
-    rowKey: (l) => `build: ${l}`,
-    libCols: [
-      ["globstar (JS)", "globstar"],
-      ["picomatch (JS)", "picomatch"],
-      ["minimatch (JS)", "minimatch"],
-      ["micromatch (JS)", "micromatch"],
-    ],
-  },
-  compile: {
-    data: js.matcherMulti ?? empty,
-    rowKey: (l) => `compile: ${l}`,
-    libCols: [
-      ["globstar (JS)", "globstar"],
-      ["picomatch (JS)", "picomatch"],
-      ["minimatch (JS)", "minimatch"],
-      ["micromatch (JS)", "micromatch"],
-    ],
-  },
-  match: {
-    data: js.matcherMulti ?? empty,
-    rowKey: (l) => `match: ${l}`,
-    libCols: [
-      ["globstar (JS)", "globstar"],
-      ["picomatch (JS)", "picomatch"],
-      ["minimatch (JS)", "minimatch"],
-      ["micromatch (JS)", "micromatch"],
-    ],
-  },
-  mem: {
-    data: js.multiMem ?? empty,
-    rowKey: (l) => l,
-    libCols: [
-      ["globstar (JS)", "globstar"],
-      ["picomatch (JS)", "picomatch"],
-      ["minimatch (JS)", "minimatch"],
-      ["micromatch (JS)", "micromatch"],
-    ],
-    cellOpts: { isMem: true },
-  },
-};
+const rustSingle = matcherTables(rust.matcherSingle, rust.singleMem, rustKey, RUST_COLS, rustOpts);
+const jsSingle = matcherTables(js.matcherSingle, js.singleMem, jsKey, JS_COLS);
+const rustMulti = matcherTables(rust.matcherMulti, rust.multiMem, rustKey, RUST_COLS, rustOpts);
+const jsMulti = matcherTables(js.matcherMulti, js.multiMem, jsKey, JS_COLS);
 
 const rustWalker = {
   data: rust.walker ?? empty,
@@ -520,9 +370,9 @@ use them for relative comparison, not absolute SLOs.
 > per trial; Rust from the allocator's count around the build and
 > those matches.
 
-> **Match cell semantics.** Rust criterion times the full 11-path
+> **Match cell semantics.** Rust criterion times the full ${PATHS.length}-path
 > batch per iter; JS mitata times one match call per iter. The
-> orchestrator divides the Rust value by 11 so all \`match\` columns
+> orchestrator divides the Rust value by ${PATHS.length} so all \`match\` columns
 > show the same per-call basis.
 `);
 
@@ -552,20 +402,10 @@ sections.push(`## Test corpus
 | \`ignore-list-40\` | 40 ignore entries of unlike shapes (\`fixtures/bench-ignore-list.txt\`): chains for the match, the graph NFA past 64 states for \`match_dir\` (dense rows in Rust, sparse in JS) |
 | \`file-list-100\` | 100 literal files over 10 folders (\`src/<area>/mod_<i>.ts\`): past 64 chains, the graph NFA alone (dense rows in Rust, sparse in JS) |
 
-### Match input — 11 paths (identical on both runtimes)
+### Match input — ${PATHS.length} paths (identical on both runtimes)
 
 \`\`\`
-src/main.ts
-src/cli/commands/build.ts
-src/cli/commands/run.rs
-src/main.rs
-tests/smoke.ts
-dist/bundle.js
-node_modules/foo/index.js
-package.json
-.env
-target/debug/build/foo
-src/a/bigger/path/to/the/crazy/needle.txt
+${PATHS.join("\n")}
 \`\`\`
 
 ### Walker tree shapes

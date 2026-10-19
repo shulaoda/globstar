@@ -53,7 +53,7 @@ fn bench_build(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.bench_function("globset", |b| {
         b.iter(|| black_box(build_globset(black_box(patterns))));
     });
-    group.bench_function("wax_or", |b| {
+    group.bench_function("wax", |b| {
         b.iter(|| black_box(build_wax(black_box(patterns))));
     });
     group.finish();
@@ -72,7 +72,7 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.bench_function("globset", |b| {
         b.iter(|| black_box(build_globset(black_box(patterns)).is_match(Path::new(first))));
     });
-    group.bench_function("wax_or", |b| {
+    group.bench_function("wax", |b| {
         b.iter(|| {
             let any = build_wax(black_box(patterns))
                 .iter()
@@ -104,7 +104,7 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
             }
         });
     });
-    group.bench_function("wax_or", |b| {
+    group.bench_function("wax", |b| {
         b.iter(|| {
             for p in PATHS.iter() {
                 let any = wax_g.iter().any(|g| g.is_match(black_box(*p)));
@@ -112,7 +112,7 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
             }
         });
     });
-    group.bench_function("fast_glob_or", |b| {
+    group.bench_function("fast_glob", |b| {
         b.iter(|| {
             for p in PATHS.iter() {
                 let any = patterns
@@ -138,6 +138,10 @@ fn assert_all_agree() {
             for (name, got) in [
                 ("globset", gset.is_match(Path::new(path))),
                 ("wax", wax_g.iter().any(|g| g.is_match(path))),
+                (
+                    "fast_glob",
+                    patterns.iter().any(|pat| fg_glob_match(pat, path)),
+                ),
             ] {
                 assert_eq!(
                     want, got,

@@ -1,29 +1,14 @@
 //! What a walk holds while it runs: counted by this binary's global
 //! allocator.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::Ordering::Relaxed;
 
 use globstar_walk::Walk;
 
-struct Counting;
-static LIVE: AtomicUsize = AtomicUsize::new(0);
-static PEAK: AtomicUsize = AtomicUsize::new(0);
-
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let live = LIVE.fetch_add(layout.size(), Relaxed) + layout.size();
-        PEAK.fetch_max(live, Relaxed);
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        LIVE.fetch_sub(layout.size(), Relaxed);
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[global_allocator]
-static ALLOC: Counting = Counting;
+#[allow(dead_code)]
+#[path = "../src/counter.rs"]
+mod counter;
+use counter::{LIVE, PEAK};
 
 const MB: usize = 1 << 20;
 
