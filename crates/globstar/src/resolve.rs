@@ -68,7 +68,7 @@ fn decide(node: &mut Node, before: bool, after: bool) {
                         continue;
                     }
                 }
-                // A `*` run is one `*` (§15.3): a `**` turned star next to one.
+                // A `*` run is one `*` (§5.2): a `**` turned star next to one.
                 if matches!(seq[i], Node::Star) && matches!(seq[..kept], [.., Node::Star]) {
                     continue;
                 }

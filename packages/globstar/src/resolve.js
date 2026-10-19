@@ -72,7 +72,7 @@ function decide(node, before, after) {
         continue;
       }
     }
-    // A `*` run is one `*` (§15.3): a `**` turned star next to one.
+    // A `*` run is one `*` (§5.2): a `**` turned star next to one.
     if (item.tag === N_STAR && kept > 0 && seq[kept - 1].tag === N_STAR) continue;
     seq[kept++] = item;
   }

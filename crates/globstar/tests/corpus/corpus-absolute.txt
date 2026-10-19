@@ -1,5 +1,5 @@
 # ============================================================================
-# corpus-absolute.txt — `**/` + absolute / UNC path semantics (GLOB_SPEC §15.3)
+# corpus-absolute.txt — `**/` + absolute / UNC path semantics (GLOB_SPEC §9.4)
 #
 # At pattern start, `**/X` means "X at any depth", which covers:
 #   - relative paths                  (a/foo)
