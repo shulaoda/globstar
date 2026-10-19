@@ -62,7 +62,7 @@ export function compileSegment(body, dot, ci, forceNfa) {
   // A lone chain serves `matchDir` too; anything else needs the NFA
   // (the test hook always does).
   const nfa = forceNfa || chainList.length !== 1 ? anyNfa(graph, ci) : null;
-  return { elems: exact(graph.elems), chains: exact(chainList), nfa };
+  return { elems: graph.elems, chains: exact(chainList), nfa };
 }
 
 function makeElem(kind, litStr, wild) {
@@ -158,7 +158,7 @@ function buildGraph(body, dot, ci) {
     }
   }
   if (b.cost > b.budget) tooComplex(b.budget);
-  return { elems: b.elems, succs: b.succs, start: b.start, linear };
+  return { elems: exact(b.elems), succs: b.succs, start: b.start, linear };
 }
 
 // The work the graph walk may take: 64 units per unit of pattern weight
@@ -590,7 +590,8 @@ function makeChain(graph, nodes, lone) {
   if (last.kind === EL_LIT) quickSuffixStr = last.litStr;
   else if (last.kind === EL_WILD && last.wild.kind === WK_AFFIX)
     quickSuffixStr = last.wild.suffixStr;
-  return { nodes, globstar, nfa, quickSuffixStr };
+  // A chain's own NFA keeps the chain's elements: no node list then.
+  return { nodes: nfa === null ? nodes : null, globstar, nfa, quickSuffixStr };
 }
 
 // ── the NFA ─────────────────────────────────────────────────────────
@@ -617,26 +618,26 @@ function anyNfa(graph, ci) {
   return graph.elems.length + 1 <= 32 ? nfaSmall(graph, null) : nfaSparse(graph, ci);
 }
 
-// Int32 active set: at most 32 states. The table holds per state the closure entered after
-// consuming a segment there (a globstar's includes itself) at `2s` and
-// the state's node at `2s + 1`.
+// Int32 active set: at most 32 states. `after` holds per state the
+// closure entered after consuming a segment there (a globstar's
+// includes itself); state `i` takes what `elems[i]` takes: the graph's
+// elements, or a chain's in path order.
 function nfaSmall(graph, nodes) {
   const { elems, n, nodeAt, succs, start } = layout(graph, nodes);
   const accept = n;
-  const tab = [];
-  for (let s = 0; s <= n; s++) tab.push(0, 0);
+  const after = [];
+  for (let s = 0; s <= n; s++) after.push(0);
   let reach1 = 0;
   // The closure a target adds, from the last position back: successors
   // always lie ahead, so each is complete when needed, and a nullable
   // successor contributes its own successors.
   const addTarget = (c, t) => {
     if (t === ACCEPT) return c | (1 << accept);
-    if (nullable(elems[nodeAt(t)])) c |= tab[t << 1];
+    if (nullable(elems[nodeAt(t)])) c |= after[t];
     return c | (1 << t);
   };
   for (let i = n - 1; i >= 0; i--) {
     const el = elems[nodeAt(i)];
-    tab[(i << 1) | 1] = nodeAt(i);
     let c = 0;
     if (succs === null) c = addTarget(c, i + 1 < n ? i + 1 : ACCEPT);
     else for (const t of succs[i]) c = addTarget(c, t);
@@ -644,11 +645,12 @@ function nfaSmall(graph, nodes) {
     // consume one and what follows reaches accept.
     if (elemSatisfiable(el) && ((c & (1 << accept)) !== 0 || (c & reach1) !== 0)) reach1 |= 1 << i;
     // A globstar stays after taking a segment.
-    tab[i << 1] = isGlobstar(el) ? c | (1 << i) : c;
+    after[i] = isGlobstar(el) ? c | (1 << i) : c;
   }
   let init = 0;
   for (const t of start) init = addTarget(init, t);
-  return { kind: NFA_SMALL, tab: exact(tab), init, accept, reach1 };
+  const own = nodes === null ? elems : nodes.map((i) => elems[i]);
+  return { kind: NFA_SMALL, elems: own, after: exact(after), init, accept, reach1 };
 }
 
 // Past 31 states the graph NFA is stepped sparsely. A position keeps

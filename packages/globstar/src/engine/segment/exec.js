@@ -267,8 +267,8 @@ export function nfaRun(m, g, str) {
 }
 
 function nfaStep(m, g, active, str, s0, e0) {
-  const elems = m.elems;
-  const tab = g.tab;
+  const elems = g.elems;
+  const after = g.after;
   const ci = m.ci;
   let next = 0;
   const segDotLed = e0 !== s0 && str.charCodeAt(s0) === 0x2e;
@@ -277,8 +277,7 @@ function nfaStep(m, g, active, str, s0, e0) {
   while (bits !== 0) {
     const s = ctz32(bits);
     bits &= bits - 1;
-    const ni = tab[(s << 1) | 1];
-    const e = elems[ni];
+    const e = elems[s];
     let consumes;
     switch (e.kind) {
       case EL_LIT:
@@ -290,7 +289,7 @@ function nfaStep(m, g, active, str, s0, e0) {
       default:
         consumes = absorbOk;
     }
-    if (consumes) next |= tab[s << 1];
+    if (consumes) next |= after[s];
   }
   return next;
 }
@@ -299,15 +298,15 @@ function nfaStep(m, g, active, str, s0, e0) {
 // literal and class rejects it (`dot=true` only).
 function nfaStepWild(m, active) {
   const g = m.nfa;
-  const elems = m.elems;
-  const tab = g.tab;
+  const elems = g.elems;
+  const after = g.after;
   let next = 0;
   let bits = active & ~(1 << g.accept);
   while (bits !== 0) {
     const s = ctz32(bits);
     bits &= bits - 1;
-    if (!elemAnySeg(elems[tab[(s << 1) | 1]])) continue;
-    next |= tab[s << 1];
+    if (!elemAnySeg(elems[s])) continue;
+    next |= after[s];
   }
   return next;
 }
@@ -323,7 +322,7 @@ export function coversBelow(m, active) {
   const acceptBit = 1 << m.nfa.accept;
   // Tokens only move forward or sit on a globstar, so the set settles
   // within the number of states.
-  const limit = Math.min(m.nfa.tab.length >> 1, MAX_COVER_SEGMENTS);
+  const limit = Math.min(m.nfa.after.length, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
     const next = nfaStepWild(m, active);
     if ((next & acceptBit) === 0) return false;
