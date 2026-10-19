@@ -289,11 +289,9 @@ function merge(out, g) {
     }
     const key = groupKey(g);
     const bucket = out.index.get(key);
-    if (bucket !== undefined) found = bucket.find((i) => agrees(out.groups[i], g)) ?? -1;
-    if (found === -1) {
-      if (bucket === undefined) out.index.set(key, [n]);
-      else bucket.push(n);
-    }
+    found = bucket?.find((i) => agrees(out.groups[i], g)) ?? -1;
+    if (bucket === undefined) out.index.set(key, [n]);
+    else if (found === -1) bucket.push(n);
   }
   if (found === -1) out.groups.push(g);
   else for (const t of g.tails) out.groups[found].tails.push(t);
@@ -382,7 +380,8 @@ class Builder {
       if (this.cost > this.budget) break;
       const node = nodes[i];
       const sepNext = nodes[i + 1]?.tag === N_SEPARATOR;
-      const last = i + 1 === nodes.length;
+      // A `/` follows: next, or after the brace this is a branch of.
+      const after = sepNext || (i + 1 === nodes.length && sepAfter);
       // Resolution puts a bare `**` only at the end of the pattern, so no
       // group is open here. Nodes that may still be absorbed by a bare
       // `**` keep the pending `**/` elements; anything else makes them
@@ -398,7 +397,6 @@ class Builder {
             break;
           }
           // A `**` ending a branch reads the `/` after the brace.
-          const after = sepNext || (last && sepAfter);
           const out = makeMerged();
           for (const branch of node.branches) {
             for (const g of groups) this.cost += groupCost(g);
@@ -413,7 +411,7 @@ class Builder {
           this.closeAll(groups);
           break;
         case N_GLOBSTAR:
-          if (sepNext || (last && sepAfter)) {
+          if (after) {
             // `**/`: zero or more whole segments, empty ones included, so
             // the separators around it are lenient (§14.2). It is emitted
             // later, when it is known that no bare `**` absorbs it.
@@ -780,10 +778,7 @@ function compileWild(nodes, dot, ci) {
   // follows them) keeps the segment anchored at both ends; anything else
   // runs the NFA.
   const suffixes = suffixProduct(nodes, idx);
-  if (suffixes === null) {
-    const nfa = compileSegNfa(nodes, dot, ci);
-    return makeWild(WK_GENERIC, { dotProtect: !dot && nfa.wildLed, nfa, anySeg: nfa.anySeg });
-  }
+  if (suffixes === null) return makeWild(WK_GENERIC, compileSegNfa(nodes, dot, ci));
   const fields = {
     prefixStr: prefix,
     minLen: prefix.length + anychars,

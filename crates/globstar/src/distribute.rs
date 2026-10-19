@@ -227,18 +227,14 @@ fn split(branches: Vec<Seq>, facing: Edge, front: bool) -> Vec<Seq> {
     let (mut rest, mut seps, mut groups) = (Vec::new(), Vec::new(), Vec::new());
     for mut branch in branches {
         let end = if front {
-            branch.items.first()
+            0
         } else {
-            branch.items.last()
+            branch.items.len().saturating_sub(1)
         };
         if !meets(facing, branch.edges[usize::from(!front)]) {
             rest.push(branch);
-        } else if matches!(end, Some(Item::Token(Node::Separator))) {
-            if front {
-                branch.items.remove(0);
-            } else {
-                branch.items.pop();
-            }
+        } else if matches!(branch.items.get(end), Some(Item::Token(Node::Separator))) {
+            branch.items.remove(end);
             seps.push(seq_of(branch.items));
         } else {
             groups.push(branch);

@@ -63,11 +63,10 @@ struct Graph {
     edges: Option<Edges>,
 }
 
-/// Successor lists in CSR form, and the start's successors.
+/// Successor lists in CSR form, the start's last (position `n`).
 struct Edges {
     offsets: Vec<u32>,
     targets: Vec<u32>,
-    start: Vec<u32>,
 }
 
 impl Edges {
@@ -134,7 +133,7 @@ impl Graph {
         // node on it (the start's below them) and the successor it tries
         // next. A path is copied only when it reaches the end.
         let mut path: Vec<u32> = Vec::new();
-        let mut levels: Vec<(&[u32], usize)> = vec![(&edges.start, 0)];
+        let mut levels: Vec<(&[u32], usize)> = vec![(edges.succ(self.elems.len()), 0)];
         while let Some((succ, next)) = levels.last_mut() {
             let Some(&id) = succ.get(*next) else {
                 levels.pop();
@@ -221,21 +220,19 @@ const MAX_DENSE_LITS: usize = 48;
 
 /// The most literals one position (or the start) leads to.
 fn lit_fanout(elems: &[Elem], edges: &Edges) -> usize {
-    let lits = |succ: &[u32]| {
-        succ.iter()
-            .filter(|&&t| t != ACCEPT && matches!(elems[t as usize], Elem::Lit(_)))
-            .count()
-    };
-    (0..elems.len())
-        .map(|i| lits(edges.succ(i)))
-        .fold(lits(&edges.start), usize::max)
+    (0..=elems.len())
+        .map(|i| {
+            let succ = edges.succ(i).iter();
+            succ.filter(|&&t| t != ACCEPT && matches!(elems[t as usize], Elem::Lit(_)))
+                .count()
+        })
+        .fold(0, usize::max)
 }
 
 /// The successors of position `p` (`n`: the start): the stored ones
 /// of a brace pattern's graph, else the next position.
 fn succ_of(edges: Option<&Edges>, n: usize, p: usize) -> impl Iterator<Item = u32> + '_ {
     let (next, stored): (Option<u32>, &[u32]) = match edges {
-        Some(e) if p == n => (None, &e.start),
         Some(e) => (None, e.succ(p)),
         None if p == n => (Some(0), &[]),
         None => (Some(if p + 1 < n { p as u32 + 1 } else { ACCEPT }), &[]),
@@ -331,7 +328,7 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         lit_at.push(lits.len() as u32);
         other_at.push(others.len() as u32);
         null_at.push(nulls.len() as u32);
-        let mut lit_pos = Vec::new();
+        let from = lits.len();
         for t in succ_of(edges, n, p) {
             if t == ACCEPT {
                 ends.set(p);
@@ -342,7 +339,7 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
             }
             let e = &elems[t as usize];
             if matches!(e, Elem::Lit(_)) {
-                lit_pos.push(t);
+                lits.push(t);
             } else {
                 others.push(t);
                 if e.nullable() {
@@ -352,11 +349,10 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         }
         // By literal, then position; a list holds no repeats, as the
         // walk deduplicates tails before it emits after them.
-        lit_pos.sort_unstable_by(|&a, &b| {
+        lits[from..].sort_unstable_by(|&a, &b| {
             let lit = |t: u32| elems[t as usize].as_lit();
             lit_cmp(lit(a), lit(b), ci).then(a.cmp(&b))
         });
-        lits.extend(lit_pos);
     }
     lit_at.push(lits.len() as u32);
     other_at.push(others.len() as u32);
@@ -411,15 +407,15 @@ fn survey(nodes: &[Node]) -> (usize, bool, usize) {
     for node in nodes {
         match node {
             Node::Brace(branches) => {
-                if crosses(node) {
-                    linear = false;
-                }
+                // A brace crosses iff its branches hold a boundary.
+                let before = boundaries;
                 weight += 1;
                 for b in branches {
                     let (n, _, w) = survey(b.seq());
                     boundaries += n;
                     weight += w;
                 }
+                linear &= boundaries == before;
             }
             Node::Literal(bytes) => weight += bytes.len(),
             Node::AnyChar | Node::Star | Node::Class(_) => weight += 1,
@@ -573,44 +569,33 @@ impl Builder {
         &self.preds[start..end]
     }
 
-    /// Invert the predecessor lists into CSR successor lists.
+    /// Invert the predecessor lists into CSR successor lists, the start's
+    /// at `n` and the pattern's ends as edges to `ACCEPT`.
     fn successors(&self) -> Edges {
         let n = self.elems.len();
-        let mut offsets = vec![0u32; n + 1];
+        let slot = |from: u32| if from == START { n } else { from as usize };
+        let mut offsets = vec![0u32; n + 2];
         for &from in self.preds.iter().chain(&self.ends) {
-            if from != START {
-                offsets[from as usize + 1] += 1;
-            }
+            offsets[slot(from) + 1] += 1;
         }
-        for i in 0..n {
+        for i in 0..=n {
             offsets[i + 1] += offsets[i];
         }
         let mut fill = offsets.clone();
-        let mut targets = vec![0u32; offsets[n] as usize];
-        let mut start = Vec::new();
-        for id in 0..n {
-            for &from in self.preds_of(id) {
-                if from == START {
-                    start.push(id as u32);
-                    continue;
-                }
-                let slot = &mut fill[from as usize];
-                targets[*slot as usize] = id as u32;
-                *slot += 1;
+        let mut targets = vec![0u32; offsets[n + 1] as usize];
+        for id in 0..=n {
+            let (froms, to) = if id < n {
+                (self.preds_of(id), id as u32)
+            } else {
+                (&self.ends[..], ACCEPT)
+            };
+            for &from in froms {
+                let at = &mut fill[slot(from)];
+                targets[*at as usize] = to;
+                *at += 1;
             }
         }
-        for &from in &self.ends {
-            if from != START {
-                let slot = &mut fill[from as usize];
-                targets[*slot as usize] = ACCEPT;
-                *slot += 1;
-            }
-        }
-        Edges {
-            offsets,
-            targets,
-            start,
-        }
+        Edges { offsets, targets }
     }
 
     /// A node for `elem` after `tails`; an existing one when a branch
@@ -694,7 +679,8 @@ impl Builder {
             }
             let node = &nodes[i];
             let sep_next = matches!(nodes.get(i + 1), Some(Node::Separator));
-            let last = i + 1 == nodes.len();
+            // A `/` follows: next, or after the brace this is a branch of.
+            let after = sep_next || (i + 1 == nodes.len() && sep_after);
             // Resolution puts a bare `**` only at the end of the pattern,
             // so no group is open here.
             debug_assert!(groups.iter().all(|g| g.state != Boundary::Open));
@@ -710,7 +696,6 @@ impl Builder {
             match node {
                 Node::Brace(branches) if crosses(node) => {
                     // A `**` ending a branch reads the `/` after the brace.
-                    let after = sep_next || (last && sep_after);
                     let mut out = Merged::default();
                     for branch in branches {
                         self.cost += groups.iter().map(Group::cost).sum::<usize>();
@@ -732,7 +717,7 @@ impl Builder {
                 // so the separators around it are lenient (§14.2). It is
                 // emitted later, when it is known that no bare `**`
                 // absorbs it.
-                Node::Globstar if sep_next || (last && sep_after) => {
+                Node::Globstar if after => {
                     for g in groups.iter_mut() {
                         // The parser never glues a `**` to text.
                         debug_assert!(g.buf.is_empty());
@@ -1053,14 +1038,7 @@ fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
     // nothing follows them) keeps the segment anchored at both ends;
     // anything else runs the NFA.
     let Some(mut suffixes) = suffix_product(&nodes[idx..]) else {
-        let nfa = SegNfa::compile(nodes, dot, ci);
-        return Wild {
-            dot_protect: !dot && nfa.wild_led,
-            any_seg: nfa.any_seg,
-            kind: WildKind::Generic(Box::new(nfa)),
-            min_len: 0,
-            variable: true,
-        };
+        return SegNfa::wild(nodes, dot, ci);
     };
     let dot_protect = !dot && prefix.is_empty() && (has_star || anychars > 0);
     // `*` or `?*` with nothing literal around it, up to a suffix that

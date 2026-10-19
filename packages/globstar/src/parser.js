@@ -53,21 +53,18 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
   }
 
-  // `pending`: a `**` was left to `resolveGlobstars` (see `doubleStar`).
-  const state = { input: bytes, pos: 0, pending: false };
-
-  let negationCount = 0;
-  while (state.pos < bytes.length && bytes.charCodeAt(state.pos) === BANG) {
-    negationCount++;
-    state.pos++;
-  }
+  // Past the end `charCodeAt` is NaN, which ends the run.
+  let negations = 0;
+  while (bytes.charCodeAt(negations) === BANG) negations++;
   // `!` and `!!` negate nothing (§6.1).
-  if (state.pos === bytes.length) throw new GlobError("Empty");
+  if (negations === bytes.length) throw new GlobError("Empty");
 
+  // `pending`: a `**` was left to `resolveGlobstars` (see `doubleStar`).
+  const state = { input: bytes, pos: negations, pending: false };
   let body = parseSequence(state, 0);
   if (state.pending) body = resolveGlobstars(body, budget);
   // `ascii`: no byte past ASCII anywhere, so none in a literal or a class.
-  return { body, isNegated: (negationCount & 1) === 1, ascii: bytes === input };
+  return { body, isNegated: (negations & 1) === 1, ascii: bytes === input };
 }
 
 // The sequence up to the end, or (`depth` > 0, inside that many braces)
@@ -225,16 +222,10 @@ function parseClass(state) {
 function parseClassByte(state, classStart) {
   const { input } = state;
   if (state.pos >= input.length) throw new GlobError("UnterminatedClass", { at: classStart });
-  const b = input.charCodeAt(state.pos);
-  let resolved;
-  if (b === BACKSLASH) {
-    state.pos++;
+  let resolved = input.charCodeAt(state.pos++);
+  if (resolved === BACKSLASH) {
     if (state.pos >= input.length) throw new GlobError("TrailingBackslash");
-    resolved = input.charCodeAt(state.pos);
-    state.pos++;
-  } else {
-    resolved = b;
-    state.pos++;
+    resolved = input.charCodeAt(state.pos++);
   }
   if (resolved === SLASH) throw new GlobError("UnterminatedClass", { at: classStart });
   return resolved;

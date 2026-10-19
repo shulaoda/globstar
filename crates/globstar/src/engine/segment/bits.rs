@@ -9,7 +9,6 @@ pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     /// Words needed for `n_bits` bits.
     fn words(n_bits: usize) -> usize;
     fn set(&mut self, i: usize);
-    fn unset(&mut self, i: usize);
     fn test(&self, i: usize) -> bool;
     fn is_zero(&self) -> bool;
     fn clear(&mut self);
@@ -33,10 +32,6 @@ impl Bits for u64 {
     #[inline]
     fn set(&mut self, i: usize) {
         *self |= 1u64 << i;
-    }
-    #[inline]
-    fn unset(&mut self, i: usize) {
-        *self &= !(1u64 << i);
     }
     #[inline]
     fn test(&self, i: usize) -> bool {
@@ -76,6 +71,13 @@ impl Bits for u64 {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Wide(Box<[u64]>);
 
+impl Wide {
+    #[inline]
+    pub(super) fn unset(&mut self, i: usize) {
+        self.0[i >> 6] &= !(1u64 << (i & 63));
+    }
+}
+
 impl Bits for Wide {
     fn zero(words: usize) -> Self {
         Wide(vec![0u64; words].into_boxed_slice())
@@ -86,10 +88,6 @@ impl Bits for Wide {
     #[inline]
     fn set(&mut self, i: usize) {
         self.0[i >> 6] |= 1u64 << (i & 63);
-    }
-    #[inline]
-    fn unset(&mut self, i: usize) {
-        self.0[i >> 6] &= !(1u64 << (i & 63));
     }
     #[inline]
     fn test(&self, i: usize) -> bool {

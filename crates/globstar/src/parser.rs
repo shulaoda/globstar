@@ -20,28 +20,23 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
         });
     }
 
-    let mut p = Parser {
-        input,
-        pos: 0,
-        pending: false,
-    };
-
-    let mut negation_count = 0u32;
-    while p.pos < input.len() && input[p.pos] == b'!' {
-        negation_count += 1;
-        p.pos += 1;
-    }
+    let negations = input.iter().take_while(|&&b| b == b'!').count();
     // `!` and `!!` negate nothing (§6.1).
-    if p.pos == input.len() {
+    if negations == input.len() {
         return Err(GlobError::Empty);
     }
 
+    let mut p = Parser {
+        input,
+        pos: negations,
+        pending: false,
+    };
     let mut body = p.parse_sequence(0)?;
     if p.pending {
         body = resolve_globstars(body, budget)?;
     }
     Ok(Ast {
-        negation_count,
+        negation_count: negations as u32,
         body,
     })
 }
@@ -171,16 +166,13 @@ impl<'a> Parser<'a> {
             Some(b',' | b'}') if in_brace => None,
             Some(_) => Some(false),
         };
-        match (before, after) {
-            (Some(false), _) | (_, Some(false)) => Node::Star,
-            (Some(true), Some(true)) if !matches!(nodes, [.., Node::Globstar, Node::Separator]) => {
-                Node::Globstar
-            }
-            _ => {
-                self.pending = true;
-                Node::Globstar
-            }
+        if before == Some(false) || after == Some(false) {
+            return Node::Star;
         }
+        self.pending |= before.is_none()
+            || after.is_none()
+            || matches!(nodes, [.., Node::Globstar, Node::Separator]);
+        Node::Globstar
     }
 
     fn parse_class(&mut self) -> Result<CharClass, GlobError> {
@@ -231,13 +223,12 @@ impl<'a> Parser<'a> {
         let b = self
             .peek()
             .ok_or(GlobError::UnterminatedClass { at: class_start })?;
+        self.pos += 1;
         let resolved = if b == b'\\' {
-            self.pos += 1;
             let next = self.peek().ok_or(GlobError::TrailingBackslash)?;
             self.pos += 1;
             next
         } else {
-            self.pos += 1;
             b
         };
         if resolved == b'/' {

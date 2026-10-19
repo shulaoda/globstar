@@ -779,7 +779,7 @@ impl SparseNfa {
             let p = p as usize;
             // Equal literals sit together, one binary search away.
             let lits = self.lits(p);
-            let order = |s: u32| lit_cmp(self.lit_of(m, s), seg, m.case_insensitive);
+            let order = |s: u32| lit_cmp(m.elems[s as usize].as_lit(), seg, m.case_insensitive);
             let first = lits.partition_point(|&s| order(s).is_lt());
             for &s in lits[first..].iter().take_while(|&&s| order(s).is_eq()) {
                 self.fire(m, s, next);
@@ -790,10 +790,6 @@ impl SparseNfa {
                 }
             }
         }
-    }
-
-    fn lit_of<'m>(&self, m: &'m SegmentMatcher, s: u32) -> &'m [u8] {
-        m.elems[s as usize].as_lit()
     }
 
     /// State `s` took a segment: a globstar stays, and its position's

@@ -13,7 +13,7 @@
 
 import { CI_BYTE, N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, seq } from "../../ast.js";
 import { ctz32, IS_WINDOWS_SEP } from "../../bytes.js";
-import { exact } from "./elem.js";
+import { exact, NEVER_LEN } from "./elem.js";
 import { wordsFor, bitTest, bitSet, bitsIsZero, bitsEqual } from "./bits.js";
 
 // NFA state kinds. A `*` is an S_ANY whose `next` is itself, with its
@@ -33,12 +33,26 @@ const UNSET = -1;
 // the step goes wins and keeps memory linear.
 const MAX_CLOSURE_BYTES = 128 * 1024;
 
+// The segment's NFA and what the graph reads off it, as `makeWild`
+// fields: one that accepts nothing gets NEVER_LEN, and it is
+// dot-protected when nothing that may take a protected leading `.` (a
+// literal `.`, a positive class listing it) can start a match.
 export function compileSegNfa(nodes, dot, ci) {
   const b = new SegBuilder(ci);
   const entry = b.compileNodes(nodes);
   const accept = b.alloc(S_MATCH, 0, UNSET);
   for (const t of b.tails) b.patch(t, accept);
-  return b.kinds.length <= 32 ? new SegNfaSmall(b, entry, dot) : new SegNfaWide(b, entry, dot);
+  const small = b.kinds.length <= 32;
+  const nfa = small ? new SegNfaSmall(b, entry, dot) : new SegNfaWide(b, entry, dot);
+  const test = small ? (a, s) => (a & (1 << s)) !== 0 : bitTest;
+  return {
+    nfa,
+    minLen: satisfiable(b, entry) ? 0 : NEVER_LEN,
+    dotProtect: !dot && wildLed(b, nfa.initDotBlocked, test),
+    // Does it accept every non-empty segment through its wildcards
+    // alone? (`matchDir` all-below.)
+    anySeg: small ? anySegSmall(nfa) : anySegWide(nfa),
+  };
 }
 
 // A class as the bytes it takes, one bit each in eight int32 words, with
@@ -196,12 +210,7 @@ class SegNfaSmall {
     // closure is just `init`.
     this.initDotBlocked = dot ? this.init : closeSmall(b, 1 << entry, true);
     this.acceptMask = 1 << (n - 1);
-    this.wildLed = wildLed(b, this.initDotBlocked, (a, s) => (a & (1 << s)) !== 0);
     this.countsBytes = b.countsBytes;
-    this.satisfiable = satisfiable(b, entry);
-    // Does the NFA accept every non-empty segment through its wildcards
-    // alone? (`matchDir` all-below.)
-    this.anySeg = anySegSmall(this);
   }
 
   matches(str, s0, e0) {
@@ -301,10 +310,7 @@ class SegNfaWide {
     this.init = entrySet(false);
     this.initDotBlocked = dot ? this.init : entrySet(true);
     this.accept = n - 1;
-    this.wildLed = wildLed(b, this.initDotBlocked, bitTest);
     this.countsBytes = b.countsBytes;
-    this.satisfiable = satisfiable(b, entry);
-    this.anySeg = anySegWide(this);
   }
 
   matches(str, s0, e0) {

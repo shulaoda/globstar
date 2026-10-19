@@ -28,7 +28,8 @@ const MAX_CHAINS: usize = 64;
 type Bytes = Box<[u8]>;
 
 /// The `min_len` of a segment no path segment can fill: one with an
-/// escaped `\` on Windows, where a segment never holds a separator.
+/// escaped `\` on Windows, where a segment never holds a separator, or
+/// an in-segment NFA that accepts nothing.
 const NEVER: u32 = u32::MAX;
 
 /// Does `lit` hold a separator byte (an escaped `\` on Windows)? A
@@ -120,14 +121,7 @@ impl Elem {
     /// Can the element consume some segment?
     #[inline]
     fn satisfiable(&self) -> bool {
-        match self {
-            Elem::Wild(w) if w.min_len == NEVER => false,
-            Elem::Wild(Wild {
-                kind: WildKind::Generic(nfa),
-                ..
-            }) => nfa.satisfiable,
-            _ => true,
-        }
+        !matches!(self, Elem::Wild(w) if w.min_len == NEVER)
     }
 }
 
@@ -135,8 +129,8 @@ impl Elem {
 struct Wild {
     kind: WildKind,
     /// Minimum segment byte length (literal parts + `?` count; for
-    /// suffix sets excludes the per-branch suffix, unused by
-    /// `Generic`).
+    /// suffix sets excludes the per-branch suffix; `Generic` keeps 0, or
+    /// `NEVER` when it accepts nothing).
     min_len: u32,
     /// `false` ⇒ length must equal `min_len` exactly (no `*`).
     variable: bool,

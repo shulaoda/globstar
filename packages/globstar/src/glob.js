@@ -37,7 +37,7 @@ export function compileMatcher(patterns, options) {
     // A lone surrogate has no UTF-8 form (§2.1).
     if (!pattern.isWellFormed()) {
       throw new TypeError(
-        `pattern must be well-formed UTF-16, got a lone surrogate at index ${loneSurrogateAt(pattern)}`,
+        `pattern must be well-formed UTF-16, got a lone surrogate at index ${pattern.search(/\p{Cs}/u)}`,
       );
     }
     if (seen !== null) {
@@ -101,31 +101,17 @@ function matcherOptions(input) {
 
 // Exported for the tests, which read how a pattern compiled.
 export function buildEngine(asts, opts) {
-  const ci = !!opts.caseInsensitive;
-  const dot = !!opts.dot;
   // Members that only differ in spelling factor into one, which may be
   // a literal again.
   const body = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
   const ascii = asts.every((a) => a.ascii);
   const literal = nodeToLiteral(body);
+  const ci = opts.caseInsensitive;
   if (literal !== null) return new LiteralMatcher(literal, ci, ascii);
-  return SegmentMatcher.build(body, dot, ci, {
+  return SegmentMatcher.build(body, opts.dot, ci, {
     forceNfa: opts.__engine === "nfa",
     byteOnly: opts.__engine === "bytes" || !ascii,
   });
-}
-
-function loneSurrogateAt(s) {
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c >= 0xdc00 && c < 0xe000) return i;
-    if (c >= 0xd800 && c < 0xdc00) {
-      const next = s.charCodeAt(i + 1);
-      if (!(next >= 0xdc00 && next < 0xe000)) return i;
-      i++;
-    }
-  }
-  return -1;
 }
 
 function requireStringInput(input) {

@@ -13,6 +13,7 @@
 use crate::ast::{CharClass, ClassItem, Node};
 
 use super::bits::{Bits, Wide};
+use super::{NEVER, Wild, WildKind};
 
 const UNSET: u32 = u32::MAX;
 
@@ -22,28 +23,17 @@ const UNSET: u32 = u32::MAX;
 const MAX_CLOSURE_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, Clone)]
-pub(super) struct SegNfa {
-    kind: Kind,
-    /// Does the NFA accept any segment at all? (`match_dir`
-    /// satisfiability.)
-    pub(super) satisfiable: bool,
-    /// Nothing that may take a protected leading `.` (a literal `.`, a
-    /// positive class listing it) can start a match ⇒ the matcher is
-    /// fully dot-protected.
-    pub(super) wild_led: bool,
-    /// Does the NFA accept every non-empty segment through its
-    /// wildcards alone? (`match_dir` all-below.)
-    pub(super) any_seg: bool,
-}
-
-#[derive(Debug, Clone)]
-enum Kind {
+pub(super) enum SegNfa {
     Small(SegNfaImpl<u64>),
     Wide(SegNfaImpl<Wide>),
 }
 
 impl SegNfa {
-    pub(super) fn compile(nodes: &[&Node], dot: bool, ci: bool) -> Self {
+    /// The segment as a `Wild` over its NFA, with what the graph reads
+    /// off it: one that accepts nothing gets `NEVER`, and it is
+    /// dot-protected when nothing that may take a protected leading `.`
+    /// (a literal `.`, a positive class listing it) can start a match.
+    pub(super) fn wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
         let mut b = SegBuilder {
             states: Vec::with_capacity(16),
             tails: Vec::new(),
@@ -56,9 +46,9 @@ impl SegNfa {
         }
         let states = b.states.into_boxed_slice();
         if states.len() <= 64 {
-            Self::build(states, entry, dot, Kind::Small)
+            Self::build(states, entry, dot, SegNfa::Small)
         } else {
-            Self::build(states, entry, dot, Kind::Wide)
+            Self::build(states, entry, dot, SegNfa::Wide)
         }
     }
 
@@ -66,8 +56,8 @@ impl SegNfa {
         states: Box<[SegState]>,
         entry: usize,
         dot: bool,
-        kind: fn(SegNfaImpl<B>) -> Kind,
-    ) -> Self {
+        kind: fn(SegNfaImpl<B>) -> SegNfa,
+    ) -> Wild {
         let n = states.len();
         let words = B::words(n);
         let closures = if n * words * 8 <= MAX_CLOSURE_BYTES {
@@ -105,18 +95,19 @@ impl SegNfa {
             accept: n - 1,
             words,
         };
-        SegNfa {
-            satisfiable,
-            wild_led: !can_lit_dot,
+        Wild {
+            min_len: if satisfiable { 0 } else { NEVER },
+            variable: true,
+            dot_protect: !dot && !can_lit_dot,
             any_seg: nfa.any_seg(),
-            kind: kind(nfa),
+            kind: WildKind::Generic(Box::new(kind(nfa))),
         }
     }
 
     pub(super) fn matches(&self, seg: &[u8]) -> bool {
-        match &self.kind {
-            Kind::Small(n) => n.matches(seg),
-            Kind::Wide(n) => n.matches(seg),
+        match self {
+            SegNfa::Small(n) => n.matches(seg),
+            SegNfa::Wide(n) => n.matches(seg),
         }
     }
 }
@@ -180,7 +171,7 @@ impl ByteSet {
 }
 
 #[derive(Debug, Clone)]
-struct SegNfaImpl<B: Bits> {
+pub(super) struct SegNfaImpl<B: Bits> {
     states: Box<[SegState]>,
     /// ε-closure of the entry (used for all non-dot-led segments, and
     /// for the EOF/empty-segment accept).
