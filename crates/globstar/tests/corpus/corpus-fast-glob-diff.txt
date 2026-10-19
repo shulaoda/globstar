@@ -68,7 +68,6 @@ a[\\b]c	abc	match
 #                literal text.
 \\\\/$^+?.()=!|{},[].*	-	err:UnterminatedClass
 
-## fast_glob_diff.class_slash_is_segment_separator
 # upstream line 554 (fast_glob.bash_slashmatch)
 #   pattern    : foo[/]bar
 #   path       : foo/bar
@@ -77,7 +76,6 @@ a[\\b]c	abc	match
 #   rationale  : `/` inside `[…]` terminates the segment — class is
 #                segment-local (§6.2), so encountering `/` is equivalent
 #                to "class never closed". Parser rejects.
-foo[/]bar	-	err:UnterminatedClass
 
 ## fast_glob_diff.unterminated_brace_rejected
 # upstream lines 1253–1256 (fast_glob.not_paired_braces)

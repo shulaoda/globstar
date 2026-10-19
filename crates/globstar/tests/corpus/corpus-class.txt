@@ -28,8 +28,6 @@
 [a-c]	c	match
 [a-c]	d	no-match
 [a-c]	-	no-match
-[0-9]	5	match
-[0-9]	a	no-match
 [A-Z]	Q	match
 [A-Z]	q	no-match
 
@@ -50,12 +48,9 @@
 [-abc]	-	match
 [-abc]	a	match
 [-abc]	d	no-match
-[abc-]	-	match
 [abc-]	c	match
 [abc-]	d	no-match
 # But mid-position `-` between two letters IS a range separator.
-[a-z]	m	match
-[a-z]	A	no-match
 # Negated form: `[!-a]` after `!`, `-` is at items[0] (first position) → literal
 [!-a]	-	no-match
 [!-a]	a	no-match
@@ -75,23 +70,15 @@
 
 ## class.posix_first_bracket_literal
 # `]` at first member position is literal, not a closer.
-[]]	]	match
-[]]	a	no-match
 []a]	]	match
 []a]	a	match
 []a]	b	no-match
 # Negated form
 [!]]	]	no-match
 [!]]	a	match
-[!]abc]	]	no-match
-[!]abc]	a	no-match
-[!]abc]	z	match
 [^]]	]	no-match
 [^]]	a	match
 # Combined with `-` at end
-[]-]	]	match
-[]-]	-	match
-[]-]	a	no-match
 # The first `]` is a member like any other, so it can start a range
 # (§6.5, as POSIX reads it): `[]-a]` is `]..=a`, `^`, `_` and `` ` `` in it.
 []-a]	]	match
@@ -124,30 +111,18 @@
 # ----------------------------------------------------------------------------
 
 ## class.escape_meta_in_class
-[\*]	*	match
-[\*]	a	no-match
-[\?]	?	match
 [\[]	[	match
-[\]]	]	match
-[\]]	a	no-match
-[\!]	!	match
-[\!]	a	no-match
-[\^]	^	match
-[\^]	a	no-match
 [\{]	{	match
 [\}]	}	match
 [\(]	(	match
 [\)]	)	match
 # `[\\]` against a `\` path is per platform: corpus-unix.txt / corpus-windows.txt.
-[\\\\]	a	no-match
 
 ## class.escape_extends_closer
 # `[\]X]` — `\]` is escaped literal `]`, then `X`, then closing `]`. Class {], X}.
 [\]X]	]	match
 [\]X]	X	match
 [\]X]	a	no-match
-[\]abc]	]	match
-[\]abc]	a	match
 [\]abc]	d	no-match
 
 ## class.escape_lenient_letters
@@ -161,8 +136,6 @@
 # ----------------------------------------------------------------------------
 
 ## class.brace_paren_metachars_decay
-[{}]	{	match
-[{}]	}	match
 [{}]	a	no-match
 [()]	(	match
 [()]	)	match
@@ -187,19 +160,12 @@
 # ----------------------------------------------------------------------------
 
 ## class.negation_basic
-[!abc]	a	no-match
-[!abc]	b	no-match
-[!abc]	d	match
-[^abc]	a	no-match
-[^abc]	d	match
 # Both forms equivalent
-[!a-z]	A	match
 [^a-z]	A	match
 [!a-z]	q	no-match
 
 ## class.negation_segment_local
 # Negated class never matches segment separator `/`.
-[^abc]	/	no-match
 [!abc]	/	no-match
 # Class is segment-local even when `/` isn't in items.
 
@@ -266,12 +232,9 @@ foo[/]bar	-	err:UnterminatedClass
 # ----------------------------------------------------------------------------
 
 ## class.range_validity_byte_level
-[z-a]	-	err:InvalidRange
 [Z-A]	-	err:InvalidRange
 [9-0]	-	err:InvalidRange
 # Same patterns under case_insensitive — STILL invalid.
-[z-a]	-	err:InvalidRange	case_insensitive=true
-[Z-A]	-	err:InvalidRange	case_insensitive=true
 # Cross-case ranges that happen to be valid byte-wise — accepted.
 [A-z]	M	match
 [A-z]	m	match
@@ -310,4 +273,3 @@ src/[a-z]*.{ts,rs}	src/main.txt	no-match
 [\]	-	err:UnterminatedClass
 # `[\]]` — `\]` is literal `]`, then second `]` closes. Class `{]}`.
 # `[\\\\]` (after TSV unescape: `[\\]`) — class with literal `\`. Platform-dep.
-[\\\\]	/	no-match

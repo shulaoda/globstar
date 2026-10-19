@@ -23,12 +23,9 @@
 
 ## abs.globstar_star_any_depth
 # `**` matches any path including separators.
-**	a	match
 **	/	match
 **	/a	match
 **	/a/b	match
-**	a/b	match
-**		match
 
 ## abs.globstar_slash_trailing_sep
 # `**/` expects a boundary at the end. Empty or sep-terminated ok; bare
@@ -38,15 +35,10 @@
 **/	/	match
 **/	/a/	match
 **/	a/b/	match
-**/	a	no-match
 **/	/a	no-match
-**/	a/b	no-match
 
 ## abs.globstar_slash_then_literal
 # `**/foo` at any depth.
-**/foo	foo	match
-**/foo	a/foo	match
-**/foo	a/b/foo	match
 **/foo	/foo	match
 **/foo	/a/foo	match
 **/foo	/a/b/foo	match
@@ -60,7 +52,6 @@
 
 ## abs.globstar_slash_then_star
 # `**/*.txt` — the classic "all .txt files" pattern.
-**/*.txt	foo.txt	match
 **/*.txt	a/foo.txt	match
 **/*.txt	a/b/foo.txt	match
 **/*.txt	/foo.txt	match
@@ -87,16 +78,11 @@
 ## abs.middle_globstar_unaffected
 # `a/**/b` — `**` in the middle. Pattern requires path to start with `a/`,
 # not affected by the leading-seps rule (first op is Lit, not OSS).
-a/**/b	a/b	match
-a/**/b	a/x/b	match
-a/**/b	a/x/y/b	match
 a/**/b	/a/b	no-match
-a/**/b	b	no-match
 
 ## abs.literal_pattern_unaffected
 # Literal and single-star patterns: no `**/` at start → no leading-seps
 # absorption. Absolute-path semantics preserved for explicit patterns.
-foo	foo	match
 foo	/foo	no-match
 foo/bar	foo/bar	match
 foo/bar	/foo/bar	no-match
@@ -111,7 +97,6 @@ foo/bar	/foo/bar	no-match
 #   `**/*`  : LeadingSeps eats `/`, OSS 0 iter, Star eats `a` → match
 #   `**`    : GlobstarAny ≡ .* → match everything
 a	/a	no-match
-*	/a	no-match
 /*	/a	match
 **/*	/a	match
 
@@ -130,7 +115,6 @@ a	/a	no-match
 # Top-level brace at pattern start: per-branch LeadingSeps absorbs leading
 # seps ONLY on `**/`-rooted branches. Literal branches stay strict.
 {**/a,**/b}	a	match
-{**/a,**/b}	b	match
 {**/a,**/b}	/a	match
 {**/a,**/b}	/b	match
 {**/a,**/b}	x/a	match

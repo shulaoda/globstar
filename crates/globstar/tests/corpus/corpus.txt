@@ -42,7 +42,6 @@ src/main.rs	src/lib.rs	no-match
 *.txt	a.txt.bak	no-match
 *.txt	txt	no-match
 *.txt	a/b.txt	no-match
-*.txt	a.txt	match	dot=true
 .txt	.txt	match
 *.txt	.txt	match	dot=true
 
@@ -658,7 +657,6 @@ x=y	x=y	match
 **/{a,b}	q/b	match
 # dot: `**/` exposes segment starts at every depth, so leading/interior
 # dotfiles are protected under dot=false.
-**/{**/a,b}	q/b	match	dot=true
 **/{**/a,b}	q/b	match	dot=false
 **/{**/a,b}	.a/b	match	dot=true
 **/{**/a,b}	.a/b	no-match	dot=false
@@ -698,7 +696,6 @@ x/{**,a}/**	xy	no-match
 */{**,*}/**	a/b/c	match
 # dot: the trailing `**` (and the leading `*` of */...) exposes segment
 # starts; dotfiles there are protected under dot=false, on BOTH branches.
-x/{**,a}/**	x/y	match	dot=true
 x/{**,a}/**	x/y	match	dot=false
 x/{**,a}/**	x/.y	match	dot=true
 x/{**,a}/**	x/.y	no-match	dot=false

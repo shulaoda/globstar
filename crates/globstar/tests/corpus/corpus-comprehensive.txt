@@ -6,9 +6,8 @@
 # Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
 # Escape rules per README: `\\` literal `\`, `\t` tab, `\n` newline.
 #
-# This file is *additive* to the existing corpus files — rows are chosen to
-# avoid duplicating existing assertions. Every pattern carries at least one
-# `match` and one `no-match` row to catch over- and under-matching.
+# This file is additive to the other corpus files: a row another file
+# already has (same pattern, path, expected and flags) does not belong here.
 # ============================================================================
 
 # ----------------------------------------------------------------------------
@@ -16,7 +15,6 @@
 # ----------------------------------------------------------------------------
 
 ## literal.ascii_basic
-abc	abc	match
 abc	abcd	no-match
 abc	xabc	no-match
 abc	ab	no-match
@@ -35,7 +33,6 @@ SCREAMING_SNAKE_CASE	SCREAMING_SNAKE_CASE	match
 SCREAMING_SNAKE_CASE	screaming_snake_case	no-match
 
 ## literal.special_bytes
-a.b	a.b	match
 a.b	axb	no-match
 a+b	a+b	match
 a+b	ab	no-match
@@ -53,7 +50,6 @@ percent%sign	percent%sign	match
 percent%sign	percentsign	no-match
 
 ## literal.embedded_space
-my file.txt	my file.txt	match
 my file.txt	myfile.txt	no-match
 my file.txt	my  file.txt	no-match
 two  spaces	two  spaces	match
@@ -98,7 +94,6 @@ src/	src	no-match
 *	x	match
 *	xy	match
 *	xyz	match
-*	a/b	no-match
 /*	/x	match
 /*	/x/y	no-match
 /*	x	no-match
@@ -114,7 +109,6 @@ foo*bar	foo	no-match
 foo*bar	bar	no-match
 foo*bar	fobar	no-match
 foo*bar	foobaz	no-match
-foo*bar	foo/bar	no-match
 prefix*suffix	prefixsuffix	match
 prefix*suffix	prefix__suffix	match
 prefix*suffix	prefisuffix	no-match
@@ -136,9 +130,6 @@ prefix*suffix	prefisuffix	no-match
 *x*y*z*	zyx	no-match
 
 ## wildcard.star.empty_match
-a*	a	match
-a*	ab	match
-a*b	ab	match
 a*b*c	abc	match
 a*b*c	axbyc	match
 
@@ -166,11 +157,8 @@ a**	axx	match
 ## wildcard.anychar.alone
 ?	x	match
 ?	0	match
-?	.	match
 ?	?	match
-?		no-match
 ?	xy	no-match
-?	/	no-match
 
 ## wildcard.anychar.at_boundary
 ?abc	xabc	match
@@ -195,10 +183,7 @@ abc?	abcde	no-match
 ?*?	a	no-match
 
 ## wildcard.anychar.runs
-???	abc	match
 ???	xyz	match
-???	ab	no-match
-???	abcd	no-match
 ???	a/c	no-match
 ????	abcd	match
 ????	abc	no-match
@@ -206,10 +191,8 @@ abc?	abcde	no-match
 ?????	hell	no-match
 
 ## wildcard.anychar.mid_segment
-a?c	abc	match
 a?c	a-c	match
 a?c	a.c	match
-a?c	a/c	no-match
 a??d	abcd	match
 a??d	abccd	no-match
 a??d	abd	no-match
@@ -240,7 +223,6 @@ a??d	abd	no-match
 [xY9]	y	no-match
 
 ## class.positive.range
-[a-a]	a	match
 [a-a]	b	no-match
 [a-b]	a	match
 [a-b]	b	match
@@ -260,8 +242,6 @@ a??d	abd	no-match
 [a-zA-Z0-9_]	a	match
 [a-zA-Z0-9_]	M	match
 [a-zA-Z0-9_]	7	match
-[a-zA-Z0-9_]	_	match
-[a-zA-Z0-9_]	-	no-match
 [a-zA-Z0-9_]	.	no-match
 [a-zA-Z0-9_]	/	no-match
 [A-Fa-f0-9]	0	match
@@ -331,7 +311,6 @@ v[0-9].[0-9]	v10.2	no-match
 ## class.negated.never_matches_separator
 [!a]	/	no-match
 [^a]	/	no-match
-[!abc]	/	no-match
 
 ## class.negated.in_pattern
 src/[!_]*.rs	src/main.rs	match
@@ -343,7 +322,6 @@ file[!0-9].txt	file_.txt	match
 
 ## class.negated.dot_protection_at_segment_start
 # dot=false: `[^x]` cannot match leading `.` (segment-start protection §12.4)
-[^x]	.	no-match	dot=false
 [^x]	a	match	dot=false
 [^x]	.	match	dot=true
 [^x]*	.hidden	no-match	dot=false
@@ -369,8 +347,6 @@ file[!0-9].txt	file_.txt	match
 
 ## class.posix_first_bracket_negated
 [!]abc]	d	match
-[!]abc]	]	no-match
-[!]abc]	a	no-match
 [^]abc]	d	match
 [^]abc]	]	no-match
 [^]abc]	a	no-match
@@ -450,8 +426,6 @@ file[!0-9].txt	file_.txt	match
 **/foo/bar	foo	no-match
 
 ## globstar.leading.dotfile
-**/.config	.config	match
-**/.config	a/.config	match
 **/.config	a/b/.config	match
 **/.config	.config/a	no-match
 **/.config	config	no-match
@@ -471,11 +445,6 @@ file[!0-9].txt	file_.txt	match
 # ----------------------------------------------------------------------------
 
 ## globstar.middle.simple
-a/**/b	a/b	match
-a/**/b	a/x/b	match
-a/**/b	a/x/y/b	match
-a/**/b	a/x/y/z/b	match
-a/**/b	a/b/x	no-match
 a/**/b	x/a/b	no-match
 a/**/b	ax/b	no-match
 a/**/b	a/bx	no-match
@@ -537,15 +506,9 @@ docs/**	docs/api/v1/page.md	match
 **	x/y/z	match
 **	a/.hidden	match
 **	.hidden	match
-**		match
-**	/	match
-**	/a	match
-**	a/	match
 
 ## globstar.alone.dot_false_protects
 # `**` itself is `.*` — but each NEW segment-start is dot-protected when dot=false.
-**	.hidden	no-match	dot=false
-**	a/.hidden	no-match	dot=false
 **	visible	match	dot=false
 **	a/visible	match	dot=false
 **	./	no-match	dot=false
@@ -555,9 +518,6 @@ docs/**	docs/api/v1/page.md	match
 # ----------------------------------------------------------------------------
 
 ## globstar.adjacent.collapse
-**/**	a	match
-**/**	a/b	match
-**/**	a/b/c/d	match
 **/**	/a	match
 **/**/**	a/b/c/d/e	match
 **/**/foo	foo	match
@@ -651,10 +611,6 @@ v{1,2,3}.0	v4.0	no-match
 # ----------------------------------------------------------------------------
 
 ## brace.nested.simple
-{a,{b,c}}	a	match
-{a,{b,c}}	b	match
-{a,{b,c}}	c	match
-{a,{b,c}}	d	no-match
 {{a,b},c}	a	match
 {{a,b},c}	b	match
 {{a,b},c}	c	match
@@ -704,9 +660,6 @@ file{,.bak}	file.bak	match
 file{,.bak}	file.txt	no-match
 
 ## brace.empty.middle
-{a,,b}	a	match
-{a,,b}		match
-{a,,b}	b	match
 {a,,b}	c	no-match
 {a,,b,}	a	match
 {a,,b,}	b	match
@@ -736,9 +689,6 @@ file{,.bak}	file.txt	no-match
 {a,b}{c,d}{e,f}	bd	no-match
 
 ## brace.cartesian.suffix_combo
-*.{ts,tsx}	main.ts	match
-*.{ts,tsx}	main.tsx	match
-*.{ts,tsx}	main.js	no-match
 *.{ts,tsx}	main	no-match
 *.{ts,tsx,d.ts}	main.d.ts	match
 *.{ts,tsx,d.ts}	main.tsx	match
@@ -796,7 +746,6 @@ src/**/{x,y,z}/file.ts	other/x/file.ts	no-match
 \,	a	no-match
 foo\,bar	foo,bar	match
 foo\,bar	foobar	no-match
-\(	(	match
 \(	a	no-match
 \)	)	match
 \)	a	no-match
@@ -869,12 +818,9 @@ a/**/b	a/x//y/b	match
 # ----------------------------------------------------------------------------
 
 ## dot.true.star_matches_hidden
-*	.hidden	match
 *	.gitignore	match
 *	.x	match
-*.txt	.txt	match
 *.txt	.config.txt	match
-**/*	a/.b	match
 **/*	a/.b/.c	match
 src/*	src/.env	match
 src/*.ts	src/.hidden.ts	match
@@ -889,16 +835,12 @@ src/*.ts	src/.hidden.ts	match
 # ----------------------------------------------------------------------------
 
 ## dot.false.star_blocked
-*	.hidden	no-match	dot=false
 *	.x	no-match	dot=false
 *	visible	match	dot=false
-*.txt	.txt	no-match	dot=false
 *.txt	a.txt	match	dot=false
-?	.	no-match	dot=false
 ?	a	match	dot=false
 
 ## dot.false.deep_segments
-**/*	a/.b	no-match	dot=false
 **/*	a/.b/c	no-match	dot=false
 **/*	a/b/c	match	dot=false
 **/*	a/b/.c	no-match	dot=false
@@ -917,9 +859,7 @@ src/**/*.ts	src/sub/.hidden.ts	no-match	dot=false
 **/.git	a/.git	match	dot=false
 
 ## dot.false.class_negated_dot_protection
-[^.]*	.hidden	no-match	dot=false
 [^.]*	visible	match	dot=false
-[^.]*	.hidden	no-match	dot=true
 [^a]	.	no-match	dot=false
 [^a]	.	match	dot=true
 [^abc]	.x	no-match	dot=false
@@ -934,8 +874,6 @@ src/**/*.ts	src/sub/.hidden.ts	no-match	dot=false
 # ----------------------------------------------------------------------------
 
 ## case.sensitive.default_literal
-Foo	Foo	match
-Foo	foo	no-match
 Foo	FOO	no-match
 README	README	match
 README	readme	no-match
@@ -945,11 +883,7 @@ SCREAM.TXT	SCREAM.TXT	match
 SCREAM.TXT	scream.txt	no-match
 
 ## case.sensitive.default_class
-[A-Z]	A	match
-[A-Z]	a	no-match
 [A-Z]	Z	match
-[a-z]	A	no-match
-[a-z]	a	match
 [A-Za-z]	a	match
 [A-Za-z]	Z	match
 [A-Za-z]	0	no-match
@@ -1002,9 +936,7 @@ src/**/*.{TS,JS}	src/main.rs	no-match	case_insensitive=true
 {README,LICENSE}	OTHER	no-match	case_insensitive=true
 
 ## case.insensitive.preserves_meta
-\*	*	match	case_insensitive=true
 \*	a	no-match	case_insensitive=true
-\?	?	match	case_insensitive=true
 \?	a	no-match	case_insensitive=true
 
 ## case.insensitive.path_segments
@@ -1018,8 +950,6 @@ src/main	src/other	no-match	case_insensitive=true
 # ----------------------------------------------------------------------------
 
 ## negation.outer.simple
-!*.log	main.rs	match
-!*.log	debug.log	no-match
 !src/**	docs/main.rs	match
 !src/**	src/main.rs	no-match
 !{a,b}	c	match
@@ -1035,10 +965,6 @@ src/main	src/other	no-match	case_insensitive=true
 !**/*.{ts,tsx}	src/Component.tsx	no-match
 
 ## negation.outer.double_triple
-!!foo	foo	match
-!!foo	bar	no-match
-!!!foo	foo	no-match
-!!!foo	bar	match
 !!!!foo	foo	match
 !!!!foo	bar	no-match
 !!!!!foo	foo	no-match
@@ -1133,14 +1059,9 @@ src/**/*.{ts,tsx,d.ts}	src/main.js	no-match
 # ----------------------------------------------------------------------------
 
 ## edge.empty_path
-foo		no-match
-*		match
-{a,b}		no-match
 {a,b,}		match
 {,a,b}		match
 */		no-match
-**/		match
-[abc]		no-match
 \*		no-match
 
 ## edge.single_byte_paths
@@ -1148,11 +1069,6 @@ foo		no-match
 foo	x	no-match
 
 ## edge.literal_only_meta_path
-\?	?	match
-\?	a	no-match
-\*	*	match
-\[	[	match
-\]	]	match
 {x,\*}	*	match
 {x,\*}	x	match
 
@@ -1283,10 +1199,7 @@ a**	a/b	no-match
 **a**	xay	match
 **a**	xyz	no-match
 **a**	x/y	no-match
-a/**b	a/b	match
 a/**b	a/xxxb	match
-a/**b	a/x/b	no-match
-a**/b	a/b	match
 a**/b	axxxx/b	match
 a**/b	a/x/b	no-match
 
@@ -1351,8 +1264,6 @@ README	.readme	no-match	case_insensitive=true,dot=false
 # ----------------------------------------------------------------------------
 
 ## class.edge.closer_immediately_after_dash
-[a-]	a	match
-[a-]	-	match
 [a-]	z	no-match
 [--]	-	match
 [--]	a	no-match
@@ -1390,7 +1301,6 @@ README	.readme	no-match	case_insensitive=true,dot=false
 # ----------------------------------------------------------------------------
 
 ## tier0.pure_literal
-src/main.rs	src/main.rs	match
 src/main.rs	src/main.RS	no-match
 src/lib/mod.rs	src/lib/mod.rs	match
 src/lib/mod.rs	src/lib/main.rs	no-match
@@ -1436,11 +1346,6 @@ f?o	fo	no-match
 # ----------------------------------------------------------------------------
 
 ## globstar.various_positions
-**/	a/	match
-**/	/a/	match
-**/	a	no-match
-**/	a/b	no-match
-**/	a/b/	match
 **/foo/**	foo	no-match
 **/foo/**	foo/x	match
 **/foo/**	x/foo/x	match
@@ -1502,8 +1407,6 @@ file{,_a,_b}.txt	file_.txt	no-match
 # ----------------------------------------------------------------------------
 
 ## path.one_segment_only_sep
-*	/	no-match
-**/	/	match
 foo	/	no-match
 foo/	/	no-match
 /	/	match
@@ -1520,7 +1423,6 @@ foo/	foo//	no-match
 foo/	foo///	no-match
 
 ## path.dot_path_components
-.	.	match
 ..	..	match
 .	a	no-match
 .	..	no-match
@@ -1591,12 +1493,6 @@ src/**main	src/foo/main	no-match
 [a^]	^	match
 [a^]	b	no-match
 
-## class.caret_first_is_negation
-[^abc]	d	match
-[^abc]	a	no-match
-[^abc]	b	no-match
-[^abc]	c	no-match
-
 # ----------------------------------------------------------------------------
 # Final tier-coverage rows
 # ----------------------------------------------------------------------------
@@ -1628,9 +1524,6 @@ src/**/*.{ts,tsx,js,jsx}	other/main.ts	no-match
 {src,lib}/**/[A-Z]*.{ts,rs}	src/main.ts	no-match
 {src,lib}/**/[A-Z]*.{ts,rs}	docs/Main.ts	no-match
 
-## brace.globstar-expansion — GLOB_SPEC §7 expansion equation: braces are
-## pure union; `**` segment ownership is judged on the EXPANDED form, so
-## a brace never grants `**` powers it lacks outside (`a{**,x}b` ≡
 ## `a{*,x}b`) and never takes away powers it has (`{**,x}/b` ≡ `**/b ∪ x/b`).
 a{**,x}b	a/x/b	no-match
 a{**,x}b	a/b	no-match
@@ -1662,9 +1555,6 @@ a{/**/,x}b	a/y/b	match
 a{/**/,x}b	axb	match
 {a,**}/{**,b}	a/b	match
 {a,**}/{**,b}	x/y	match
-## A `**` touching a brace is judged per expansion, the brace-free
-## neighbor of each branch deciding: `**{/a,b}` ≡ `**/a ∪ **b` (the
-## second a plain star), `{a,}**` ≡ `a** ∪ **`. Spliced stars never fuse
 ## into a new `**` (`a/*{*,x}/b` ≡ `a/*/b ∪ a/*x/b`).
 **{/a,/b}	a	match
 **{/a,/b}	x/y/b	match
@@ -1691,8 +1581,6 @@ x{/,/}{**,a}/y	x//y	match
 {src/,lib/}{**,gen}/*.ts	src//a.ts	match
 a/*{*,x}/b	a/yz/b	match
 a/*{*,x}/b	a/y/z/b	no-match
-## Only the branches a `**` can meet are taken apart: branches that all
-## hand it a `/` share that `/` (`{**,dist}{/a,/b}` ≡ `{**,dist}/{a,b}`),
 ## and a `**` beside a plain token is a star whatever the brace holds.
 {**,dist}{/a,/b}	x/y/a	match
 {**,dist}{/a,/b}	dist/b	match
@@ -1717,7 +1605,6 @@ a{,b}**	ab/c	no-match
 {a/,}{**/x,**/y,z}	a/p/q/y	match
 {a/,}{**/x,**/y,z}	az	no-match
 {,}{,}**	a/b	match
-## The `/` a `**` needs may stand outside the brace; then nothing is
 ## expanded: `**/{a,b}`, `{a,b}/**`, `{src,lib}/{**,gen}/*.ts`.
 **/{a,b}	a	match
 **/{a,b}	x/y/b	match
