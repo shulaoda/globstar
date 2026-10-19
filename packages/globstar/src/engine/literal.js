@@ -1,4 +1,4 @@
-import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../bytes.js";
+import { patByteEq, IS_WINDOWS_SEP } from "../bytes.js";
 import { DirMatch } from "../dir-match.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../utf8.js";
 
@@ -46,17 +46,10 @@ export class LiteralMatcher {
   }
 }
 
-// How many leading chars of `str` the literal takes. A pattern `/` takes
-// any separator byte; no other byte ever does (§2.2).
+// How many leading chars of `str` the literal takes.
 function prefixLen(lit, str, ci) {
   const end = lit.length < str.length ? lit.length : str.length;
-  for (let n = 0; n < end; n++) {
-    const lb = lit.charCodeAt(n);
-    const pb = str.charCodeAt(n);
-    if (lb === 0x2f ? isPathSep(pb) : !isPathSep(pb) && (ci ? eqByteCi(lb, pb) : lb === pb)) {
-      continue;
-    }
-    return n;
-  }
-  return end;
+  let n = 0;
+  while (n < end && patByteEq(lit.charCodeAt(n), str.charCodeAt(n), ci)) n++;
+  return n;
 }

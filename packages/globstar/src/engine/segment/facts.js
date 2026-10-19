@@ -2,7 +2,7 @@
 // and the static prefixes a walker seeds from. JS twin of
 // `crates/globstar/src/engine/segment/facts.rs`.
 
-import { isPathSep, eqByteCi, IS_WINDOWS_SEP } from "../../bytes.js";
+import { patByteEq, IS_WINDOWS_SEP } from "../../bytes.js";
 import { N_BRACE, N_LITERAL, N_SEPARATOR, endsWithGlobstar, seq } from "../../ast.js";
 import { nodeWeight } from "./compile.js";
 
@@ -17,21 +17,12 @@ export function suffixes(body) {
   return extractSuffixSet(nodes);
 }
 
-// Does `str` end with `suffix`? A pattern `/` takes any separator byte.
+// Does `str` end with `suffix`, its bytes compared by `patByteEq`?
 export function endsWithSepAware(str, suffix, ci) {
-  let si = suffix.length;
-  let pi = str.length;
-  while (si > 0) {
-    if (pi === 0) return false;
-    si--;
-    pi--;
-    const sb = suffix.charCodeAt(si);
-    const pb = str.charCodeAt(pi);
-    if (sb === 0x2f) {
-      if (!isPathSep(pb)) return false;
-    } else if (ci ? !eqByteCi(sb, pb) : sb !== pb) {
-      return false;
-    }
+  const at = str.length - suffix.length;
+  if (at < 0) return false;
+  for (let i = suffix.length - 1; i >= 0; i--) {
+    if (!patByteEq(suffix.charCodeAt(i), str.charCodeAt(at + i), ci)) return false;
   }
   return true;
 }

@@ -1,5 +1,7 @@
 use crate::dir_match::DirMatch;
 
+use super::pat_byte_eq;
+
 #[derive(Debug, Clone)]
 pub struct LiteralMatcher {
     literal: Box<[u8]>,
@@ -41,33 +43,14 @@ impl LiteralMatcher {
         }
     }
 
-    #[inline(always)]
-    fn eq_byte(&self, a: u8, b: u8) -> bool {
-        if self.case_insensitive {
-            a.eq_ignore_ascii_case(&b)
-        } else {
-            a == b
-        }
-    }
-
     fn match_prefix(&self, other: &[u8]) -> usize {
         let literal = &self.literal;
         let mut n = 0usize;
-        while n < literal.len() && n < other.len() {
-            let lb = literal[n];
-            let ob = other[n];
-            // Separators only match the structural `/`; a literal `\`
-            // byte (Windows separator) never does (§2.2).
-            let ok = if lb == b'/' {
-                std::path::is_separator(ob as char)
-            } else {
-                !std::path::is_separator(ob as char) && self.eq_byte(lb, ob)
-            };
-            if ok {
-                n += 1;
-            } else {
-                break;
-            }
+        while n < literal.len()
+            && n < other.len()
+            && pat_byte_eq(literal[n], other[n], self.case_insensitive)
+        {
+            n += 1;
         }
         n
     }

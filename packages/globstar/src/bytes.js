@@ -25,3 +25,13 @@ export function eqByteCi(a, b) {
   const l = a | 0x20;
   return l === (b | 0x20) && l >= 0x61 && l <= 0x7a;
 }
+
+// A pattern byte against a path byte: `/` takes any separator, letters
+// fold when `ci`, and a separator byte of the pattern (an escaped `\`
+// on Windows) takes nothing (§2.2). The unequal case, the common one in
+// the prefilter, returns before that last test reads the constant.
+export function patByteEq(pat, b, ci) {
+  if (pat === 0x2f) return isPathSep(b);
+  if (ci ? !eqByteCi(pat, b) : pat !== b) return false;
+  return !(IS_WINDOWS && b === 0x5c);
+}

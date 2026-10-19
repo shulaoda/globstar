@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 
 use crate::dir_match::DirMatch;
 
+use super::super::pat_byte_eq;
 use super::bits::Bits;
 use super::bits::Wide;
 use super::compile::lit_cmp;
@@ -94,19 +95,6 @@ impl SegmentMatcher {
         }
     }
 
-    /// A pattern byte against a path byte: `/` stands for any
-    /// separator, letters fold when case-insensitive.
-    #[inline]
-    fn pat_byte_eq(&self, pat: u8, b: u8) -> bool {
-        if pat == b'/' {
-            std::path::is_separator(b as char)
-        } else if self.case_insensitive {
-            pat.eq_ignore_ascii_case(&b)
-        } else {
-            pat == b
-        }
-    }
-
     /// Suffix test, last byte first: that is where extensions differ.
     #[inline]
     fn ends_with(&self, path: &[u8], suffix: &[u8]) -> bool {
@@ -115,7 +103,7 @@ impl SegmentMatcher {
                 .iter()
                 .zip(&path[path.len() - suffix.len()..])
                 .rev()
-                .all(|(&s, &p)| self.pat_byte_eq(s, p))
+                .all(|(&s, &p)| pat_byte_eq(s, p, self.case_insensitive))
     }
 
     /// Does the path end like the chain's last element (a literal, or
