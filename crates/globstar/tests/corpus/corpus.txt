@@ -5,7 +5,7 @@
 # Default flags: dot=true (matches CompileOptions::default()),
 # case sensitive. Rows that assert Bash-style dot-protection (the
 # Walker layer default) carry explicit `dot=false`.
-# See tests/README.md for escape rules (\\, \t, \n)
+# See tests/corpus/README.md for escape rules (\\, \t, \n)
 # ============================================================================
 
 ## literal.exact
@@ -316,10 +316,7 @@ file{,_bak}	file_bak	match
 {src,lib}/**/*.ts	src/a.js	no-match
 
 ## escape.metachars
-# Note: literal-backslash round-trip tests (like `\\` pattern matching `\` path)
-# are intentionally absent — under spec §14.2, path `\` is normalized as a
-# separator and cannot be distinguished from `/`, so a literal `\` in the
-# pattern has nothing to match against.
+# `\\` against a `\` path is per platform (§14.2): corpus-unix.txt / corpus-windows.txt.
 \*	*	match
 \*	a	no-match
 \?	?	match

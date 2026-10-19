@@ -7,12 +7,10 @@
 //! - `nfa`          — the same `Glob`, `is_match` forced onto the segment
 //!   engine's NFA instead of its anchored chains (`Glob::is_match_nfa`)
 //!
-//! Single-pattern `is_match` rows live in `tests/corpus/corpus*.txt`;
-//! `match_dir` rows in `tests/corpus/corpus-dir.txt`; multi-pattern rows
-//! in `tests/corpus/corpus-multi.txt`. Parse-error rows live in
-//! `tests/corpus/corpus-err.txt` and only exercise the public API
-//! (engines see only well-formed programs); a single-pattern row may
-//! also expect `err:Kind`.
+//! Single-pattern `is_match` rows live in `tests/corpus/corpus*.txt`
+//! (a row may expect `err:Kind` instead of an answer); `match_dir` rows
+//! in `tests/corpus/corpus-dir.txt`; multi-pattern rows in
+//! `tests/corpus/corpus-multi.txt`.
 //!
 //! Nothing is skipped: a compile error where a row expects an answer is
 //! a failure, and a row the loader cannot read stops the run.
@@ -37,6 +35,7 @@ const SINGLE_FILES: &[&str] = &[
     "corpus-case.txt",
     "corpus-class.txt",
     "corpus-comprehensive.txt",
+    "corpus-err.txt",
     #[cfg(windows)]
     "corpus-windows.txt",
     #[cfg(not(windows))]
@@ -414,29 +413,4 @@ fn corpus_multi_dir_engines_vs_truth() {
         });
     }
     finish("mdir", &[("globstar", &globstar)]);
-}
-
-/// `corpus-err.txt`: PATTERN, then the error kind.
-#[test]
-fn corpus_err_parse_failures() {
-    let path = corpus_path("corpus-err.txt");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
-    let mut stats = Stats::default();
-    for (idx, line) in text.lines().enumerate() {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let at = format!("corpus-err.txt:{}", idx + 1);
-        let (pattern, kind) = line
-            .split_once('\t')
-            .unwrap_or_else(|| panic!("{at}: a row needs PATTERN and ERROR_KIND"));
-        let pattern = String::from_utf8(unescape(pattern))
-            .unwrap_or_else(|_| panic!("{at}: pattern is not UTF-8"));
-        let got = Glob::new(&pattern).map(|_| ());
-        stats.record(judge(got, &Want::Err(kind.to_string())), || {
-            format!("{at}: pattern={pattern:?}")
-        });
-    }
-    finish("err", &[("globstar", &stats)]);
 }

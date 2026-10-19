@@ -1,15 +1,13 @@
 #!/usr/bin/env node
 // Corpus-driven correctness verification for both runtimes.
 //
-// Five corpora share the same harness:
-//
-// All live in `crates/globstar/tests/corpus/`:
+// Four corpora, all in `crates/globstar/tests/corpus/`, share the same
+// harness:
 //
 //   single — SINGLE_FILES list below   single-pattern × 2 lanes
 //   multi  — `corpus-multi.txt`        N-pattern OR × 2 lanes
 //   dir    — `corpus-dir.txt`          match_dir
 //   mdir   — `corpus-multi-dir.txt`    N-pattern match_dir
-//   err    — `corpus-err.txt`          parse-error variants
 //
 // Two lanes per match row:
 //   - globstar     — public API (`globstar(...)`, `Glob::new` / `Glob::union`)
@@ -63,6 +61,7 @@ const SINGLE_FILES = [
   "corpus-case.txt",
   "corpus-class.txt",
   "corpus-comprehensive.txt",
+  "corpus-err.txt",
   process.platform === "win32" ? "corpus-windows.txt" : "corpus-unix.txt",
 ];
 
@@ -259,26 +258,6 @@ async function runJsVerify() {
   const dir = dirLane(rowsOf("corpus-dir.txt", false), (row) => unescape(row.raw));
   const multiDir = dirLane(rowsOf("corpus-multi-dir.txt", false), patternsOf);
 
-  // ── parse-error corpus — public API only (engines never see malformed
-  // input): PATTERN, then the error kind.
-  const errStats = makeStats();
-  readFileSync(join(CORPUS_DIR, "corpus-err.txt"), "utf8")
-    .split("\n")
-    .forEach((raw, i) => {
-      const line = raw.replace(/\r$/, "");
-      if (!line || line.startsWith("#")) return;
-      const at = `corpus-err.txt:${i + 1}`;
-      const tab = line.indexOf("\t");
-      if (tab < 0) throw new Error(`${at}: a row needs PATTERN and ERROR_KIND`);
-      const pattern = unescape(line.slice(0, tab));
-      const got = attempt(() => (compileMatcher(pattern), true));
-      record(
-        errStats,
-        judge(got, { err: line.slice(tab + 1) }),
-        () => `${at}: pattern=${JSON.stringify(pattern)}`,
-      );
-    });
-
   return [
     { corpus: "single", engine: "globstar", ...single.globstar },
     { corpus: "single", engine: "nfa", ...single.nfa },
@@ -286,7 +265,6 @@ async function runJsVerify() {
     { corpus: "multi", engine: "nfa", ...multi.nfa },
     { corpus: "dir", engine: "globstar", ...dir },
     { corpus: "mdir", engine: "globstar", ...multiDir },
-    { corpus: "err", engine: "globstar", ...errStats },
   ];
 }
 

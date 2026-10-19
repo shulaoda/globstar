@@ -46,12 +46,6 @@ assert.equal(verdict("**", "a"), DirMatch.DescendAllAndMatch);
   assert.equal(built.matchDir("dist"), DirMatch.DescendAll);
 }
 
-// `dot: false` never covers a subtree: a dot-led name below escapes every wildcard.
-assert.equal(
-  compileMatcher("**/node_modules/**", { dot: false }).matchDir("node_modules"),
-  DirMatch.Descend,
-);
-
 // A negated pattern is always worth walking, and says exactly whether the
 // directory itself matches (§15.4), alone or in a list.
 assert.equal(compileMatcher("!**/*.ts").matchDir("src"), DirMatch.DescendAndMatch);

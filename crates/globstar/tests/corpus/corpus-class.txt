@@ -1,7 +1,7 @@
 # ============================================================================
 # corpus-class.txt — character class `[...]` semantics
 # (GLOB_SPEC.md §8 — class basics, §8.2 segment-local, §8.3 dispatch table,
-#  §8.5 POSIX first-`]` rule, §4.1 escape)
+#  §8.5 POSIX first-`]` rule, §4.2 escape)
 #
 # Class is the trickiest piece of glob syntax — many overlapping rules:
 #   - POSIX first-`]` literal-member rule
@@ -167,7 +167,6 @@
 ## class.negation_segment_local
 # Negated class never matches segment separator `/`.
 [!abc]	/	no-match
-# Class is segment-local even when `/` isn't in items.
 
 # ----------------------------------------------------------------------------
 # Interaction with brace `{...}` and raw parens
@@ -234,7 +233,6 @@ foo[/]bar	-	err:UnterminatedClass
 ## class.range_validity_byte_level
 [Z-A]	-	err:InvalidRange
 [9-0]	-	err:InvalidRange
-# Same patterns under case_insensitive — STILL invalid.
 # Cross-case ranges that happen to be valid byte-wise — accepted.
 [A-z]	M	match
 [A-z]	m	match
@@ -271,5 +269,3 @@ src/[a-z]*.{ts,rs}	src/main.txt	no-match
 ## class.bracket_escape_corner
 # `[\]` — `\]` consumes the `]` as literal, no closer left → UnterminatedClass.
 [\]	-	err:UnterminatedClass
-# `[\]]` — `\]` is literal `]`, then second `]` closes. Class `{]}`.
-# `[\\\\]` (after TSV unescape: `[\\]`) — class with literal `\`. Platform-dep.

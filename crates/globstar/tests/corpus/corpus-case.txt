@@ -11,26 +11,6 @@
 #
 # would silently pass if either side were canonicalized at parse/compile.
 #
-# Coverage matrix (every glob construct × case_insensitive on/off):
-#
-#   construct           rows
-#   ─────────────────────────
-#   literal             ~12
-#   star (*)            ~14
-#   question (?)         ~9
-#   class [...]          ~24
-#   negated class [^]    ~8
-#   class with range     ~6
-#   globstar **          ~14
-#   brace {a,b}          ~10
-#   nested brace         ~6
-#   brace + globstar     ~6
-#   class inside brace   ~4
-#   escape \X            ~5
-#   ASCII-only scope     ~6
-#   dot interaction      ~6
-#   default (off) sanity ~5
-#
 # Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
 # ============================================================================
 

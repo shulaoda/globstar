@@ -193,28 +193,12 @@ fn dir_token(d: DirMatch) -> String {
     .to_string()
 }
 
-/// Map a `GlobError` to the same kind string the JS `GlobError.kind` uses,
-/// so `err:<Kind>` tokens compare 1:1 across runtimes. A union member's
-/// error is its own kind in JS (with an `index`), so `InMember` reads
-/// through to it.
+/// A `GlobError` as the `err:<Kind>` token the JS `GlobError.kind` gives:
+/// the variant's name. A union member's error is its own kind in JS
+/// (with an `index`), so `InMember` reads through to it.
 fn err_token(e: &GlobError) -> String {
-    use GlobError::*;
-    let kind = match e.root() {
-        Empty => "Empty",
-        TooLong { .. } => "TooLong",
-        UnterminatedClass { .. } => "UnterminatedClass",
-        UnterminatedBrace { .. } => "UnterminatedBrace",
-        TrailingBackslash => "TrailingBackslash",
-        EscapedSeparator { .. } => "EscapedSeparator",
-        BraceNestingTooDeep { .. } => "BraceNestingTooDeep",
-        BraceExpansionTooLarge { .. } => "BraceExpansionTooLarge",
-        TooComplex { .. } => "TooComplex",
-        InvalidRange { .. } => "InvalidRange",
-        EmptyPatternSet => "EmptyPatternSet",
-        NegatedInUnion { .. } => "NegatedInUnion",
-        // A kind this harness does not know yet: never a JS token.
-        _ => "Unknown",
-    };
+    let debug = format!("{:?}", e.root());
+    let kind = debug.split([' ', '{', '(']).next().unwrap_or(&debug);
     format!("err:{kind}")
 }
 

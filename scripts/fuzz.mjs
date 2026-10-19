@@ -218,7 +218,7 @@ function escapeBytes(bytes) {
   let out = "";
   for (const b of bytes) {
     if (b === 0x5c) out += "\\\\";
-    else if (b >= 0x20 && b <= 0x7e && b !== 0x09) out += String.fromCharCode(b);
+    else if (b >= 0x20 && b <= 0x7e) out += String.fromCharCode(b);
     else out += "\\x" + b.toString(16).padStart(2, "0");
   }
   return out;

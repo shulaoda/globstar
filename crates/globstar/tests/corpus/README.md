@@ -9,11 +9,12 @@ Single-pattern `is_match` corpora: `corpus.txt` (core, spec-sourced),
 `corpus-class.txt`, `corpus-case.txt`, `corpus-utf8.txt`,
 `corpus-absolute.txt`, `corpus-comprehensive.txt`,
 `corpus-realworld.txt`, `corpus-fast-glob.txt`,
-`corpus-fast-glob-diff.txt`, plus the platform-gated `corpus-unix.txt`
-and `corpus-windows.txt`.
+`corpus-fast-glob-diff.txt`, `corpus-err.txt` (the parse errors the
+others do not pin), plus the platform-gated `corpus-unix.txt` and
+`corpus-windows.txt`.
 
 Other surfaces: `corpus-dir.txt` (`match_dir`), `corpus-multi.txt` /
-`corpus-multi-dir.txt` (unions), `corpus-err.txt` (parse errors).
+`corpus-multi-dir.txt` (unions).
 
 The file lists are hard-coded in `tests/corpus.rs` and `scripts/verify.mjs` —
 a new corpus file must be registered in BOTH, or it runs nowhere.
@@ -41,7 +42,6 @@ PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
     `descend-match` | `descend-all` | `descend-all-match`
   - any of these files: `err:Kind` — the pattern must fail to compile with
     that `GlobError` kind (PATH is then usually `-`)
-  - `corpus-err.txt`: a `GlobError` variant name (e.g. `UnterminatedClass`), in column 2 — error rows have no PATH
 - **FLAGS** (column 4, optional): `k=v[,k=v]` with keys `dot` and
   `case_insensitive`, values `true` or `false`, e.g. `dot=true`.
 
@@ -71,34 +71,9 @@ When FLAGS is omitted, the matcher defaults apply: `dot = true` for the
 `is_match` and multi corpora, `dot = false` for the dir corpora (the
 walker-layer default), case-sensitive everywhere.
 
-## Minimal driver sketch (reference)
-
-```rust
-#[test]
-fn corpus() {
-    let text = std::fs::read_to_string("tests/corpus/corpus.txt").unwrap();
-    let mut n_ok = 0;
-    let mut n_fail = 0;
-    for (line_no, line) in text.lines().enumerate() {
-        let line = line.trim_end();
-        if line.is_empty() || line.starts_with('#') { continue; }
-        let fields: Vec<&str> = line.split('\t').collect();
-        let pattern  = unescape(fields[0]);
-        let path     = unescape(fields[1]);
-        let expected = fields[2];
-        let flags    = fields.get(3).copied().unwrap_or("");
-        // ... parse flags, compile, run is_match, compare
-    }
-    assert_eq!(n_fail, 0);
-}
-```
-
-`corpus-dir.txt` and `corpus-err.txt` follow the same shape but call
-`match_dir` or compare the `GlobError` variant name respectively.
-
 ## Provenance
 
-Each case in `corpus.txt` / `corpus-dir.txt` / `corpus-err.txt` is sourced
+Each case in `corpus.txt` / `corpus-dir.txt` is sourced
 from a specific section of `GLOB_SPEC.md`. Cases pulled from external
 corpora (fast-glob, real-world repos) live in separate files so the
 spec-authoritative corpus stays clean.

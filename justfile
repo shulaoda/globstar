@@ -10,7 +10,7 @@ setup:
     cargo build --release --workspace
     git config core.hooksPath .githooks
 
-# Cross-runtime correctness verification (Rust + JS × {single, multi, dir, mdir, err}).
+# Cross-runtime correctness verification (Rust + JS × {single, multi, dir, mdir}).
 verify *args:
     node scripts/verify.mjs {{args}}
 
@@ -41,7 +41,7 @@ fix:
     pnpm fix
     cargo fmt --all
 
-# Rust tests (single-pattern + multi-pattern + err corpus + walker
+# Rust tests (single-pattern + multi-pattern corpus + walker
 # integration + bounded-exhaustive matchDir properties) + JS goldens: the
 # compiler-stages TSV fixture, the string-mode↔byte-mode differential
 # (fixed-seed, deterministic), the JS matchDir exhaustive twin, the

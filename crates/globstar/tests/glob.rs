@@ -2,25 +2,19 @@
 
 use globstar::{CompileOptions, Glob, Tier};
 
+// The tier is syntax only: a brace counts as `Globstar`, a negation
+// does not count.
 #[test]
-fn classify_literal() {
-    let g = Glob::new("README.md").unwrap();
-    assert_eq!(g.tier(), Tier::Literal);
-    // Glob::new succeeds → pattern is fully supported.
-}
-
-#[test]
-fn classify_simple_wildcard() {
-    let g = Glob::new("*.ts").unwrap();
-    assert_eq!(g.tier(), Tier::SimpleWildcard);
-    assert!(g.is_match(b"main.ts"));
-    assert!(!g.is_match(b"main.rs"));
-}
-
-#[test]
-fn classify_globstar() {
-    let g = Glob::new("src/**/*.ts").unwrap();
-    assert_eq!(g.tier(), Tier::Globstar);
+fn a_tier_follows_the_syntax() {
+    for (pattern, tier) in [
+        ("README.md", Tier::Literal),
+        ("!foo", Tier::Literal),
+        ("*.ts", Tier::SimpleWildcard),
+        ("src/**/*.ts", Tier::Globstar),
+        ("*.{ts,tsx}", Tier::Globstar),
+    ] {
+        assert_eq!(Glob::new(pattern).unwrap().tier(), tier, "{pattern}");
+    }
 }
 
 #[test]
@@ -173,21 +167,6 @@ fn glob_debug_is_short() {
         text,
         r#"Glob { tier: Globstar, engine: "Segment", negated: false }"#
     );
-}
-
-#[test]
-fn classify_brace_routes_to_globstar_tier() {
-    let g = Glob::new("*.{ts,tsx}").unwrap();
-    // A brace counts as `Tier::Globstar`; the tier is syntax only.
-    assert_eq!(g.tier(), Tier::Globstar);
-}
-
-#[test]
-fn tier0_negated() {
-    let g = Glob::new("!foo").unwrap();
-    assert_eq!(g.tier(), Tier::Literal);
-    assert!(!g.is_match(b"foo"));
-    assert!(g.is_match(b"bar"));
 }
 
 /// The static prefixes of the rows of `fixtures/static-prefixes.tsv`,

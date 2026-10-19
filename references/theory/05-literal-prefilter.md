@@ -74,7 +74,7 @@ The exact engines are left-to-right. A prefix mismatch is detected at the first 
 
 A suffix mismatch is not detected until the engine has consumed the full input, because the engine has no native notion of an end anchor. Adding an end-anchored test at the matcher entry rejects mismatched tails in `O(|suffix(P)|)` without entering the engine at all, which is the win on walker workloads dominated by paths that share a prefix with the pattern's literal head but differ at the extension.
 
-The implementation accordingly stores only suffix facts. The historical prefix facts were removed once the equivalence with the engine's natural prefix rejection was confirmed by measurement.
+The implementation accordingly stores only suffix facts.
 
 ## 4. Separator-aware comparison
 

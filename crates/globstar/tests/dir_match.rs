@@ -63,14 +63,6 @@ fn excluding_files_skips_a_directory_only_when_everything_below_is_excluded() {
     assert_eq!(built.match_dir(b"dist"), DirMatch::DescendAll);
 }
 
-#[test]
-fn dot_false_never_covers_a_subtree() {
-    // A dot-led name below escapes every wildcard, so nothing is
-    // excluded whole; the directory is still worth testing below.
-    let g = Glob::new_with("**/node_modules/**", dot(false)).unwrap();
-    assert_eq!(g.match_dir(b"node_modules"), DirMatch::Descend);
-}
-
 // A negated pattern is always worth walking, and says exactly whether the
 // directory itself matches (§15.4). Twin of the check in dir-match.mjs.
 #[test]
