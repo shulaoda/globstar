@@ -42,12 +42,23 @@ const WALKER_LABELS = [
 
 let failed = false;
 
+// The Rust side is built with every function on a 64-byte boundary and
+// every jump target on a 32-byte one, in its own target directory.
+// Without them, code placement alone moved a 2 ns row 1.7× and a
+// 190 ns row 1.15× between builds that ran the same instructions.
+const RUST_ENV = {
+  ...process.env,
+  RUSTFLAGS: "-C llvm-args=-align-all-functions=6 -C llvm-args=-align-all-nofallthru-blocks=5",
+  CARGO_TARGET_DIR: "target/bench",
+};
+
 function step(name, cmd, argv) {
   process.stderr.write(`\n[bench] ${name} → ${cmd} ${argv.join(" ")}\n`);
   const t0 = Date.now();
   const res = spawnSync(cmd, argv, {
     stdio: ["inherit", "pipe", "pipe"],
     encoding: "utf-8",
+    env: cmd === "cargo" ? RUST_ENV : process.env,
   });
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   if (res.status !== 0) {
@@ -348,7 +359,10 @@ columns share each table — every row exercises the **same pattern and
 match input on both runtimes**. Numbers are means: criterion's
 estimate from a \`--quick\` run (Rust) and mitata's \`avg\` (JS). No
 spread is shown, so a gap of a few percent between two runs is noise;
-use them for relative comparison, not absolute SLOs.
+use them for relative comparison, not absolute SLOs. The Rust binaries
+are built with every function 64-byte aligned and every jump target
+32-byte aligned, so code placement does not move the shortest rows
+between builds.
 
 > **Same answers.** Every library runs with \`dot: true\` (globstar's
 > default), and each bench checks before timing that all of them give
