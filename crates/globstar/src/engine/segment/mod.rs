@@ -22,9 +22,6 @@ use seg_nfa::SegNfa;
 /// Paths through the graph `is_match` tries one by one; past that the
 /// NFA over the whole graph runs.
 const MAX_CHAINS: usize = 64;
-/// An `AffixSet` up to this size is scanned in pattern order; a
-/// larger one is sorted and binary-searched per suffix length.
-const LINEAR_SUFFIXES: usize = 8;
 
 /// A byte string the matcher keeps: literals, affixes, suffixes,
 /// static prefixes.

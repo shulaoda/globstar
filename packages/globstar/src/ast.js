@@ -1,5 +1,3 @@
-import { isPathSep } from "./bytes.js";
-
 // Node tags. The parser never produces a concatenation of one node, nor one
 // inside another (the empty one is an empty brace branch); it emits a
 // globstar only where the `**` owns a whole segment in every brace expansion
@@ -52,20 +50,6 @@ export function classItemByte(b) {
 }
 export function classItemRange(lo, hi) {
   return { tag: CI_RANGE, lo, hi };
-}
-
-export function classMatches(cls, b) {
-  if (isPathSep(b)) return false;
-  const items = cls.items;
-  let listed = false;
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    if (it.tag === CI_BYTE ? it.b === b : b >= it.lo && b <= it.hi) {
-      listed = true;
-      break;
-    }
-  }
-  return cls.neg ? !listed : listed;
 }
 
 // The bytes of a pure-literal body, one char each, or `null`. A sequence

@@ -551,7 +551,7 @@ function affixEq(part, str, at, ci) {
 
 // Binary search of `set[lo, hi)` (sorted, one length) for the segment
 // tail `str[at, at + len)`, folding the tail's ASCII case when `ci`.
-function setHas(set, lo, hi, str, at, len, ci) {
+function runHas(set, lo, hi, str, at, len, ci) {
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
     const c = cmpTail(set[mid], str, at, len, ci);
@@ -614,7 +614,7 @@ function wildConsumes(m, w, str, s, t) {
         const run = runs[r];
         if (run.len > room) break;
         if (!w.variable && run.len !== room) continue;
-        if (setHas(set, run.start, run.end, str, t - run.len, run.len, ci)) return true;
+        if (runHas(set, run.start, run.end, str, t - run.len, run.len, ci)) return true;
       }
       return false;
     }

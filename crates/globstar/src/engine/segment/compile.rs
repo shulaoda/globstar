@@ -17,9 +17,8 @@ use crate::error::GlobError;
 use super::bits::{Bits, Wide};
 use super::seg_nfa::SegNfa;
 use super::{
-    Affix, AffixIndex, AffixSet, AnyNfa, ByteSketch, Bytes, Chain, Elem, LINEAR_SUFFIXES,
-    MAX_CHAINS, NEVER, Nfa, SegmentMatcher, Shape, SparseNfa, State, SuffixRun, Wild, WildKind,
-    facts, has_sep,
+    Affix, AffixIndex, AffixSet, AnyNfa, ByteSketch, Bytes, Chain, Elem, MAX_CHAINS, NEVER, Nfa,
+    SegmentMatcher, Shape, SparseNfa, State, SuffixRun, Wild, WildKind, facts, has_sep,
 };
 
 /// Successor marker for "the pattern ends here".
@@ -1091,6 +1090,9 @@ fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
 /// multiplying it out; a single list is no product and is enumerated
 /// whatever its length.
 const MAX_SUFFIX_PRODUCT: usize = 1024;
+/// An `AffixSet` up to this size is scanned in pattern order; a
+/// larger one is sorted and binary-searched per suffix length.
+const LINEAR_SUFFIXES: usize = 8;
 /// The enumerated suffixes, one byte more each, may not take more than
 /// this or four times their nodes: a long literal next to a product
 /// would be copied into every suffix.

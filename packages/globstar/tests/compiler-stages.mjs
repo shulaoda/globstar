@@ -252,7 +252,11 @@ console.log("✓ engine shapes");
 // class's items define (ASCII here: a path string holds no lone byte past
 // 0x7f). Twin of `a_byte_set_takes_what_its_class_does`.
 {
-  const { classMatches } = await import("../src/ast.js");
+  const { isPathSep } = await import("../src/bytes.js");
+  // The class's own meaning, item by item: the oracle for its byte table.
+  const inClass = (items, b) =>
+    !isPathSep(b) &&
+    items.some((it) => (it.tag === CI_BYTE ? it.b === b : b >= it.lo && b <= it.hi));
   for (const pattern of [
     "[a]",
     "[!a]",
@@ -276,7 +280,7 @@ console.log("✓ engine shapes");
         if (b === 0x2f || (process.platform === "win32" && b === 0x5c)) continue; // separators
         // Case folding adds each listed letter's other case, then the
         // class is negated.
-        const listed = (c) => classMatches({ ...cls, neg: false }, c);
+        const listed = (c) => inClass(cls.items, c);
         const letter = /[a-z]/i.test(String.fromCharCode(b));
         const want = (listed(b) || (ci && letter && listed(b ^ 0x20))) !== cls.neg;
         assert.equal(m.match("x" + String.fromCharCode(b)), want, `${pattern} (ci ${ci}) at ${b}`);

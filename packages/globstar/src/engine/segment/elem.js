@@ -5,9 +5,6 @@
 // Paths through the graph `isMatch` tries one by one; past that the
 // NFA over the whole graph runs.
 export const MAX_CHAINS = 64;
-// An affix set up to this size is scanned in pattern order; a larger
-// one is sorted and binary-searched per suffix length.
-export const LINEAR_SUFFIXES = 8;
 
 // Element kinds.
 export const EL_LIT = 0;

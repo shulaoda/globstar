@@ -32,7 +32,6 @@ import {
   WK_AFFIX_INDEX,
   WK_GENERIC,
   MAX_CHAINS,
-  LINEAR_SUFFIXES,
   NO_G,
   MANY_G,
   NFA_SMALL,
@@ -816,6 +815,9 @@ function compileWild(nodes, dot, ci) {
 // multiplying it out; a single list is no product and is enumerated
 // whatever its length.
 const MAX_SUFFIX_PRODUCT = 1024;
+// An affix set up to this size is scanned in pattern order; a larger
+// one is sorted and binary-searched per suffix length.
+const LINEAR_SUFFIXES = 8;
 // The enumerated suffixes, one byte more each, may not take more than
 // this or four times their nodes: a long literal next to a product
 // would be copied into every suffix.
