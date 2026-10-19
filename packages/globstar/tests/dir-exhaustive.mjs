@@ -60,13 +60,12 @@ function enumerate(segs, depth) {
 }
 
 const patterns = [...enumerate(SEGMENTS, 1), ...enumerate(SEGMENTS, 2), ...enumerate(CORE, 3)];
+// Every relative path of 1..=3 PSEG segments, shallowest first: the
+// directories judged, and the suffixes all-below is judged on.
 const universe = [...enumerate(PSEG, 1), ...enumerate(PSEG, 2), ...enumerate(PSEG, 3)];
 
-// Every relative path of 1..=3 PSEG segments, shallowest first.
-const suffixes = [...enumerate(PSEG, 1), ...enumerate(PSEG, 2), ...enumerate(PSEG, 3)];
-
 // Does every `dir + "/" + suffix` match?
-const allBelow = (matcher, dir, set = suffixes) => set.every((s) => matcher.match(`${dir}/${s}`));
+const allBelow = (matcher, dir, set = universe) => set.every((s) => matcher.match(`${dir}/${s}`));
 
 // Every match starts with one of the static prefixes, byte for byte.
 // (Under caseInsensitive a match may differ in case: not checked.)
@@ -82,8 +81,9 @@ function assertPrefixesCover(matcher, paths, matched) {
 const isBelow = (child, dir) =>
   child.length > dir.length && child[dir.length] === "/" && child.startsWith(dir);
 
-// `set` is the suffixes all-below is judged on.
-function check(pats, paths, dot, ci, set = suffixes) {
+// `pats` are patterns, or arrays of patterns for union matchers; `set`
+// is the suffixes all-below is judged on.
+function check(pats, paths, dot, ci, set = universe) {
   const below = paths.map((d) => {
     const out = [];
     for (let j = 0; j < paths.length; j++) if (isBelow(paths[j], d)) out.push(j);
@@ -128,65 +128,20 @@ function check(pats, paths, dot, ci, set = suffixes) {
   return cases;
 }
 
-// Same five properties over OR-union matchers, on every ordered pair from
-// an 8-pattern set plus every ordered triple from a 4-pattern core.
-function checkUnion(sets, paths, dot, ci) {
-  const below = paths.map((d) => {
-    const out = [];
-    for (let j = 0; j < paths.length; j++) if (isBelow(paths[j], d)) out.push(j);
-    return out;
-  });
-
-  let cases = 0;
-  for (const set of sets) {
-    const opts = { dot, caseInsensitive: ci };
-    const def = compileMatcher(set, opts);
-    const nfa = compileMatcher(set, { ...opts, __engine: "nfa" });
-
-    const matched = paths.map((p) => def.match(p));
-    if (!ci) assertPrefixesCover(def, paths, matched);
-
-    for (let i = 0; i < paths.length; i++) {
-      const dir = paths[i];
-      const ctx = `patterns=${JSON.stringify(set)} dir=${JSON.stringify(dir)} dot=${dot} ci=${ci}`;
-
-      assert.equal(nfa.match(dir), matched[i], `union is_match disagreement: ${ctx}`);
-
-      const dm = def.matchDir(dir);
-
-      assert.equal(DirMatch.matches(dm), matched[i], `union match flag != match: ${ctx} dm=${dm}`);
-
-      const anyBelow = below[i].some((j) => matched[j]);
-      if (anyBelow) {
-        assert.ok(DirMatch.mayMatchBelow(dm), `union walker would lose a match: ${ctx} dm=${dm}`);
-      }
-      if (dm === DirMatch.Pruned) {
-        assert.ok(!anyBelow, `union pruned but a descendant matches: ${ctx}`);
-      }
-
-      assert.equal(
-        DirMatch.matchesAllBelow(dm),
-        allBelow(def, dir),
-        `union all-below flag != every descendant matches: ${ctx} dm=${dm}`,
-      );
-      cases++;
-    }
-  }
-  return cases;
-}
-
 let total = 0;
 total += check(patterns, universe, false, false);
 total += check(patterns, universe, true, false);
 
+// Union matchers: every ordered pair from an 8-pattern set plus every
+// ordered triple from a 4-pattern core.
 const UNION_PATTERNS = ["a/b", "a/*", "*/b", "**/b", "a/**", "{a,b}/c", ".a/*", "?"];
 const UNION_CORE = ["a/*", "**/b", ".a/*", "?"];
 const unionSets = [];
 for (const a of UNION_PATTERNS) for (const b of UNION_PATTERNS) unionSets.push([a, b]);
 for (const a of UNION_CORE)
   for (const b of UNION_CORE) for (const c of UNION_CORE) unionSets.push([a, b, c]);
-total += checkUnion(unionSets, universe, false, false);
-total += checkUnion(unionSets, universe, true, false);
+total += check(unionSets, universe, false, false);
+total += check(unionSets, universe, true, false);
 
 // A globstar, then three elements: the chain's tail tokens take one or
 // two of them, which no shorter pattern reaches. Paths go four deep, and

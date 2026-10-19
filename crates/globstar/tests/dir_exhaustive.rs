@@ -61,16 +61,9 @@ fn patterns() -> Vec<String> {
     out
 }
 
+/// Every relative path of 1..=3 `PSEG` segments, shallowest first: the
+/// directories judged, and the suffixes all-below is judged on.
 fn universe() -> Vec<String> {
-    let mut out = Vec::new();
-    for d in 1..=3 {
-        out.extend(enumerate(PSEG, d));
-    }
-    out
-}
-
-/// Every relative path of 1..=3 `PSEG` segments, shallowest first.
-fn suffixes() -> Vec<String> {
     let mut out = Vec::new();
     for d in 1..=3 {
         out.extend(enumerate(PSEG, d));
@@ -121,123 +114,81 @@ fn below_map(paths: &[String]) -> Vec<Vec<usize>> {
 }
 
 fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
-    check_below(patterns, paths, &suffixes(), dot, ci);
+    check_below(patterns, paths, &universe(), dot, ci);
 }
 
 /// `check`, with all-below judged on `dir/s` for each of `suffixes`.
 fn check_below(patterns: &[String], paths: &[String], suffixes: &[String], dot: bool, ci: bool) {
     let below = below_map(paths);
-
     for pattern in patterns {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
-        let default = Glob::new_with(pattern, opts).expect("compile");
-
-        let matched: Vec<bool> = paths
-            .iter()
-            .map(|p| default.is_match(p.as_bytes()))
-            .collect();
-        if !ci {
-            assert_prefixes_cover(&default, paths, &matched);
-        }
-
-        for (i, dir) in paths.iter().enumerate() {
-            let nfa = default.is_match_nfa(dir.as_bytes());
-            assert_eq!(
-                matched[i], nfa,
-                "is_match disagreement: pattern={pattern:?} path={dir:?} dot={dot} ci={ci} \
-                 chains={} nfa={nfa}",
-                matched[i]
-            );
-
-            let dm = default.match_dir(dir.as_bytes());
-
-            assert_eq!(
-                dm.matches(),
-                matched[i],
-                "match flag != is_match: pattern={pattern:?} dir={dir:?} dot={dot} ci={ci} dm={dm:?}"
-            );
-
-            let any_below = below[i].iter().any(|&j| matched[j]);
-            if any_below {
-                assert!(
-                    dm.may_match_below(),
-                    "walker would lose a match: pattern={pattern:?} dir={dir:?} dot={dot} \
-                     ci={ci} dm={dm:?}"
-                );
-            }
-            if dm == DirMatch::Pruned {
-                assert!(
-                    !any_below,
-                    "pruned but a descendant matches: pattern={pattern:?} dir={dir:?} dot={dot} ci={ci}"
-                );
-            }
-
-            assert_eq!(
-                dm.matches_all_below(),
-                all_below(|p| default.is_match(p), dir, suffixes),
-                "all-below flag != every descendant matches: pattern={pattern:?} dir={dir:?} \
-                 dot={dot} ci={ci} dm={dm:?}"
-            );
-        }
+        let glob = Glob::new_with(pattern, opts).expect("compile");
+        check_glob(pattern, &glob, paths, suffixes, &below, dot, ci);
     }
 }
 
-/// Same five properties over OR-union matchers (`Glob::union`, chains vs
-/// the forced NFA), on every ordered pair from an 8-pattern set plus every
-/// ordered triple from a 4-pattern core.
+/// The same properties over OR-union matchers (`Glob::union`), on every
+/// ordered pair from an 8-pattern set plus every ordered triple from a
+/// 4-pattern core.
 fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool) {
     let below = below_map(paths);
-    let suffixes = suffixes();
-
+    let suffixes = universe();
     for set in sets {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
-        let default = Glob::union_with(set.iter().copied(), opts).expect("union");
+        let glob = Glob::union_with(set.iter().copied(), opts).expect("union");
+        check_glob(set, &glob, paths, &suffixes, &below, dot, ci);
+    }
+}
 
-        let matched: Vec<bool> = paths
-            .iter()
-            .map(|p| default.is_match(p.as_bytes()))
-            .collect();
-        if !ci {
-            assert_prefixes_cover(&default, paths, &matched);
-        }
+/// The five `match_dir` properties of one matcher over `paths`: the
+/// chains agree with the forced NFA, the match flag is `is_match`, a
+/// directory with a matching descendant is never pruned, and all-below
+/// holds exactly when every `dir/s` matches.
+fn check_glob(
+    label: &dyn std::fmt::Debug,
+    glob: &Glob,
+    paths: &[String],
+    suffixes: &[String],
+    below: &[Vec<usize>],
+    dot: bool,
+    ci: bool,
+) {
+    let matched: Vec<bool> = paths.iter().map(|p| glob.is_match(p.as_bytes())).collect();
+    if !ci {
+        assert_prefixes_cover(glob, paths, &matched);
+    }
+    for (i, dir) in paths.iter().enumerate() {
+        let ctx = format!("{label:?} dir={dir:?} dot={dot} ci={ci}");
+        let nfa = glob.is_match_nfa(dir.as_bytes());
+        assert_eq!(
+            matched[i], nfa,
+            "is_match disagreement: {ctx} chains={} nfa={nfa}",
+            matched[i]
+        );
 
-        for (i, dir) in paths.iter().enumerate() {
-            let nfa = default.is_match_nfa(dir.as_bytes());
-            assert_eq!(
-                matched[i], nfa,
-                "union is_match disagreement: patterns={set:?} path={dir:?} dot={dot} ci={ci}"
-            );
+        let dm = glob.match_dir(dir.as_bytes());
+        assert_eq!(
+            dm.matches(),
+            matched[i],
+            "match flag != is_match: {ctx} dm={dm:?}"
+        );
 
-            let dm = default.match_dir(dir.as_bytes());
-
-            assert_eq!(
-                dm.matches(),
-                matched[i],
-                "union match flag != is_match: patterns={set:?} dir={dir:?} dot={dot} ci={ci} dm={dm:?}"
-            );
-
-            let any_below = below[i].iter().any(|&j| matched[j]);
-            if any_below {
-                assert!(
-                    dm.may_match_below(),
-                    "union walker would lose a match: patterns={set:?} dir={dir:?} dot={dot} \
-                     ci={ci} dm={dm:?}"
-                );
-            }
-            if dm == DirMatch::Pruned {
-                assert!(
-                    !any_below,
-                    "union pruned but a descendant matches: patterns={set:?} dir={dir:?} dot={dot} ci={ci}"
-                );
-            }
-
-            assert_eq!(
-                dm.matches_all_below(),
-                all_below(|p| default.is_match(p), dir, &suffixes),
-                "union all-below flag != every descendant matches: patterns={set:?} dir={dir:?} \
-                 dot={dot} ci={ci} dm={dm:?}"
+        let any_below = below[i].iter().any(|&j| matched[j]);
+        if any_below {
+            assert!(
+                dm.may_match_below(),
+                "walker would lose a match: {ctx} dm={dm:?}"
             );
         }
+        if dm == DirMatch::Pruned {
+            assert!(!any_below, "pruned but a descendant matches: {ctx}");
+        }
+
+        assert_eq!(
+            dm.matches_all_below(),
+            all_below(|p| glob.is_match(p), dir, suffixes),
+            "all-below flag != every descendant matches: {ctx} dm={dm:?}"
+        );
     }
 }
 

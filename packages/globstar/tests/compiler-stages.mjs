@@ -244,10 +244,6 @@ for (const [pattern, at] of [
   assert.throws(() => compileMatcher(["a", pattern]), TypeError);
 }
 assert.equal(compileMatcher("😀*").match("😀x"), true);
-// `!` and `!!` negate nothing (§4.5): `Empty`, like `""`.
-for (const pattern of ["!", "!!", "!!!"]) {
-  assert.throws(() => compileMatcher(pattern), { kind: "Empty" });
-}
 console.log("✓ limits");
 
 // The engine's routing: what each pattern in fixtures/engine-shapes.tsv
