@@ -12,16 +12,14 @@ wax = "0.6"
 [dev-dependencies]
 globstar-walk = { path = "../../crates/globstar-walk" }
 
-# Single-pattern memory: globstar vs globset / wax,
-# matching the 7-pattern corpus in
-# `packages/bench/benches/matcher_single.js`.
+# Single-pattern memory: globstar vs globset / wax, on the rows of
+# `fixtures/bench-single.tsv`.
 [[bin]]
 name = "matcher-single-memory"
 path = "src/matcher_single_memory.rs"
 
 # Multi-pattern memory: globstar (union / per-pattern) vs globset / wax,
-# matching the 5 sets in `packages/bench/benches/matcher_multi.js`
-# and `crates/globstar/benches/matcher_multi.rs`.
+# on the sets of `fixtures/bench-sets.tsv` and the two list files.
 [[bin]]
 name = "matcher-multi-memory"
 path = "src/matcher_multi_memory.rs"

@@ -23,35 +23,8 @@ use globstar::{CompileOptions, Glob};
 use std::path::Path;
 use wax::Pattern as WaxPattern;
 
-/// Same 7 patterns the JS bench uses (`packages/bench/benches/matcher_single.js`).
-const PATTERNS: &[(&str, &str)] = &[
-    ("literal", "src/main.rs"),
-    ("simple-wildcard", "src/*.ts"),
-    ("globstar", "src/**/*.ts"),
-    ("brace-suffix", "**/*.{ts,tsx,js,jsx}"),
-    ("reject-prefilter", "**/*.md"),
-    ("class-anychar", "src/**/n*d[k-m]e?txt"),
-    ("brace-anychar", "src/**/{tob,crazy}/?*.{png,txt}"),
-];
-
-/// Same 11 paths the JS bench uses.
-/// A path no row matches. A first match on it runs every part a matcher
-/// left for its first use (in a list of separate matchers, each one).
-const MISS: &str = "target/debug/build/foo";
-
-const PATHS: &[&str] = &[
-    "src/main.ts",
-    "src/cli/commands/build.ts",
-    "src/cli/commands/run.rs",
-    "src/main.rs",
-    "tests/smoke.ts",
-    "dist/bundle.js",
-    "node_modules/foo/index.js",
-    "package.json",
-    ".env",
-    "target/debug/build/foo",
-    "src/a/bigger/path/to/the/crazy/needle.txt",
-];
+mod common;
+use common::{MISS, PATHS, SINGLE};
 
 /// `dot` defaults to `true` in both runtimes, so `**/*.md` doesn't
 /// filter out dotfiles — keeps Rust and JS results comparable.
@@ -65,7 +38,7 @@ fn build_public(pattern: &str) -> Glob {
 /// Every library must give globstar's answer on every (pattern, path)
 /// pair, so the rows time the same answers. Runs once before timing.
 fn assert_all_agree() {
-    for &(label, pattern) in PATTERNS {
+    for &(label, pattern) in SINGLE.iter() {
         let public = build_public(pattern);
         let gs = strict_globset(pattern);
         let wax_g = wax::Glob::new(pattern).expect("wax parse");
@@ -73,7 +46,7 @@ fn assert_all_agree() {
             !public.is_match(MISS.as_bytes()),
             "`{label}` matches {MISS}"
         );
-        for &path in PATHS {
+        for &path in PATHS.iter() {
             let want = public.is_match(path.as_bytes());
             for (name, got) in [
                 ("globset", gs.is_match(Path::new(path))),
@@ -150,21 +123,21 @@ fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
     let mut group = c.benchmark_group(format!("match_{label}"));
     group.bench_function("globstar", |b| {
         b.iter(|| {
-            for p in PATHS {
+            for p in PATHS.iter() {
                 black_box(public.is_match(black_box(p.as_bytes())));
             }
         });
     });
     group.bench_function("globset", |b| {
         b.iter(|| {
-            for p in PATHS {
+            for p in PATHS.iter() {
                 black_box(gs.is_match(black_box(Path::new(p))));
             }
         });
     });
     group.bench_function("wax", |b| {
         b.iter(|| {
-            for p in PATHS {
+            for p in PATHS.iter() {
                 black_box(wax_g.is_match(black_box(*p)));
             }
         });
@@ -173,7 +146,7 @@ fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
     // so its number sits on the same axis as the others.
     group.bench_function("fast_glob", |b| {
         b.iter(|| {
-            for p in PATHS {
+            for p in PATHS.iter() {
                 black_box(fg_glob_match(black_box(pattern), black_box(*p)));
             }
         });
@@ -183,7 +156,7 @@ fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
 
 fn bench_all(c: &mut Criterion) {
     assert_all_agree();
-    for &(label, pattern) in PATTERNS {
+    for &(label, pattern) in SINGLE.iter() {
         bench_build(c, label, pattern);
         bench_compile(c, label, pattern);
         bench_match(c, label, pattern);

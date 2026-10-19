@@ -2,83 +2,18 @@
 // picomatch / minimatch / micromatch (per-pattern matchers OR'd at
 // runtime). Output is consumed by `scripts/bench.mjs`.
 
-import { readFileSync } from "node:fs";
 import { bench, run, group, summary, do_not_optimize } from "mitata";
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { globstar } from "@globstar/core";
-import { MISS, assertAgree, assertMisses, freshSet } from "./shared.js";
+import { MISS, PATHS, PATTERN_SETS, assertAgree, assertMisses, freshSet } from "./shared.js";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
   process.exit(1);
 }
 
-// The `ignore-list-40` set, shared with the Rust bench and memory tool.
-const IGNORE_LIST = readFileSync(
-  new URL("../../../fixtures/bench-ignore-list.txt", import.meta.url),
-  "utf8",
-)
-  .split("\n")
-  .filter((l) => l !== "" && !l.startsWith("#"));
-
-// The `file-list-100` set: 100 literal files over 10 folders, as a
-// generated manifest lists them. Two segments vary, so the union does
-// not factor into one chain and runs on the graph NFA (sparse here,
-// dense rows in Rust).
-const AREAS = ["cli", "server", "client", "core", "shared", "utils", "hooks", "store", "api", "ui"];
-const FILE_LIST = Array.from(
-  { length: 100 },
-  (_, i) => `src/${AREAS[i % AREAS.length]}/mod_${i}.ts`,
-);
-
-/** @type {Array<[string, string[]]>} */
-const PATTERN_SETS = [
-  ["solo-globstar", ["**/*.ts"]],
-  ["brace-equiv-4", ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]],
-  [
-    "brace-equiv-8",
-    ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.mts", "**/*.cts"],
-  ],
-  ["mixed-roots", ["src/**/*.ts", "tests/**/*.ts", "lib/**/*.js"]],
-  // Aligned with Rust's matcher_multi.rs corpus — `huge-set-pos` is the
-  // 10-positive variant (Rust's `Glob::union` rejects `!`-prefixed
-  // patterns so the negation-bearing `huge-set` and `include-exclude`
-  // sets only ran on the JS side and were dropped to keep
-  // BENCHMARKS.md cross-runtime tables consistent).
-  [
-    "huge-set-pos",
-    [
-      "src/**/*.ts",
-      "src/**/*.tsx",
-      "tests/**/*.test.ts",
-      "lib/**/*.{js,mjs}",
-      "**/*.json",
-      "**/package.json",
-      "**/.env*",
-      "components/**/*.vue",
-      "scripts/**/*.sh",
-      "docs/**/*.md",
-    ],
-  ],
-  ["ignore-list-40", IGNORE_LIST],
-  ["file-list-100", FILE_LIST],
-];
-
-const PATHS = [
-  "src/main.ts",
-  "src/cli/commands/build.ts",
-  "src/cli/commands/run.rs",
-  "src/main.rs",
-  "tests/smoke.ts",
-  "dist/bundle.js",
-  "node_modules/foo/index.js",
-  "package.json",
-  ".env",
-  "target/debug/build/foo",
-  "src/a/bigger/path/to/the/crazy/needle.txt",
-];
 const N = PATHS.length;
 
 // One matcher per pattern for the third-party libs (no native union API).

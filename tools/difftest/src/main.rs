@@ -1,8 +1,9 @@
 //! Cross-runtime differential-test harness (Rust side).
 //!
 //! Reads one request per line on stdin and writes one result token per line
-//! on stdout, using ONLY `globstar`'s public API — exactly what a real caller
-//! sees. The JS driver (`scripts/fuzz.mjs`) generates random inputs,
+//! on stdout, through `globstar`'s public API, plus the hidden
+//! `is_match_nfa` for the lanes that cross-check the NFA. The JS driver
+//! (`scripts/fuzz.mjs`) generates random inputs,
 //! feeds the SAME inputs to this binary and to the `@globstar/core` JS
 //! port, and asserts the two agree. This measures JS↔Rust drift on the
 //! infinite out-of-corpus input space, which the fixed hand corpus cannot.

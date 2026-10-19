@@ -1,0 +1,12 @@
+# The 11 paths the match benches answer, in both runtimes.
+src/main.ts
+src/cli/commands/build.ts
+src/cli/commands/run.rs
+src/main.rs
+tests/smoke.ts
+dist/bundle.js
+node_modules/foo/index.js
+package.json
+.env
+target/debug/build/foo
+src/a/bigger/path/to/the/crazy/needle.txt

@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PATTERNS, PATTERN_SETS } from "../packages/bench/benches/shared.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 process.chdir(ROOT);
@@ -28,29 +29,9 @@ const SKIP_JS = args.has("--skip-js");
 // the per-call basis JS mitata reports natively.
 const PATHS_PER_BATCH = 11;
 
-// Single-pattern row labels (must match both matcher_single.rs and
-// packages/bench/benches/matcher_single.js).
-const SINGLE_PATTERNS = [
-  "literal",
-  "simple-wildcard",
-  "globstar",
-  "brace-suffix",
-  "reject-prefilter",
-  "class-anychar",
-  "brace-anychar",
-];
-
-// Multi-pattern row labels (must match both matcher_multi.rs and
-// packages/bench/benches/matcher_multi.js).
-const MULTI_SETS = [
-  "solo-globstar",
-  "brace-equiv-4",
-  "brace-equiv-8",
-  "mixed-roots",
-  "huge-set-pos",
-  "ignore-list-40",
-  "file-list-100",
-];
+// The matcher row labels, from the fixtures both runtimes' benches read.
+const SINGLE_PATTERNS = PATTERNS.map(([, label]) => label);
+const MULTI_SETS = PATTERN_SETS.map(([label]) => label);
 
 // Walker row labels — `<scale>_<pattern-set>`.
 const WALKER_LABELS = [

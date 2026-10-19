@@ -1,0 +1,8 @@
+# The union bench rows: label<TAB>pattern..., in both runtimes. Two more
+# rows come from their own files: `ignore-list-40` (bench-ignore-list.txt)
+# and `file-list-100` (bench-file-list.txt).
+solo-globstar	**/*.ts
+brace-equiv-4	**/*.ts	**/*.tsx	**/*.js	**/*.jsx
+brace-equiv-8	**/*.ts	**/*.tsx	**/*.js	**/*.jsx	**/*.mjs	**/*.cjs	**/*.mts	**/*.cts
+mixed-roots	src/**/*.ts	tests/**/*.ts	lib/**/*.js
+huge-set-pos	src/**/*.ts	src/**/*.tsx	tests/**/*.test.ts	lib/**/*.{js,mjs}	**/*.json	**/package.json	**/.env*	components/**/*.vue	scripts/**/*.sh	docs/**/*.md

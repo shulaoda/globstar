@@ -1,56 +1,24 @@
-//! Cross-runtime memory comparison: measures the production matcher
-//! on the same 7 patterns the JS
-//! `matcher_single.js` Phase-3 table uses, so the rows line up
-//! one-for-one with the JS column.
+//! Cross-runtime memory comparison: measures the production matcher on
+//! the single-pattern bench rows (`fixtures/bench-single.tsv`, which the
+//! JS bench reads too), so the rows line up with the JS column.
 //!
 //! Counting `GlobalAlloc` wrapper tracks net bytes-allocated, and we
 //! measure (after − before) around each engine's `build` and its
 //! matches on the bench paths. Inline + heap = total per matcher.
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::mem::size_of_val;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use globset::GlobBuilder;
 use globstar::{CompileOptions, Glob};
 use wax::Pattern as _;
 
-static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
-
-struct Counter;
-
-unsafe impl GlobalAlloc for Counter {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATED.fetch_add(layout.size(), Ordering::Relaxed);
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        ALLOCATED.fetch_sub(layout.size(), Ordering::Relaxed);
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[global_allocator]
-static A: Counter = Counter;
-
-/// The 11 paths the match benches use: every matcher answers them all
-/// before it is counted, since regex-backed ones build their search
-/// cache on first use.
-const PATHS: &[&str] = &[
-    "src/main.ts",
-    "src/cli/commands/build.ts",
-    "src/cli/commands/run.rs",
-    "src/main.rs",
-    "tests/smoke.ts",
-    "dist/bundle.js",
-    "node_modules/foo/index.js",
-    "package.json",
-    ".env",
-    "target/debug/build/foo",
-    "src/a/bigger/path/to/the/crazy/needle.txt",
-];
+#[path = "../../../crates/globstar/benches/common/mod.rs"]
+mod common;
+mod counter;
+use common::{PATHS, SINGLE};
+use counter::{measure_heap, median_of};
 
 /// Public-API build of `globstar`. `dot=true` mirrors the
 /// JS default.
@@ -58,38 +26,7 @@ fn build_public(pattern: &str) -> Glob {
     Glob::new_with(pattern, CompileOptions::default().dot(true)).expect("compile")
 }
 
-/// Returns `(value, inline_size, net_heap_bytes)`.
-fn measure<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {
-    let before = ALLOCATED.load(Ordering::SeqCst);
-    let val = f();
-    let after = ALLOCATED.load(Ordering::SeqCst);
-    let inline = size_of_val(&val);
-    let heap = (after as isize - before as isize).max(0) as usize;
-    (val, inline, heap)
-}
-
-/// Median-of-N: build N matchers in a row, take the median per-matcher
-/// total. Mirrors the JS bench's median-of-5 trial loop, except in
-/// Rust we know the exact per-call delta so we don't need to amortize
-/// noise across 1000 builds.
-fn median_total(n: usize, mut build: impl FnMut() -> usize) -> usize {
-    let mut samples: Vec<usize> = (0..n).map(|_| build()).collect();
-    samples.sort_unstable();
-    samples[samples.len() / 2]
-}
-
 fn main() {
-    // Same 7 patterns as packages/bench/benches/matcher_single.js.
-    let patterns: &[(&str, &str)] = &[
-        ("literal", "src/main.rs"),
-        ("simple-wildcard", "src/*.ts"),
-        ("globstar", "src/**/*.ts"),
-        ("brace-suffix", "**/*.{ts,tsx,js,jsx}"),
-        ("reject-prefilter", "**/*.md"),
-        ("class-anychar", "src/**/n*d[k-m]e?txt"),
-        ("brace-anychar", "src/**/{tob,crazy}/?*.{png,txt}"),
-    ];
-
     fn build_globset(pattern: &str) -> globset::GlobMatcher {
         GlobBuilder::new(pattern)
             .literal_separator(true)
@@ -108,36 +45,36 @@ fn main() {
     println!("{:-<20}   {:->10}   {:->10}   {:->10}", "", "", "", "");
 
     let trials = 9;
-    for &(label, pattern) in patterns {
-        let public_total = median_total(trials, || {
-            let (_v, inline, heap) = measure(|| {
+    for &(label, pattern) in SINGLE.iter() {
+        let public_total = median_of(trials, || {
+            let (v, heap) = measure_heap(|| {
                 let g = build_public(pattern);
-                for p in PATHS {
+                for p in PATHS.iter() {
                     black_box(g.is_match(p.as_bytes()));
                 }
                 g
             });
-            inline + heap
+            size_of_val(&v) + heap
         });
-        let gs_total = median_total(trials, || {
-            let (_v, inline, heap) = measure(|| {
+        let gs_total = median_of(trials, || {
+            let (v, heap) = measure_heap(|| {
                 let g = build_globset(pattern);
-                for p in PATHS {
+                for p in PATHS.iter() {
                     black_box(g.is_match(Path::new(p)));
                 }
                 g
             });
-            inline + heap
+            size_of_val(&v) + heap
         });
-        let wax_total = median_total(trials, || {
-            let (_v, inline, heap) = measure(|| {
+        let wax_total = median_of(trials, || {
+            let (v, heap) = measure_heap(|| {
                 let g = build_wax(pattern);
-                for p in PATHS {
+                for p in PATHS.iter() {
                     black_box(g.is_match(*p));
                 }
                 g
             });
-            inline + heap
+            size_of_val(&v) + heap
         });
 
         println!(

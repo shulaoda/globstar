@@ -9,125 +9,20 @@
 //! modes we sum the allocations of all N matchers — that's the
 //! actual memory cost a caller pays.
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use globset::GlobBuilder;
 use globstar::Glob;
 use wax::Pattern as _;
 
-static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
-
-struct Counter;
-
-unsafe impl GlobalAlloc for Counter {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATED.fetch_add(layout.size(), Ordering::Relaxed);
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        ALLOCATED.fetch_sub(layout.size(), Ordering::Relaxed);
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[global_allocator]
-static A: Counter = Counter;
-
-/// Returns net heap-byte delta around `f`. Inline size of the value
-/// is intentionally NOT included here — multi-mode data depends on
-/// how the caller wraps the matcher (`Vec<Glob>` vs one `globset::GlobSet`),
-/// so we report heap-only and add the obvious wrapper inline cost
-/// outside.
-fn measure_heap<T>(f: impl FnOnce() -> T) -> (T, usize) {
-    let before = ALLOCATED.load(Ordering::SeqCst);
-    let val = f();
-    let after = ALLOCATED.load(Ordering::SeqCst);
-    let heap = (after as isize - before as isize).max(0) as usize;
-    (val, heap)
-}
-
-/// The 11 paths the match benches use: every matcher answers them all
-/// before it is counted, since regex-backed ones build their search
-/// cache on first use.
-const PATHS: &[&str] = &[
-    "src/main.ts",
-    "src/cli/commands/build.ts",
-    "src/cli/commands/run.rs",
-    "src/main.rs",
-    "tests/smoke.ts",
-    "dist/bundle.js",
-    "node_modules/foo/index.js",
-    "package.json",
-    ".env",
-    "target/debug/build/foo",
-    "src/a/bigger/path/to/the/crazy/needle.txt",
-];
-
-/// Median-of-9 to dampen allocator noise around the boundary alloc.
-fn median(samples: &mut [usize]) -> usize {
-    samples.sort_unstable();
-    samples[samples.len() / 2]
-}
-
-/// The `ignore-list-40` set, shared with the benches.
-const IGNORE_LIST: &str = include_str!("../../../fixtures/bench-ignore-list.txt");
-
-/// The `file-list-100` set of the benches: 100 literal files over 10
-/// folders.
-fn file_list() -> Vec<&'static str> {
-    const AREAS: [&str; 10] = [
-        "cli", "server", "client", "core", "shared", "utils", "hooks", "store", "api", "ui",
-    ];
-    (0..100)
-        .map(|i| &*Box::leak(format!("src/{}/mod_{i}.ts", AREAS[i % AREAS.len()]).into_boxed_str()))
-        .collect()
-}
+#[path = "../../../crates/globstar/benches/common/mod.rs"]
+mod common;
+mod counter;
+use common::PATHS;
+use counter::{measure_heap, median_of};
 
 fn main() {
-    let ignore_list: Vec<&str> = IGNORE_LIST
-        .lines()
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .collect();
-    let file_list = file_list();
-    let pattern_sets: &[(&str, &[&str])] = &[
-        ("solo-globstar", &["**/*.ts"]),
-        (
-            "brace-equiv-4",
-            &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
-        ),
-        (
-            "brace-equiv-8",
-            &[
-                "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.mts",
-                "**/*.cts",
-            ],
-        ),
-        (
-            "mixed-roots",
-            &["src/**/*.ts", "tests/**/*.ts", "lib/**/*.js"],
-        ),
-        (
-            "huge-set-pos",
-            &[
-                "src/**/*.ts",
-                "src/**/*.tsx",
-                "tests/**/*.test.ts",
-                "lib/**/*.{js,mjs}",
-                "**/*.json",
-                "**/package.json",
-                "**/.env*",
-                "components/**/*.vue",
-                "scripts/**/*.sh",
-                "docs/**/*.md",
-            ],
-        ),
-        ("ignore-list-40", &ignore_list),
-        ("file-list-100", &file_list),
-    ];
-
     fn build_globset(patterns: &[&str]) -> globset::GlobSet {
         let mut b = globset::GlobSetBuilder::new();
         for p in patterns {
@@ -147,75 +42,63 @@ fn main() {
         "", "", "", "", "", ""
     );
 
-    for &(label, patterns) in pattern_sets {
+    for (label, patterns) in common::sets() {
         let n = patterns.len();
 
         // globstar union — one merged Glob.
-        let mut samples: Vec<usize> = (0..trials)
-            .map(|_| {
-                let (_v, heap) = measure_heap(|| {
-                    let g = Glob::union(patterns.iter().copied()).unwrap();
-                    for p in PATHS {
-                        black_box(g.is_match(p.as_bytes()));
-                    }
-                    g
-                });
-                heap
-            })
-            .collect();
-        let gs_union = median(&mut samples);
+        let gs_union = median_of(trials, || {
+            let (_v, heap) = measure_heap(|| {
+                let g = Glob::union(patterns.iter().copied()).unwrap();
+                for p in PATHS.iter() {
+                    black_box(g.is_match(p.as_bytes()));
+                }
+                g
+            });
+            heap
+        });
 
         // globstar per-pattern — N independent Glob matchers (heap of
         // a Vec<Glob> with N entries).
-        let mut samples: Vec<usize> = (0..trials)
-            .map(|_| {
-                let (_v, heap) = measure_heap(|| {
-                    let gs = patterns
-                        .iter()
-                        .map(|p| Glob::new(p).unwrap())
-                        .collect::<Vec<_>>();
-                    for p in PATHS {
-                        black_box(gs.iter().any(|g| g.is_match(p.as_bytes())));
-                    }
-                    gs
-                });
-                heap
-            })
-            .collect();
-        let gs_per = median(&mut samples);
+        let gs_per = median_of(trials, || {
+            let (_v, heap) = measure_heap(|| {
+                let gs = patterns
+                    .iter()
+                    .map(|p| Glob::new(p).unwrap())
+                    .collect::<Vec<_>>();
+                for p in PATHS.iter() {
+                    black_box(gs.iter().any(|g| g.is_match(p.as_bytes())));
+                }
+                gs
+            });
+            heap
+        });
 
         // globset — N regexes + Aho-Corasick prefilter, all merged.
-        let mut samples: Vec<usize> = (0..trials)
-            .map(|_| {
-                let (_v, heap) = measure_heap(|| {
-                    let g = build_globset(patterns);
-                    for p in PATHS {
-                        black_box(g.is_match(Path::new(p)));
-                    }
-                    g
-                });
-                heap
-            })
-            .collect();
-        let globset_total = median(&mut samples);
+        let globset_total = median_of(trials, || {
+            let (_v, heap) = measure_heap(|| {
+                let g = build_globset(&patterns);
+                for p in PATHS.iter() {
+                    black_box(g.is_match(Path::new(p)));
+                }
+                g
+            });
+            heap
+        });
 
         // wax per-pattern — N independent matchers.
-        let mut samples: Vec<usize> = (0..trials)
-            .map(|_| {
-                let (_v, heap) = measure_heap(|| {
-                    let gs = patterns
-                        .iter()
-                        .map(|p| wax::Glob::new(p).unwrap().into_owned())
-                        .collect::<Vec<_>>();
-                    for p in PATHS {
-                        black_box(gs.iter().any(|g| g.is_match(*p)));
-                    }
-                    gs
-                });
-                heap
-            })
-            .collect();
-        let wax_per = median(&mut samples);
+        let wax_per = median_of(trials, || {
+            let (_v, heap) = measure_heap(|| {
+                let gs = patterns
+                    .iter()
+                    .map(|p| wax::Glob::new(p).unwrap().into_owned())
+                    .collect::<Vec<_>>();
+                for p in PATHS.iter() {
+                    black_box(gs.iter().any(|g| g.is_match(*p)));
+                }
+                gs
+            });
+            heap
+        });
 
         println!(
             "{:<18} {:>3} {:>12} {:>12} {:>12} {:>12}",

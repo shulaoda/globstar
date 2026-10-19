@@ -1,5 +1,30 @@
 // Helpers the matcher benches share.
 
+import { readFileSync } from "node:fs";
+
+// The data lines of a fixture: not blank, not a `#` comment.
+const fixture = (name) =>
+  readFileSync(new URL(`../../../fixtures/${name}`, import.meta.url), "utf8")
+    .split("\n")
+    .filter((l) => l !== "" && !l.startsWith("#"));
+
+// The bench corpus, from the same files the Rust benches read, so the
+// rows of the two runtimes line up by construction.
+export const PATHS = fixture("bench-paths.txt");
+export const PATTERNS = fixture("bench-single.tsv").map((l) => {
+  const [label, pattern] = l.split("\t");
+  return [pattern, label];
+});
+/** @type {Array<[string, string[]]>} */
+export const PATTERN_SETS = [
+  ...fixture("bench-sets.tsv").map((l) => {
+    const [label, ...patterns] = l.split("\t");
+    return [label, patterns];
+  }),
+  ["ignore-list-40", fixture("bench-ignore-list.txt")],
+  ["file-list-100", fixture("bench-file-list.txt")],
+];
+
 let count = 0;
 
 // A pattern this process has not compiled yet, of the same shape as a

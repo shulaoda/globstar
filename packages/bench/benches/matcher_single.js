@@ -8,35 +8,13 @@ import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { globstar } from "@globstar/core";
-import { MISS, assertAgree, assertMisses, fresh } from "./shared.js";
+import { MISS, PATHS, PATTERNS, assertAgree, assertMisses, fresh } from "./shared.js";
 
 if (!global.gc) {
   console.error("Run with --expose-gc");
   process.exit(1);
 }
 
-const PATTERNS = [
-  ["src/main.rs", "literal"],
-  ["src/*.ts", "simple-wildcard"],
-  ["src/**/*.ts", "globstar"],
-  ["**/*.{ts,tsx,js,jsx}", "brace-suffix"],
-  ["**/*.md", "reject-prefilter"],
-  ["src/**/n*d[k-m]e?txt", "class-anychar"],
-  ["src/**/{tob,crazy}/?*.{png,txt}", "brace-anychar"],
-];
-const PATHS = [
-  "src/main.ts",
-  "src/cli/commands/build.ts",
-  "src/cli/commands/run.rs",
-  "src/main.rs",
-  "tests/smoke.ts",
-  "dist/bundle.js",
-  "node_modules/foo/index.js",
-  "package.json",
-  ".env",
-  "target/debug/build/foo",
-  "src/a/bigger/path/to/the/crazy/needle.txt",
-];
 const N = PATHS.length;
 
 // Every library answers with dot files matched, as globstar does by

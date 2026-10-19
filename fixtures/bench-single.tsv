@@ -1,0 +1,8 @@
+# The single-pattern bench rows: label<TAB>pattern, in both runtimes.
+literal	src/main.rs
+simple-wildcard	src/*.ts
+globstar	src/**/*.ts
+brace-suffix	**/*.{ts,tsx,js,jsx}
+reject-prefilter	**/*.md
+class-anychar	src/**/n*d[k-m]e?txt
+brace-anychar	src/**/{tob,crazy}/?*.{png,txt}
