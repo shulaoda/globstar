@@ -2,7 +2,7 @@
 
 This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling.
 
-**Version.** v0.3.11, draft. Appendix A (§12) lists every change.
+**Version.** v0.3.12, draft. Appendix A (§12) lists every change.
 
 **Status.** Active, not yet released.
 
@@ -128,7 +128,7 @@ final_match(path) := positive.match(path)
 
 An ignored folder hides its whole subtree: `glob("**/*.js", { ignore: ["dist"] })` drops `dist/a.js`, though `dist` alone names no `.js` file.
 
-`ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. An entry that ends in `/` (also after §4.3 normalization, `d/.` ≡ `d/`) matches folders only: a folder is asked about with its `/`, so `node_modules/` prunes the folder `node_modules` and everything below it, never a file of that name; like every pattern it is anchored at `cwd` (`**/node_modules/` for any depth). A positive pattern that ends in `/` matches folders only too, so it selects no file (§8.1). Each `ignore` entry is itself a strictly positive pattern: the array is NOT subject to the §4.2 `!`-split rule, and an entry that starts with `!` (after §4.3 normalization) is refused with `WalkError("InvalidPattern")`. As the matcher's whole-pattern negation (GLOB_SPEC.md §9.3) it would ignore everything except what it names, which is never what a caller writing `!src/**` into an ignore list means; escape a name that starts with `!` as `\!`.
+`ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. An entry that ends in `/` (also after §4.3 normalization, `d/.` ≡ `d/`) matches folders only: a folder is asked about with its `/`, so `node_modules/` prunes the folder `node_modules` and everything below it, never a file of that name; like every pattern it is anchored at `cwd` (`**/node_modules/` for any depth). Every `ignore` entry is asked about a folder with its `/`, so one that ends in `/**` prunes the folder too (`**/node_modules/**` never reads `node_modules`), under either `dot`: a dot-led name below it that a positive pattern names is then not found, as fast-glob and tinyglobby do not find it. A positive pattern that ends in `/` matches folders only too, so it selects no file (§8.1). Each `ignore` entry is itself a strictly positive pattern: the array is NOT subject to the §4.2 `!`-split rule, and an entry that starts with `!` (after §4.3 normalization) is refused with `WalkError("InvalidPattern")`. As the matcher's whole-pattern negation (GLOB_SPEC.md §9.3) it would ignore everything except what it names, which is never what a caller writing `!src/**` into an ignore list means; escape a name that starts with `!` as `\!`.
 
 ### 3.3 Toggles deliberately NOT provided
 
@@ -196,7 +196,6 @@ After preprocessing, the walker compiles three matchers:
 
 - `matcher` — the OR-union of the (preprocessed) positive set;
 - `ignore` — the OR-union of the (preprocessed) `opts.ignore` plus the `!`-routed negative set, or `null` when both are empty;
-- `ignoreDirs` — the OR-union of the `ignore` entries that end in `/`, which match folders only (§3.2), or `null` when there are none.
 
 If the positive set is empty after preprocessing (e.g. `glob(["!foo"])` with no other inputs), the walker MUST short-circuit and return an empty result without attempting any traversal.
 
@@ -261,7 +260,7 @@ Each frame carries a list `links` of the symlinks the walker descended through t
 5. **Special files** — a FIFO, a socket or a device (neither a directory nor a file nor a link) is skipped (§8.1).
 6. Branch on the type:
    - **Non-directory.** If `matcher.match(childRel)` is true, push `childAbs` into the result array. Output is always the absolute form (§8.2).
-   - **Directory.** The walker emits files only, so `matcher.match_dir(childRel)` is consulted for the descend decision alone. The folder is skipped when `ignoreDirs !== null` AND `ignoreDirs.match(childRel + "/")` (§3.2), when `may_match_below()` is false, or when the ignore set covers the whole subtree (`ignore.match_dir(childRel).matches_all_below()`). The last check lets `**/node_modules/**` skip `node_modules` as cheaply as `node_modules` does; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §13.6) and a positive pattern may still name one. Otherwise push a child frame into the descend list, whose `links` is:
+   - **Directory.** The walker emits files only, so `matcher.match_dir(childRel)` is consulted for the descend decision alone. The folder is skipped when `ignore.match(childRel + "/")` (§3.2: asked with its `/`, under either `dot`), when `may_match_below()` is false, or when the ignore set covers the whole subtree (`ignore.match_dir(childRel).matches_all_below()`). The last check lets `**/node_modules/**` skip `node_modules` as cheaply as `node_modules` does; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §13.6) and a positive pattern may still name one. Otherwise push a child frame into the descend list, whose `links` is:
      - **non-symlink dir** — the parent's `links`, unchanged;
      - **symlink-to-dir** — the parent's `links` plus this link, unless its target is the target of one of them already (§10): then this is a cycle, and the descent is skipped.
 
@@ -453,6 +452,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **v0.3.9** (2026-10-16): §6: a seed is reached part by part through the walk's own per-entry rule (§7.1), so it follows every rule of a root walk by construction; this also prunes a seed below a folder the ignore set covers, which used to be read.
 - **v0.3.10** (2026-10-17): §10: symlink cycles are found by the target's `(dev, ino)` from the stat that typed the link, confirmed by `realpath` on a hit (Windows: `realpath` alone), so a walk without a cycle resolves no path. §7.1 lists the steps as the walker takes them (paths from per-folder heads, special files, folder-only ignores) and §4.4 the third matcher. §6: on Windows a seed part Win32 would rewrite must be listed as written. §2.1: patterns are any iterable.
 - **v0.3.11** (2026-10-18): §7.1: the Rust walker skips a name that is not valid UTF-8 as the JS walker does (it used to match a lossy spelling of it); §9.3: an entry that cannot be typed is reported with its folder's path in both runtimes; §6: the Rust walker splits a seed prefix on every platform separator, as the guard already did; `DirEntry::is_dir` says what the walk took an entry for.
+- **v0.3.12** (2026-10-19): §3.2: a folder is asked about with its `/` of the whole `ignore` set, so an entry that ends in `/**` prunes it under either `dot` (it used to be read, and a dot-led name below it that a pattern named was found under `dot: false`); §4.4 loses the folder-only ignore matcher; §7.1 says so.
 
 ---
 

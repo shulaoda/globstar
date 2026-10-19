@@ -174,12 +174,6 @@ function prepare(patterns, optsInput) {
   }
   for (const n of negatives) ignorePatterns.push(n);
   const ignore = compileUnion(ignorePatterns, matcherOpts);
-  // §3.2: an entry that ends in `/` ignores folders only, asked about
-  // with their `/` (`node_modules/` prunes the folder, not a file).
-  const ignoreDirs = compileUnion(
-    ignorePatterns.filter((p) => p.body.endsWith("/")),
-    matcherOpts,
-  );
 
   // Lock cwd to an absolute path and validate BEFORE the empty-positives
   // early return: bad-cwd loudness must not depend on pattern content.
@@ -206,7 +200,6 @@ function prepare(patterns, optsInput) {
   const ctx = {
     matcher,
     ignore,
-    ignoreDirs,
     cwd,
     followSymlinks: !!opts.followSymlinks,
     // Whether the ignore set can cover a whole subtree (matchDir
@@ -324,10 +317,12 @@ function processDirents(ctx, dirents, frame, results, descend) {
       if (matcher.match(childRel)) results.push(absHead + name);
       continue;
     }
-    if (ctx.ignoreDirs !== null && ctx.ignoreDirs.match(childRel + "/")) continue;
+    // Asked with its `/`, the folder is pruned by an ignore entry that
+    // ends in `/` or `/**` (§3.2), under either `dot`.
+    if (ignore !== null && ignore.match(childRel + "/")) continue;
     if (!DirMatch.mayMatchBelow(matcher.matchDir(childRel))) continue;
     // An ignore that covers everything below skips the subtree
-    // (`**/node_modules/**` and `node_modules`).
+    // (`**/x/**/*`; one that ends in `/**` was caught above).
     if (ctx.pruneIgnored && DirMatch.matchesAllBelow(ignore.matchDir(childRel))) continue;
     const childAbs = absHead + name;
     // Cycle break: a link to a folder already on the way down is not

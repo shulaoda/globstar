@@ -58,8 +58,9 @@ export interface GlobOptions {
  *
  * Output is always **absolute file paths** rooted at the resolved
  * `cwd`. Directory matches aren't emitted, nor FIFOs, sockets or devices;
- * a pattern or `ignore` entry that ends in `/` matches folders only
- * (`ignore: ["node_modules/"]` prunes that folder). Callers wanting paths
+ * a pattern or `ignore` entry that ends in `/` matches folders only, and
+ * an `ignore` entry that ends in `/` or `/**` prunes the folder before it
+ * is read (`ignore: ["node_modules/**"]`). Callers wanting paths
  * relative to `cwd` should `path.relative(cwd, p)` at their boundary.
  * Errors reject the returned Promise with a {@link WalkError} (never
  * silent); wrongly-typed patterns or options reject it with a

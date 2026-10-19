@@ -570,6 +570,25 @@ await check("a pattern that ends in / matches folders only", async () => {
   }
 });
 
+// ── An ignore that ends in /** prunes the folder ─────────────────────────
+await check("an ignore that ends in /** prunes the folder under either dot", async () => {
+  // WALKER_SPEC §3.2: `node_modules` is never read, and a dot-led name
+  // below it that a pattern names is not found, as fast-glob and
+  // tinyglobby do not find it. Twin of the Rust check.
+  const root = tmpTree("prunestar", [
+    "node_modules/p/i.js",
+    "node_modules/.cache/x",
+    "src/a.js",
+    "src/.env",
+  ]);
+  const patterns = ["**/*.js", "**/.env", "node_modules/.cache/x"];
+  for (const dot of [true, false]) {
+    const opts = { cwd: root, dot, ignore: ["**/node_modules/**"] };
+    assert.deepEqual(rel(root, globSync(patterns, opts)), ["src/.env", "src/a.js"], `dot ${dot}`);
+    assert.deepEqual(rel(root, await glob(patterns, opts)), ["src/.env", "src/a.js"], `dot ${dot}`);
+  }
+});
+
 // ── Special files are not files ─────────────────────────────────────────
 if (process.platform !== "win32" && symlinksOk) {
   await check("FIFOs and sockets are no files", async () => {

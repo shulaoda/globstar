@@ -1948,6 +1948,33 @@ fn a_pattern_that_ends_in_a_slash_matches_folders_only() {
     }
 }
 
+// An ignore entry that ends in `/**` prunes the folder itself, under
+// either `dot` (WALKER_SPEC §3.2): `node_modules` is never read, and a
+// dot-led name below it that a pattern names is not found, as fast-glob
+// and tinyglobby do not find it. Twin of the check in walk.mjs.
+#[test]
+fn an_ignore_that_ends_in_a_globstar_prunes_the_folder() {
+    let t = TmpTree::new("prunestar");
+    for f in [
+        "node_modules/p/i.js",
+        "node_modules/.cache/x",
+        "src/a.js",
+        "src/.env",
+    ] {
+        t.touch(f);
+    }
+    for dot in [true, false] {
+        let mut opts = WalkOptions::new(t.root());
+        opts.dot = dot;
+        opts.ignore = vec!["**/node_modules/**".to_string()];
+        let patterns = ["**/*.js", "**/.env", "node_modules/.cache/x"];
+        let got: Vec<String> = collect_rel(Walk::from_patterns(patterns, opts).unwrap(), t.root())
+            .into_iter()
+            .collect();
+        assert_eq!(got, ["src/.env", "src/a.js"], "dot={dot}");
+    }
+}
+
 // A seed is reached as a root walk reaches it: through the walk's own
 // per-entry rule, so a folder the ignore set covers is pruned before it
 // is read, from a seed as from the root. Twin of the check in walk.mjs.

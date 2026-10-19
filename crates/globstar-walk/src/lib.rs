@@ -280,7 +280,6 @@ impl Walk {
         }
         ignore_patterns.extend(negatives);
         let ignore = compile_union(&ignore_patterns, compile_opts)?;
-        let ignore_dirs = compile_union(&folders_only(&ignore_patterns), compile_opts)?;
         // Lock the base to an absolute path at construction, resolved the
         // way Node's `path.resolve` does: against the current CWD (the
         // empty base is the CWD itself), with `.` and `..` taken out as
@@ -302,7 +301,6 @@ impl Walk {
             matcher,
             ignore,
             dirs,
-            ignore_dirs,
             follow_links: opts.follow_links,
             prune_ignored: opts.dot,
         });
@@ -459,10 +457,9 @@ struct Rules {
     matcher: Glob,
     /// `opts.ignore` and the `!`-split patterns.
     ignore: Option<Glob>,
-    /// The patterns and ignore entries that end in `/`, which match
-    /// folders only: asked about a folder with its `/`.
+    /// The patterns that end in `/`, which match folders only: asked
+    /// about a folder with its `/`.
     dirs: Option<Glob>,
-    ignore_dirs: Option<Glob>,
     follow_links: bool,
     /// Whether the ignore set can cover a whole subtree (`match_dir`
     /// all-below), which `dot = false` never does.
@@ -565,14 +562,16 @@ impl Rules {
         if !typed.is_dir() {
             return self.matcher.is_match(rel).then(|| entry(path()));
         }
-        if folder_matches(self.ignore_dirs.as_ref(), rel) {
+        // Asked with its `/`, the folder is pruned by an ignore entry that
+        // ends in `/` or `/**` (§3.2), under either `dot`.
+        if folder_matches(self.ignore.as_ref(), rel) {
             return None;
         }
         let dm = self.matcher.match_dir(rel);
         let emitted =
             (dm.matches() || folder_matches(self.dirs.as_ref(), rel)).then(|| entry(path()));
         // An ignore that covers everything below skips the subtree
-        // (`**/node_modules/**` and `node_modules`).
+        // (`**/x/**/*`; one that ends in `/**` was caught above).
         let covered = self.prune_ignored
             && self
                 .ignore
@@ -772,11 +771,12 @@ fn folders_only(entries: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Does a folder-only matcher match the folder `rel`, asked with its `/`?
-fn folder_matches(dirs: Option<&Glob>, rel: &mut Vec<u8>) -> bool {
-    dirs.is_some_and(|d| {
+/// Does `glob` match the folder `rel`, asked with its `/`? Only a pattern
+/// that ends in `/` or `/**` can.
+fn folder_matches(glob: Option<&Glob>, rel: &mut Vec<u8>) -> bool {
+    glob.is_some_and(|g| {
         rel.push(b'/');
-        let hit = d.is_match(rel);
+        let hit = g.is_match(rel);
         rel.pop();
         hit
     })

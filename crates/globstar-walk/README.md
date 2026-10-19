@@ -4,7 +4,8 @@ Filesystem walker powered by [`globstar`]. Static-prefix jump-start,
 `match_dir` subtree pruning, symlink cycle breaking, `!`-pattern
 auto-split into the ignore set. It yields the files and the folders that
 match (the JS twin yields files only); a pattern or ignore entry that
-ends in `/` matches folders only.
+ends in `/` matches folders only, and an ignore entry that ends in `/`
+or `/**` prunes the folder before it is read.
 
 ```rust
 use globstar_walk::Walk;

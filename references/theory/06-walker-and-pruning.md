@@ -36,7 +36,7 @@ Walker per directory frame (absolute, relative):
        child_rel = relative ++ "/" ++ entry.name
        if ignore.match(child_rel):     skip
        else if entry is directory:     # a symlink takes its target's type
-           if ignore_dirs.match(child_rel ++ "/"):             skip
+           if ignore.match(child_rel ++ "/"):                  skip
            dm = matcher.match_dir(child_rel)
            if not DirMatch::may_match_below(dm):              skip
            if dot and ignore.match_dir(child_rel) covers all below: skip
@@ -203,7 +203,7 @@ The walker's responsibilities relative to this module are documented in `referen
 - `static_prefixes()` is consumed once at construction time (`prepare()` → `initFromPrefixes`) to produce seed frames, each reached part by part through the per-entry rule.
 - `match_dir(child_rel)` is consulted once per discovered directory during `processDirents`. The return value gates the descend decision; the JS walker emits files only and leaves the `Match` flag unused, while the Rust walker yields a matching folder too.
 - `is_match(child_rel)` is consulted once per discovered file.
-- `ignore.is_match(child_rel)` is consulted once per discovered entry of either kind, before any other matcher work; `ignore_dirs.is_match(child_rel ++ "/")` once per directory (entries that end in `/`, WALKER_SPEC §3.2); and under `dot: true`, `ignore.match_dir(child_rel)` once per directory worth descending, whose `DescendAll…` verdict skips the subtree (§2.5).
+- `ignore.is_match(child_rel)` is consulted once per discovered entry of either kind, before any other matcher work; `ignore.is_match(child_rel ++ "/")` once per directory (an entry that ends in `/` or `/**` prunes it, WALKER_SPEC §3.2); and under `dot: true`, `ignore.match_dir(child_rel)` once per directory worth descending, whose `DescendAll…` verdict skips the subtree (§2.5).
 
 ## 4. Properties
 
