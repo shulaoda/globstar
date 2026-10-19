@@ -652,10 +652,11 @@ function nfaSmall(graph, nodes) {
 
 // Past 31 states the graph NFA is stepped sparsely. A position keeps
 // its successors, not a closure row (the start is the last position):
-// the literal ones' entry states sorted by literal (`litKeys` folded
-// when insensitive), the other positions, and the nullable ones (`**/`)
-// among those, at `xs[xAt[p]..xAt[p + 1]]`. The active set holds states
-// and whole positions; see `nfaRunSparse`.
+// the literal ones sorted by literal (`litKeys` folded when
+// insensitive) at `lits[litAt[p]..litAt[p + 1]]`, and the others at
+// `others[otherAt[p]..otherAt[p + 1]]`, the nullable ones (`**/`) first,
+// up to `nullEnd[p]`. The active set holds states and whole positions;
+// see `nfaRunSparse`.
 function nfaSparse(graph, ci) {
   const { elems, n, succs, start } = layout(graph, null);
   const succOf = (p) => (p === n ? start : succs === null ? null : succs[p]);
@@ -675,7 +676,9 @@ function nfaSparse(graph, ci) {
   // takes 8 bytes per entry, booleans included.
   // (A nullable successor is a `**/`, which reaches accept through one
   // segment whenever it reaches it at all.)
-  const reach1 = new Uint8Array(n + 1);
+  const base = n + 1;
+  // Positions sit past the states, as `Active` indexes them (`base + p`).
+  const reach1 = new Uint8Array(2 * n + 2);
   for (let i = n - 1; i >= 0; i--) {
     let o = 0;
     eachSucc(i, (t) => {
@@ -687,30 +690,28 @@ function nfaSparse(graph, ci) {
   const key = (t) => (ci ? asciiLower(elems[t].litStr) : elems[t].litStr);
   const litAt = new Int32Array(n + 2);
   const otherAt = new Int32Array(n + 2);
-  const nullAt = new Int32Array(n + 2);
+  const nullEnd = new Int32Array(n + 1);
   const ends = new Uint8Array(n + 1);
-  const succReach1 = new Uint8Array(n + 1);
   const lits = [];
   const litKeys = [];
   const others = [];
-  const nulls = [];
   for (let p = 0; p <= n; p++) {
     litAt[p] = lits.length;
     otherAt[p] = others.length;
-    nullAt[p] = nulls.length;
     const litPos = [];
+    const rest = [];
     eachSucc(p, (t) => {
       if (t === ACCEPT) {
         ends[p] = 1;
         return;
       }
-      if (reach1[t]) succReach1[p] = 1;
+      if (reach1[t]) reach1[base + p] = 1;
       if (elems[t].kind === EL_LIT) litPos.push(t);
-      else {
-        others.push(t);
-        if (nullable(elems[t])) nulls.push(t);
-      }
+      else if (nullable(elems[t])) others.push(t);
+      else rest.push(t);
     });
+    nullEnd[p] = others.length;
+    for (const t of rest) others.push(t);
     const keys = litPos.map(key);
     const order = litPos.map((_, i) => i);
     order.sort((a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : litPos[a] - litPos[b]));
@@ -721,7 +722,6 @@ function nfaSparse(graph, ci) {
   }
   litAt[n + 1] = lits.length;
   otherAt[n + 1] = others.length;
-  nullAt[n + 1] = nulls.length;
   return {
     kind: NFA_SPARSE,
     n,
@@ -730,11 +730,9 @@ function nfaSparse(graph, ci) {
     litKeys: exact(litKeys),
     otherAt,
     others: Int32Array.from(others),
-    nullAt,
-    nulls: Int32Array.from(nulls),
+    nullEnd,
     ends,
     reach1,
-    succReach1,
     accept,
     // Mark arrays reused across calls (see `nfaRunSparse`).
     scratch: null,

@@ -310,7 +310,7 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
     // position back, as successors always lie ahead.
     // (A nullable successor is a `**/`, which reaches accept through
     // one segment whenever it reaches it at all.)
-    let mut reach1 = Wide::zero(Wide::words(n + 1));
+    let mut reach1 = Wide::zero(Wide::words(2 * n + 2));
     for i in (0..n).rev() {
         if elems[i].satisfiable()
             && succ_of(edges, n, i).any(|t| t == ACCEPT || reach1.test(t as usize))
@@ -319,56 +319,47 @@ fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         }
     }
 
-    let (mut lit_at, mut lits) = (Vec::with_capacity(n + 2), Vec::new());
-    let (mut other_at, mut others) = (Vec::with_capacity(n + 2), Vec::new());
-    let (mut null_at, mut nulls) = (Vec::with_capacity(n + 2), Vec::new());
+    let mut at = Vec::with_capacity(3 * (n + 1) + 1);
+    let mut succ = Vec::new();
+    let (mut lits, mut nulls, mut rest) = (Vec::new(), Vec::new(), Vec::new());
     let mut ends = Wide::zero(Wide::words(n + 1));
-    let mut succ_reach1 = Wide::zero(Wide::words(n + 1));
     for p in 0..=n {
-        lit_at.push(lits.len() as u32);
-        other_at.push(others.len() as u32);
-        null_at.push(nulls.len() as u32);
-        let from = lits.len();
         for t in succ_of(edges, n, p) {
             if t == ACCEPT {
                 ends.set(p);
                 continue;
             }
             if reach1.test(t as usize) {
-                succ_reach1.set(p);
+                reach1.set(n + 1 + p);
             }
             let e = &elems[t as usize];
             if matches!(e, Elem::Lit(_)) {
                 lits.push(t);
+            } else if e.nullable() {
+                nulls.push(t);
             } else {
-                others.push(t);
-                if e.nullable() {
-                    nulls.push(t);
-                }
+                rest.push(t);
             }
         }
         // By literal, then position; a list holds no repeats, as the
         // walk deduplicates tails before it emits after them.
-        lits[from..].sort_unstable_by(|&a, &b| {
+        lits.sort_unstable_by(|&a, &b| {
             let lit = |t: u32| elems[t as usize].as_lit();
             lit_cmp(lit(a), lit(b), ci).then(a.cmp(&b))
         });
+        for part in [&mut lits, &mut nulls, &mut rest] {
+            at.push(succ.len() as u32);
+            succ.append(part);
+        }
     }
-    lit_at.push(lits.len() as u32);
-    other_at.push(others.len() as u32);
-    null_at.push(nulls.len() as u32);
+    at.push(succ.len() as u32);
 
     SparseNfa {
         n: n as u32,
-        lit_at: lit_at.into_boxed_slice(),
-        lits: lits.into_boxed_slice(),
-        other_at: other_at.into_boxed_slice(),
-        others: others.into_boxed_slice(),
-        null_at: null_at.into_boxed_slice(),
-        nulls: nulls.into_boxed_slice(),
+        at: at.into_boxed_slice(),
+        succ: succ.into_boxed_slice(),
         ends,
         reach1,
-        succ_reach1,
     }
 }
 

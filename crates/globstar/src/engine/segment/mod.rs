@@ -274,22 +274,18 @@ struct SparseNfa {
     /// Positions, one per node (state `i` is position `i` is node `i`);
     /// the accept state is `n`.
     n: u32,
-    /// Per position (the start last), its successors: the literal
-    /// ones sorted by literal (case-folded when
-    /// insensitive), the other positions, and the nullable ones (`**/`)
-    /// among those, at `xs[x_at[p]..x_at[p + 1]]`.
-    lit_at: Box<[u32]>,
-    lits: Box<[u32]>,
-    other_at: Box<[u32]>,
-    others: Box<[u32]>,
-    null_at: Box<[u32]>,
-    nulls: Box<[u32]>,
+    /// Per position (the start last) its successors, in three parts:
+    /// the literal ones sorted by literal (case-folded when
+    /// insensitive), the nullable ones (`**/`), then the rest. Part `k`
+    /// of position `p` is `succ[at[3p + k]..at[3p + k + 1]]`.
+    at: Box<[u32]>,
+    succ: Box<[u32]>,
     /// Positions the pattern may end after.
     ends: Wide,
-    /// States, and positions with a successor, that can still consume
-    /// ≥ 1 segment on a path to accept.
+    /// States, and positions with a successor (as `Active` indexes
+    /// them, `n + 1 + p`), that can still consume ≥ 1 segment on a path
+    /// to accept.
     reach1: Wide,
-    succ_reach1: Wide,
 }
 
 #[derive(Debug, Clone)]

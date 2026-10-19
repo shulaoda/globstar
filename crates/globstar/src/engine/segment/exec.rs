@@ -701,12 +701,10 @@ impl SparseNfa {
         self.n
     }
 
-    fn lits(&self, p: usize) -> &[u32] {
-        &self.lits[self.lit_at[p] as usize..self.lit_at[p + 1] as usize]
-    }
-
-    fn others(&self, p: usize) -> &[u32] {
-        &self.others[self.other_at[p] as usize..self.other_at[p + 1] as usize]
+    /// Position `p`'s successors from part `from` to part `to` (0 the
+    /// literals, 1 the nullable ones, 2 the rest, 3 the end).
+    fn succ(&self, p: usize, from: usize, to: usize) -> &[u32] {
+        &self.succ[self.at[3 * p + from] as usize..self.at[3 * p + to] as usize]
     }
 
     pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
@@ -723,14 +721,7 @@ impl SparseNfa {
             let exact = active.has(self.accept());
             (active, exact)
         };
-        let prefix = root
-            || active
-                .items
-                .iter()
-                .any(|&i| match i.checked_sub(self.n + 1) {
-                    None => self.reach1.test(i as usize),
-                    Some(p) => self.succ_reach1.test(p as usize),
-                });
+        let prefix = root || active.items.iter().any(|&i| self.reach1.test(i as usize));
         // `dot=false` never covers a subtree: no wildcard matches the
         // dot-led names below.
         let all = m.dot && prefix && self.covers_below(m, &mut active);
@@ -778,13 +769,13 @@ impl SparseNfa {
             };
             let p = p as usize;
             // Equal literals sit together, one binary search away.
-            let lits = self.lits(p);
+            let lits = self.succ(p, 0, 1);
             let order = |s: u32| lit_cmp(m.elems[s as usize].as_lit(), seg, m.case_insensitive);
             let first = lits.partition_point(|&s| order(s).is_lt());
             for &s in lits[first..].iter().take_while(|&&s| order(s).is_eq()) {
                 self.fire(m, s, next);
             }
-            for &s in self.others(p) {
+            for &s in self.succ(p, 1, 3) {
                 if consumes(s) {
                     self.fire(m, s, next);
                 }
@@ -820,7 +811,7 @@ impl SparseNfa {
             if self.ends.test(p) {
                 next.add(self.accept());
             }
-            for &t in &self.nulls[self.null_at[p] as usize..self.null_at[p + 1] as usize] {
+            for &t in self.succ(p, 1, 2) {
                 next.add(base + t);
             }
         }
@@ -841,7 +832,7 @@ impl SparseNfa {
                     continue;
                 };
                 // Literals never take a wildcard-only segment.
-                for &s in self.others(p as usize) {
+                for &s in self.succ(p as usize, 1, 3) {
                     if any_seg(s) {
                         self.fire(m, s, &mut next);
                     }

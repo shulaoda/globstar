@@ -377,7 +377,7 @@ function enterSparse(g, p, next) {
     if (item < base) continue;
     const q = item - base;
     if (g.ends[q]) addTo(next, g.accept);
-    for (let k = g.nullAt[q]; k < g.nullAt[q + 1]; k++) addTo(next, base + g.nulls[k]);
+    for (let k = g.otherAt[q]; k < g.nullEnd[q]; k++) addTo(next, base + g.others[k]);
   }
 }
 
@@ -479,11 +479,7 @@ function sparseConsumes(m, s, str, s0, e0, absorbOk) {
 
 // May a state of the set still consume ≥ 1 segment on a path to accept?
 export function sparseReach1(g, set) {
-  const base = g.n + 1;
-  for (let k = 0; k < set.len; k++) {
-    const item = set.items[k];
-    if (item < base ? g.reach1[item] : g.succReach1[item - base]) return true;
-  }
+  for (let k = 0; k < set.len; k++) if (g.reach1[set.items[k]]) return true;
   return false;
 }
 
