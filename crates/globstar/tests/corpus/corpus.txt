@@ -351,6 +351,11 @@ file{,_bak}	file_bak	match
 !!!foo	foo	no-match
 !!!foo	bar	match
 
+## negation.extglob-is-literal
+!(foo)	foo	match
+!(foo)	bar	match
+!(foo)	(foo)	no-match
+
 ## negation.literal.via.escape
 \!foo	!foo	match
 \!foo	foo	no-match

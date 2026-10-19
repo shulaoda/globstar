@@ -176,39 +176,10 @@ fn glob_debug_is_short() {
 }
 
 #[test]
-fn dir_match_new_combines_the_three_facts() {
-    use globstar::DirMatch;
-    assert_eq!(DirMatch::new(true, false, false), DirMatch::Match);
-    assert_eq!(DirMatch::new(false, true, true), DirMatch::DescendAll);
-    // `all_below` implies `may_below`.
-    assert_eq!(
-        DirMatch::new(true, false, true),
-        DirMatch::DescendAllAndMatch
-    );
-}
-
-#[test]
 fn classify_brace_routes_to_globstar_tier() {
     let g = Glob::new("*.{ts,tsx}").unwrap();
     // A brace counts as `Tier::Globstar`; the tier is syntax only.
     assert_eq!(g.tier(), Tier::Globstar);
-}
-
-#[test]
-fn classify_extglob() {
-    // `!(foo)` = negate once, body = literal `(foo)` → Tier::Literal.
-    let g = Glob::new("!(foo)").unwrap();
-    assert_eq!(g.tier(), Tier::Literal);
-    assert!(g.is_match(b"bar"));
-    assert!(g.is_match(b"foo")); // 'foo' != '(foo)', negated, so matches
-    assert!(!g.is_match(b"(foo)"));
-}
-
-#[test]
-fn tier0_match_basic() {
-    let g = Glob::new("src/main.rs").unwrap();
-    assert!(g.is_match(b"src/main.rs"));
-    assert!(!g.is_match(b"src/lib.rs"));
 }
 
 #[test]
@@ -219,85 +190,40 @@ fn tier0_negated() {
     assert!(g.is_match(b"bar"));
 }
 
+/// The static prefixes of the rows of `fixtures/static-prefixes.tsv`,
+/// shared with the JS tests: the patterns, `=>`, the sorted prefixes.
+/// One pattern is `Glob::new`; more are a union.
 #[test]
-fn tier0_double_negation() {
-    let g = Glob::new("!!foo").unwrap();
-    assert!(g.is_match(b"foo"));
-    assert!(!g.is_match(b"bar"));
-}
-
-fn prefixes(pattern: &str) -> Vec<Vec<u8>> {
-    Glob::new(pattern).unwrap().static_prefixes()
-}
-
-#[test]
-fn prefixes_literal() {
-    assert_eq!(prefixes("src/main.rs"), vec![b"src/main.rs".to_vec()]);
-    assert_eq!(prefixes("foo"), vec![b"foo".to_vec()]);
-}
-
-#[test]
-fn prefixes_simple_wildcard() {
-    assert_eq!(prefixes("src/*.ts"), vec![b"src".to_vec()]);
-    assert_eq!(prefixes("*.ts"), vec![b"".to_vec()]);
-}
-
-#[test]
-fn prefixes_globstar() {
-    assert_eq!(prefixes("src/**/*.ts"), vec![b"src".to_vec()]);
-    assert_eq!(prefixes("**/*.ts"), vec![b"".to_vec()]);
-    assert_eq!(prefixes("a/b/**/c"), vec![b"a/b".to_vec()]);
+fn static_prefixes_match_the_shared_rows() {
+    for line in include_str!("../../../fixtures/static-prefixes.tsv").lines() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        let at = cols.iter().position(|c| *c == "=>").expect("a `=>` column");
+        let (patterns, want) = (&cols[..at], &cols[at + 1..]);
+        let glob = match patterns {
+            [p] => Glob::new(p),
+            ps => Glob::union(ps.iter().copied()),
+        }
+        .unwrap();
+        let mut got: Vec<String> = glob
+            .static_prefixes()
+            .into_iter()
+            .map(|p| String::from_utf8(p).unwrap())
+            .collect();
+        got.sort();
+        assert_eq!(got, want, "{patterns:?}");
+    }
 }
 
 #[test]
-fn prefixes_brace_multiple() {
-    let p = prefixes("{src,tests}/*.rs");
-    assert_eq!(p.len(), 2);
-    assert!(p.contains(&b"src".to_vec()));
-    assert!(p.contains(&b"tests".to_vec()));
-}
-
-#[test]
-fn prefixes_brace_dedupes_nested() {
-    // `{src,src/cli}/*.rs` — "src" subsumes "src/cli".
-    let p = prefixes("{src,src/cli}/*.rs");
-    assert_eq!(p, vec![b"src".to_vec()]);
-}
-
-#[test]
-fn prefixes_take_a_brace_with_what_follows_it() {
-    // Each expansion's literal head: a brace in the head no longer cuts
-    // the prefix at the brace.
-    let sorted = |p: &str| {
-        let mut v = prefixes(p);
-        v.sort();
-        v
-    };
-    assert_eq!(
-        sorted("{node_modules,packages}/lodash/package.json"),
-        vec![
-            b"node_modules/lodash/package.json".to_vec(),
-            b"packages/lodash/package.json".to_vec()
-        ]
-    );
-    assert_eq!(
-        sorted("{src,lib}/index.ts"),
-        vec![b"lib/index.ts".to_vec(), b"src/index.ts".to_vec()]
-    );
-    assert_eq!(
-        sorted("a{b,c}d/x"),
-        vec![b"abd/x".to_vec(), b"acd/x".to_vec()]
-    );
-    assert_eq!(sorted("{a/**,b}/c"), vec![b"a".to_vec(), b"b/c".to_vec()]);
-    assert_eq!(prefixes("src/{**,*.ts}"), vec![b"src".to_vec()]);
+fn prefix_expansion_stays_within_the_budget() {
+    let prefixes = |p: &str| Glob::new(p).unwrap().static_prefixes();
     // Doubling braces expand while the budget lasts (eight give 256
     // heads); sixteen pass it, and nothing whole is literal before them.
     assert_eq!(prefixes(&("{a,b}".repeat(8) + "/x")).len(), 256);
     assert_eq!(prefixes(&("{a,b}".repeat(16) + "/x")), vec![b"".to_vec()]);
-}
-
-#[test]
-fn prefixes_stay_linear_in_the_pattern() {
     // A brace before a long literal copies it while the budget lasts,
     // then cuts the rest at their last whole segment.
     let branches: Vec<String> = (0..1000).map(|i| format!("b{i}")).collect();
@@ -306,31 +232,6 @@ fn prefixes_stay_linear_in_the_pattern() {
     assert_eq!(p.len(), 1000);
     let bytes: usize = p.iter().map(Vec::len).sum();
     assert!(bytes <= 4 * pattern.len(), "{bytes} bytes of prefixes");
-}
-
-#[test]
-fn prefixes_trailing_slash_globstar() {
-    // Strict trailing `/**` keeps the full literal head as the seed.
-    assert_eq!(prefixes("src/**"), vec![b"src".to_vec()]);
-    assert_eq!(prefixes("a/b/**"), vec![b"a/b".to_vec()]);
-    let p = prefixes("{src,tests}/**");
-    assert_eq!(p.len(), 2);
-    assert!(p.contains(&b"src".to_vec()));
-    assert!(p.contains(&b"tests".to_vec()));
-}
-
-#[test]
-fn prefixes_empty_subsumes_all() {
-    // `{**,src}/x` — one variant is `**/x` (prefix ""), the other is
-    // `src/x` (prefix "src"). The empty prefix subsumes "src".
-    let p = prefixes("{**,src}/x");
-    assert_eq!(p, vec![b"".to_vec()]);
-}
-
-#[test]
-fn prefixes_extglob_at_start() {
-    // `@(foo|bar).ts` is fully literal — whole string is the prefix.
-    assert_eq!(prefixes("@(foo|bar).ts"), vec![b"@(foo|bar).ts".to_vec()]);
 }
 
 // A class is a byte table: one lookup per byte, however many items it

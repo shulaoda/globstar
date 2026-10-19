@@ -1,0 +1,34 @@
+# Static prefixes: the patterns, `=>`, the sorted prefixes. One pattern
+# compiles alone, more are a union; an empty column is the empty prefix.
+src/main.rs	=>	src/main.rs
+foo	=>	foo
+src/*.ts	=>	src
+*.ts	=>	
+src/**/*.ts	=>	src
+**/*.ts	=>	
+a/b/**/c	=>	a/b
+# a strict trailing `/**` keeps the whole literal head
+src/**	=>	src
+a/b/**	=>	a/b
+{src,tests}/**	=>	src	tests
+# a brace is taken with what follows it; nested heads dedupe, `**` subsumes
+{src,tests}/*.rs	=>	src	tests
+{src,src/cli}/*.rs	=>	src
+{**,src}/x	=>	
+{node_modules,packages}/lodash/package.json	=>	node_modules/lodash/package.json	packages/lodash/package.json
+{src,lib}/index.ts	=>	lib/index.ts	src/index.ts
+a{b,c}d/x	=>	abd/x	acd/x
+{a/**,b}/c	=>	a	b/c
+src/{**,*.ts}	=>	src
+@(foo|bar).ts	=>	@(foo|bar).ts
+# a factored union keeps each member's own head
+src/**/*.ts	test/**/*.js	=>	src	test
+src/**	spec/**	=>	spec	src
+dir1/*.ts	dir2/*.ts	=>	dir1	dir2
+foo.ts	foobar.ts	=>	foo.ts	foobar.ts
+src/mod1/index.ts	src/mod2/index.ts	=>	src/mod1/index.ts	src/mod2/index.ts
+node_modules/react/package.json	node_modules/vue/package.json	=>	node_modules/react/package.json	node_modules/vue/package.json
+README.md	node_modules/lodash/README.md	=>	README.md	node_modules/lodash/README.md
+src	src/**	=>	src
+docs/**	docs/*.md	=>	docs
+src/**/*.ts	test/*.ts	=>	src	test

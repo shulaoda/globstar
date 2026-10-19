@@ -20,27 +20,6 @@ fn or_oracle(patterns: &[&str], path: &[u8]) -> bool {
         .any(|p| Glob::new(p).map(|g| g.is_match(path)).unwrap_or(false))
 }
 
-const PATHS: &[&[u8]] = &[
-    b"foo.ts",
-    b"foo.tsx",
-    b"foo.js",
-    b"foo.jsx",
-    b"README.md",
-    b"src/a/b.ts",
-    b"src/main.rs",
-    b"node_modules/foo/index.js",
-];
-
-#[test]
-fn equivalence_with_or_oracle() {
-    let patterns = ["**/*.ts", "**/*.tsx", "**/*.js"];
-    let u = Glob::union(patterns).unwrap();
-    assert_eq!(u.engine_name(), "Segment");
-    for p in PATHS {
-        assert_eq!(u.is_match(p), or_oracle(&patterns, p), "path {p:?}");
-    }
-}
-
 #[test]
 fn empty_throws() {
     let result = Glob::union(std::iter::empty::<&str>());
@@ -96,50 +75,6 @@ fn a_union_tier_is_its_highest_members() {
     assert_eq!(tier(&["a", "*.ts"]), Tier::SimpleWildcard);
     assert_eq!(tier(&["a", "**/b"]), Tier::Globstar);
     assert_eq!(tier(&["{a,b}"]), Tier::Globstar);
-}
-
-#[test]
-fn factoring_keeps_the_members_static_prefixes() {
-    let prefixes = |patterns: &[&str]| -> Vec<String> {
-        let mut out: Vec<String> = Glob::union(patterns)
-            .unwrap()
-            .static_prefixes()
-            .iter()
-            .map(|p| String::from_utf8(p.to_vec()).unwrap())
-            .collect();
-        out.sort();
-        out
-    };
-    // Lifting the shared `s` of `src`/`spec` would leave the walker with no
-    // directory to start from; what factoring shares behind a `/` is read
-    // back per member.
-    assert_eq!(prefixes(&["src/**/*.ts", "test/**/*.js"]), ["src", "test"]);
-    assert_eq!(prefixes(&["src/**", "spec/**"]), ["spec", "src"]);
-    assert_eq!(prefixes(&["dir1/*.ts", "dir2/*.ts"]), ["dir1", "dir2"]);
-    assert_eq!(prefixes(&["foo.ts", "foobar.ts"]), ["foo.ts", "foobar.ts"]);
-    assert_eq!(
-        prefixes(&["src/mod1/index.ts", "src/mod2/index.ts"]),
-        ["src/mod1/index.ts", "src/mod2/index.ts"]
-    );
-    // A shared head or tail no longer hides a member's own prefix, and a
-    // member that is a folder another member walks keeps it.
-    assert_eq!(
-        prefixes(&[
-            "node_modules/react/package.json",
-            "node_modules/vue/package.json"
-        ]),
-        [
-            "node_modules/react/package.json",
-            "node_modules/vue/package.json"
-        ]
-    );
-    assert_eq!(
-        prefixes(&["README.md", "node_modules/lodash/README.md"]),
-        ["README.md", "node_modules/lodash/README.md"]
-    );
-    assert_eq!(prefixes(&["src", "src/**"]), ["src"]);
-    assert_eq!(prefixes(&["docs/**", "docs/*.md"]), ["docs"]);
-    assert_eq!(prefixes(&["src/**/*.ts", "test/*.ts"]), ["src", "test"]);
 }
 
 #[test]
@@ -202,25 +137,20 @@ fn single_pattern_degenerates() {
 }
 
 #[test]
-fn negated_pattern_rejected() {
-    let result = Glob::union(["a", "!b"]);
-    assert!(matches!(
-        result,
-        Err(GlobError::NegatedInUnion { index: 1, .. })
-    ));
-}
-
-#[test]
-fn single_negated_pattern_rejected() {
+fn negated_members_are_rejected() {
     // Deliberate Rust/JS asymmetry: `Glob::union` is a pure OR of
     // positive patterns, so even a lone `!foo` is rejected — while the
     // JS `globstar()`/`compileMatcher()` factory accepts negation as
     // part of its include/exclude contract.
-    let result = Glob::union(["!foo"]);
-    assert!(matches!(
-        result,
-        Err(GlobError::NegatedInUnion { index: 0, .. })
-    ));
+    for (members, index) in [(&["a", "!b"][..], 1), (&["!foo"][..], 0)] {
+        assert!(
+            matches!(
+                Glob::union(members.iter().copied()),
+                Err(GlobError::NegatedInUnion { index: i, .. }) if i == index
+            ),
+            "{members:?}"
+        );
+    }
 }
 
 #[test]

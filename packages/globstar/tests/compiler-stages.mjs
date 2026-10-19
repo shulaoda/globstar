@@ -73,49 +73,30 @@ for (const [index, line] of cases.split("\n").entries()) {
 
 console.log("✓ shared parser golden cases");
 
-// Static-prefix pinning, mirroring crates/globstar/tests/glob.rs prefixes_*.
+// Static-prefix pinning, with crates/globstar/tests/glob.rs.
 const prefixesOf = (patterns) =>
   compileMatcher(patterns)
     .staticPrefixes()
     .map((b) => new TextDecoder().decode(b))
     .sort();
-assert.deepEqual(prefixesOf("src/main.rs"), ["src/main.rs"]);
-assert.deepEqual(prefixesOf("src/*.ts"), ["src"]);
-assert.deepEqual(prefixesOf("**/*.ts"), [""]);
-assert.deepEqual(prefixesOf("src/**/*.ts"), ["src"]);
-// Strict trailing `/**` keeps the full literal head as the seed.
-assert.deepEqual(prefixesOf("src/**"), ["src"]);
-assert.deepEqual(prefixesOf("a/b/**"), ["a/b"]);
-assert.deepEqual(prefixesOf("{src,tests}/**"), ["src", "tests"]);
-// `{**,src}/x` — the empty prefix subsumes "src".
-assert.deepEqual(prefixesOf("{**,src}/x"), [""]);
+// The shared rows: the patterns, `=>`, the sorted prefixes (one pattern
+// or a union). Twin of `static_prefixes_match_the_shared_rows` in glob.rs.
+const prefixRows = readFileSync(resolve(here, "../../../fixtures/static-prefixes.tsv"), "utf8");
+for (const line of prefixRows.split("\n")) {
+  if (!line || line.startsWith("#")) continue;
+  const cols = line.split("\t");
+  const at = cols.indexOf("=>");
+  const patterns = cols.slice(0, at);
+  const got = prefixesOf(patterns.length === 1 ? patterns[0] : patterns);
+  assert.deepEqual(got, cols.slice(at + 1), JSON.stringify(patterns));
+}
 // A negated branch means matches can fall anywhere: seed from the cwd
 // (a single empty prefix, never an empty list — the Rust convention).
 assert.deepEqual(prefixesOf(["src/*.ts", "!x"]), [""]);
 assert.deepEqual(prefixesOf(["!x"]), [""]);
-// Each expansion's literal head: a brace is taken with what follows it,
-// and a factored union keeps its members' heads. Twins of
-// `prefixes_take_a_brace_with_what_follows_it` (glob.rs) and
-// `factoring_keeps_the_members_static_prefixes` (glob_union.rs).
-assert.deepEqual(prefixesOf("{node_modules,packages}/lodash/package.json"), [
-  "node_modules/lodash/package.json",
-  "packages/lodash/package.json",
-]);
-assert.deepEqual(prefixesOf("a{b,c}d/x"), ["abd/x", "acd/x"]);
-assert.deepEqual(prefixesOf("{a/**,b}/c"), ["a", "b/c"]);
-assert.deepEqual(prefixesOf("src/{**,*.ts}"), ["src"]);
+// Doubling braces expand while the budget lasts; sixteen pass it.
 assert.equal(prefixesOf("{a,b}".repeat(8) + "/x").length, 256);
 assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
-assert.deepEqual(prefixesOf(["src/mod1/index.ts", "src/mod2/index.ts"]), [
-  "src/mod1/index.ts",
-  "src/mod2/index.ts",
-]);
-assert.deepEqual(prefixesOf(["README.md", "node_modules/lodash/README.md"]), [
-  "README.md",
-  "node_modules/lodash/README.md",
-]);
-assert.deepEqual(prefixesOf(["src", "src/**"]), ["src"]);
-assert.deepEqual(prefixesOf(["docs/**", "docs/*.md"]), ["docs"]);
 {
   const branches = Array.from({ length: 1000 }, (_, i) => `b${i}`).join(",");
   const pattern = `{${branches}}/${"z".repeat(20_000)}`;
