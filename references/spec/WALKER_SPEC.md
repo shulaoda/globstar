@@ -2,8 +2,6 @@
 
 This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling.
 
-**Version.** v0.3.12, draft. Appendix A (§12) lists every change.
-
 **Status.** Active, not yet released.
 
 **Reference implementation.** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec.
@@ -23,8 +21,7 @@ This document specifies the filesystem walker that consumes the glob matcher def
 9. [Error Handling](#9-error-handling)
 10. [Symlink Behavior](#10-symlink-behavior)
 11. [Differences from Other Walkers](#11-differences-from-other-walkers)
-12. [Appendix A: Version History](#12-appendix-a-version-history)
-13. [Appendix B: Glossary](#13-appendix-b-glossary)
+12. [Appendix A: Glossary](#12-appendix-a-glossary)
 
 ---
 
@@ -424,39 +421,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 
 ---
 
-## 12. Appendix A: Version History
-
-- **v0.1.0** (2026-04-30, draft):
-  - Public API split into `glob` (async concurrent) and `globSync` (sync DFS).
-  - Hardwired `onlyFiles: true` output. `withFileTypes` and `DirEntry` removed from the public surface.
-  - `onError` removed; all IO failures throw `WalkError("Io")` and propagate (sync throws / async rejects).
-  - `cwd` validated upfront; missing or non-directory `cwd` throws `WalkError("Io")`.
-  - `!`-prefix split for input arrays uses parity (matching the matcher's parser parity rule from GLOB_SPEC.md §11.1) instead of the earlier "exactly one `!`" rule.
-  - Async traversal uses an own implementation directly on `node:fs.readdir`; the `@nodelib/fs.walk` and `fdir` dependencies were evaluated and dropped — same fan-out, no extra dependency.
-- **v0.2.0** (2026-05-03, draft):
-  - `absolute` option **removed**. Output is hardwired to the `cwd`-prefixed absolute form. Rationale: matches Vite's `import.meta.glob` actual contract (the Vite source always passes `absolute: true` to tinyglobby and post-relativizes itself), and a single output form keeps the walker shape minimal. Callers wanting paths relative to `cwd` should `path.relative(cwd, p)` at their boundary.
-- **v0.3.0** (2026-05-04, draft):
-  - `followSymlinks` semantics aligned with `tinyglobby` / `fdir`:
-    - default flipped from `false` to `true` (matches Vite's `import.meta.glob` contract — pnpm-style `node_modules/<pkg>` symlinks must be traversed by default).
-    - When `false`, symlinks are now dropped entirely (NOT emitted, NOT descended). Was previously "emit as file, never descend"; the new behavior matches `fdir`'s `excludeSymlinks` mode.
-    - When `true`, symlink cycles are now broken via `fs.realpathSync` + ancestor chain (§7.1 step 6, §10). Was previously "no cycle detection — caller's responsibility".
-- **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §6.2); seed stat failures probe `lstat` (§9.4).
-- **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.
-- **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
-- **v0.3.3** (2026-10-16): options are checked (§3.1: own keys only, no unknown keys, booleans for the flags; `glob` rejects); an ignore entry that starts with `!` is refused (§3.2); every `!` run normalization exposes counts in the split (§4.2).
-- **v0.3.4** (2026-10-16): §3.2's ignore predicate names the folders above a path (an ignored folder hides its subtree); a symlink that closes a cycle is not emitted (§3.2, §10: the output is files only); §2.2 says async and sync each win somewhere, with measurements; §11 corrects the seeding cell and fills doublestar's `!` cell.
-- **v0.3.5** (2026-10-16): §4.4: a compile failure names the member the matcher reports, with no second compile; a whole-list error names the list cut after three.
-- **v0.3.6** (2026-10-16): §6 joins a seed part by part, as a root walk does; §7.4 and §8.2: on Windows a drive-root `cwd` gets no second separator and a verbatim `cwd` is joined with `\`.
-- **v0.3.7** (2026-10-16): §6: a seed part with a non-ASCII name must appear in its folder's listing as written (APFS opens an NFC spelling of an NFD name); §10: `followSymlinks: false` judges an entry when its parent is read, which a tree changing during the walk can get around.
-- **v0.3.8** (2026-10-16): §3.2: a pattern or ignore entry that ends in `/` matches folders only (`node_modules/` prunes the folder). §8.1: FIFOs, sockets and devices are never emitted.
-- **v0.3.9** (2026-10-16): §6: a seed is reached part by part through the walk's own per-entry rule (§7.1), so it follows every rule of a root walk by construction; this also prunes a seed below a folder the ignore set covers, which used to be read.
-- **v0.3.10** (2026-10-17): §10: symlink cycles are found by the target's `(dev, ino)` from the stat that typed the link, confirmed by `realpath` on a hit (Windows: `realpath` alone), so a walk without a cycle resolves no path. §7.1 lists the steps as the walker takes them (paths from per-folder heads, special files, folder-only ignores) and §4.4 the third matcher. §6: on Windows a seed part Win32 would rewrite must be listed as written. §2.1: patterns are any iterable.
-- **v0.3.11** (2026-10-18): §7.1: the Rust walker skips a name that is not valid UTF-8 as the JS walker does (it used to match a lossy spelling of it); §9.3: an entry that cannot be typed is reported with its folder's path in both runtimes; §6: the Rust walker splits a seed prefix on every platform separator, as the guard already did; `DirEntry::is_dir` says what the walk took an entry for.
-- **v0.3.12** (2026-10-19): §3.2: a folder is asked about with its `/` of the whole `ignore` set, so an entry that ends in `/**` prunes it under either `dot` (it used to be read, and a dot-led name below it that a pattern named was found under `dot: false`); §4.4 loses the folder-only ignore matcher; §7.1 says so.
-
----
-
-## 13. Appendix B: Glossary
+## 12. Appendix A: Glossary
 
 - **Walker.** The filesystem-traversal layer (`glob` / `globSync`) that invokes the matcher to enumerate matching file paths under `cwd`.
 - **Frame.** One unit of walker work: an absolute directory path paired with its relative-to-`cwd` form. The traversal stack / scheduler holds frames.

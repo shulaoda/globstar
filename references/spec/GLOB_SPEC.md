@@ -2,8 +2,6 @@
 
 **Status.** This document is the normative definition of the glob dialect implemented by the `globstar` Rust crate (`crates/globstar`) and the `@globstar/core` JS package (`packages/globstar`). When code, tests or other documents disagree with it, the code changes.
 
-**Version.** 0.3.0, draft. Appendix B lists every change.
-
 **Baseline.** The dialect follows `picomatch` and `fast-glob` mainline behavior with the rigor of `doublestar`. Bit-exact parity with any single tool is not a goal; Appendix A lists every deliberate difference.
 
 **Conventions.** The key words MUST, MUST NOT, SHOULD and MAY are to be read as described in RFC 2119. They state requirements on an implementation or on a caller. Sentences without a key word define the pattern language itself. A paragraph marked *Note*, *Rationale* or *Implementation note* is informative. Examples are informative.
@@ -31,8 +29,7 @@
 17. [Static Prefixes](#17-static-prefixes)
 
 - [Appendix A: Differences from Other Tools](#appendix-a-differences-from-other-tools)
-- [Appendix B: Version History](#appendix-b-version-history)
-- [Appendix C: Glossary](#appendix-c-glossary)
+- [Appendix B: Glossary](#appendix-b-glossary)
 
 ---
 
@@ -115,7 +112,7 @@ is_match(P, path)  :=  path ∈ L(P)
 
 A match covers the whole path: every byte of the path is consumed by `P`, and nothing is matched as a substring (§14.1). `L(P)` depends on the two options of §3; this document writes `L(P)` for the language under the options in force.
 
-The language is built compositionally: each construct (§7–§10) denotes a set of byte strings, a sequence denotes their concatenation, the leading `!` (§11) complements, and two cross-cutting rules, dot protection (§12) and case folding (§13), restrict or widen what the wildcards consume. Appendix C restates the vocabulary.
+The language is built compositionally: each construct (§7–§10) denotes a set of byte strings, a sequence denotes their concatenation, the leading `!` (§11) complements, and two cross-cutting rules, dot protection (§12) and case folding (§13), restrict or widen what the wildcards consume. Appendix B restates the vocabulary.
 
 ---
 
@@ -936,42 +933,7 @@ Every cell was measured on 2026-10-16: Bash 5.2.37 (filename expansion with `glo
 
 ---
 
-## Appendix B: Version History
-
-Section numbers in entries before v0.3.0 refer to the numbering of that time; v0.3.0 gives the map.
-
-- **v0.1** (2026-04-11): initial draft.
-- **v0.1.1** (2026-04-11): §8 rewritten. `L(**)` is any byte string (regex `.*`); `L(a/**)` includes `a/` but not `a`; §8.4 added.
-- **v0.1.2** (2026-04-14): class `/` is `UnterminatedClass` (§6.2); POSIX first-`]` rule (§6.5), `EmptyClass` and `EmptyNegationClass` removed; leading `**/` means "at any depth" (§8.5).
-- **v0.1.3** (2026-04-14): implementation-defined separator set `Seps` (§12.3).
-- **v0.1.4** (2026-04-14): matcher `dot` default flipped to `true`; walker stays `false`.
-- **v0.1.5** (2026-04-14): class `Seps` guard applies to both polarities.
-- **v0.1.6** (2026-04-14, rolled back): stray `]` and `}` as errors. Reverted: real file names need them as plain bytes more often than typo detection helps.
-- **v0.1.7** (2026-04-14): ASCII `case_insensitive` option (§11.2).
-- **v0.2.0** (2026-04-23): extglobs removed; `@()`, `?()`, `*()`, `+()`, `!(...)` are literal.
-- **v0.2.1** (2026-07-23): braces defined by the expansion equation (§7.0). `**` ownership is judged on the expanded form: `a{**,x}b` degrades, `{**,x}/b` matches `b`, `a/{**/x,y}` gets the lenient boundary. Deliberate divergence from picomatch (§16). Corpus group `brace.globstar-expansion`.
-- **v0.2.2** (2026-09-28): `DescendAll` and `DescendAllAndMatch` (§13.1, §13.2, §13.6): the one-sided guarantee, the wildcard-only rule, the shapes it cannot prove; never set under `dot=false`. Corpus group `all-below`.
-- **v0.2.3** (2026-09-30): the expansion equation holds on every shape (§7.0, §8.1): `**{/a,b}` ≡ `**/a ∪ *b`, `{a,}**` ≡ `a* ∪ **`. The local expansion is bounded by `BraceExpansionTooLarge` and `BraceNestingTooDeep` (§7.6, §7.7, §10).
-- **v0.2.4** (2026-10-14): editorial pass; the text follows the implementation everywhere, and the document states its conventions.
-  - `|` is a literal byte everywhere (§3, §5); `[[:alpha:]]` compiles as an ordinary class (§6.6).
-  - Removed the "trailing `/` means directory" claims (§8.3, §16): no such rule exists.
-  - §7.6: the nesting counter sees every `{`, single-branch ones included.
-  - §13.2 defines the walk root (`d = ""`); §13.4: a negated pattern is always `Descend`.
-  - §10: the JS `TooManyStates` note is gone with the engine that had the cap; `NegatedInUnion` carries `index` and `pattern`.
-  - Implementation-internal names left the normative text. RFC 2119 key words are reserved for requirements; rationale and implementation notes are marked as informative.
-- **v0.2.5** (2026-10-16): `TooComplex` (§10) bounds the compile work of braces whose segments multiply.
-- **v0.2.6** (2026-10-16): §13.6 states how the reference implementations bound the all-below proof (64 wildcard-only segments, 4096 tail compares); §7.2 and §7.7 point at `TooComplex`.
-- **v0.2.7** (2026-10-16): §12.4 states dot protection as the implementations apply it, per segment start: a `*` there matches nothing, not even the empty string (`*.txt` does not match `.txt`); §15.8 shows it.
-- **v0.2.8** (2026-10-16): §10: `InvalidRange.at` is where the range starts; an error one member of a pattern list raises names the member (`InMember` in Rust, `index` in JS).
-- **v0.2.9** (2026-10-16): §16 measured cell by cell against each tool (versions under the table), with fast-glob's npm walker and Rust crate in columns of their own, and a row for `.` and `..` under `dot = true` (§11.1 says to normalize paths from outside); the other-tool claims in §6.5, §7.4, §8.3 and §11.1 follow the measurements. §13.2's examples take the `match_dir(P, d)` order and name their `dot`. §13.6 states the all-below rule per segment with its `dot` gate, and says union members merge while a user's braces do not. §7.0 cites §8.1 for star collapse.
-- **v0.2.10** (2026-10-16): §13.5: on Windows an expansion through an escaped `\` gives no static prefix, and its segment is one `match_dir` prunes at.
-- **v0.2.11** (2026-10-16): §4.5, §10: an empty body after the leading `!` run (`!`, `!!`) is `Empty`. §6.3, §6.5: a first-position `]` can start a range (`[]-a]` is `]..=a`, as POSIX reads it). §2.1: a JS pattern with a lone surrogate is a `TypeError`. §13.4: a negated pattern's `matches` is exact (`DescendAndMatch` when `d` matches). §6.6 (new; POSIX classes move to §6.7): a class takes one byte, so `[é]` never matches `é`. §3 writes down the grammar rules that lived only in code: a run of stars is one star, a range end can be escaped, a `-` after a range is a member, and `[a\` is `TrailingBackslash`. §13.2: ask about a directory without its trailing separator, and about the filesystem root as `""`.
-- **v0.3.0** (2026-10-19): the document is reorganized from first principles; no rule changed. §2 (Model) defines bytes, separators, segments and what a pattern denotes once, and every later section builds on it; options come next (§3), then syntax (§4–§6: lexical rules, grammar with the normalizations in one table, errors with the three limits in one place), semantics per construct (§7–§10), the cross-cutting rules (§11 negation, §12 dot protection, §13 case folding), matching a path (§14), and the operations (§15 `match_dir`, §16 unions, §17 static prefixes, which was an implementation note). The edge-case catalog is gone: the corpus is the conformance test. Old → new sections: 2.1→2.1, 2.2/2.3→2.2, 2.4→4.2, 3→5.1, 4.1–4.3→7, 4.5→6.1, 5→1.2, 6.x→8.x, 7.0→10.1, 7.1→10.2, 7.2→10.5, 7.3→10.3, 7.4→10.4, 7.5→10.6, 7.6/7.7→6.2, 7.8/7.9→10.7, 8.1→9.1, 8.2→9.2, 8.3→9.3, 8.4→15.3, 8.5→9.4, 8.6/8.7→9.6, 9.1→4.1, 9.2→4.4, 9.3/9.5→11.1, 9.4→11.3, 9.6→11.4, 10→6, 11.1→3.1, 11.2→3.2 and 13, 11.3→3.3, 12.1/12.2→14.1 (and 2.4), 12.3→14.2 (and 7.4, 9.5), 12.4→12, 12.5→14.3, 13.1→15.1, 13.2→15.2, 13.3→15.6, 13.4→15.4, 13.5→17, 13.6→15.5, 14.1/14.2→16.1, 14.3→16.2, 14.4→16.3, 16→A, 17→B, 18→C.
-- Awaiting owner approval before freezing as v1.0.
-
----
-
-## Appendix C: Glossary
+## Appendix B: Glossary
 
 | Term                   | Meaning                                                                                                                  |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
