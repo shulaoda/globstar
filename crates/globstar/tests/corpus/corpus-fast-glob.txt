@@ -354,7 +354,7 @@ a[X-]b	aXb	match
 [a-y]*[^c]	bb	match
 [a-y]*[^c]	bcd	match
 # Row removed — fast-glob allows `/` to match `[^c]`, we don't (class is
-# segment-local per §6.2). Divergence in corpus-fast-glob-diff.txt.
+# segment-local per §8.2). Divergence in corpus-fast-glob-diff.txt.
 [a-y]*[^c]	Beware	no-match
 [a-y]*[^c]	c	no-match
 [a-y]*[^c]	ca	match
@@ -447,7 +447,7 @@ a[\\b]c	\\*	no-match
 a[\\b]c	a	no-match
 a[\\b]c	a/*	no-match
 # Row removed — fast-glob interprets `\b` as ASCII backspace (0x08); we
-# use lenient escape (§6.3) so `\b` = literal `b`, hence `a[\b]c` matches
+# use lenient escape (§8.3) so `\b` = literal `b`, hence `a[\b]c` matches
 # `abc`. Divergence in corpus-fast-glob-diff.txt.
 a[\\b]c	abd	no-match
 a[\\b]c	abe	no-match
@@ -552,7 +552,7 @@ t[^a-g]n	ton	match
 
 ## fast_glob.bash_slashmatch
 # Row removed — `foo[/]bar`: fast-glob treats `[/]` as matching `/`, we
-# reject at parse time (class is segment-local, §6.2). Divergence in
+# reject at parse time (class is segment-local, §8.2). Divergence in
 # corpus-err.txt.
 f[^eiu][^eiu][^eiu][^eiu][^eiu]r	foo-bar	match
 

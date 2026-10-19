@@ -46,7 +46,7 @@ export function compileSegNfa(nodes, dot, ci) {
 // lookup, however many items the class lists. `neg` stays for dot
 // protection, where a negated class counts as a wildcard.
 // Case-insensitively (`ci`) a listed ASCII letter lists its other case
-// too, before the negation (§11.2).
+// too, before the negation (§13).
 function byteSet(cls, ci) {
   const bits = [0, 0, 0, 0, 0, 0, 0, 0];
   for (const it of cls.items) {

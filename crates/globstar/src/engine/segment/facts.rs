@@ -177,7 +177,7 @@ impl Heads<'_> {
             };
             match node {
                 // An escaped `\` on Windows: the expansion matches nothing
-                // (§2.4), so it has no head to seed.
+                // (§4.2), so it has no head to seed.
                 Node::Literal(bytes) if has_sep(bytes) => {
                     acc.truncate(mark);
                     return;

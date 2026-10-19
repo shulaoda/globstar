@@ -251,7 +251,7 @@ a??d	abd	no-match
 [A-Fa-f0-9]	G	no-match
 
 ## class.positive.boundary_ranges
-# Note: ranges that include `/` are parse errors (§6.2). Use ranges that
+# Note: ranges that include `/` are parse errors (§8.2). Use ranges that
 # stay strictly above (`0`–`~`) or below (`!`–`.`) `/` to test punctuation
 # coverage.
 [0-~]	0	match
@@ -321,7 +321,7 @@ file[!0-9].txt	file5.txt	no-match
 file[!0-9].txt	file_.txt	match
 
 ## class.negated.dot_protection_at_segment_start
-# dot=false: `[^x]` cannot match leading `.` (segment-start protection §12.4)
+# dot=false: `[^x]` cannot match leading `.` (segment-start protection §12)
 [^x]	a	match	dot=false
 [^x]	.	match	dot=true
 [^x]*	.hidden	no-match	dot=false

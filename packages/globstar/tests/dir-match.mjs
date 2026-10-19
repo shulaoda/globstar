@@ -53,7 +53,7 @@ assert.equal(
 );
 
 // A negated pattern is always worth walking, and says exactly whether the
-// directory itself matches (§13.4), alone or in a list.
+// directory itself matches (§15.4), alone or in a list.
 assert.equal(compileMatcher("!**/*.ts").matchDir("src"), DirMatch.DescendAndMatch);
 assert.equal(compileMatcher("!**/*.ts").matchDir("a.ts"), DirMatch.Descend);
 for (const [d, matches] of [
@@ -87,7 +87,7 @@ assert.equal(DirMatch.from(false, false, true), DirMatch.DescendAll);
 
 console.log("✓ matchDir verdicts serve both the selecting and the excluding role");
 
-// Windows: an escaped `\` is a literal no segment holds (§2.4), so its
+// Windows: an escaped `\` is a literal no segment holds (§4.2), so its
 // expansion seeds nothing, and `matchDir` prunes where it is next. Twin
 // of `an_escaped_backslash_is_dead_on_windows`.
 if (process.platform === "win32") {

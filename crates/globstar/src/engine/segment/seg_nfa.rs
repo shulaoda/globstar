@@ -133,7 +133,7 @@ struct ByteSet {
 
 impl ByteSet {
     /// Case-insensitively (`ci`) a listed ASCII letter lists its other
-    /// case too, before the negation (§11.2).
+    /// case too, before the negation (§13).
     fn of(cls: &CharClass, ci: bool) -> Self {
         let mut set = ByteSet {
             bits: [0; 4],

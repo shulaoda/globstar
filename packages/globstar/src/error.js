@@ -2,7 +2,7 @@
 // may nest (`BraceNestingTooDeep`).
 export const MAX_PATTERN_LEN = 64 * 1024;
 export const MAX_BRACE_NESTING = 32;
-// What distributing braces around `**` may copy (§7.7), per matcher: one
+// What distributing braces around `**` may copy (§6.2), per matcher: one
 // per token, a literal or a class by its length, and one per brace branch.
 export const MAX_EXPANSION = 4096;
 

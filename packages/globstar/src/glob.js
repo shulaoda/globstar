@@ -150,7 +150,7 @@ function makeMatcher(positiveEngine, negativeEngines) {
     requireStringInput(input);
     if (!hasNegatives) return positiveEngine.matchDir(input);
     // Anything below may match a negated member; whether `input` itself
-    // matches is exact (§13.4).
+    // matches is exact (§15.4).
     const below = positiveEngine === null ? DirMatch.Descend : positiveEngine.matchDir(input);
     return DirMatch.from(match(input), true, DirMatch.matchesAllBelow(below));
   };

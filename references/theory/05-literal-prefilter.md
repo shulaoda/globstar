@@ -78,7 +78,7 @@ The implementation accordingly stores only suffix facts. The historical prefix f
 
 ## 4. Separator-aware comparison
 
-The end-anchored comparison must respect the platform separator set `Sep` (`references/spec/GLOB_SPEC.md` §12.3): on Windows, a pattern suffix `/` should match a path-side `\`. The `ends_with` in `accept` (Rust `SegmentMatcher::ends_with`, JS `endsWithSepAware`) therefore matches a byte `b` against the suffix byte `s` as
+The end-anchored comparison must respect the platform separator set `Sep` (`references/spec/GLOB_SPEC.md` §14.2): on Windows, a pattern suffix `/` should match a path-side `\`. The `ends_with` in `accept` (Rust `SegmentMatcher::ends_with`, JS `endsWithSepAware`) therefore matches a byte `b` against the suffix byte `s` as
 
 ```
 b matches s   ⇔   (s ∈ Sep ⇒ b ∈ Sep) ∧

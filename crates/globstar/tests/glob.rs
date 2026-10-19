@@ -247,7 +247,7 @@ fn a_long_class_costs_one_lookup_per_byte() {
     assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
 }
 
-// Windows: an escaped `\` is a literal no segment holds (§2.4), so its
+// Windows: an escaped `\` is a literal no segment holds (§4.2), so its
 // expansion seeds nothing, and `match_dir` prunes where it is next.
 #[cfg(windows)]
 #[test]

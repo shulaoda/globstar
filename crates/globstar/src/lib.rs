@@ -85,11 +85,11 @@ pub enum Tier {
 pub struct CompileOptions {
     /// When `false`, wildcards (`*` `?` `[^x]`) cannot consume a leading
     /// `.` — dotfile protection. `Glob` defaults to `true`, `Walk` to
-    /// `false` (GLOB_SPEC.md §11.1 / §12.4).
+    /// `false` (GLOB_SPEC.md §3.1 / §12).
     pub dot: bool,
 
     /// ASCII-only case folding, `false` by default; non-ASCII bytes
-    /// compare verbatim (GLOB_SPEC.md §11.2 / §12.5).
+    /// compare verbatim (GLOB_SPEC.md §13 / §14.3).
     pub case_insensitive: bool,
 }
 
@@ -322,10 +322,10 @@ impl Glob {
     /// that something below may: [`DirMatch::DescendAndMatch`] or
     /// [`DirMatch::Descend`], never a covering verdict. Ask about a
     /// directory without a trailing separator (`a`, not `a/`; GLOB_SPEC
-    /// §13.2).
+    /// §15.2).
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
         // Anything below may match a negated pattern; whether `dir_path`
-        // itself does is exact (§13.4).
+        // itself does is exact (§15.4).
         if self.negated {
             return DirMatch::new(self.is_match(dir_path), true, false);
         }

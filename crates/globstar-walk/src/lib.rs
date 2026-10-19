@@ -219,12 +219,12 @@ impl Walk {
     /// it as `base`.
     ///
     /// **`!`-prefixed patterns are auto-split** out of `patterns` by
-    /// leading-`!` parity (GLOB_SPEC §9.5): odd count routes the body
+    /// leading-`!` parity (GLOB_SPEC §11.1): odd count routes the body
     /// (with all leading `!`s stripped) into the ignore set, even count
     /// routes it into the positive set. `["**/*.ts", "!**/*.test.ts"]`
     /// is equivalent to `patterns: ["**/*.ts"]` + `ignore: ["**/*.test.ts"]`.
     /// To match a filename literally starting with `!`, escape it
-    /// (`\!foo` or `[\!]foo`) per GLOB_SPEC §9.4.
+    /// (`\!foo` or `[\!]foo`) per GLOB_SPEC §11.3.
     pub fn from_patterns<I, S>(patterns: I, opts: impl Into<WalkOptions>) -> Result<Self, WalkError>
     where
         I: IntoIterator<Item = S>,
@@ -235,7 +235,7 @@ impl Walk {
             .dot(opts.dot)
             .case_insensitive(opts.case_insensitive);
 
-        // Partition input by leading-`!` parity (GLOB_SPEC §9.5): count
+        // Partition input by leading-`!` parity (GLOB_SPEC §11.1): count
         // all leading `!`s, route by parity (odd → ignore, even → match),
         // strip every leading `!` from the body so the parser sees a
         // clean pattern. Matches the JS walker (`packages/globstar-walk/src/walk.js`).

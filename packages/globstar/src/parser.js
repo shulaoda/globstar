@@ -36,7 +36,7 @@ const DASH = 0x2d;
 const SPECIAL = new Uint8Array(256);
 for (const b of [BACKSLASH, SLASH, QUESTION, STAR, LBRACK, LBRACE, COMMA, RBRACE]) SPECIAL[b] = 1;
 
-// `budget` is the expansion budget (§7.7): the patterns of one matcher share
+// `budget` is the expansion budget (§6.2): the patterns of one matcher share
 // it, so together they may copy `MAX_EXPANSION`, not each.
 //
 // The pattern is read as its UTF-8 bytes, one char per byte (see
@@ -61,7 +61,7 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
     negationCount++;
     state.pos++;
   }
-  // `!` and `!!` negate nothing (§4.5).
+  // `!` and `!!` negate nothing (§6.1).
   if (state.pos === bytes.length) throw new GlobError("Empty");
 
   let body = parseSequence(state, 0);
@@ -132,7 +132,7 @@ function parseSequence(state, depth) {
           nodes.push(brace(branches));
           break;
         }
-        // One branch is no brace (§7.4): its text, braces included.
+        // One branch is no brace (§10.4): its text, braces included.
         text += "{";
         const single = branches[0];
         for (const node of single.tag === N_CONCAT ? single.children : [single]) {
@@ -163,10 +163,10 @@ function parseSequence(state, depth) {
 }
 
 // A `**` is a globstar with a separator, or the end of the pattern, on both
-// sides, and a star beside any other token (§8.1). Beside a brace, or at the
+// sides, and a star beside any other token (§9.1). Beside a brace, or at the
 // edge of a branch, what it meets depends on the branch, so such a `**` is
 // left to `resolveGlobstars`; so is one after `**/`, which `resolveGlobstars`
-// folds into it (§8.6).
+// folds into it (§9.6).
 function doubleStar(state, nodes, inBrace) {
   const last = nodes.length > 0 ? nodes[nodes.length - 1] : undefined;
   let before;
@@ -198,7 +198,7 @@ function parseClass(state) {
   }
 
   const items = [];
-  // A `]` first is a member (§6.5), and like any member it can start a
+  // A `]` first is a member (§8.5), and like any member it can start a
   // range: `[]-a]` is `]..=a`.
   let first = true;
   while (true) {

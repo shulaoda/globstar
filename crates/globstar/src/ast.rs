@@ -25,12 +25,12 @@ pub enum Node {
     /// `*` — zero or more non-separator bytes.
     Star,
     /// `**` — zero or more bytes across separators. The parser emits it
-    /// only where it owns a whole segment (§8.1), in every brace expansion;
+    /// only where it owns a whole segment (§9.1), in every brace expansion;
     /// a `**` that does not is a [`Node::Star`].
     Globstar,
     /// `[...]` character class.
     Class(CharClass),
-    /// `{a,b,c}` brace alternation: always two or more branches (§7.4).
+    /// `{a,b,c}` brace alternation: always two or more branches (§10.4).
     Brace(Vec<Node>),
 }
 

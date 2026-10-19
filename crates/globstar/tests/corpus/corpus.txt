@@ -317,7 +317,7 @@ file{,_bak}	file_bak	match
 
 ## escape.metachars
 # Note: literal-backslash round-trip tests (like `\\` pattern matching `\` path)
-# are intentionally absent — under spec §12.3, path `\` is normalized as a
+# are intentionally absent — under spec §14.2, path `\` is normalized as a
 # separator and cannot be distinguished from `/`, so a literal `\` in the
 # pattern has nothing to match against.
 \*	*	match
@@ -382,7 +382,7 @@ src/*.ts	src/main.ts	match
 **/*	a/.b	match	dot=true
 
 ## path.separator.normalization
-# `/` is the spec-level separator (§12.3), platform-independent.
+# `/` is the spec-level separator (§14.2), platform-independent.
 # `\` additionally counts as a separator on Windows only (via
 # `std::path::is_separator`) — see corpus-windows.txt / corpus-unix.txt
 # for the platform-dependent `a\b` rows.
@@ -470,7 +470,7 @@ my file.txt	my file.txt	match
 x=y	x=y	match
 
 ## class.semantics.literal_metachars
-# Inside `[…]`, pattern-level metacharacters decay to literals (§6.3).
+# Inside `[…]`, pattern-level metacharacters decay to literals (§8.3).
 [?*!(]	?	match
 [?*!(]	*	match
 [?*!(]	!	match
@@ -497,7 +497,7 @@ x=y	x=y	match
 # Need `\\` in the pattern (i.e. `\\\\` in TSV after unescape) to get a
 # literal `\` as a class member. Class-vs-`\`-byte behavior is
 # platform-dependent: on Unix `\` ∉ Seps (regular byte), on Windows
-# `\` ∈ Seps and classes are segment-local (§6.2). Platform-specific
+# `\` ∈ Seps and classes are segment-local (§8.2). Platform-specific
 # rows live in corpus-windows.txt / corpus-unix.txt.
 [\\\\]	/	no-match
 [\\\\]	a	no-match
@@ -514,7 +514,7 @@ x=y	x=y	match
 [^abc]	/	no-match
 
 ## class.semantics.posix_first_bracket
-# POSIX first-`]` rule (§6.5): `]` as the first member is literal.
+# POSIX first-`]` rule (§8.5): `]` as the first member is literal.
 []]	]	match
 []]	a	no-match
 # Combined with `-` at the end being literal.
@@ -553,7 +553,7 @@ x=y	x=y	match
 # corpus.txt default is dot=true; dot=false rows are marked explicitly.
 # ============================================================================
 
-## M3.single-branch-brace-is-literal-globstar-degrades (§7.4 + §8.1)
+## M3.single-branch-brace-is-literal-globstar-degrades (§10.4 + §9.1)
 # {**} degrades to literal {*}: a single-segment wildcard flanked by { }.
 {**}	{a}	match
 {**}	{}	match
@@ -583,7 +583,7 @@ x=y	x=y	match
 {a/**}	{a/.x}	match	dot=true
 {a/**}	{a/.x}	no-match	dot=false
 
-## M5.globstar-boundary-chained-outward-across-brace (§7.0 + §8.1)
+## M5.globstar-boundary-chained-outward-across-brace (§10.1 + §9.1)
 # {src/,lib/}** is src/** union lib/** — the trailing `/` inside each branch
 # makes the following `**` a real globstar.
 {src/,lib/}**	src/a/b	match
@@ -620,7 +620,7 @@ x=y	x=y	match
 {a/,b/}**	a/.x	match	dot=true
 {a/,b/}**	a/.x	no-match	dot=false
 
-## M5b.globstar-boundary-looks-past-the-braces-that-hold-it (§7.0 + §8.1)
+## M5b.globstar-boundary-looks-past-the-braces-that-hold-it (§10.1 + §9.1)
 # A `**` that opens a branch looks past the `{` to what precedes the brace;
 # one that closes a branch looks past the `}` to what follows it. Nested
 # braces are looked past too. No expansion is needed for these.
@@ -643,7 +643,7 @@ x=y	x=y	match
 {**/x,y}	.a/x	match	dot=true
 {**/x,y}	.a/x	no-match	dot=false
 
-## M2.leading-globstar-keeps-its-slash-across-a-brace (§8.5)
+## M2.leading-globstar-keeps-its-slash-across-a-brace (§9.4)
 # **/{**/a,b} is **/a union **/b : the leading **/ still matches X at depth 0.
 **/{**/a,b}	b	match
 **/{**/a,b}	a	match
@@ -670,7 +670,7 @@ x=y	x=y	match
 **/{x,**}	.x	match	dot=true
 **/{x,**}	.x	no-match	dot=false
 
-## M1.segment-engine-preserves-the-mandatory-separator (§8.3)
+## M1.segment-engine-preserves-the-mandatory-separator (§9.3)
 # x/{**,a}/** is x/** union x/a/** — both require the x/ prefix (NOT bare x).
 x/{**,a}/**	x	no-match
 x/{**,a}/**	x/	match
@@ -742,7 +742,7 @@ a/{{**/c,x}d,y}	a/b/cd	match
 
 ## brace.trailing-sep.lenient-globstar-boundary
 # A branch-trailing / before **/ is **-adjacent and lenient (SepRun),
-# like the flat X/**/ form (§7.0 + §12.3). Pinned 2026-08.
+# like the flat X/**/ form (§10.1 + §14.2). Pinned 2026-08.
 {src/,lib/}**/*.ts	src//x.ts	match
 {src/,lib/}**/*.ts	src/x.ts	match
 {src/,lib/}**/*.ts	lib//deep//x.ts	match
@@ -752,7 +752,7 @@ a/{{**/c,x}d,y}	a/b/cd	match
 {{a/,b/},c/}**/x	a//x	match
 {{a/,b/},c/}**/x	c//x	match
 # Two braces around one `/`, each with a `**` at that edge: the `/` stays
-# lenient for every pair of branches (§7.0 + §12.3).
+# lenient for every pair of branches (§10.1 + §14.2).
 {a,/**}/{**/x,b}	a//x	match
 {a,/**}/{**/x,b}	a/x	match
 {a,/**}/{**/x,b}	a/b	match
@@ -780,7 +780,7 @@ a?{b,c}	ab	no-match
 {,**/}x	x	match
 {,**/}x	a/y	no-match
 
-## dot.protection.first.element (§12.4)
+## dot.protection.first.element (§12)
 # Under dot=false a segment that starts with `.` needs a first element
 # that takes the `.` itself; a `*` there matches nothing, not even the
 # empty string.
@@ -793,7 +793,7 @@ a?{b,c}	ab	no-match
 a/*.txt	a/.txt	no-match	dot=false
 
 ## spec.15.catalog
-# §15 lines no other row covered.
+# rows the spec's former edge-case catalog listed and no other row covered.
 ?.txt	.txt	no-match	dot=false
 ?txt	.txt	no-match	dot=false
 ?txt	atxt	match	dot=false
@@ -802,7 +802,7 @@ a/*.txt	a/.txt	no-match	dot=false
 [a-z]	X	no-match
 .*	.hidden	match	dot=false
 
-## lenient.sep.through.braces (§12.3)
+## lenient.sep.through.braces (§14.2)
 # A `**` that opens or closes a brace branch keeps the `/` beside the
 # brace lenient (mutation testing, 2026-10 audit).
 {a/**,b}/{{**/x,y},z}	b//x	match
@@ -811,12 +811,12 @@ a/*.txt	a/.txt	no-match	dot=false
 a/{{**/x,b},c}	a//a/x	match
 {x,{a,/**}}/**/y	a//a/y	match
 
-## dot.small.cases (§12.4)
+## dot.small.cases (§12)
 {.b,c}	.b	match	dot=false
 a/**	a/x/	match	dot=false
 *{.,x}[!.]	.a	no-match	dot=false
 
-## ci.class.ranges (§11.2)
+## ci.class.ranges (§13)
 # Folding applies to letters only: `@`, `[`, `` ` `` and `{` sit next to
 # the letters in ASCII and must stay out of a folded range.
 [@-Z]	b	match	case_insensitive=true
@@ -831,6 +831,6 @@ a@b	a`b	no-match	case_insensitive=true
 a\[b	a{b	no-match	case_insensitive=true
 [a-a]	a	match
 
-## limits.nesting (§7.6)
+## limits.nesting (§6.2)
 # 32 levels compile; 33 are BraceNestingTooDeep (corpus-err.txt).
 {{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	match

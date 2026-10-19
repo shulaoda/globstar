@@ -1,4 +1,4 @@
-// Which `**` are globstars (GLOB_SPEC §7.0, §8.1).
+// Which `**` are globstars (GLOB_SPEC §10.1, §9.1).
 //
 // A pattern means the union of its brace expansions, and in each one a `**`
 // is a globstar only with a separator, or the edge of the pattern, on both
@@ -12,7 +12,7 @@
 import { N_SEPARATOR, N_BRACE, N_CONCAT, N_GLOBSTAR, star, N_STAR } from "./ast.js";
 import { distribute } from "./distribute.js";
 
-// `budget.left` is what distribution may still copy (§7.7).
+// `budget.left` is what distribution may still copy (§6.2).
 export function resolveGlobstars(body, budget) {
   if (mayTouch(body)) body = distribute(body, budget);
   return decide(body, true, true);
@@ -54,7 +54,7 @@ function decide(node, before, after) {
   }
   if (node.tag !== N_CONCAT) return node;
   const seq = node.children;
-  // `**/**` is one `**` (§8.6): a `/`, `**` after a `**` is dropped.
+  // `**/**` is one `**` (§9.6): a `/`, `**` after a `**` is dropped.
   let kept = 0;
   for (let i = 0; i < seq.length; i++) {
     let item = seq[i];
@@ -72,7 +72,7 @@ function decide(node, before, after) {
         continue;
       }
     }
-    // A `*` run is one `*` (§8.4): a `**` turned star next to one.
+    // A `*` run is one `*` (§15.3): a `**` turned star next to one.
     if (item.tag === N_STAR && kept > 0 && seq[kept - 1].tag === N_STAR) continue;
     seq[kept++] = item;
   }

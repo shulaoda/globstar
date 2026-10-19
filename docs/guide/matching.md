@@ -16,7 +16,7 @@ A pattern matches a path only when the pattern covers every byte of the path, fr
 
 To match a name at any depth, start the pattern with `**/`. See [The `**` wildcard](./globstar.md).
 
-Spec: [GLOB_SPEC §12.1–12.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §16.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Paths are just strings
 
@@ -32,7 +32,7 @@ The matcher never looks at the file system. It does not resolve `.` or `..`, fol
 With the default `dot: true`, `*` matches the names `.` and `..` like any other name. So `src/*/a.ts` matches `src/../a.ts`, a file that is not inside `src` at all. If paths come from users, clean them up (for example with `path.normalize`) before you match.
 :::
 
-Spec: [GLOB_SPEC §12.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §14.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Path separators
 
@@ -56,7 +56,7 @@ A path may use `/` on every platform. On Windows, `\` in a path also counts as a
 
 The last row shows the cost: on macOS and Linux, `\` is an ordinary byte in a file name, so `*` can match it. The matcher does not rewrite `\` to `/`; it only treats it as a separator. If you need the same answer on every platform, convert paths to `/` before matching.
 
-Spec: [GLOB_SPEC §2.3, §12.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §2.2, §14.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ### Repeated separators
 
@@ -77,7 +77,7 @@ There are two exceptions, both about `**`. A `/` next to `**` (as in `/**/`) acc
 | `**/README.md` | `//server/share/README.md` | ✅     |
 | `src/**/*.ts`  | `/repo/src/a.ts`           | ❌     |
 
-Spec: [GLOB_SPEC §12.3, §8.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §14.2, §9.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ### Trailing separators
 
@@ -93,7 +93,7 @@ A `/` at the end of a path is a real byte, and the pattern must match it like an
 
 `src/**` needs the `src/` prefix, so it does not match `src` itself. File systems usually return directory paths without a trailing `/`. To ask whether a directory may hold matches, see [Directory matching](./directory-matching.md).
 
-Spec: [GLOB_SPEC §8.2, §12.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §9.2, §14.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Options
 
@@ -133,7 +133,7 @@ The matcher default is `dot: true`. The matcher only compares strings, and "hidd
 | `**/*`        | `a/.b`            | `dot: false` | ❌     |
 | `src/**/*.ts` | `src/.cache/a.ts` | `dot: false` | ❌     |
 
-Spec: [GLOB_SPEC §11.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §3.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ### `caseInsensitive`
 
@@ -150,13 +150,13 @@ When `caseInsensitive` (Rust: `case_insensitive`) is `true`, ASCII letters match
 
 The option changes only how bytes are compared, never how the pattern is read. `[a-A]` is still an `InvalidRange` error with the option on, because `a` comes after `A` in byte order. If you need full Unicode case folding, normalize both the pattern and the path yourself (for example, lowercase both) before you match.
 
-Spec: [GLOB_SPEC §11.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §13](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ### Options that do not exist
 
 There is no switch to turn off braces, to turn off `**`, or to fold Unicode case. Each switch would add state to the parser for very few users, and escapes already cover the need: write `\{a,b\}` to match a literal `{a,b}`. For Unicode case, normalize the strings first.
 
-Spec: [GLOB_SPEC §11.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §3.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Dot protection, precisely
 
@@ -185,7 +185,7 @@ With `dot: false`, a `.` in the path is protected when it is the first byte of t
 
 `file?txt` matches because that `.` is not at the start of a name. On Windows a dot right after `\` is protected too, since `\` is a separator there. The names `.` and `..` are plain bytes: with `dot: false`, `*` matches neither, but `.*` matches both, because the literal `.` takes the first dot and `*` may take the rest.
 
-Spec: [GLOB_SPEC §12.4, §15.8](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §12](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Multi-byte characters
 
@@ -199,7 +199,7 @@ Matching works on bytes. A pattern and a JS path are compared as UTF-8 bytes; a 
 | `???.md` | `日.md`   | ✅     |
 | `*.md`   | `日本.md` | ✅     |
 
-Spec: [GLOB_SPEC §12.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §14.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Leading `!` and the options
 
@@ -217,4 +217,4 @@ A leading `!` flips the result of the rest of the pattern. It is always on; no o
 With `dot: false`, `*` cannot match `.env`, so `!*` does match it. A `!` pattern flips the hidden names too. For how `!` works inside a list of patterns, see [Multiple patterns](./multi-pattern.md).
 :::
 
-Spec: [GLOB_SPEC §9.6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §11.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

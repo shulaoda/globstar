@@ -31,7 +31,7 @@ A class always matches exactly one character, never zero and never two. `file[0-
 
 A class with one member is still a class: `[a]` matches `a`. Braces work differently: a brace with no comma, like `{a}`, is plain text (see [Brace expansion](./braces.md)).
 
-Spec: [GLOB_SPEC §6.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §8.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Ranges
 
@@ -48,7 +48,7 @@ A range must go up. If the end comes before the start, the pattern fails to comp
 | `[9-0]`        | `InvalidRange` error    |
 | `[a-A]`        | `InvalidRange` error    |
 
-Spec: [GLOB_SPEC §6.1, §11.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §8.1, §13](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Negated classes
 
@@ -75,7 +75,7 @@ With `dot: false`, a negated class at the start of a segment does not match a le
 | `[.]*`         | `.env`           | ✅          | ✅           |
 | `x[^_]`        | `x.`             | ✅          | ✅           |
 
-Spec: [GLOB_SPEC §6.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §8.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Classes never match `/`
 
@@ -90,7 +90,7 @@ Because of this, a `/` inside the brackets is a compile error, `UnterminatedClas
 
 A literal backslash is allowed as a member: `[\\]` is the class that holds `\`. On Linux and macOS it matches a `\` in a file name. On Windows, `\` is a path separator, so this class never matches there.
 
-Spec: [GLOB_SPEC §6.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §8.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Special characters inside a class
 
@@ -130,7 +130,7 @@ A `\` makes the next character a plain member, so `\-` is a dash and not a range
 
 Be careful with `[\]`: the `\` escapes the `]`, so the class never closes and you get `UnterminatedClass`.
 
-Spec: [GLOB_SPEC §6.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §8.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## A `]` right after `[`, and empty classes
 
@@ -150,7 +150,7 @@ The first `]` is a member like any other, so it can start a range, as POSIX read
 
 A class takes one byte. A non-ASCII character in a class stands for its UTF-8 bytes, each a member of its own, so `[é]` never matches `é` (two bytes). To match one of several characters, use a brace: `{é,è}`.
 
-Spec: [GLOB_SPEC §6.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §8.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Classes and braces
 
@@ -165,7 +165,7 @@ You can put a class inside a brace branch, and both work as usual.
 
 Inside a class, `{`, `}`, and `,` are plain characters, so `[{]}` matches the path `{}`. Whichever bracket opens first owns the text until its own closer. In `{[}]`, the class swallows the `}`, the brace is never closed, and the pattern fails with `UnterminatedBrace`. See [Compile-time errors](./errors.md).
 
-Spec: [GLOB_SPEC §7.9, §9.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.7, §4.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Classes match one byte
 
@@ -183,4 +183,4 @@ Named classes such as `[[:alpha:]]` and `[[:digit:]]` are not supported and not 
 | `[[:alpha:]]` | `[a-zA-Z]`    |
 | `[[:alnum:]]` | `[a-zA-Z0-9]` |
 
-Spec: [GLOB_SPEC §6.7](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §8.7](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

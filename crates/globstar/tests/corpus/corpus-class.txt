@@ -1,7 +1,7 @@
 # ============================================================================
 # corpus-class.txt — character class `[...]` semantics
-# (GLOB_SPEC.md §6 — class basics, §6.2 segment-local, §6.3 dispatch table,
-#  §6.5 POSIX first-`]` rule, §9.1 escape)
+# (GLOB_SPEC.md §8 — class basics, §8.2 segment-local, §8.3 dispatch table,
+#  §8.5 POSIX first-`]` rule, §4.1 escape)
 #
 # Class is the trickiest piece of glob syntax — many overlapping rules:
 #   - POSIX first-`]` literal-member rule
@@ -65,7 +65,7 @@
 [a\-*]	b	no-match
 
 # ----------------------------------------------------------------------------
-# POSIX first-`]` rule (§6.5)
+# POSIX first-`]` rule (§8.5)
 # ----------------------------------------------------------------------------
 
 ## class.posix_first_bracket_literal
@@ -80,7 +80,7 @@
 [^]]	a	match
 # Combined with `-` at end
 # The first `]` is a member like any other, so it can start a range
-# (§6.5, as POSIX reads it): `[]-a]` is `]..=a`, `^`, `_` and `` ` `` in it.
+# (§8.5, as POSIX reads it): `[]-a]` is `]..=a`, `^`, `_` and `` ` `` in it.
 []-a]	]	match
 []-a]	^	match
 []-a]	_	match
@@ -92,7 +92,7 @@
 [\]-a]	^	match
 
 ## class.grammar.rules
-# §3: a range end can be escaped; a `-` right after a range is a member.
+# §5.1: a range end can be escaped; a `-` right after a range is a member.
 [\a-c]	b	match
 [a-\c]	b	match
 [a-c-e]	-	match
@@ -107,7 +107,7 @@
 [^]	-	err:UnterminatedClass
 
 # ----------------------------------------------------------------------------
-# Escaped metachars in class (§6.3 lenient escape)
+# Escaped metachars in class (§8.3 lenient escape)
 # ----------------------------------------------------------------------------
 
 ## class.escape_meta_in_class
@@ -132,7 +132,7 @@
 [\a\b\c]	d	no-match
 
 # ----------------------------------------------------------------------------
-# Class metachars decay to literals (§6.3 dispatch table)
+# Class metachars decay to literals (§8.3 dispatch table)
 # ----------------------------------------------------------------------------
 
 ## class.brace_paren_metachars_decay
@@ -207,14 +207,14 @@
 [(]	(	match
 [(]	)	no-match
 [)]	)	match
-# `[(]` is class containing `(`. Then `)` after class is stray-loose literal (§9.1).
+# `[(]` is class containing `(`. Then `)` after class is stray-loose literal (§4.1).
 [(])	()	match
 # `(...)` is just literal parens around a class.
 ([a])	(a)	match
 ([a])	a	no-match
 
 # ----------------------------------------------------------------------------
-# Class containing the spec separator `/` is always invalid (§6.2)
+# Class containing the spec separator `/` is always invalid (§8.2)
 # ----------------------------------------------------------------------------
 
 ## class.slash_always_invalid

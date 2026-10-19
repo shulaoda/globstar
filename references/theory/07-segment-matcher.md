@@ -6,7 +6,7 @@ Source: `crates/globstar/src/engine/segment/` (Rust),
 ## The observation
 
 Every construct in the dialect except `**` is segment-local (GLOB_SPEC
-§6.2, §12.3): `*`, `?`, `[...]` cannot cross a separator, and
+§8.2, §14.2): `*`, `?`, `[...]` cannot cross a separator, and
 dot-protection keys on segment starts. After the globstar fold, `**`
 appears in exactly four op forms, each of which denotes a
 _segment-run absorber_. A pattern is therefore a graph of
@@ -20,7 +20,7 @@ Element := Lit(bytes) | Wild(matcher) | G0 | G1
 with `G0` absorbing ≥ 0 path segments and `G1` ≥ 1. (A `G0` that may not
 begin with an empty segment is never needed: a `**/` absorbs empty
 segments too, which is what makes the separators around it lenient,
-§12.3.) Empty path segments are first-class
+§14.2.) Empty path segments are first-class
 (`a//b` = `[a, "", b]`), which yields the strict-`Sep` semantics for
 free as element-count equality.
 
@@ -133,7 +133,7 @@ O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 65
 wildcard-only segments for the all-below proof (64 and the step that
 shows the set has settled) and 4096 element
 compares for a chain's tail tokens; past them it gives the safe
-answer (GLOB_SPEC §13.6). The engine answers `is_match`, `match_dir`,
+answer (GLOB_SPEC §15.5). The engine answers `is_match`, `match_dir`,
 and `static_prefixes` natively.
 
 ## JS dual-mode execution

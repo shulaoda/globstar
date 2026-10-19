@@ -1,13 +1,13 @@
 # ============================================================================
 # corpus-err.txt — parse-error golden test corpus
 # Format: PATTERN<TAB>ERROR_KIND
-# ERROR_KIND maps to a GlobError enum variant name (see spec §10).
+# ERROR_KIND maps to a GlobError enum variant name (see spec §6).
 # Every pattern MUST raise the corresponding error at compile time.
 # ============================================================================
 
 ## empty
 	Empty
-# §4.5: `!` and `!!` negate nothing.
+# §6.1: `!` and `!!` negate nothing.
 !	Empty
 !!	Empty
 !!!	Empty
@@ -16,7 +16,7 @@
 foo\	TrailingBackslash
 \	TrailingBackslash
 a/b/c\	TrailingBackslash
-# §3: the pattern ends inside a class's escape.
+# §5.1: the pattern ends inside a class's escape.
 [a\	TrailingBackslash
 
 ## unterminated.class
@@ -26,16 +26,16 @@ foo[abc	UnterminatedClass
 [a-	UnterminatedClass
 
 ## class.separator.means.unterminated
-# §6.2: `/` is the pattern-level segment separator. A `/` inside `[…]`
+# §8.2: `/` is the pattern-level segment separator. A `/` inside `[…]`
 # terminates the segment, so the class is considered never closed —
 # same error as running off the end of input. Applies to both raw `/`
 # and `\/` (escape resolving to `/`).
 #
 # `\` is NOT rejected here — it's a pattern-level escape character, not
 # a separator. `[\\b]` (class with literal `\` and `b`) compiles fine;
-# runtime `CharClass::matches` short-circuits any `Seps` member (§12.3),
+# runtime `CharClass::matches` short-circuits any `Seps` member (§14.2),
 # so the `\` member is dead on Windows (`\` ∈ Seps) but active on Unix
-# (`\` is a regular byte there). See §6.2 for the polarity-uniform rule.
+# (`\` is a regular byte there). See §8.2 for the polarity-uniform rule.
 [/]	UnterminatedClass
 [a/]	UnterminatedClass
 [/a]	UnterminatedClass
@@ -44,7 +44,7 @@ foo[/]bar	UnterminatedClass
 [\/]	UnterminatedClass
 
 ## posix.first_bracket_literal_unterminated
-# POSIX first-`]` rule (§6.5): leading `]` after `[` (or `[!`/`[^`) is a
+# POSIX first-`]` rule (§8.5): leading `]` after `[` (or `[!`/`[^`) is a
 # literal class member, so `[]`, `[!]`, `[^]` decay to "literal `]` + no
 # closer" → UnterminatedClass.
 []	UnterminatedClass
@@ -69,7 +69,7 @@ foo{a,b	UnterminatedBrace
 ## invalid.range
 [z-a]	InvalidRange
 [9-0]	InvalidRange
-# A first-position `]` starts a range too (§6.5), and `!` is below `]`.
+# A first-position `]` starts a range too (§8.5), and `!` is below `]`.
 []-!]	InvalidRange
 
 ## too.deep.nesting
@@ -77,14 +77,14 @@ foo{a,b	UnterminatedBrace
 {{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	BraceNestingTooDeep
 
 ## brace.expansion.too.large
-# Distributing braces around `**` would copy more than 4096 (§7.7).
+# Distributing braces around `**` would copy more than 4096 (§6.2).
 {**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	BraceExpansionTooLarge
-# ...or would nest braces deeper than 32 levels (§7.6).
+# ...or would nest braces deeper than 32 levels (§6.2).
 **{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}	BraceNestingTooDeep
 
 ## too.complex
 # Braces whose segments multiply: `{a,b,/}` × 100 would build a node
-# per pair of braces (§10).
+# per pair of braces (§6).
 {a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	TooComplex
 
 ## too.long
@@ -97,7 +97,7 @@ foo{a,b	UnterminatedBrace
 
 ## escaped.separator
 # `\/` is rejected: a `/` can never appear inside a file name on any
-# platform, so an escaped separator has no possible match (spec §2.4).
+# platform, so an escaped separator has no possible match (spec §4.2).
 \/	EscapedSeparator
 a\/b	EscapedSeparator
 {a\/b,c}	EscapedSeparator

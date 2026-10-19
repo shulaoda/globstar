@@ -160,7 +160,7 @@ fn walker_lone_negation_yields_nothing() {
 
 #[test]
 fn walker_multi_bang_parity_routes_by_count() {
-    // GLOB_SPEC §9.5: leading-`!` parity rule. Odd count → ignore set,
+    // GLOB_SPEC §11.1: leading-`!` parity rule. Odd count → ignore set,
     // even count → match set; all leading `!`s are stripped from the
     // body. The JS walker uses the same rule (`packages/globstar-walk/src/walk.js`).
     let t = TmpTree::new("multi_bang");
@@ -533,7 +533,7 @@ fn walker_invalid_member_of_a_list_is_named() {
         _ => panic!("expected InvalidPattern, got {err:?}"),
     }
     // Every member compiles alone; together they pass the expansion
-    // budget (GLOB_SPEC §7.7). The error names the member it ran out in.
+    // budget (GLOB_SPEC §6.2). The error names the member it ran out in.
     let member = "{,/}".repeat(10) + "**/f";
     let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
     let err = Walk::from_patterns(&members, t.root()).unwrap_err();
@@ -1840,7 +1840,7 @@ fn a_seed_finds_a_name_only_as_listed() {
     assert_eq!(walk(&format!("{nfd}/*.ts")).len(), 1);
 }
 
-// `!` and `!!` negate nothing: an empty pattern (GLOB_SPEC §4.5), named as
+// `!` and `!!` negate nothing: an empty pattern (GLOB_SPEC §6.1), named as
 // written. Twin of the check in walk.mjs.
 #[test]
 fn a_lone_bang_is_an_empty_pattern() {

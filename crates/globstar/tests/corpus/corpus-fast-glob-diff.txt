@@ -33,7 +33,7 @@
 #   fast-glob  : match
 #   ours       : no-match
 #   rationale  : `[^c]` per POSIX implicitly excludes `/` (char classes
-#                don't cross segment boundaries — §6.2). fast-glob allows
+#                don't cross segment boundaries — §8.2). fast-glob allows
 #                `/` to match a negated class, so `bdir/` ends in `/`
 #                which for them satisfies `[^c]`. We enforce segment-local.
 [a-y]*[^c]	bdir/	no-match
@@ -44,7 +44,7 @@
 #   path       : abc
 #   fast-glob  : no-match
 #   ours       : match
-#   rationale  : `\b` inside `[…]` — we apply lenient escape (§6.3):
+#   rationale  : `\b` inside `[…]` — we apply lenient escape (§8.3):
 #                `\X` = literal `X`, so `[\b]` ≡ class `{b}`, and
 #                `a[\b]c` matches `abc`. fast-glob interprets `\b` as
 #                ASCII backspace (0x08), so their class is `{0x08}`
@@ -62,7 +62,7 @@ a[\\b]c	abc	match
 #   pattern    : \\/$^+?.()=!|{},[].*
 #   fast-glob  : compiles, matches path as literal (no-match outcome)
 #   ours       : Err(UnterminatedClass) at byte 16
-#   rationale  : pattern contains `[]` — POSIX first-`]` rule (§6.5) makes
+#   rationale  : pattern contains `[]` — POSIX first-`]` rule (§8.5) makes
 #                the `]` literal, so the class is never closed. fast-glob
 #                tolerates and treats the whole bracket expression as
 #                literal text.
@@ -74,7 +74,7 @@ a[\\b]c	abc	match
 #   fast-glob  : match (treats `[/]` as matching `/`)
 #   ours       : Err(UnterminatedClass) at byte 3
 #   rationale  : `/` inside `[…]` terminates the segment — class is
-#                segment-local (§6.2), so encountering `/` is equivalent
+#                segment-local (§8.2), so encountering `/` is equivalent
 #                to "class never closed". Parser rejects.
 
 ## fast_glob_diff.unterminated_brace_rejected

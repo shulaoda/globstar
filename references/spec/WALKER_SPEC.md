@@ -100,13 +100,13 @@ The directory the patterns and `ignore` globs resolve against. Internally resolv
 
 #### `dot`
 
-Forwarded to the matcher. The walker default is `false` (Unix "hide-dotfile" convention) — `**/*` does NOT descend into `.git/`, `.cache/`, etc. Refer to GLOB_SPEC.md §11.1 and §12.4 for the precise positional semantics.
+Forwarded to the matcher. The walker default is `false` (Unix "hide-dotfile" convention) — `**/*` does NOT descend into `.git/`, `.cache/`, etc. Refer to GLOB_SPEC.md §3.1 and §12 for the precise positional semantics.
 
 This is the only option whose default differs between the matcher layer (`true`) and the walker layer (`false`). The split is intentional: dot protection is a filesystem convention, not a property of the pattern language.
 
 #### `caseInsensitive`
 
-Forwarded to the matcher (ASCII-only). See GLOB_SPEC.md §11.2 for the precise semantics. The walker honors the matcher's behavior on the runtime hot path; the seeding caveat is documented in §5 below.
+Forwarded to the matcher (ASCII-only). See GLOB_SPEC.md §13 for the precise semantics. The walker honors the matcher's behavior on the runtime hot path; the seeding caveat is documented in §5 below.
 
 #### `followSymlinks`
 
@@ -128,7 +128,7 @@ final_match(path) := positive.match(path)
 
 An ignored folder hides its whole subtree: `glob("**/*.js", { ignore: ["dist"] })` drops `dist/a.js`, though `dist` alone names no `.js` file.
 
-`ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. An entry that ends in `/` (also after §4.3 normalization, `d/.` ≡ `d/`) matches folders only: a folder is asked about with its `/`, so `node_modules/` prunes the folder `node_modules` and everything below it, never a file of that name; like every pattern it is anchored at `cwd` (`**/node_modules/` for any depth). Every `ignore` entry is asked about a folder with its `/`, so one that ends in `/**` prunes the folder too (`**/node_modules/**` never reads `node_modules`), under either `dot`: a dot-led name below it that a positive pattern names is then not found, as fast-glob and tinyglobby do not find it. A positive pattern that ends in `/` matches folders only too, so it selects no file (§8.1). Each `ignore` entry is itself a strictly positive pattern: the array is NOT subject to the §4.2 `!`-split rule, and an entry that starts with `!` (after §4.3 normalization) is refused with `WalkError("InvalidPattern")`. As the matcher's whole-pattern negation (GLOB_SPEC.md §9.3) it would ignore everything except what it names, which is never what a caller writing `!src/**` into an ignore list means; escape a name that starts with `!` as `\!`.
+`ignore` patterns are compiled with the same `dot` / `caseInsensitive` options as the positive set. An entry that ends in `/` (also after §4.3 normalization, `d/.` ≡ `d/`) matches folders only: a folder is asked about with its `/`, so `node_modules/` prunes the folder `node_modules` and everything below it, never a file of that name; like every pattern it is anchored at `cwd` (`**/node_modules/` for any depth). Every `ignore` entry is asked about a folder with its `/`, so one that ends in `/**` prunes the folder too (`**/node_modules/**` never reads `node_modules`), under either `dot`: a dot-led name below it that a positive pattern names is then not found, as fast-glob and tinyglobby do not find it. A positive pattern that ends in `/` matches folders only too, so it selects no file (§8.1). Each `ignore` entry is itself a strictly positive pattern: the array is NOT subject to the §4.2 `!`-split rule, and an entry that starts with `!` (after §4.3 normalization) is refused with `WalkError("InvalidPattern")`. As the matcher's whole-pattern negation (GLOB_SPEC.md §11.1) it would ignore everything except what it names, which is never what a caller writing `!src/**` into an ignore list means; escape a name that starts with `!` as `\!`.
 
 ### 3.3 Toggles deliberately NOT provided
 
@@ -151,7 +151,7 @@ The walker exposes 5 options. The following toggles, common in other walkers, ar
 
 ### 4.2 `!`-prefix split (parity rule)
 
-For each pattern in the input array — AFTER the §4.3 normalization, so a leading `/` cannot shield a `!` from the split (`/!x` ≡ `!x`; before this ordering was pinned, `/!x` reached the matcher as whole-pattern negation and walked nearly the whole tree) — the walker counts the run of leading `!` bytes and routes by parity (matching the matcher's internal parity rule from GLOB_SPEC.md §9.5):
+For each pattern in the input array — AFTER the §4.3 normalization, so a leading `/` cannot shield a `!` from the split (`/!x` ≡ `!x`; before this ordering was pinned, `/!x` reached the matcher as whole-pattern negation and walked nearly the whole tree) — the walker counts the run of leading `!` bytes and routes by parity (matching the matcher's internal parity rule from GLOB_SPEC.md §11.1):
 
 - count is odd → strip ALL `!`s, push the body into the ignore set;
 - count is even → strip ALL `!`s, push the body into the positive set.
@@ -175,7 +175,7 @@ glob(["src/**/*.ts", "!**/*.test.ts"], { cwd })
 ≡  glob(["src/**/*.ts"], { cwd, ignore: ["**/*.test.ts"] })
 ```
 
-Filenames that literally start with `!` MUST be escaped (`\!foo` or `[\!]foo`), as documented in GLOB_SPEC.md §9.4.
+Filenames that literally start with `!` MUST be escaped (`\!foo` or `[\!]foo`), as documented in GLOB_SPEC.md §11.3.
 
 ### 4.3 Pattern normalization
 
@@ -186,7 +186,7 @@ Each individual pattern (in BOTH the positive and ignore sets, BOTH from the inp
 - plain `.` segments are dropped (`readdir` never yields `.`): `./src/**` ≡ `src/**`, `a/./b` ≡ `a/b`. A last `.` names the folder before it, so it becomes a trailing `/` instead: `d/.` ≡ `d/`, and `*/.` matches no file (dropping it made `*/.` mean `*`);
 - a pattern that normalizes to nothing (`.`, `./`) matches nothing and is dropped.
 
-Escaped forms (`\.`) are untouched; `/` in a pattern is always structural (`\/` is a parse error, GLOB_SPEC §2.4), so the textual rewrite is safe. Without this, `./`/`//` spellings leaked verbatim into static prefixes and therefore into emitted absolute paths — the same file got different spellings depending on how the pattern was written.
+Escaped forms (`\.`) are untouched; `/` in a pattern is always structural (`\/` is a parse error, GLOB_SPEC §4.2), so the textual rewrite is safe. Without this, `./`/`//` spellings leaked verbatim into static prefixes and therefore into emitted absolute paths — the same file got different spellings depending on how the pattern was written.
 
 The leading-`/` strip guarantees that the matcher's static prefixes (used for traversal seeding, §6) always come out relative to `cwd`. Patterns are scoped to `cwd`; absolute filesystem paths cannot be glob'd through the walker API — callers wanting to walk `/etc/...` MUST pass `cwd: "/etc"`.
 
@@ -199,7 +199,7 @@ After preprocessing, the walker compiles three matchers:
 
 If the positive set is empty after preprocessing (e.g. `glob(["!foo"])` with no other inputs), the walker MUST short-circuit and return an empty result without attempting any traversal.
 
-If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member the matcher failed in, as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`), and the underlying reason. The matcher reports that member (GLOB_SPEC §10), so nothing is compiled twice. When the members together ran past the expansion budget they share (GLOB_SPEC §7.7), the member named is the one it ran out in, and the reason says the patterns share the limit. An error no one member explains (the union's compile work, `TooComplex`) names the list, cut after three: `["a", "b", "c"] and 2 more`. When preprocessing changed the member, the reason names the text its byte offsets count in: `invalid character class range … at byte 5 … (in 'src/[z-a]', as the walker reads it)`. See §9.
+If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member the matcher failed in, as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`), and the underlying reason. The matcher reports that member (GLOB_SPEC §6), so nothing is compiled twice. When the members together ran past the expansion budget they share (GLOB_SPEC §6.2), the member named is the one it ran out in, and the reason says the patterns share the limit. An error no one member explains (the union's compile work, `TooComplex`) names the list, cut after three: `["a", "b", "c"] and 2 more`. When preprocessing changed the member, the reason names the text its byte offsets count in: `invalid character class range … at byte 5 … (in 'src/[z-a]', as the walker reads it)`. See §9.
 
 ---
 
@@ -222,7 +222,7 @@ The same filesystem folding cuts the OTHER way under `caseInsensitive: false` on
 
 ## 6. Static-prefix Seeding
 
-The matcher exposes `static_prefixes` (GLOB_SPEC.md §13.5 implementation note, and see `computeStaticPrefixes` in `packages/globstar/src/engine/segment/facts.js`): for each expansion of the pattern's braces, its literal head up to its last whole segment, with heads a shorter one covers removed. For a union these are its members' heads. Examples:
+The matcher exposes `static_prefixes` (GLOB_SPEC.md §17, and see `computeStaticPrefixes` in `packages/globstar/src/engine/segment/facts.js`): for each expansion of the pattern's braces, its literal head up to its last whole segment, with heads a shorter one covers removed. For a union these are its members' heads. Examples:
 
 | Pattern           | Static prefixes                         |
 | ----------------- | --------------------------------------- |
@@ -260,7 +260,7 @@ Each frame carries a list `links` of the symlinks the walker descended through t
 5. **Special files** — a FIFO, a socket or a device (neither a directory nor a file nor a link) is skipped (§8.1).
 6. Branch on the type:
    - **Non-directory.** If `matcher.match(childRel)` is true, push `childAbs` into the result array. Output is always the absolute form (§8.2).
-   - **Directory.** The walker emits files only, so `matcher.match_dir(childRel)` is consulted for the descend decision alone. The folder is skipped when `ignore.match(childRel + "/")` (§3.2: asked with its `/`, under either `dot`), when `may_match_below()` is false, or when the ignore set covers the whole subtree (`ignore.match_dir(childRel).matches_all_below()`). The last check lets `**/node_modules/**` skip `node_modules` as cheaply as `node_modules` does; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §13.6) and a positive pattern may still name one. Otherwise push a child frame into the descend list, whose `links` is:
+   - **Directory.** The walker emits files only, so `matcher.match_dir(childRel)` is consulted for the descend decision alone. The folder is skipped when `ignore.match(childRel + "/")` (§3.2: asked with its `/`, under either `dot`), when `may_match_below()` is false, or when the ignore set covers the whole subtree (`ignore.match_dir(childRel).matches_all_below()`). The last check lets `**/node_modules/**` skip `node_modules` as cheaply as `node_modules` does; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §15.5) and a positive pattern may still name one. Otherwise push a child frame into the descend list, whose `links` is:
      - **non-symlink dir** — the parent's `links`, unchanged;
      - **symlink-to-dir** — the parent's `links` plus this link, unless its target is the target of one of them already (§10): then this is a cycle, and the descent is skipped.
 
@@ -359,7 +359,7 @@ class WalkError extends Error {
 
 ### 9.2 `InvalidPattern`
 
-Raised during `prepare()` when any positive or `ignore` pattern fails to compile: `globSync` throws, `glob` rejects its Promise. The walker catches the matcher's `GlobError` (GLOB_SPEC.md §10) and re-throws it wrapped in `WalkError("InvalidPattern")` so callers have a single error type to match on at the walker layer.
+Raised during `prepare()` when any positive or `ignore` pattern fails to compile: `globSync` throws, `glob` rejects its Promise. The walker catches the matcher's `GlobError` (GLOB_SPEC.md §6) and re-throws it wrapped in `WalkError("InvalidPattern")` so callers have a single error type to match on at the walker layer.
 
 ### 9.3 `Io`
 
@@ -431,7 +431,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
   - Hardwired `onlyFiles: true` output. `withFileTypes` and `DirEntry` removed from the public surface.
   - `onError` removed; all IO failures throw `WalkError("Io")` and propagate (sync throws / async rejects).
   - `cwd` validated upfront; missing or non-directory `cwd` throws `WalkError("Io")`.
-  - `!`-prefix split for input arrays uses parity (matching the matcher's parser parity rule from GLOB_SPEC.md §9.5) instead of the earlier "exactly one `!`" rule.
+  - `!`-prefix split for input arrays uses parity (matching the matcher's parser parity rule from GLOB_SPEC.md §11.1) instead of the earlier "exactly one `!`" rule.
   - Async traversal uses an own implementation directly on `node:fs.readdir`; the `@nodelib/fs.walk` and `fdir` dependencies were evaluated and dropped — same fan-out, no extra dependency.
 - **v0.2.0** (2026-05-03, draft):
   - `absolute` option **removed**. Output is hardwired to the `cwd`-prefixed absolute form. Rationale: matches Vite's `import.meta.glob` actual contract (the Vite source always passes `absolute: true` to tinyglobby and post-relativizes itself), and a single output form keeps the walker shape minimal. Callers wanting paths relative to `cwd` should `path.relative(cwd, p)` at their boundary.
@@ -440,7 +440,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
     - default flipped from `false` to `true` (matches Vite's `import.meta.glob` contract — pnpm-style `node_modules/<pkg>` symlinks must be traversed by default).
     - When `false`, symlinks are now dropped entirely (NOT emitted, NOT descended). Was previously "emit as file, never descend"; the new behavior matches `fdir`'s `excludeSymlinks` mode.
     - When `true`, symlink cycles are now broken via `fs.realpathSync` + ancestor chain (§7.1 step 6, §10). Was previously "no cycle detection — caller's responsibility".
-- **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §7.7); seed stat failures probe `lstat` (§9.4).
+- **Between v0.3.0 and v0.3.1** (2026-08 to 2026-10, not versioned then): normalization runs before the `!` split (§4.2, so `/!x` ≡ `!x`); the seed guards of §6 (`..`/`.`, ignored ancestors, symlinks under `followSymlinks: false`); the shared expansion budget of a pattern list (§4.4, GLOB_SPEC §6.2); seed stat failures probe `lstat` (§9.4).
 - **v0.3.1** (2026-10-16): seeding matches a root walk in four more places (§6, §7.1, §9.4): a prefix with an empty segment is dropped (`{a,/b}`); a seed frame starts with the targets of the symlinks on its prefix, and a prefix that goes round a cycle is dropped; ELOOP, ENAMETOOLONG, EINVAL and NUL names count as "nothing there"; JS resolves link targets with `realpathSync.native`. The permission corners are stated (§9.4). The Rust walker checks its base before seeding, for every pattern.
 - **v0.3.2** (2026-10-16): a last `.` is a trailing `/` (§4.3); errors name the pattern as written (§4.4); `cwd` resolution is stated, and Rust follows it (§5); an ignore that covers a subtree skips it under `dot: true` (§7.1); names that are not UTF-8 are skipped (§7.1); an entry vanishing during a typed read is not an error (§9.3).
 - **v0.3.3** (2026-10-16): options are checked (§3.1: own keys only, no unknown keys, booleans for the flags; `glob` rejects); an ignore entry that starts with `!` is refused (§3.2); every `!` run normalization exposes counts in the split (§4.2).
@@ -462,6 +462,6 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **Frame.** One unit of walker work: an absolute directory path paired with its relative-to-`cwd` form. The traversal stack / scheduler holds frames.
 - **Seed frame.** A frame produced from the matcher's static prefixes during initialization, before any `readdir` has been issued.
 - **Auto-split.** The walker's preprocessing of a `patterns` array that routes `!`-prefixed entries to the ignore set (§4.2).
-- **Static prefix.** The literal head of one expansion of the pattern's braces, up to its last whole segment (GLOB_SPEC.md §13.5). Walker uses these to skip directories no expansion can match.
+- **Static prefix.** The literal head of one expansion of the pattern's braces, up to its last whole segment (GLOB_SPEC.md §17). Walker uses these to skip directories no expansion can match.
 - **`withSep`.** A folder's absolute path with a separator after it; a child's path is that and its name, bypassing `path.join`'s normalization for measurable speedup (§7.4).
 - **Late callback.** An `fs.readdir` callback that fires after the walker has already rejected its returned Promise. The async traversal MUST drop these (§7.3).

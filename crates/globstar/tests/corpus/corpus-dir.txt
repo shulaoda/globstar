@@ -37,7 +37,7 @@ src/*.ts	node_modules	pruned
 {src,lib}/**	lib	descend
 {src,lib}/**	docs	pruned
 # `**` matches any non-empty content, so `src/a` itself is in L({src,lib}/**)
-# AND `src/a/b...` continues to match — descend-and-match (GLOB_SPEC §13.3).
+# AND `src/a/b...` continues to match — descend-and-match (GLOB_SPEC §15.6).
 {src,lib}/**	src/a	descend-match
 {src,lib}/**	lib/a/b	descend-match
 {src,lib,tests}/**	tests	descend
@@ -101,7 +101,7 @@ src/*	src/visible	match
 src/*	src/.hidden	match	dot=true
 
 ## negation.prefix.cannot.prune
-# Anything below may match; `matches` is exact (§13.4): none of these
+# Anything below may match; `matches` is exact (§15.4): none of these
 # dirs is in `foo/**` or `src/**`, so each matches the negation.
 !foo/**	anywhere	descend-match
 !foo/**	foo	descend-match
@@ -110,7 +110,7 @@ src/*	src/.hidden	match	dot=true
 !src/**	src/a	descend
 
 ## leading_seps_with_match_dir
-# LeadingSeps (§8.4) must not break match_dir's "could descendant match"
+# LeadingSeps (§15.3) must not break match_dir's "could descendant match"
 # analysis. For `**/a` every directory is a potential prefix; leading `/`
 # in the directory path is absorbed by LeadingSeps.
 **/a	src	descend
@@ -155,7 +155,7 @@ x{/,/}{**,a}/y	x/	descend
 # corpus-dir.txt default is dot=false; rows carry an explicit flag.
 # ============================================================================
 
-## M1.segment-engine-preserves-the-mandatory-separator (§8.3, dir view)
+## M1.segment-engine-preserves-the-mandatory-separator (§9.3, dir view)
 # x/{**,a}/** : x itself no match but all below does, deeper matches, wrong root prunes.
 x/{**,a}/**	x	descend-all	dot=true
 x/{**,a}/**	x/y	descend-all-match	dot=true
@@ -170,26 +170,26 @@ x/{**,a}/**	xy	pruned	dot=true
 {a/**,b}/**	c	pruned	dot=true
 {a/**,b}/**	ab	pruned	dot=true
 
-## M5.globstar-boundary-chained-outward-across-brace (§7.0 + §8.1, dir view)
+## M5.globstar-boundary-chained-outward-across-brace (§10.1 + §9.1, dir view)
 {src/,lib/}**	src	descend-all	dot=true
 {src/,lib/}**	src/a	descend-all-match	dot=true
 {src/,lib/}**	lib	descend-all	dot=true
 {src/,lib/}**	srcx	pruned	dot=true
 {src/,lib/}**	docs	pruned	dot=true
 
-## M2.leading-globstar-brace (§8.5) — a `**`-led pattern never prunes (dot=true).
+## M2.leading-globstar-brace (§9.4) — a `**`-led pattern never prunes (dot=true).
 **/{**/a,b}	a	descend-match	dot=true
 **/{**/a,b}	q	descend	dot=true
 **/{**/a,b}	c	descend	dot=true
 
-## M3.single-branch-brace-literal (§7.4) — the exact `match` state.
+## M3.single-branch-brace-literal (§10.4) — the exact `match` state.
 {**}	{a}	match	dot=true
 {**}	{a/b}	pruned	dot=true
 {a/**}	{a/b}	match	dot=true
 {**/a}	{x/a}	match	dot=true
 {**/a}	{a}	descend	dot=true
 
-## H3.negated-pattern-match_dir-conservatively-descends (§13.4)
+## H3.negated-pattern-match_dir-conservatively-descends (§15.4)
 # Never a covering verdict; `matches` is the negation's own answer.
 !src/**	docs	descend-match	dot=true
 !src/**	src	descend-match	dot=true
@@ -318,7 +318,7 @@ A*/b	a	pruned
 **/a/**	.b	descend	dot=true
 
 ## single.branch.brace.with.sep
-# A `/` inside a single-branch brace stays a structural separator (§7.4),
+# A `/` inside a single-branch brace stays a structural separator (§10.4),
 # so `x{a/b}y*` means the two-segment pattern `x{a` / `b}y*`.
 x{a/b}y*	x{a	descend
 x{a/b}y*	x{a/b}y	match
@@ -344,7 +344,7 @@ x{a/b}y*	xa	pruned
 {a,/**}/{**/x,b}	a//p	descend
 
 # ============================================================================
-# all-below — `descend-all` / `descend-all-match` (GLOB_SPEC §13.6).
+# all-below — `descend-all` / `descend-all-match` (GLOB_SPEC §15.5).
 # "Every path below the dir matches": is_match(dir + "/" + s) for every `s`
 # of one or more non-empty segments. A consumer that excludes FILES by glob
 # may skip a whole directory only on these two results.
@@ -395,7 +395,7 @@ x{a/b}y*	xa	pruned
 **/*.log	/p/foo.log	descend-match	dot=true
 # Nothing escapes, but a brace the user wrote keeps its branches, and
 # names split by length across branches are not proven (GLOB_SPEC
-# §13.6); the union of the same two is (corpus-multi-dir.txt).
+# §15.5); the union of the same two is (corpus-multi-dir.txt).
 {**/?,**/??*}	a	descend-match	dot=true
 
 ## all-below.dot.false.never.covers

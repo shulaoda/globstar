@@ -112,7 +112,7 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
       continue;
     }
     const node = nodes[i++];
-    // An escaped `\` on Windows: the expansion matches nothing (§2.4), so
+    // An escaped `\` on Windows: the expansion matches nothing (§4.2), so
     // it has no head to seed.
     if (node.tag === N_LITERAL && IS_WINDOWS_SEP && node.str.includes("\\")) return;
     if (node.tag === N_LITERAL && afford(heads, node.str.length)) {

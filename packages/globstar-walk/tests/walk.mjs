@@ -276,7 +276,7 @@ await check("invalid member of a pattern list is named", async () => {
     (e) => e instanceof WalkError && e.pattern === "a/{b",
   );
   // Every member compiles alone; together they pass the expansion budget
-  // (GLOB_SPEC §7.7). The error names the member it ran out in.
+  // (GLOB_SPEC §6.2). The error names the member it ran out in.
   const member = "{,/}".repeat(10) + "**/f";
   const members = Array.from({ length: 10 }, (_, i) => `${member}${i}`);
   assert.throws(

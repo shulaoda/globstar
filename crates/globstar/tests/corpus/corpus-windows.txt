@@ -15,7 +15,7 @@ src/main.rs	src\\main.rs	match
 
 ## path.separator.backslash.consecutive
 # A pattern `/` is a strict `Sep`: it takes exactly ONE separator byte
-# (§12.3), whichever of `/` and `\` it is. A run of two does not match,
+# (§14.2), whichever of `/` and `\` it is. A run of two does not match,
 # the same as `a/b` against `a//b` in corpus.txt.
 a/b	a\\\\b	no-match
 a/b	a/\\b	no-match
@@ -33,7 +33,7 @@ foo*bar	foo\\bar	no-match
 [^abc]	\\	no-match
 
 ## charclass.positive.literal_backslash_dead_on_windows
-# On Windows `\` ∈ Seps, and classes are segment-local (§6.2). Positive
+# On Windows `\` ∈ Seps, and classes are segment-local (§8.2). Positive
 # classes that list `\` silently don't match `\` — the user's intent
 # is fundamentally incompatible with the platform's segment rules.
 # Same principle as parser-rejected `[/]`: separator-as-class-member

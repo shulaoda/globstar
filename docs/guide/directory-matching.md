@@ -45,7 +45,7 @@ assert!(!d.matches_all_below());
 
 :::
 
-Spec: [GLOB_SPEC §13.1–13.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §15.1–15.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## A pattern that selects files
 
@@ -104,7 +104,7 @@ With `dot: false`, no wildcard may match a name that starts with `.`. A director
 | `dist/**`            | `dist`         | `dot: true`  | `DescendAll` |
 | `dist/**`            | `dist`         | `dot: false` | `Descend`    |
 
-Spec: [GLOB_SPEC §13.6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §15.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Negated patterns
 
@@ -115,7 +115,7 @@ compileMatcher("!**/*.ts").matchDir("src"); // DirMatch.DescendAndMatch: `src` i
 compileMatcher("!**/*.ts").matchDir("a.ts"); // DirMatch.Descend
 ```
 
-Spec: [GLOB_SPEC §13.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §15.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Union of patterns
 
@@ -141,4 +141,4 @@ The prefixes are spelled the way the pattern is: with `/`, and in the pattern's 
 compileMatcher(["src/**/*.ts", "docs/**/*.md"]).staticPrefixes(); // [src, docs] as Uint8Array
 ```
 
-Spec: [GLOB_SPEC §13.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §17](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

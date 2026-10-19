@@ -30,7 +30,7 @@ assert!(!glob.is_match(b"src/index.ts"));
 
 The union is OR, never AND. There is no API that tells you _which_ member matched; the matcher answers the boolean questions only (`match`, `matchDir`, `staticPrefixes`). A pattern given twice counts once. In Rust the union is an ordinary `Glob`, not a separate set type.
 
-Spec: [GLOB_SPEC §14.1–14.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §16.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Negated members
 
@@ -72,7 +72,7 @@ Include/exclude filtering belongs to the walker layer. `@globstar/walk` and `glo
 
 Pruning is safe only when every member says `Pruned`. See [Directory matching](./directory-matching.md) for what each verdict means to an include list and to an exclude list.
 
-Spec: [GLOB_SPEC §14.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §16.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Static prefixes of a union
 
@@ -93,4 +93,4 @@ Braces next to `**` are taken apart at compile time, and the copies that makes a
 - Any member that fails to compile fails the whole union with that member's error.
 - Rust: a `!`-member fails with `NegatedInUnion`, which carries the member's index and text.
 
-Spec: [GLOB_SPEC §10, §14](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §6, §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

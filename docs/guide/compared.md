@@ -3,7 +3,7 @@
 This page answers "how is globstar different from the glob tool I already use?". It covers the tools the spec compares against: Bash, picomatch, globset (Rust), fast-glob (the npm walker and the Rust crate, which differ), and doublestar (Go). If you move patterns from one of them to globstar, check the rows below first.
 
 ::: tip What the other columns mean
-Every cell for another tool was measured on 2026-10-16, the same runs as [GLOB_SPEC §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md): Bash 5.2.37, picomatch 4.0.7, globset 0.4.20, fast-glob 3.3.3 from npm (it matches through micromatch and picomatch 2), the fast-glob crate 1.1.2 and doublestar v4.10.3. Windows cells come from a simulated platform, and tools change between versions. The globstar column is checked against `@globstar/core`, and each section shows the examples. The comparison does not include minimatch or gitignore.
+Every cell for another tool was measured on 2026-10-16, the same runs as [GLOB_SPEC Appendix A](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md): Bash 5.2.37, picomatch 4.0.7, globset 0.4.20, fast-glob 3.3.3 from npm (it matches through micromatch and picomatch 2), the fast-glob crate 1.1.2 and doublestar v4.10.3. Windows cells come from a simulated platform, and tools change between versions. The globstar column is checked against `@globstar/core`, and each section shows the examples. The comparison does not include minimatch or gitignore.
 :::
 
 Symbols: ✅ yes, ❌ no, ⚠️ partial or conditional (the cell says how), n/a does not apply to that tool. ¹ Measured on Unix only.
@@ -141,4 +141,4 @@ A `\` in a path counts as a separator only on Windows. `matchDir` tells a walker
 
 Of these tools, picomatch is the closest. globstar is stricter about input (patterns must use `/`), treats directory matching as a first-class operation, and is stricter about syntax errors: an unclosed class or brace is always an error, never silently turned into literal text.
 
-Spec: [GLOB_SPEC §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC Appendix A](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

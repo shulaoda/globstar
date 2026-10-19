@@ -20,7 +20,7 @@ globstar fails loudly on real mistakes, such as an unclosed `[` or `{`. It does 
 
 See [Pattern syntax](./syntax.md) for the full rules.
 
-Spec: [GLOB_SPEC §10](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Error kinds
 
@@ -52,7 +52,7 @@ When a pattern **list** fails because one member does not compile, the error say
 
 `[a-A]` fails even with `caseInsensitive: true`. Case folding only changes how bytes compare when matching; it never changes what counts as a valid pattern. See [How a path is matched](./matching.md#caseinsensitive).
 
-Spec: [GLOB_SPEC §10, §15.10](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §6, §6.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## The four limits
 
@@ -72,7 +72,7 @@ The limits stop a hostile or broken pattern from using huge amounts of memory or
 
 The limits are exported: in Rust as `globstar::error::{MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION}`, in JS as `MAX_PATTERN_LEN`, `MAX_BRACE_NESTING` and `MAX_EXPANSION` from `@globstar/core`. The compile-work limit depends on the pattern, so read `err.max` on the error.
 
-Spec: [GLOB_SPEC §7.6, §7.7, §10](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §6.2, §6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Catching errors in JS
 
@@ -112,4 +112,4 @@ match Glob::new("src/[a-z.ts") {
 
 Both languages reject an empty list with `EmptyPatternSet`. A `!` member is accepted in JS, where it adds its complement to the OR, and rejected in Rust: `Glob::union(["src/**", "!**/*.test.ts"])` returns `GlobError::NegatedInUnion { index: 1, pattern: "!**/*.test.ts" }`. Either way a `!` in a list never excludes anything; see [Negated members](./multi-pattern.md#negated-members).
 
-Spec: [GLOB_SPEC §10, §14](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §6, §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

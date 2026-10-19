@@ -126,7 +126,7 @@
 
 ## union.factored-suffix.leading-seps
 # Factoring a shared trailing `**/` leaves an empty branch whose expansion
-# starts with `**/`; it must keep the §8.5 leading-separator leniency, for
+# starts with `**/`; it must keep the §9.4 leading-separator leniency, for
 # a large brace fan-out (the long rows) and a small one (the short rows).
 ["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]	/	match
 ["**/","{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}**/"]		match

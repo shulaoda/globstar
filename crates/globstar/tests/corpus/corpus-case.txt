@@ -1,6 +1,6 @@
 # ============================================================================
 # corpus-case.txt — ASCII case-insensitive matching
-# (CompileOptions::case_insensitive — see GLOB_SPEC.md §11.2)
+# (CompileOptions::case_insensitive — see GLOB_SPEC.md §13)
 #
 # All `case_insensitive=true` rows test ASCII fold semantics.
 # Mixed case is intentional throughout — both PATTERNS and PATHS use
@@ -329,12 +329,12 @@ TeSt.{jPg,pNg,gIf}	test.bmp	no-match	case_insensitive=true
 \?	?	match	case_insensitive=true
 
 # ----------------------------------------------------------------------------
-# ASCII-only scope (non-ASCII bytes do NOT fold per §11.3 / §12.5)
+# ASCII-only scope (non-ASCII bytes do NOT fold per §3.3 / §14.3)
 # ----------------------------------------------------------------------------
 
 ## case.ascii_only_scope
 # Pattern's non-ASCII byte must match path's non-ASCII byte EXACTLY —
-# we don't fold é/É, ü/Ü etc. (Unicode case folding is out of scope §11.3).
+# we don't fold é/É, ü/Ü etc. (Unicode case folding is out of scope §3.3).
 CaFé.tXt	cafÉ.txt	no-match	case_insensitive=true
 CaFé.tXt	café.TXT	match	case_insensitive=true
 CaFé.tXt	CaFé.tXt	match	case_insensitive=true

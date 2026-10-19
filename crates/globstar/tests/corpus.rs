@@ -385,7 +385,7 @@ fn corpus_multi_engines_vs_truth() {
 
 /// `corpus-dir.txt` rows default to `dot=false`, the walker convention;
 /// rows for the other half of the matrix say `dot=true`. Negated rows
-/// run too: `match_dir` answers `Descend` for them (GLOB_SPEC §13.4).
+/// run too: `match_dir` answers `Descend` for them (GLOB_SPEC §15.4).
 #[test]
 fn corpus_dir_engines_vs_truth() {
     let mut globstar = Stats::default();

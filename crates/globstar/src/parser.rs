@@ -6,7 +6,7 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
     parse_within(input, &mut { MAX_EXPANSION })
 }
 
-/// [`parse`] drawing on a shared expansion `budget` (§7.7): the patterns of
+/// [`parse`] drawing on a shared expansion `budget` (§6.2): the patterns of
 /// one union may copy [`MAX_EXPANSION`] between them, not each.
 #[inline]
 pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, GlobError> {
@@ -31,7 +31,7 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
         negation_count += 1;
         p.pos += 1;
     }
-    // `!` and `!!` negate nothing (§4.5).
+    // `!` and `!!` negate nothing (§6.1).
     if p.pos == input.len() {
         return Err(GlobError::Empty);
     }
@@ -155,10 +155,10 @@ impl<'a> Parser<'a> {
     }
 
     /// A `**` is a globstar with a separator, or the end of the pattern, on
-    /// both sides, and a star beside any other token (§8.1). Beside a brace,
+    /// both sides, and a star beside any other token (§9.1). Beside a brace,
     /// or at the edge of a branch, what it meets depends on the branch, so
     /// such a `**` is left to `resolve_globstars`; so is one after `**/`,
-    /// which `resolve_globstars` folds into it (§8.6).
+    /// which `resolve_globstars` folds into it (§9.6).
     fn double_star(&mut self, nodes: &[Node], in_brace: bool) -> Node {
         let before = match nodes.last() {
             None if !in_brace => Some(true),
@@ -195,7 +195,7 @@ impl<'a> Parser<'a> {
 
         let mut items: Vec<ClassItem> = Vec::with_capacity(4);
 
-        // A `]` first is a member (§6.5), and like any member it can start
+        // A `]` first is a member (§8.5), and like any member it can start
         // a range: `[]-a]` is `]..=a`.
         let mut first = true;
         loop {

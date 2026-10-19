@@ -1,5 +1,5 @@
 # ============================================================================
-# corpus-absolute.txt — `**/` + absolute / UNC path semantics (GLOB_SPEC §8.4)
+# corpus-absolute.txt — `**/` + absolute / UNC path semantics (GLOB_SPEC §15.3)
 #
 # At pattern start, `**/X` means "X at any depth", which covers:
 #   - relative paths                  (a/foo)
@@ -102,7 +102,7 @@ a	/a	no-match
 
 ## abs.dot_protection_not_bypassed
 # LeadingSeps must not bypass dot protection for subsequent segments.
-# `**/a` cannot cross `.hidden` segment when dot=false (see §12.4).
+# `**/a` cannot cross `.hidden` segment when dot=false (see §12).
 **/a	/.hidden/a	no-match	dot=false
 **/a	.hidden/a	no-match	dot=false
 # But literal `.` in pattern still matches dotfiles at any depth.

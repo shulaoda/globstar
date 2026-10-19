@@ -22,7 +22,7 @@ use super::{
 
 /// The wildcard-only segments `covers_below` feeds before it gives up:
 /// a pattern needs about one more than its longest run of them, and
-/// "not provable" is a valid answer (GLOB_SPEC §13.6).
+/// "not provable" is a valid answer (GLOB_SPEC §15.5).
 const MAX_COVER_SEGMENTS: usize = 64;
 
 /// The element compares `chain_dir` spends on tail tokens; past them it

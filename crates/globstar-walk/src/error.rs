@@ -19,7 +19,7 @@ pub enum WalkError {
     InvalidPattern {
         /// The pattern that failed, as written (`!src/[z-a]`). When the
         /// members of a pattern list each compile alone but not together
-        /// (they share one expansion budget, GLOB_SPEC §7.7), this is the
+        /// (they share one expansion budget, GLOB_SPEC §6.2), this is the
         /// whole list, formatted like `["a", "b"]`.
         pattern: String,
         /// Human-readable reason (from the underlying parser). When the

@@ -16,7 +16,7 @@ Each expansion is a complete pattern, and every rule on these pages applies to i
 
 globstar does not build the list of expansions in memory. A brace with thousands of branches, or many braces in a row, still compiles fast and small. The one exception is braces whose branches cross a `/`, like `{a,/}` written many times in a row: the number of different segments can grow with the square of their count, and such a pattern fails with `TooComplex` (see [Errors and limits](./errors.md)).
 
-Spec: [GLOB_SPEC §7.0, §7.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.1, §10.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Basic forms
 
@@ -44,7 +44,7 @@ Spec: [GLOB_SPEC §7.0, §7.2](https://github.com/shulaoda/globstar/blob/main/re
 
 The `src/app.js` row fails because each expansion is a normal pattern: `*.js` does not cross `/`.
 
-Spec: [GLOB_SPEC §7.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Nesting
 
@@ -73,7 +73,7 @@ A branch can be empty. `{a,}` means "`a` or nothing". This is the easy way to ma
 
 The empty pattern `""` is a compile error, but an empty branch is fine: it just adds "nothing" as one of the choices.
 
-Spec: [GLOB_SPEC §7.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## A brace needs a comma
 
@@ -89,7 +89,7 @@ A brace with no comma is not a brace. `{a}` is just the three characters `{`, `a
 
 To match a name that has a comma inside braces, escape the `{`: `\{a,b\}` (or just `\{a,b}`) is plain text. Instead of `{1..3}`, write `{1,2,3}` or the class `[1-3]`.
 
-Spec: [GLOB_SPEC §7.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Unclosed braces are errors
 
@@ -97,7 +97,7 @@ A `{` always opens a brace, and the brace must be closed. `{a,b` and `src/{a,b/*
 
 A `}` with no open brace is fine. It is a plain character, so `{a,b}}` matches `a}` and `b}`.
 
-Spec: [GLOB_SPEC §7.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## `!` inside a brace
 
@@ -115,13 +115,13 @@ A branch may contain its own `**`. Each branch is separate, so the `**` in one b
 
 A `**` right next to a brace, or at the edge of a branch, is judged on each expansion: `{**,dist}/*.js` expands to `**/*.js`, where `**` owns a segment, while `src{**,x}.ts` expands to `src**.ts`, where it acts as `*`. See [`**` next to a brace](./globstar.md#next-to-a-brace).
 
-Spec: [GLOB_SPEC §7.8](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.7](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Braces and character classes
 
 A branch may hold a class, as in `{[0-9],x}.log`. Inside a class, `{`, `}`, and `,` are plain characters. See [Classes and braces](./character-classes.md#classes-and-braces) for examples.
 
-Spec: [GLOB_SPEC §7.9](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §10.7](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Limits
 
@@ -133,7 +133,7 @@ Braces may be nested up to 32 levels deep. One more level fails with `BraceNesti
 
 A `**` next to braces can create nesting you did not write yourself, and that nesting counts too. For example, `**` followed by `{,/a}` written 33 times fails with the same error.
 
-Spec: [GLOB_SPEC §7.6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §6.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ### Expansion budget: 4096
 
@@ -153,4 +153,4 @@ The one exception is a `**` next to a brace. To judge that `**` per expansion, g
 If a long list must follow a `**`, put a `/` between them (`**/{a,b,…}`), or start every branch with `/` (`{**,dist}{/a,/b,…}`). Neither form copies the list.
 :::
 
-Spec: [GLOB_SPEC §7.7](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §6.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

@@ -235,7 +235,7 @@ async function runJsVerify() {
 
   // ── match_dir corpora — public API vs truth. Rows default to
   // `dot=false` (the walker convention); negated rows run too, a negated
-  // pattern answers `Descend` (§13.4). Indexed by JS `DirMatch` value
+  // pattern answers `Descend` (§15.4). Indexed by JS `DirMatch` value
   // (Match=0, Pruned=1, Descend=2, DescendAndMatch=3, DescendAll=4,
   // DescendAllAndMatch=5).
   const DIR_TOKEN = [

@@ -1,4 +1,4 @@
-//! Which `**` are globstars (GLOB_SPEC §7.0, §8.1).
+//! Which `**` are globstars (GLOB_SPEC §10.1, §9.1).
 //!
 //! A pattern means the union of its brace expansions, and in each one a
 //! `**` is a globstar only with a separator, or the edge of the pattern, on
@@ -14,7 +14,7 @@ use crate::ast::Node;
 use crate::distribute::distribute;
 use crate::error::GlobError;
 
-/// `budget` is what distribution may still copy (§7.7).
+/// `budget` is what distribution may still copy (§6.2).
 pub(crate) fn resolve_globstars(mut body: Node, budget: &mut usize) -> Result<Node, GlobError> {
     if may_touch(&body) {
         body = distribute(body, budget)?;
@@ -50,7 +50,7 @@ fn decide(node: &mut Node, before: bool, after: bool) {
             }
         }
         Node::Concat(seq) => {
-            // `**/**` is one `**` (§8.6): a `/`, `**` after a `**` is dropped.
+            // `**/**` is one `**` (§9.6): a `/`, `**` after a `**` is dropped.
             let mut kept = 0;
             for i in 0..seq.len() {
                 if matches!(seq[i], Node::Globstar | Node::Brace(_)) {
@@ -68,7 +68,7 @@ fn decide(node: &mut Node, before: bool, after: bool) {
                         continue;
                     }
                 }
-                // A `*` run is one `*` (§8.4): a `**` turned star next to one.
+                // A `*` run is one `*` (§15.3): a `**` turned star next to one.
                 if matches!(seq[i], Node::Star) && matches!(seq[..kept], [.., Node::Star]) {
                     continue;
                 }

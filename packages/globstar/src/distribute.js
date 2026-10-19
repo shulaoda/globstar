@@ -1,4 +1,4 @@
-// Braces taken apart around a `**` (GLOB_SPEC §7.0, §7.7).
+// Braces taken apart around a `**` (GLOB_SPEC §10.1, §6.2).
 //
 // A `**` beside a brace meets a different token in every branch, and a `**`
 // at the edge of a branch may meet a brace outside. `distribute` rewrites
@@ -10,8 +10,8 @@
 //
 // The work is linear in the output: every sequence caches the edges of its
 // expansions, which no merge changes. What a merge copies is charged to a
-// budget (§7.7), and the braces it nests are held to the nesting limit
-// (§7.6).
+// budget (§6.2), and the braces it nests are held to the nesting limit
+// (§6.2).
 
 import {
   N_SEPARATOR,
@@ -125,7 +125,7 @@ function rewrite(node, budget) {
 
 // Pushes `item` and merges the junction it closes; pushing the merged items
 // can close another one with the items before them. Braces may nest no
-// deeper than in a pattern (§7.6).
+// deeper than in a pattern (§6.2).
 function push(seq, item, budget) {
   if (item.tag === N_BRACE) {
     if (item.depth > MAX_BRACE_NESTING) {

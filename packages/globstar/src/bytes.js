@@ -2,7 +2,7 @@
 // `std::path::is_separator`, `u32::trailing_zeros`,
 // `u8::eq_ignore_ascii_case`.
 
-// Path separators per GLOB_SPEC §12.3: `/` always, `\` on Windows.
+// Path separators per GLOB_SPEC §14.2: `/` always, `\` on Windows.
 const IS_WINDOWS = typeof process !== "undefined" && process.platform === "win32";
 export function isPathSep(b) {
   if (b === 0x2f) return true;

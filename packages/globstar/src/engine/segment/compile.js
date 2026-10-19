@@ -415,7 +415,7 @@ class Builder {
         case N_GLOBSTAR:
           if (sepNext || (last && sepAfter)) {
             // `**/`: zero or more whole segments, empty ones included, so
-            // the separators around it are lenient (§12.3). It is emitted
+            // the separators around it are lenient (§14.2). It is emitted
             // later, when it is known that no bare `**` absorbs it.
             for (const g of groups) {
               g.pendingOss = true;
@@ -501,7 +501,7 @@ class Builder {
 
   close(buf) {
     // An escaped `\` on Windows: no segment holds a separator, so a
-    // segment with one is a silent miss (§2.4), kept as a wildcard that
+    // segment with one is a silent miss (§4.2), kept as a wildcard that
     // wants more bytes than any segment has.
     if (IS_WINDOWS_SEP && buf.some((n) => n.tag === N_LITERAL && n.str.includes("\\"))) {
       return makeElem(EL_WILD, null, makeWild(WK_AFFIX, { minLen: NEVER_LEN, variable: false }));

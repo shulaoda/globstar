@@ -315,7 +315,7 @@ function makeGen(seed) {
     if (!UNION.has(cmd)) return { cmd, dot, ci, pat: genPattern(10 * scale), input };
     // union: 2..10 patterns stripped of `!` — negated members are the one
     // documented API divergence (Rust rejects NegatedInUnion, JS accepts;
-    // GLOB_SPEC §10), so raw equality can't compare them.
+    // GLOB_SPEC §6), so raw equality can't compare them.
     const k = randint(2, 10);
     const patterns = [];
     for (let i = 0; i < k; i++) patterns.push(stripBang(genPattern(6 * scale)));

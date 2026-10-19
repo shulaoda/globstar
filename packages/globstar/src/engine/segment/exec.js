@@ -43,7 +43,7 @@ function lastSepBefore(str, end) {
 
 // The wildcard-only segments `coversBelow` feeds before it gives up: a
 // pattern needs about one more than its longest run of them, and "not
-// provable" is a valid answer (GLOB_SPEC §13.6).
+// provable" is a valid answer (GLOB_SPEC §15.5).
 const MAX_COVER_SEGMENTS = 64;
 
 // The element compares `chainDir` spends on tail tokens; past them it

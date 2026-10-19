@@ -413,7 +413,7 @@ function splitBangs(raw) {
 // names the member, as written, that the union failed in; when the
 // written text differs, the reason says which text its byte offsets
 // count in, and when it ran past the expansion budget the members share
-// (GLOB_SPEC §7.7), that they share it. An error no one member explains
+// (GLOB_SPEC §6.2), that they share it. An error no one member explains
 // (the union's compile work) names the list, cut after three.
 function compileUnion(patterns, opts) {
   if (patterns.length === 0) return null;

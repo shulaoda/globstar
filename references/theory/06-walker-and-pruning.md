@@ -53,7 +53,7 @@ Two outputs from the matcher drive the walker: `static_prefixes` jumps the trave
 
 ### 1.1 Definition
 
-For a pattern `P` with brace expansions `E(P)` (GLOB_SPEC §7.0), let `head(e)` be the longest literal prefix of the expansion `e` that ends at a path-segment boundary: every `w ∈ L(e)` starts with it, and it is `ε` or every such `w` equals it or goes on after it with a separator. The _static prefixes_ of `P` are
+For a pattern `P` with brace expansions `E(P)` (GLOB_SPEC §10.1), let `head(e)` be the longest literal prefix of the expansion `e` that ends at a path-segment boundary: every `w ∈ L(e)` starts with it, and it is `ε` or every such `w` equals it or goes on after it with a separator. The _static prefixes_ of `P` are
 
 ```
 SP(P) := the minimal elements of { head(e) : e ∈ E(P) }
@@ -133,7 +133,7 @@ combine(false, true,  false) = Descend
 combine(false, false, false) = Pruned
 ```
 
-These are the definitions of `references/spec/GLOB_SPEC.md` §13.2 and §13.6. At the root the engines report `prefix_match` as true for every pattern.
+These are the definitions of `references/spec/GLOB_SPEC.md` §15.2 and §15.5. At the root the engines report `prefix_match` as true for every pattern.
 
 `Pruned` is the only verdict that licenses the walker to skip `readdir(d)`. The two `DescendAll…` verdicts license the opposite kind of consumer — one that EXCLUDES files by glob, such as a watcher — to skip `d` whole (§2.5).
 
@@ -157,7 +157,7 @@ Unlike `is_match`, `match_dir` does not consult the suffix prefilter (§05; Rust
 
 ### 2.4 Negated patterns
 
-A lone negated pattern returns `DescendAndMatch` when the directory itself matches and `Descend` otherwise, in both runtimes (`references/spec/GLOB_SPEC.md` §13.4). A negated pattern matches paths _not_ in some sublanguage, and the walker has not yet seen the deeper paths; it cannot rule out their membership in the complement.
+A lone negated pattern returns `DescendAndMatch` when the directory itself matches and `Descend` otherwise, in both runtimes (`references/spec/GLOB_SPEC.md` §15.4). A negated pattern matches paths _not_ in some sublanguage, and the walker has not yet seen the deeper paths; it cannot rule out their membership in the complement.
 
 Rust's `Glob::union` rejects `!` members (`NegatedInUnion`). The JS multi-pattern matcher (`compileMatcher` in `packages/globstar/src/glob.js`, built by `makeMatcher`) accepts them: a negated member matches every directory outside its sublanguage and contributes may-below (GLOB_SPEC §14.3). So when any member is negated, `matches` is the union's own answer (a negated member counts), may-below is forced true, and the positive members alone give the all-below bit:
 
@@ -168,7 +168,7 @@ match_dir(P with negations, d) = combine(any member matches d, true, positive al
 
 i.e. pruning is suppressed: the verdict is never `Pruned` or `Match`. For example `compileMatcher(["a/**", "!b"]).matchDir("a")` is `DescendAllAndMatch` (`a` is not `b`, so the negated member matches it), and `compileMatcher(["!b"]).matchDir("b")` is `Descend`. Pruning is restored only when no negative member exists.
 
-This is the formal counterpart of `references/spec/GLOB_SPEC.md` §13.4 and §14.3. The walker (§ `references/spec/WALKER_SPEC.md` §4) splits `!`-prefixed input patterns into its own ignore set, so the matcher receives only positive patterns at the walker layer; the conservative case applies only to direct standalone callers.
+This is the formal counterpart of `references/spec/GLOB_SPEC.md` §15.4 and §16.2. The walker (§ `references/spec/WALKER_SPEC.md` §4) splits `!`-prefixed input patterns into its own ignore set, so the matcher receives only positive patterns at the walker layer; the conservative case applies only to direct standalone callers.
 
 ### 2.5 All-below
 

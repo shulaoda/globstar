@@ -72,7 +72,7 @@ fn dot_false_never_covers_a_subtree() {
 }
 
 // A negated pattern is always worth walking, and says exactly whether the
-// directory itself matches (§13.4). Twin of the check in dir-match.mjs.
+// directory itself matches (§15.4). Twin of the check in dir-match.mjs.
 #[test]
 fn a_negated_pattern_is_always_worth_walking() {
     let g = Glob::new("!**/*.ts").unwrap();

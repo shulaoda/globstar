@@ -6,7 +6,7 @@ use core::fmt;
 pub const MAX_PATTERN_LEN: usize = 64 * 1024;
 /// How deep braces may nest ([`GlobError::BraceNestingTooDeep`]).
 pub const MAX_BRACE_NESTING: usize = 32;
-/// What distributing braces around `**` may copy (§7.7), per pattern or
+/// What distributing braces around `**` may copy (§6.2), per pattern or
 /// per union: one per token, a literal or a class by its length, and one
 /// per brace branch.
 pub const MAX_EXPANSION: usize = 4096;

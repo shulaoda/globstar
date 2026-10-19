@@ -30,7 +30,7 @@ A pattern must match the entire path, from the first character to the last. It n
 | `node_modules` | `packages/web/node_modules` | ❌     |
 | `src`          | `src/main.ts`               | ❌     |
 
-Spec: [GLOB_SPEC §12.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §14.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Characters and bytes
 
@@ -83,7 +83,7 @@ These characters can have a special meaning: `*` `?` `[` `]` `{` `}` `,` `\`, pl
 
 So a stray closer is fine: `a]b` matches the path `a]b`, and `a}b` matches `a}b`. An opener with no closer is an error: `[a` and `{a` both fail to compile. See [Compile-time errors](./errors.md).
 
-Spec: [GLOB_SPEC §3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §5.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Basic constructs
 
@@ -130,7 +130,7 @@ With `dot: false`, `?` and `*` do not match a `.` at the start of a segment, so 
 
 The empty string `""` is not a valid pattern. Compiling it throws a `GlobError` with kind `Empty`.
 
-Spec: [GLOB_SPEC §4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §7](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## What is not supported
 
@@ -153,7 +153,7 @@ Some popular syntax from shells and other glob libraries is not part of globstar
 | `file(1).txt` | `file(1).txt` | ✅     |
 | `~/x`         | `~/x`         | ✅     |
 
-Spec: [GLOB_SPEC §1.2, §5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §1.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Escaping with `\`
 
@@ -190,7 +190,7 @@ Note the last two rows: without escapes, `[draft]` is a class that matches one l
 In a JavaScript string, `\` is also an escape, so the pattern `\*.md` is written `'\\*.md'` (or `String.raw` with `` `\*.md` ``). In Rust, use a raw string: `r"\*.md"`.
 :::
 
-Spec: [GLOB_SPEC §9.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §4.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ## Negation with a leading `!`
 
@@ -222,4 +222,4 @@ The leading `!` is read before braces are expanded, so a `!` inside a brace is l
 A list is an OR, so a `!` member adds paths instead of removing them. See [Negated members](./multi-pattern.md#negated-members).
 :::
 
-Spec: [GLOB_SPEC §9.3–9.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
+Spec: [GLOB_SPEC §11](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
