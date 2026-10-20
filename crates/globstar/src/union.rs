@@ -100,6 +100,16 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
 /// member joins the deepest group it fits, and what that makes of it is
 /// not keyed again at the shallower segments, where roots would collide
 /// in vain.
+/// A member's part in the merge, once a group forms.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Member {
+    Free,
+    /// Heads a group: its trailing literal became the brace.
+    Head,
+    /// Joined a head's brace: dropped at the end.
+    Absorbed,
+}
+
 fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
     // (segment, cheap key, member, node) per literal ending a segment.
     let mut entries: Vec<(usize, u64, usize, usize)> = Vec::new();
@@ -134,8 +144,7 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
         return;
     }
     entries.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    // Per member once a group forms: 0 free, 1 heads a group, 2 absorbed.
-    let mut state: Vec<u8> = Vec::new();
+    let mut state: Vec<Member> = Vec::new();
     let mut run = 0;
     while run < entries.len() {
         let (k, key, ..) = entries[run];
@@ -150,7 +159,7 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
             // hold but the literal.
             let mut keyed: Vec<(u64, usize, usize)> = entries[run..end]
                 .iter()
-                .filter(|&&(_, _, i, _)| state.get(i).is_none_or(|&st| st == 0))
+                .filter(|&&(_, _, i, _)| state.get(i).is_none_or(|&st| st == Member::Free))
                 .map(|&(_, _, i, at)| (hash_without(&seqs[i], at), i, at))
                 .collect();
             keyed.sort_unstable();
@@ -160,13 +169,13 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
     }
     if !state.is_empty() {
         let mut st = state.iter();
-        seqs.retain(|_| *st.next().unwrap() != 2);
+        seqs.retain(|_| *st.next().unwrap() != Member::Absorbed);
     }
 }
 
 /// Merge each run of `keyed` (hash, member, node) whose members are the
 /// same node for node but for that literal, into the first of them.
-fn merge_runs(seqs: &mut [Vec<Node>], keyed: &[(u64, usize, usize)], state: &mut Vec<u8>) {
+fn merge_runs(seqs: &mut [Vec<Node>], keyed: &[(u64, usize, usize)], state: &mut Vec<Member>) {
     let mut run = 0;
     while run < keyed.len() {
         let hash = keyed[run].0;
@@ -178,16 +187,16 @@ fn merge_runs(seqs: &mut [Vec<Node>], keyed: &[(u64, usize, usize)], state: &mut
                 None => head = Some((i, at)),
                 Some((h, h_at)) if same_but(&seqs[h], &seqs[i], h_at) => {
                     if state.is_empty() {
-                        *state = vec![0; seqs.len()];
+                        *state = vec![Member::Free; seqs.len()];
                     }
-                    state[i] = 2;
+                    state[i] = Member::Absorbed;
                     lits.push(std::mem::replace(&mut seqs[i][at], Node::Separator));
                 }
                 Some(_) => {} // a hash collision stays as it is
             }
         }
         if let (Some((h, at)), false) = (head, lits.is_empty()) {
-            state[h] = 1;
+            state[h] = Member::Head;
             lits.insert(0, std::mem::replace(&mut seqs[h][at], Node::Separator));
             seqs[h][at] = Node::Brace(lits);
         }

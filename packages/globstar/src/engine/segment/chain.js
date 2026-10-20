@@ -17,7 +17,7 @@ import {
 import { isPathSep, nextSep, lastSepBefore } from "../../bytes.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { ACCEPT } from "./graph.js";
-import { nfaRun, nfaSmall } from "./nfa.js";
+import { denseNfa, nfaRun } from "./nfa.js";
 import { affixEq, litEq, wildConsumes } from "./wild.js";
 
 // Every path through the graph as a chain, in pattern order, or none
@@ -25,7 +25,7 @@ import { affixEq, litEq, wildConsumes } from "./wild.js";
 // is the only path or has more than 32 states (the NFA takes those).
 export function chains(graph) {
   if (graph.linear) {
-    const chain = makeChain(graph, null, true);
+    const chain = chainOf(graph, null, true);
     return chain === null ? [] : [chain];
   }
   // Depth-first, first branch first, along one path: a level per node
@@ -55,7 +55,7 @@ export function chains(graph) {
   }
   const out = [];
   for (const nodes of paths) {
-    const chain = makeChain(graph, nodes, paths.length === 1);
+    const chain = chainOf(graph, nodes, paths.length === 1);
     if (chain === null) return [];
     out.push(chain);
   }
@@ -66,7 +66,7 @@ export function chains(graph) {
 // whose nodes are `0..elems.length`), or `null` when it has several
 // globstars and is the graph's `lone` path (the graph's NFA serves) or
 // its NFA would not fit an int32.
-function makeChain(graph, nodes, lone) {
+function chainOf(graph, nodes, lone) {
   const elems = graph.elems;
   const n = nodes === null ? elems.length : nodes.length;
   const elem = (i) => elems[nodes === null ? i : nodes[i]];
@@ -84,7 +84,7 @@ function makeChain(graph, nodes, lone) {
   let nfa = null;
   if (globstar === MANY_G) {
     if (lone || n + 1 > 32) return null;
-    nfa = nfaSmall(graph, nodes);
+    nfa = denseNfa(graph, nodes);
   }
   // A chain's own NFA keeps the chain's elements: no node list then.
   const chainNodes = nfa === null ? nodes : null;

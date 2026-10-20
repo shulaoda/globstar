@@ -59,7 +59,11 @@ impl Edges {
 impl Graph {
     pub(super) fn build(body: &Node, dot: bool, ci: bool) -> Result<Self, GlobError> {
         let nodes = body.seq();
-        let (boundaries, linear, weight) = survey(nodes);
+        let Survey {
+            boundaries,
+            linear,
+            weight,
+        } = survey(nodes);
         // Only a separator-crossing brace can need regrouping.
         let nodes = if linear {
             Cow::Borrowed(nodes)
@@ -93,10 +97,20 @@ impl Graph {
     }
 }
 
+/// What the walk needs to know about the pattern before it starts.
+struct Survey {
+    /// Separators and globstars, inside braces too.
+    boundaries: usize,
+    /// No brace holds a boundary: the pattern is one path.
+    linear: bool,
+    /// The pattern's `node_weight`.
+    weight: usize,
+}
+
 /// How many segment boundaries the pattern has (a floor for its
 /// elements), whether it has a separator-crossing brace at all, and its
 /// weight (`node_weight`).
-fn survey(nodes: &[Node]) -> (usize, bool, usize) {
+fn survey(nodes: &[Node]) -> Survey {
     let mut boundaries = 0;
     let mut linear = true;
     let mut weight = 0;
@@ -107,9 +121,9 @@ fn survey(nodes: &[Node]) -> (usize, bool, usize) {
                 let before = boundaries;
                 weight += 1;
                 for b in branches {
-                    let (n, _, w) = survey(b.seq());
-                    boundaries += n;
-                    weight += w;
+                    let inner = survey(b.seq());
+                    boundaries += inner.boundaries;
+                    weight += inner.weight;
                 }
                 linear &= boundaries == before;
             }
@@ -122,7 +136,11 @@ fn survey(nodes: &[Node]) -> (usize, bool, usize) {
             Node::Concat(_) => unreachable!("a sequence holds no sequence"),
         }
     }
-    (boundaries, linear, weight)
+    Survey {
+        boundaries,
+        linear,
+        weight,
+    }
 }
 
 /// What a node costs the walk to copy and compile: a literal its

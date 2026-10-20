@@ -103,6 +103,14 @@ export function factorBranches(branches) {
 // last back: a member joins the deepest group it fits, and what that makes
 // of it is not keyed again at the shallower segments, where roots would
 // collide in vain.
+// A member's part in the merge, once a group forms (`state`, a
+// Uint8Array: every member starts FREE).
+const FREE = 0;
+// Heads a group: its trailing literal became the brace.
+const HEAD = 1;
+// Joined a head's brace: dropped at the end.
+const ABSORBED = 2;
+
 function mergeSegments(seqs, liftedWild) {
   // [segment, cheap key, member, node] per literal ending a segment.
   const entries = [];
@@ -165,7 +173,7 @@ function mergeSegments(seqs, liftedWild) {
       run = end;
     }
   }
-  return state === null ? seqs : seqs.filter((_, i) => state[i] !== 2);
+  return state === null ? seqs : seqs.filter((_, i) => state[i] !== ABSORBED);
 }
 
 // Merge the members of `alike` ([segment, cheap key, member, node]) that
@@ -175,7 +183,7 @@ function mergeSegments(seqs, liftedWild) {
 // literal first.
 function mergeAlike(seqs, alike, state) {
   const free = [];
-  for (const m of alike) if (state === null || state[m[2]] === 0) free.push(m);
+  for (const m of alike) if (state === null || state[m[2]] === FREE) free.push(m);
   if (free.length < 2) return state;
   if (free.length > 8) {
     const keyed = free.map((m) => [hashWithout(seqs[m[2]], m[3]), m[2], m[3]]);
@@ -188,12 +196,12 @@ function mergeAlike(seqs, alike, state) {
     if (head === undefined) heads.push([i, at, []]);
     else {
       head[2].push(seqs[i][at]);
-      (state ??= new Uint8Array(seqs.length))[i] = 2;
+      (state ??= new Uint8Array(seqs.length))[i] = ABSORBED;
     }
   }
   for (const [h, at, lits] of heads) {
     if (lits.length === 0) continue;
-    state[h] = 1;
+    state[h] = HEAD;
     lits.unshift(seqs[h][at]);
     seqs[h][at] = brace(lits);
   }
@@ -218,12 +226,12 @@ function mergeRuns(seqs, keyed, state) {
         headAt = at;
       } else if (sameBut(seqs[head], seqs[i], headAt)) {
         if (state === null) state = new Uint8Array(seqs.length);
-        state[i] = 2;
+        state[i] = ABSORBED;
         lits.push(seqs[i][at]);
       } // a hash collision stays as it is
     }
     if (lits.length > 0) {
-      state[head] = 1;
+      state[head] = HEAD;
       lits.unshift(seqs[head][headAt]);
       seqs[head][headAt] = brace(lits);
     }

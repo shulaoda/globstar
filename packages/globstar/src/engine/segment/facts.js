@@ -12,9 +12,9 @@ import { nodeWeight } from "./graph.js";
 // per byte, like the path strings they are compared with.
 export function suffixes(body) {
   const nodes = seq(body);
-  const suffix = trailingLiteral(nodes, nodes.length);
+  const suffix = trailing(nodes, nodes.length);
   if (suffix.length > 0) return [suffix];
-  return extractSuffixSet(nodes);
+  return suffixSet(nodes);
 }
 
 // Does `str` end with `suffix`, its bytes compared by `patByteEq`?
@@ -29,7 +29,7 @@ export function endsWithSepAware(str, suffix, ci) {
 
 // The bytes of the literal/separator run that ends `nodes[..end]`. The
 // `/` of a `**/` is not part of it: `**/b` matches `b` alone.
-function trailingLiteral(nodes, end) {
+function trailing(nodes, end) {
   let acc = "";
   for (let i = end - 1; i >= 0; i--) {
     const node = nodes[i];
@@ -47,17 +47,17 @@ const MAX_SUFFIX_SET = 16;
 
 // When the pattern ends in a brace: one guaranteed suffix per branch, or
 // none when a branch guarantees nothing.
-function extractSuffixSet(nodes) {
+function suffixSet(nodes) {
   if (nodes.length === 0) return [];
   const last = nodes[nodes.length - 1];
   if (last.tag !== N_BRACE || last.branches.length > MAX_SUFFIX_SET) return [];
 
-  const commonTail = trailingLiteral(nodes, nodes.length - 1);
+  const commonTail = trailing(nodes, nodes.length - 1);
 
   const set = [];
   for (const branch of last.branches) {
     const b = seq(branch);
-    const branchSuffix = trailingLiteral(b, b.length);
+    const branchSuffix = trailing(b, b.length);
     // Gluing the common tail to a branch that is not all-literal would
     // claim more than the branch guarantees.
     const allLiteral = b.every((n) => n.tag === N_LITERAL || n.tag === N_SEPARATOR);
@@ -91,7 +91,7 @@ export function computeStaticPrefixes(body) {
   const nodes = seq(body);
   const heads = { root: nodes, spent: 0, limit: HEAD_BUDGET_FLOOR, weighed: false, out: [] };
   readHeads(heads, nodes, 0, null, "", 0, 0);
-  return dedupePrefixes(heads.out);
+  return dedupe(heads.out);
 }
 
 // Read `nodes` from `at`, then `then` (`{ nodes, at, next }`: what
@@ -162,7 +162,7 @@ function opensSegment(node) {
 // Drop prefixes a shorter one already covers; an empty one covers all.
 // Shortest first, so a prefix is only ever covered by one kept before,
 // found by a binary search at each of its `/`.
-function dedupePrefixes(prefixes) {
+function dedupe(prefixes) {
   if (prefixes.length <= 1) return prefixes;
   prefixes.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
   const kept = [];

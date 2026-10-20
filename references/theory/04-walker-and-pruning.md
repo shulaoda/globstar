@@ -153,7 +153,7 @@ This is the production path. It answers the directory query without rebuilding a
 
 ### 2.3 The suffix prefilter is not used
 
-Unlike `is_match`, `match_dir` does not consult the suffix prefilter (§03; Rust `SegmentMatcher::prefilter`, JS `_factsAccept`). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. The engine runs unfiltered for `match_dir`.
+Unlike `is_match`, `match_dir` does not consult the suffix prefilter (§03; Rust `SegmentMatcher::prefilter`, JS `_prefilter`). A directory prefix in general does not end with the pattern's suffix — the pattern's literal tail lives in the file segment, not the directory segment — so the prefilter would over-reject. The engine runs unfiltered for `match_dir`.
 
 ### 2.4 Negated patterns
 

@@ -46,14 +46,14 @@ function layout(graph, nodes) {
 
 // One int32 of states up to 32, sparse beyond.
 export function anyNfa(graph, ci) {
-  return graph.elems.length + 1 <= 32 ? nfaSmall(graph, null) : nfaSparse(graph, ci);
+  return graph.elems.length + 1 <= 32 ? denseNfa(graph, null) : sparseNfa(graph, ci);
 }
 
 // Int32 active set: at most 32 states. `after` holds per state the
 // closure entered after consuming a segment there (a globstar's
 // includes itself); state `i` takes what `elems[i]` takes: the graph's
 // elements, or a chain's in path order.
-export function nfaSmall(graph, nodes) {
+export function denseNfa(graph, nodes) {
   const { elems, n, nodeAt, succs, start } = layout(graph, nodes);
   const accept = n;
   const after = [];
@@ -91,7 +91,7 @@ export function nfaSmall(graph, nodes) {
 // `others[otherAt[p]..otherAt[p + 1]]`, the nullable ones (`**/`) first,
 // up to `nullEnd[p]`. The active set holds states and whole positions;
 // see `nfaRunSparse`.
-function nfaSparse(graph, ci) {
+function sparseNfa(graph, ci) {
   const { elems, n, succs, start } = layout(graph, null);
   const succOf = (p) => (p === n ? start : succs === null ? null : succs[p]);
   // Linear graphs store no edges: position `p` is followed by `p + 1`.
@@ -324,7 +324,7 @@ export function initSparse(g) {
 
 // Order of a sorted literal key against segment `str[s..t]`, the
 // segment ASCII-folded when insensitive.
-function cmpKey(key, str, s, t, ci) {
+function litCmp(key, str, s, t, ci) {
   const n = Math.min(key.length, t - s);
   for (let i = 0; i < n; i++) {
     let c = str.charCodeAt(s + i);
@@ -376,10 +376,10 @@ function stepSparse(m, g, active, next, str, s0, e0) {
     let top = hi;
     while (lo < top) {
       const mid = (lo + top) >>> 1;
-      if (cmpKey(g.litKeys[mid], str, s0, e0, ci) < 0) lo = mid + 1;
+      if (litCmp(g.litKeys[mid], str, s0, e0, ci) < 0) lo = mid + 1;
       else top = mid;
     }
-    for (; lo < hi && cmpKey(g.litKeys[lo], str, s0, e0, ci) === 0; lo++) {
+    for (; lo < hi && litCmp(g.litKeys[lo], str, s0, e0, ci) === 0; lo++) {
       fireSparse(m, g, g.lits[lo], next);
     }
     for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {

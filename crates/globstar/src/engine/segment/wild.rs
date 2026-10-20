@@ -395,7 +395,7 @@ impl SegmentMatcher {
         let order = |k: usize| {
             let s = &index.suffixes[run.start as usize + k * len..][..len];
             if self.case_insensitive {
-                cmp_folded(s, tail)
+                cmp_tail(s, tail)
             } else {
                 s.cmp(tail)
             }
@@ -415,7 +415,7 @@ impl SegmentMatcher {
 
 /// Order of a lowercased suffix against a segment tail of the same
 /// length, folding the tail's ASCII case.
-fn cmp_folded(suffix: &[u8], tail: &[u8]) -> Ordering {
+fn cmp_tail(suffix: &[u8], tail: &[u8]) -> Ordering {
     suffix
         .iter()
         .zip(tail)

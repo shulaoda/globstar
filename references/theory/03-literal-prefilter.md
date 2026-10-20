@@ -26,7 +26,7 @@ AST      ──►  trailing(nodes)            ──►  one suffix
    └──────────────────────────────────────────────────────┘
 ```
 
-`accept(path)` is the check: `SegmentMatcher::prefilter` in Rust (`engine/segment/mod.rs`), `_factsAccept` in JS (`engine/segment/index.js`). It is a separator-aware `ends_with`: a `'/'` byte in the suffix matches any `Seps` byte in the path (so `*/main.ts`, suffix `/main.ts`, rejects `src\foo.js` on Windows and accepts `src\main.ts`).
+`accept(path)` is the check: `SegmentMatcher::prefilter` in Rust (`engine/segment/mod.rs`), `_prefilter` in JS (`engine/segment/index.js`). It is a separator-aware `ends_with`: a `'/'` byte in the suffix matches any `Seps` byte in the path (so `*/main.ts`, suffix `/main.ts`, rejects `src\foo.js` on Windows and accepts `src\main.ts`).
 
 When the trailing literal/separator run is non-empty it is the single anchor. Otherwise, when the pattern ends in a brace of at most 16 branches (e.g. `**/*.{ts,tsx,js}`), `suffix_set` derives one anchor per branch and `accept` succeeds if `path` ends with any of them.
 
@@ -90,7 +90,7 @@ Without this rule, `*/main.ts` (suffix `/main.ts`) would incorrectly reject `src
 
 ## 5. Extraction algorithm
 
-`trailing(nodes)` (JS `trailingLiteral`) walks the pattern's node sequence right to left, collecting bytes:
+`trailing(nodes)` walks the pattern's node sequence right to left, collecting bytes:
 
 ```
 Literal(b₁ … bₖ)             → push bₖ, …, b₁
@@ -100,7 +100,7 @@ any other                    → halt collection
 
 The collected bytes are reversed to form the suffix. Halting at the first other node is required for soundness: a wildcard or a `**` can produce arbitrary bytes at the suffix, so prepending its contribution would be unsound. The `/` right after a `**` (or after a brace a `**` ends) belongs to that `**/`, which absorbs zero segments too, so the suffix of `a/**/b` is `b`, not `/b`, and `**/b` keeps matching `b`.
 
-`suffix_set(nodes)` (JS `extractSuffixSet`) is invoked when `trailing(nodes)` yields the empty suffix and the pattern ends with a brace of at most `MAX_SUFFIX_SET = 16` branches:
+`suffix_set(nodes)` (JS `suffixSet`) is invoked when `trailing(nodes)` yields the empty suffix and the pattern ends with a brace of at most `MAX_SUFFIX_SET = 16` branches:
 
 ```
 common_tail := trailing(nodes without the trailing brace)
@@ -226,9 +226,9 @@ Rust, `crates/globstar/src/engine/segment/`:
 JS, `packages/globstar/src/engine/segment/`:
 
 - `facts.js::suffixes(body)` — entry; returns a string array (one char per byte), empty when there is no prefilter.
-- `facts.js::trailingLiteral` / `facts.js::extractSuffixSet` — internal helpers; `MAX_SUFFIX_SET = 16`.
+- `facts.js::trailing` / `facts.js::suffixSet` — internal helpers; `MAX_SUFFIX_SET = 16`.
 - `facts.js::endsWithSepAware` — the separator-aware `ends_with`.
-- `index.js::SegmentMatcher._factsAccept(str)` — the check, the first step of `_isMatch`.
+- `index.js::SegmentMatcher._prefilter(str)` — the check, the first step of `_isMatch`.
 
 ## 9. References
 

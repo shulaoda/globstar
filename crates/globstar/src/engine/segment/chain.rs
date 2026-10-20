@@ -10,7 +10,7 @@
 use crate::dir_match::DirMatch;
 
 use super::graph::{ACCEPT, Graph};
-use super::nfa::{Nfa, nfa_over};
+use super::nfa::{Nfa, dense_nfa};
 use super::wild::WildKind;
 use super::{Elem, SegmentMatcher, seg_end, seg_start};
 
@@ -36,19 +36,23 @@ pub(super) struct Chain {
 /// Where a chain's globstars are, which decides how it is matched.
 #[derive(Debug, Clone)]
 pub(super) enum Shape {
-    /// At most one globstar, at `g` (past the end for none): the head
-    /// and the tail are anchored around it. Every element from
-    /// `open_from` on takes some segment, from `any_from` on any
-    /// non-empty one: what `match_dir` reads off a lone chain (both 0
-    /// on a union member's, which `match_dir` never reads).
-    Line {
-        g: u32,
-        open_from: u32,
-        any_from: u32,
-    },
+    /// At most one globstar: the head and the tail are anchored around
+    /// it.
+    Line(Line),
     /// Several: the NFA over this chain alone (a union member; a lone
     /// chain with several globstars is the graph, whose NFA serves).
     Many(Box<Nfa<u64>>),
+}
+
+/// A chain with at most one globstar, at `g` (past the end for none).
+/// Every element from `open_from` on takes some segment, from
+/// `any_from` on any non-empty one: what `match_dir` reads off a lone
+/// chain (both 0 on a union member's, which `match_dir` never reads).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Line {
+    g: u32,
+    open_from: u32,
+    any_from: u32,
 }
 
 impl Graph {
@@ -58,7 +62,7 @@ impl Graph {
     /// (the NFA takes those).
     pub(super) fn chains(&self) -> Box<[Chain]> {
         let Some(edges) = &self.edges else {
-            return self.chain(None, true).into_iter().collect();
+            return self.chain_of(None, true).into_iter().collect();
         };
         let mut paths: Vec<Vec<u32>> = Vec::new();
         // Depth-first, first branch first, along one path: a level per
@@ -86,7 +90,7 @@ impl Graph {
         let lone = paths.len() == 1;
         paths
             .into_iter()
-            .map(|p| self.chain(Some(p), lone))
+            .map(|p| self.chain_of(Some(p), lone))
             .collect::<Option<_>>()
             .unwrap_or_default()
     }
@@ -95,7 +99,7 @@ impl Graph {
     /// pattern, whose nodes are `0..elems.len()`); `None` when it has
     /// several globstars and is the graph's `lone` path (the graph's
     /// NFA serves) or would not fit a `u64`.
-    fn chain(&self, path: Option<Vec<u32>>, lone: bool) -> Option<Chain> {
+    fn chain_of(&self, path: Option<Vec<u32>>, lone: bool) -> Option<Chain> {
         let n = path.as_ref().map_or(self.elems.len(), Vec::len);
         let elem = |i: usize| &self.elems[path.as_ref().map_or(i, |p| p[i] as usize)];
         let mut globstars = (0..n).filter(|&i| elem(i).is_globstar());
@@ -110,15 +114,15 @@ impl Graph {
                     return None;
                 }
                 let p = path.as_deref();
-                Shape::Many(Box::new(nfa_over::<u64>(&self.elems, None, p)))
+                Shape::Many(Box::new(dense_nfa::<u64>(&self.elems, None, p)))
             }
             // `match_dir` reads `open_from` and `any_from` off the lone
             // chain only.
-            (g, _) => Shape::Line {
+            (g, _) => Shape::Line(Line {
                 g: g.unwrap_or(n) as u32,
                 open_from: if lone { from(Elem::satisfiable) } else { 0 },
                 any_from: if lone { from(Elem::any_seg) } else { 0 },
-            },
+            }),
         };
         Some(Chain {
             nodes: path.map_or_else(Default::default, Vec::into_boxed_slice),
@@ -240,11 +244,11 @@ impl SegmentMatcher {
     #[inline]
     fn chain_matches_on<E: ChainElems>(&self, chain: &Chain, elems: &E, path: &[u8]) -> bool {
         match &chain.shape {
-            Shape::Line { g, .. } if *g as usize == elems.len() => {
+            Shape::Line(line) if line.g as usize == elems.len() => {
                 self.fixed_run(elems, 0..elems.len(), path, 0)
             }
-            Shape::Line { g, .. } => {
-                let g = *g as usize;
+            Shape::Line(line) => {
+                let g = line.g as usize;
                 self.head(elems, g, path)
                     .is_some_and(|mid_start| self.tail_and_globstar(elems, g, path, mid_start))
             }
@@ -402,15 +406,9 @@ impl SegmentMatcher {
     /// NFA.
     pub(super) fn chain_dir(&self, dir: &[u8]) -> DirMatch {
         let chain = &self.chains[0];
-        let Shape::Line {
-            g,
-            open_from,
-            any_from,
-        } = chain.shape
-        else {
+        let Shape::Line(line) = chain.shape else {
             unreachable!("a chain with several globstars keeps the NFA")
         };
-        let line = (g as usize, open_from as usize, any_from as usize);
         if chain.nodes.is_empty() {
             self.chain_dir_on(line, &&self.elems[..], dir)
         } else {
@@ -427,13 +425,11 @@ impl SegmentMatcher {
     /// globstar when it has taken everything after the head, and a
     /// tail position when the tail's first elements take the last
     /// segments.
-    fn chain_dir_on<E: ChainElems>(
-        &self,
-        (g, open_from, any_from): (usize, usize, usize),
-        elems: &E,
-        dir: &[u8],
-    ) -> DirMatch {
+    fn chain_dir_on<E: ChainElems>(&self, line: Line, elems: &E, dir: &[u8]) -> DirMatch {
         let n = elems.len();
+        let g = line.g as usize;
+        let open_from = line.open_from as usize;
+        let any_from = line.any_from as usize;
         // A fixed chain: the globstar sits past the end, the tail is
         // empty.
         let tl = n - g - usize::from(g < n);
@@ -473,7 +469,7 @@ impl SegmentMatcher {
         let mut prefix = g_alive && open(g + 1);
         let mut all = self.dot && g_alive && tail_any;
         if (!prefix || all) && tl > 1 {
-            (prefix, all) = self.tail_tokens(elems, (g, open_from), dir, mid_start, prefix, all);
+            (prefix, all) = self.tail_tokens(elems, line, dir, mid_start, prefix, all);
         }
         DirMatch::new(exact, prefix, all)
     }
@@ -488,13 +484,15 @@ impl SegmentMatcher {
     fn tail_tokens<E: ChainElems>(
         &self,
         elems: &E,
-        (g, open_from): (usize, usize),
+        line: Line,
         dir: &[u8],
         mid_start: usize,
         mut prefix: bool,
         mut all: bool,
     ) -> (bool, bool) {
         let n = elems.len();
+        let g = line.g as usize;
+        let open_from = line.open_from as usize;
         let tl = n - g - 1;
         let kind = elems.at(g);
         let dot_at = Some(self.first_dot(dir, mid_start));

@@ -35,14 +35,14 @@ impl LiteralMatcher {
     }
 
     pub(crate) fn is_match(&self, path: &[u8]) -> bool {
-        let n = self.match_prefix(path);
+        let n = self.prefix_len(path);
         n == self.literal.len() && n == path.len()
     }
 
     /// One scan: the directory is the literal itself, or a whole
     /// segment run of it (the root `""` included), or neither.
     pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        let n = self.match_prefix(dir_path);
+        let n = self.prefix_len(dir_path);
         if n == dir_path.len() && n == self.literal.len() {
             DirMatch::Match
         } else if dir_path.is_empty() || (n == dir_path.len() && self.literal.get(n) == Some(&b'/'))
@@ -53,7 +53,8 @@ impl LiteralMatcher {
         }
     }
 
-    fn match_prefix(&self, other: &[u8]) -> usize {
+    /// How many leading bytes of `other` the literal takes.
+    fn prefix_len(&self, other: &[u8]) -> usize {
         let literal = &self.literal;
         let mut n = 0usize;
         while n < literal.len()

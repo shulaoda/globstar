@@ -123,7 +123,7 @@ export class SegmentMatcher {
   }
 
   _isMatch(str) {
-    if (!this._factsAccept(str)) return false;
+    if (!this._prefilter(str)) return false;
     const chainList = this.chains;
     if (chainList.length === 0) return this._nfaMatch(str);
     if (chainList.length === 1) return chainMatches(this, chainList[0], str);
@@ -133,7 +133,7 @@ export class SegmentMatcher {
   // Does one of the chains match the whole path? Each runs after quick
   // looks at the path's ends: its first character against a leading
   // literal's, its last against a literal suffix, an affix's prefix or a
-  // set's last characters (`makeChain`). Exact tests, so a
+  // set's last characters (`chainOf`). Exact tests, so a
   // case-insensitive matcher skips them. Its own method, so `_isMatch`
   // stays small for the one-chain and NFA matchers.
   _anyChainMatches(chainList, str) {
@@ -167,7 +167,7 @@ export class SegmentMatcher {
     return (nfaRun(this, g, str) & (1 << g.accept)) !== 0;
   }
 
-  _factsAccept(str) {
+  _prefilter(str) {
     const set = this.suffixes;
     if (set === null) return true;
     const plain = this.factsPlain;

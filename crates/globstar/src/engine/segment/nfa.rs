@@ -94,13 +94,13 @@ impl AnyNfa {
 pub(super) fn any_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> AnyNfa {
     let states = elems.len() + 1;
     if states <= 64 {
-        AnyNfa::Small(nfa_over(elems, edges, None))
+        AnyNfa::Small(dense_nfa(elems, edges, None))
     } else if states * Wide::words(states) * 8 <= MAX_ROW_BYTES
         && edges.is_none_or(|e| lit_fanout(elems, e) <= MAX_DENSE_LITS)
     {
-        AnyNfa::Wide(Box::new(nfa_over(elems, edges, None)))
+        AnyNfa::Wide(Box::new(dense_nfa(elems, edges, None)))
     } else {
-        AnyNfa::Sparse(Box::new(sparse_over(elems, ci, edges)))
+        AnyNfa::Sparse(Box::new(sparse_nfa(elems, ci, edges)))
     }
 }
 
@@ -138,7 +138,7 @@ fn succ_of(edges: Option<&Edges>, n: usize, p: usize) -> impl Iterator<Item = u3
 /// The NFA over the positions of a path, which follow one another
 /// (`None`: the graph itself, whose `edges` a brace pattern stores).
 /// State `i` is position `i`, the accept state last.
-pub(super) fn nfa_over<B: Bits>(
+pub(super) fn dense_nfa<B: Bits>(
     elems: &[Elem],
     edges: Option<&Edges>,
     path: Option<&[u32]>,
@@ -200,7 +200,7 @@ pub(super) fn nfa_over<B: Bits>(
 
 /// The sparse NFA over the graph: each position keeps its successors,
 /// the start's last, the literal ones sorted by literal.
-fn sparse_over(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
+fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
     // The start is position `n`.
     let n = elems.len();
 
