@@ -1,6 +1,13 @@
-use crate::ast::*;
+//! Text → the AST of one pattern: the parser, with `ast` as its output and
+//! `globstar` as the pass that decides a `**` beside a brace.
+
+pub mod ast;
+mod globstar;
+
 use crate::error::*;
-use crate::resolve::resolve_globstars;
+
+use ast::*;
+use globstar::resolve_globstars;
 
 pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
     parse_within(input, &mut { MAX_EXPANSION })

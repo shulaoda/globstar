@@ -16,7 +16,7 @@ others do not pin), plus the platform-gated `corpus-unix.txt` and
 Other surfaces: `corpus-dir.txt` (`match_dir`), `corpus-multi.txt` /
 `corpus-multi-dir.txt` (unions).
 
-The file lists are hard-coded in `tests/corpus.rs` and `scripts/verify.mjs` —
+The file lists are hard-coded in `crates/globstar/tests/corpus.rs` and `scripts/verify.mjs` —
 a new corpus file must be registered in BOTH, or it runs nowhere.
 
 ## Format
@@ -47,7 +47,7 @@ PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]
 
 Nothing is skipped. A row whose pattern fails to compile where it expects
 an answer is a failure, and a short row, an unknown EXPECTED word or an
-unknown flag stops the run, in both runners (`tests/corpus.rs`,
+unknown flag stops the run, in both runners (`crates/globstar/tests/corpus.rs`,
 `scripts/verify.mjs`).
 
 ### Escape rules

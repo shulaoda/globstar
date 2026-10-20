@@ -37,7 +37,7 @@ painful to track down.
 implementation and a JavaScript port that match byte-for-byte on every
 documented edge case. The Rust crate is the canonical implementation
 and the JS package is held to the same semantics via the differential
-test corpus under `crates/globstar/tests/corpus/`.
+test corpus under `fixtures/corpus/`.
 
 ## Documentation
 

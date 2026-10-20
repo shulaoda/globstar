@@ -4,15 +4,13 @@
 // the graph with at most one globstar, an NFA over the graph for
 // everything else.
 
-import { IS_WINDOWS_SEP } from "../../bytes.js";
+import { IS_WINDOWS_SEP, lastSepBefore } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
-import { compileSegment } from "./compile.js";
-import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
+import { buildGraph } from "./graph.js";
+import { chains, chainMatches, chainDir } from "./chain.js";
 import {
-  chainMatches,
-  lastSepBefore,
-  chainDir,
+  anyNfa,
   nfaRun,
   nfaRunSparse,
   initSparse,
@@ -20,7 +18,8 @@ import {
   sparseReach1,
   coversBelow,
   coversBelowSparse,
-} from "./exec.js";
+} from "./nfa.js";
+import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
 import {
   NFA_SMALL,
   NFA_SPARSE,
@@ -32,6 +31,7 @@ import {
   WK_AFFIX_INDEX,
   elemAnySeg,
   elemSatisfiable,
+  exact,
 } from "./elem.js";
 
 export class SegmentMatcher {
@@ -207,4 +207,13 @@ export class SegmentMatcher {
     }
     return DirMatch.from(exact, prefix, all);
   }
+}
+
+export function compileSegment(body, dot, ci, forceNfa) {
+  const graph = buildGraph(body, dot, ci);
+  const chainList = chains(graph);
+  // A lone chain serves `matchDir` too; anything else needs the NFA
+  // (the test hook always does).
+  const nfa = forceNfa || chainList.length !== 1 ? anyNfa(graph, ci) : null;
+  return { elems: graph.elems, chains: exact(chainList), nfa };
 }

@@ -12,6 +12,10 @@ export const EL_WILD = 1;
 export const EL_G0 = 2;
 export const EL_G1 = 3;
 
+export const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
+// Absorbs zero segments too.
+export const nullable = (e) => e.kind === EL_G0;
+
 // In-segment wildcard kinds.
 export const WK_AFFIX = 0;
 export const WK_AFFIX_SET = 1;

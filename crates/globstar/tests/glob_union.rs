@@ -107,7 +107,7 @@ fn duplicate_members_count_once() {
 #[test]
 fn members_spelled_differently_fold_into_one() {
     // One body under two spellings: factoring lifts all of it and keeps
-    // one empty branch, so nothing follows an open `**` (compile.rs
+    // one empty branch, so nothing follows an open `**` (graph.rs
     // debug-asserts it) and a literal keeps the Literal engine.
     for (a, b) in [
         ("**", "**/**"),
@@ -265,7 +265,7 @@ fn corpus_differential_vs_or_oracle() {
     // Load every (pattern, path) from the canonical corpus files and
     // verify `Glob::union(group).is_match` agrees with the inlined OR
     // oracle on a sampling of group sizes 2/3/5/10.
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/corpus");
     // Ordered sets, so each run tests the same groups and a failure
     // reproduces.
     let mut all_patterns: BTreeSet<String> = BTreeSet::new();

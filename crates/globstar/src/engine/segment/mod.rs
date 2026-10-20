@@ -5,23 +5,28 @@
 //! else runs an NFA whose active set grows with the pattern, so no
 //! pattern is too big for it. Only braces whose segments multiply are
 //! refused, by the compile walk (`GlobError::TooComplex`).
+//!
+//! `graph` builds the graph, `chain` and `nfa` match over it, `wild`
+//! (with `seg_nfa`) matches inside a segment, `facts` reads the literal
+//! facts off the AST, `bits` holds the bit sets both NFAs use.
 
 mod bits;
-mod compile;
-mod exec;
+mod chain;
 mod facts;
+mod graph;
+mod nfa;
 mod seg_nfa;
+mod wild;
 
-use crate::ast::Node;
 use crate::dir_match::DirMatch;
 use crate::error::GlobError;
+use crate::parse::ast::Node;
 
-use bits::{Bits, Wide};
-use seg_nfa::SegNfa;
-
-/// Paths through the graph `is_match` tries one by one; past that the
-/// NFA over the whole graph runs.
-const MAX_CHAINS: usize = 64;
+use super::pat_byte_eq;
+use chain::Chain;
+use graph::Graph;
+use nfa::{AnyNfa, any_nfa, chain_nfa};
+use wild::{ByteSketch, Wild, WildKind};
 
 /// A byte string the matcher keeps: literals, affixes, suffixes,
 /// static prefixes.
@@ -36,43 +41,6 @@ const NEVER: u32 = u32::MAX;
 /// literal never holds a `/`, so elsewhere it never does.
 fn has_sep(lit: &[u8]) -> bool {
     cfg!(windows) && lit.iter().any(|&b| std::path::is_separator(char::from(b)))
-}
-
-/// A 64-slot sketch of a set of bytes (`b % 64`): a byte not in the
-/// sketch is not in the set, so a set scan can be skipped.
-#[derive(Debug, Clone, Copy)]
-struct ByteSketch(u64);
-
-impl ByteSketch {
-    fn of_last_bytes<'a>(strings: impl Iterator<Item = &'a [u8]>, ci: bool) -> Self {
-        let mut bits = 0u64;
-        for s in strings {
-            match s.last() {
-                // The empty string ends with anything.
-                None => return ByteSketch(u64::MAX),
-                Some(&b) => {
-                    bits |= 1 << (b & 63);
-                    if ci {
-                        bits |= 1 << (b.to_ascii_lowercase() & 63);
-                        bits |= 1 << (b.to_ascii_uppercase() & 63);
-                    }
-                    // A trailing `/` stands for any separator.
-                    if b == b'/' {
-                        bits |= 1 << (b'\\' & 63);
-                    }
-                }
-            }
-        }
-        ByteSketch(bits)
-    }
-
-    #[inline]
-    fn may_end(self, s: &[u8]) -> bool {
-        match s.last() {
-            None => self.0 == u64::MAX,
-            Some(&b) => self.0 & (1 << (b & 63)) != 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -126,208 +94,6 @@ impl Elem {
 }
 
 #[derive(Debug, Clone)]
-struct Wild {
-    kind: WildKind,
-    /// Minimum segment byte length (literal parts + `?` count; for
-    /// suffix sets excludes the per-branch suffix; `Generic` keeps 0, or
-    /// `NEVER` when it accepts nothing).
-    min_len: u32,
-    /// `false` ⇒ length must equal `min_len` exactly (no `*`).
-    variable: bool,
-    /// Reject dot-led segments (wildcard-led matcher on a
-    /// `dot=false` compile).
-    dot_protect: bool,
-    /// Its wildcards alone match every non-empty segment (`*`, `?*`,
-    /// `{a,*}`); drives `match_dir`'s all-below bit.
-    any_seg: bool,
-}
-
-impl Wild {
-    /// What the kind's tables take: a set's suffixes (one byte more
-    /// each), an NFA's states and kept closures. The compile walk
-    /// charges it (`GlobError::TooComplex`), so a brace pattern whose
-    /// segments multiply cannot keep big tables in each of them.
-    fn table_bytes(&self) -> usize {
-        match &self.kind {
-            WildKind::Affix(_) => 0,
-            WildKind::AffixSet(set) => set.parts[1..].iter().map(|s| s.len() + 1).sum(),
-            WildKind::AffixIndex(index) => {
-                index.suffixes.len() + index.runs.iter().map(|r| r.count as usize).sum::<usize>()
-            }
-            WildKind::Generic(nfa) => nfa.table_bytes(),
-        }
-    }
-}
-
-/// The rarer kinds are boxed so an `Elem` stays 40 bytes.
-#[derive(Debug, Clone)]
-enum WildKind {
-    /// `lit (*|?)+ lit` and degenerate forms (`*`, `*lit`, `lit*`,
-    /// `a?b`): compare the affixes, the length rules do the rest.
-    Affix(Affix),
-    /// `lit (*|?)+ {lit,…}` (`*.{ts,tsx}`): the prefix plus one
-    /// suffix out of a set of at most `LINEAR_SUFFIXES`, scanned in
-    /// pattern order.
-    AffixSet(AffixSet),
-    /// `AffixSet` past `LINEAR_SUFFIXES` (a factored union of names).
-    AffixIndex(Box<AffixIndex>),
-    /// Everything else: a mini Thompson NFA over the in-segment nodes.
-    Generic(Box<SegNfa>),
-}
-
-/// A prefix and a suffix in one string, `split` bytes of prefix.
-#[derive(Debug, Clone)]
-struct Affix {
-    bytes: Bytes,
-    split: u32,
-}
-
-impl Affix {
-    fn new(prefix: Bytes, suffix: Bytes) -> Self {
-        let split = prefix.len() as u32;
-        let bytes = match (prefix.is_empty(), suffix.is_empty()) {
-            (true, _) => suffix,
-            (_, true) => prefix,
-            _ => [&prefix[..], &suffix[..]].concat().into_boxed_slice(),
-        };
-        Affix { bytes, split }
-    }
-
-    #[inline]
-    fn parts(&self) -> (&[u8], &[u8]) {
-        self.bytes.split_at(self.split as usize)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct AffixSet {
-    /// The prefix, then the suffixes.
-    parts: Box<[Bytes]>,
-    last: ByteSketch,
-}
-
-/// A large suffix set: sorted by (length, bytes), ASCII-lowercased
-/// when case-insensitive, laid end to end in one allocation, with one
-/// `SuffixRun` per length for a binary search by index arithmetic.
-#[derive(Debug, Clone)]
-struct AffixIndex {
-    prefix: Bytes,
-    suffixes: Bytes,
-    last: ByteSketch,
-    /// One run per distinct suffix length, ascending.
-    runs: Box<[SuffixRun]>,
-}
-
-/// `count` suffixes of `len` bytes each, from byte `start` on.
-#[derive(Debug, Clone, Copy)]
-struct SuffixRun {
-    len: u32,
-    start: u32,
-    count: u32,
-}
-
-/// One path through the graph.
-#[derive(Debug, Clone)]
-struct Chain {
-    /// Its nodes in order; empty for the lone path of a pattern
-    /// without a separator-crossing brace, whose nodes are
-    /// `0..elems.len()`.
-    nodes: Box<[u32]>,
-    shape: Shape,
-}
-
-/// Where a chain's globstars are, which decides how it is matched.
-#[derive(Debug, Clone)]
-enum Shape {
-    /// At most one globstar, at `g` (past the end for none): the head
-    /// and the tail are anchored around it. Every element from
-    /// `open_from` on takes some segment, from `any_from` on any
-    /// non-empty one: what `match_dir` reads off a lone chain (both 0
-    /// on a union member's, which `match_dir` never reads).
-    Line {
-        g: u32,
-        open_from: u32,
-        any_from: u32,
-    },
-    /// Several: the NFA over this chain alone (a union member; a lone
-    /// chain with several globstars is the graph, whose NFA serves).
-    Many(Box<Nfa<u64>>),
-}
-
-/// An NFA over graph positions: one state per position plus the
-/// accept state, which is the last.
-#[derive(Debug, Clone)]
-struct Nfa<B: Bits> {
-    states: Box<[State<B>]>,
-    /// ε-closure of the start.
-    init: B,
-    /// States that can still consume ≥ 1 segment on a path to
-    /// accept; drives `match_dir`'s prefix bit.
-    reach1: B,
-}
-
-#[derive(Debug, Clone)]
-struct State<B: Bits> {
-    /// The closure entered after consuming a segment here (a
-    /// globstar's includes itself).
-    after: B,
-    /// The state's node (the accept slot is unused).
-    node: u32,
-}
-
-/// The same automaton past `MAX_ROW_BYTES` of rows, or with a literal
-/// fan-out past `MAX_DENSE_LITS`, stepped sparsely. A position keeps its
-/// successors, not a closure row, and the active set holds
-/// states and whole positions: "every successor of `p` is entered" is
-/// one entry, whose literals are found by one binary search. A step
-/// costs what it tests, and the tables grow with the graph, not its
-/// square.
-#[derive(Debug, Clone)]
-struct SparseNfa {
-    /// Positions, one per node (state `i` is position `i` is node `i`);
-    /// the accept state is `n`.
-    n: u32,
-    /// Per position (the start last) its successors, in three parts:
-    /// the literal ones sorted by literal (case-folded when
-    /// insensitive), the nullable ones (`**/`), then the rest. Part `k`
-    /// of position `p` is `succ[at[3p + k]..at[3p + k + 1]]`.
-    at: Box<[u32]>,
-    succ: Box<[u32]>,
-    /// Positions the pattern may end after.
-    ends: Wide,
-    /// States, and positions with a successor (as `Active` indexes
-    /// them, `n + 1 + p`), that can still consume ≥ 1 segment on a path
-    /// to accept.
-    reach1: Wide,
-}
-
-#[derive(Debug, Clone)]
-enum AnyNfa {
-    Small(Nfa<u64>),
-    // The rarer kinds are boxed, so the common one sets the size.
-    Wide(Box<Nfa<Wide>>),
-    Sparse(Box<SparseNfa>),
-}
-
-impl AnyNfa {
-    fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
-        match self {
-            AnyNfa::Small(n) => n.is_match(m, path),
-            AnyNfa::Wide(n) => n.is_match(m, path),
-            AnyNfa::Sparse(n) => n.is_match(m, path),
-        }
-    }
-
-    fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
-        match self {
-            AnyNfa::Small(n) => n.match_dir(m, dir_path),
-            AnyNfa::Wide(n) => n.match_dir(m, dir_path),
-            AnyNfa::Sparse(n) => n.match_dir(m, dir_path),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub(crate) struct SegmentMatcher {
     /// The graph's nodes, in emission order.
     elems: Box<[Elem]>,
@@ -350,7 +116,7 @@ pub(crate) struct SegmentMatcher {
 
 impl SegmentMatcher {
     pub(crate) fn build(body: &Node, dot: bool, ci: bool) -> Result<Box<Self>, GlobError> {
-        compile::compile(body, dot, ci).map(Box::new)
+        compile(body, dot, ci).map(Box::new)
     }
 
     /// Every matching path starts with one of these.
@@ -421,7 +187,7 @@ impl SegmentMatcher {
         match &self.nfa {
             Some(nfa) => nfa.is_match(self, path),
             None => {
-                let (m, nfa) = compile::chain_nfa(self);
+                let (m, nfa) = chain_nfa(self);
                 nfa.is_match(&m, path)
             }
         }
@@ -433,4 +199,87 @@ impl SegmentMatcher {
             None => self.chain_dir(dir_path),
         }
     }
+}
+
+fn compile(body: &Node, dot: bool, ci: bool) -> Result<SegmentMatcher, GlobError> {
+    let graph = Graph::build(body, dot, ci)?;
+    let chains = graph.chains();
+    // A lone chain serves `match_dir` too; anything else needs the NFA.
+    let nfa = match &chains[..] {
+        [_] => None,
+        _ => Some(Box::new(any_nfa(&graph.elems, ci, graph.edges.as_ref()))),
+    };
+    let suffixes = facts::suffixes(body);
+    Ok(SegmentMatcher {
+        suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
+        suffixes,
+        chains,
+        nfa,
+        elems: graph.elems.into_boxed_slice(),
+        prefixes: facts::static_prefixes(body, graph.weight),
+        case_insensitive: ci,
+        dot,
+    })
+}
+
+impl SegmentMatcher {
+    /// The suffix prefilter: `false` means the path cannot match.
+    #[inline]
+    pub(super) fn prefilter(&self, path: &[u8]) -> bool {
+        match &self.suffixes[..] {
+            [] => true,
+            [one] => self.ends_with(path, one),
+            set => self.suffix_last.may_end(path) && set.iter().any(|s| self.ends_with(path, s)),
+        }
+    }
+
+    /// Suffix test, last byte first: that is where extensions differ.
+    #[inline]
+    fn ends_with(&self, path: &[u8], suffix: &[u8]) -> bool {
+        path.len() >= suffix.len()
+            && suffix
+                .iter()
+                .zip(&path[path.len() - suffix.len()..])
+                .rev()
+                .all(|(&s, &p)| pat_byte_eq(s, p, self.case_insensitive))
+    }
+
+    #[inline]
+    fn lit_eq(&self, lit: &[u8], seg: &[u8]) -> bool {
+        lit.len() == seg.len() && self.affix_eq(lit, seg)
+    }
+
+    /// Byte-wise, so short affixes stay inline rather than calling
+    /// `bcmp`.
+    #[inline(always)]
+    fn affix_eq(&self, part: &[u8], seg_part: &[u8]) -> bool {
+        debug_assert_eq!(part.len(), seg_part.len());
+        if self.case_insensitive {
+            part.iter()
+                .zip(seg_part)
+                .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
+        } else {
+            part.iter().zip(seg_part).all(|(a, b)| a == b)
+        }
+    }
+}
+
+/// Index just past the segment that starts at `pos`.
+#[inline]
+fn seg_end(path: &[u8], pos: usize) -> usize {
+    let mut i = pos;
+    while i < path.len() && !std::path::is_separator(path[i] as char) {
+        i += 1;
+    }
+    i
+}
+
+/// Start of the segment that ends at `end`.
+#[inline]
+fn seg_start(path: &[u8], end: usize) -> usize {
+    let mut s = end;
+    while s > 0 && !std::path::is_separator(path[s - 1] as char) {
+        s -= 1;
+    }
+    s
 }

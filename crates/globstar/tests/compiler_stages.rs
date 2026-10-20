@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
-use globstar::ast::{ClassItem, Node};
-use globstar::parser::parse;
+use globstar::parse::ast::{ClassItem, Node};
+use globstar::parse::parse;
 
 const CASES: &str = include_str!("../../../fixtures/compiler-stages.tsv");
 

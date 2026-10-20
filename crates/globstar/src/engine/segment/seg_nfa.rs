@@ -10,10 +10,11 @@
 //! that (a dense set per state is quadratic in the states) it closes its
 //! set as it goes, so memory stays linear in the pattern.
 
-use crate::ast::{CharClass, ClassItem, Node};
+use crate::parse::ast::{CharClass, ClassItem, Node};
 
+use super::NEVER;
 use super::bits::{Bits, Wide};
-use super::{NEVER, Wild, WildKind};
+use super::wild::{Wild, WildKind};
 
 const UNSET: u32 = u32::MAX;
 
@@ -535,7 +536,7 @@ impl SegBuilder {
 #[cfg(test)]
 mod tests {
     use super::ByteSet;
-    use crate::ast::Node;
+    use crate::parse::ast::Node;
 
     // The table takes exactly the bytes the class's items define, for
     // every byte, negated or not, with ranges and repeats.
@@ -558,7 +559,7 @@ mod tests {
             "[!\u{e9}]",
             "[\u{e9}-\u{ff}]",
         ] {
-            let ast = crate::parser::parse(pattern.as_bytes()).unwrap();
+            let ast = crate::parse::parse(pattern.as_bytes()).unwrap();
             let Node::Class(cls) = &ast.body else {
                 panic!("{pattern} is not one class: {:?}", ast.body);
             };

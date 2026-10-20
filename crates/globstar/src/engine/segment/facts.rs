@@ -1,9 +1,10 @@
 //! Literal facts read off the AST at compile time: the suffix
 //! prefilter and the static prefixes a walker seeds from.
 
-use crate::ast::Node;
+use crate::parse::ast::Node;
 
-use super::compile::{len_then_bytes, node_weight};
+use super::graph::node_weight;
+use super::wild::len_then_bytes;
 use super::{Bytes, has_sep};
 
 /// Largest suffix set worth scanning before the engine runs; a

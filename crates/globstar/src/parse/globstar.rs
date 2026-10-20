@@ -1,23 +1,106 @@
-//! Braces taken apart around a `**` (GLOB_SPEC §10.1, §6.2).
+//! Which `**` are globstars (GLOB_SPEC §10.1, §9.1).
 //!
-//! A `**` beside a brace meets a different token in every branch, and a
-//! `**` at the edge of a branch may meet a brace outside. [`distribute`]
-//! rewrites such a sequence until no `**` is left facing a brace edge that
-//! may be a separator, or empty, in some expansion: `**{/a,b}` becomes
-//! `{**/a,**b}`, `{**,a}{/,b}` becomes `{**/,**b,a{/,b}}`. Afterwards the
-//! tokens beside each `**` tell what it meets in every expansion, and
-//! [`crate::resolve`] decides it.
-//!
-//! The work is linear in the output: every sequence caches the edges of
-//! its expansions, which no merge changes. What a merge copies is charged
-//! to a budget (§6.2), and the braces it nests are held to the nesting
-//! limit (§6.2).
+//! A pattern means the union of its brace expansions, and in each one a
+//! `**` is a globstar only with a separator, or the edge of the pattern, on
+//! both sides; otherwise it is a star. The parser decides a `**` beside
+//! plain tokens as it reads, and leaves one beside a brace, at the edge of
+//! a branch, or right after a `**/`, to this pass, which runs only then.
+//! Such a `**` meets a different token in every branch, so the braces are
+//! first taken apart by `distribute` (the second half of this file);
+//! `may_touch` tells when that can be the case. Then `decide` turns every
+//! `**` into a globstar or a star by the tokens beside it.
 
-use crate::ast::Node;
+use super::ast::Node;
 use crate::error::{GlobError, MAX_BRACE_NESTING, MAX_EXPANSION};
 
+/// `budget` is what distribution may still copy (§6.2).
+pub(crate) fn resolve_globstars(mut body: Node, budget: &mut usize) -> Result<Node, GlobError> {
+    if may_touch(&body) {
+        body = distribute(body, budget)?;
+    }
+    decide(&mut body, true, true);
+    Ok(body)
+}
+
+/// Is a brace in `node` beside a `**`, or beside another brace when either
+/// holds a `**`? Only then can distribution change anything.
+fn may_touch(node: &Node) -> bool {
+    let seq = node.seq();
+    (0..seq.len()).any(|i| match &seq[i..] {
+        [Node::Globstar, Node::Brace(_), ..] | [Node::Brace(_), Node::Globstar, ..] => true,
+        [a @ Node::Brace(_), b @ Node::Brace(_), ..] if a.has_globstar() || b.has_globstar() => {
+            true
+        }
+        [Node::Brace(branches), ..] => branches.iter().any(may_touch),
+        _ => false,
+    })
+}
+
+/// Decides every `**` in `node`, a pattern or a brace branch: a globstar
+/// with a separator (or the edge of the pattern) on both sides, a star
+/// otherwise. `before`/`after` tell whether the neighbors of `node` are
+/// such boundaries.
+fn decide(node: &mut Node, before: bool, after: bool) {
+    match node {
+        Node::Globstar if !(before && after) => *node = Node::Star,
+        Node::Brace(branches) => {
+            for branch in branches {
+                decide(branch, before, after);
+            }
+        }
+        Node::Concat(seq) => {
+            // `**/**` is one `**` (§9.6): a `/`, `**` after a `**` is dropped.
+            let mut kept = 0;
+            for i in 0..seq.len() {
+                if matches!(seq[i], Node::Globstar | Node::Brace(_)) {
+                    let left = seq[..kept]
+                        .last()
+                        .map_or(before, |n| matches!(n, Node::Separator));
+                    let right = seq
+                        .get(i + 1)
+                        .map_or(after, |n| matches!(n, Node::Separator));
+                    decide(&mut seq[i], left, right);
+                    if matches!(seq[i], Node::Globstar)
+                        && matches!(seq[..kept], [.., Node::Globstar, Node::Separator])
+                    {
+                        kept -= 1;
+                        continue;
+                    }
+                }
+                // A `*` run is one `*` (§5.2): a `**` turned star next to one.
+                if matches!(seq[i], Node::Star) && matches!(seq[..kept], [.., Node::Star]) {
+                    continue;
+                }
+                seq.swap(kept, i);
+                kept += 1;
+            }
+            seq.truncate(kept);
+            if seq.len() == 1 {
+                *node = seq.pop().unwrap();
+            }
+        }
+        _ => {}
+    }
+}
+
+// ── Distribution ─────────────────────────────────────────────────────────
+// Braces taken apart around a `**` (GLOB_SPEC §10.1, §6.2).
+//
+// A `**` beside a brace meets a different token in every branch, and a
+// `**` at the edge of a branch may meet a brace outside. `distribute`
+// rewrites such a sequence until no `**` is left facing a brace edge that
+// may be a separator, or empty, in some expansion: `**{/a,b}` becomes
+// `{**/a,**b}`, `{**,a}{/,b}` becomes `{**/,**b,a{/,b}}`. Afterwards the
+// tokens beside each `**` tell what it meets in every expansion, and
+// `decide` decides it.
+//
+// The work is linear in the output: every sequence caches the edges of
+// its expansions, which no merge changes. What a merge copies is charged
+// to a budget (§6.2), and the braces it nests are held to the nesting
+// limit (§6.2).
+
 /// `budget` is what the rewrite may still copy.
-pub(crate) fn distribute(node: Node, budget: &mut usize) -> Result<Node, GlobError> {
+fn distribute(node: Node, budget: &mut usize) -> Result<Node, GlobError> {
     Ok(node_of(rewrite(node, budget)?))
 }
 

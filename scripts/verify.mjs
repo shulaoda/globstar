@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Corpus-driven correctness verification for both runtimes.
 //
-// Four corpora, all in `crates/globstar/tests/corpus/`, share the same
+// Four corpora, all in `fixtures/corpus/`, share the same
 // harness:
 //
 //   single — SINGLE_FILES list below   single-pattern × 2 lanes
@@ -49,7 +49,7 @@ if (SKIP_RUST && SKIP_JS) {
   process.exit(2);
 }
 
-const CORPUS_DIR = resolve(ROOT, "crates/globstar/tests/corpus");
+const CORPUS_DIR = resolve(ROOT, "fixtures/corpus");
 
 const SINGLE_FILES = [
   "corpus.txt",

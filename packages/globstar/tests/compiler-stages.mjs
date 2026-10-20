@@ -13,10 +13,10 @@ import {
   N_LITERAL,
   N_SEPARATOR,
   N_STAR,
-} from "../src/ast.js";
-import { parse } from "../src/parser.js";
+} from "../src/parse/ast.js";
+import { parse } from "../src/parse/parser.js";
 import { buildEngine, compileMatcher } from "../src/glob.js";
-import { factorBranches } from "../src/factor.js";
+import { factorBranches } from "../src/union.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cases = readFileSync(resolve(here, "../../../fixtures/compiler-stages.tsv"), "utf8");

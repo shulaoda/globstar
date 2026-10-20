@@ -10,7 +10,7 @@ import {
   lit,
   sep,
   star,
-} from "./ast.js";
+} from "./parse/ast.js";
 
 // The structural nodes are singletons: an identity test is cheaper than
 // reading `tag` off nodes of several shapes.

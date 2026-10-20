@@ -1,4 +1,4 @@
-use crate::ast::Node;
+use crate::parse::ast::Node;
 
 /// One body for the union of `branches`: what they all start or end with
 /// is lifted out of the brace, whole tokens first, then the bytes shared by

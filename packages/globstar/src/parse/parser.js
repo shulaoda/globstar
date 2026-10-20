@@ -15,9 +15,9 @@ import {
   classItemByte,
   classItemRange,
 } from "./ast.js";
-import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } from "./error.js";
-import { resolveGlobstars } from "./resolve.js";
-import { utf8Latin1, utf8Length } from "./utf8.js";
+import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } from "../error.js";
+import { resolveGlobstars } from "./globstar.js";
+import { utf8Latin1, utf8Length } from "../utf8.js";
 
 const BACKSLASH = 0x5c;
 const SLASH = 0x2f;

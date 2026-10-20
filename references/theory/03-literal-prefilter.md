@@ -26,7 +26,7 @@ AST      ──►  trailing(nodes)            ──►  one suffix
    └──────────────────────────────────────────────────────┘
 ```
 
-`accept(path)` is the check: `SegmentMatcher::prefilter` in Rust (`exec.rs`), `_factsAccept` in JS (`engine/segment/index.js`). It is a separator-aware `ends_with`: a `'/'` byte in the suffix matches any `Seps` byte in the path (so `*/main.ts`, suffix `/main.ts`, rejects `src\foo.js` on Windows and accepts `src\main.ts`).
+`accept(path)` is the check: `SegmentMatcher::prefilter` in Rust (`engine/segment/mod.rs`), `_factsAccept` in JS (`engine/segment/index.js`). It is a separator-aware `ends_with`: a `'/'` byte in the suffix matches any `Seps` byte in the path (so `*/main.ts`, suffix `/main.ts`, rejects `src\foo.js` on Windows and accepts `src\main.ts`).
 
 When the trailing literal/separator run is non-empty it is the single anchor. Otherwise, when the pattern ends in a brace of at most 16 branches (e.g. `**/*.{ts,tsx,js}`), `suffix_set` derives one anchor per branch and `accept` succeeds if `path` ends with any of them.
 
@@ -221,7 +221,7 @@ Rust, `crates/globstar/src/engine/segment/`:
 
 - `facts.rs::suffixes(body)` — entry; returns the suffix list (`Box<[Bytes]>`), empty when there is no prefilter. Runs `trailing`, falls back to `suffix_set` if the single suffix is empty.
 - `facts.rs::trailing` / `facts.rs::suffix_set` — internal helpers; `MAX_SUFFIX_SET = 16`.
-- `exec.rs::SegmentMatcher::prefilter(path)` — separator-aware end-anchored comparison (single suffix or set), the first step of `is_match`.
+- `segment/mod.rs::SegmentMatcher::prefilter(path)` — separator-aware end-anchored comparison (single suffix or set), the first step of `is_match`.
 
 JS, `packages/globstar/src/engine/segment/`:
 

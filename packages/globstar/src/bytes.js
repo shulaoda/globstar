@@ -35,3 +35,31 @@ export function patByteEq(pat, b, ci) {
   if (ci ? !eqByteCi(pat, b) : pat !== b) return false;
   return !(IS_WINDOWS && b === 0x5c);
 }
+
+// Index of the first separator in `str` from `from` on, or -1.
+export function nextSep(str, from) {
+  const i = str.indexOf("/", from);
+  if (!IS_WINDOWS_SEP) return i;
+  const j = str.indexOf("\\", from);
+  if (i === -1) return j;
+  if (j === -1) return i;
+  return i < j ? i : j;
+}
+
+// Index of the last separator in `str` before `end`, or -1.
+export function lastSepBefore(str, end) {
+  if (end <= 0) return -1;
+  const i = str.lastIndexOf("/", end - 1);
+  if (!IS_WINDOWS_SEP) return i;
+  const j = str.lastIndexOf("\\", end - 1);
+  return i > j ? i : j;
+}
+
+export function asciiLower(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 0x41 && c <= 0x5a ? String.fromCharCode(c + 32) : s[i];
+  }
+  return out;
+}

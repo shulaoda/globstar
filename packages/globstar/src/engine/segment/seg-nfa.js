@@ -11,7 +11,7 @@
 // quadratic in the states) it closes its set as it goes, so memory stays
 // linear in the pattern.
 
-import { CI_BYTE, N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, seq } from "../../ast.js";
+import { CI_BYTE, N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, seq } from "../../parse/ast.js";
 import { ctz32, IS_WINDOWS_SEP } from "../../bytes.js";
 import { exact, NEVER_LEN } from "./elem.js";
 import { wordsFor, bitTest, bitSet, bitsIsZero, bitsEqual } from "./bits.js";
@@ -35,7 +35,7 @@ const MAX_CLOSURE_BYTES = 128 * 1024;
 
 // The bytes `states` NFA states take in the Rust twin (16 each), with
 // their closures while those are kept: what the compile walk charges
-// for a segment's NFA (`tableBytes` in compile.js).
+// for a segment's NFA (`tableBytes` in graph.js).
 export function nfaTableBytes(states) {
   const closures = states * Math.ceil(states / 64) * 8;
   return states * 16 + (closures <= MAX_CLOSURE_BYTES ? closures : 0);

@@ -70,7 +70,7 @@ match(!P, w) := ¬match(P, w)         for all w ∈ Σ*
 
 The matcher computes `match(P, w)` and inverts the boolean. No automaton over `Σ* \ L(P)` is constructed; the language definition of `P` is unchanged.
 
-Even-numbered runs of leading `!` cancel; odd-numbered runs negate once. This is the parity rule formalized in `references/spec/GLOB_SPEC.md` §11.1 and implemented in the parser: `parser.rs::parse_within` counts the run, and `Ast::is_negated` gives the parity.
+Even-numbered runs of leading `!` cancel; odd-numbered runs negate once. This is the parity rule formalized in `references/spec/GLOB_SPEC.md` §11.1 and implemented in the parser: `parse/mod.rs::parse_within` counts the run, and `Ast::is_negated` gives the parity.
 
 ## 6. Empty pattern; empty string; the empty language
 

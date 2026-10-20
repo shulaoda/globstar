@@ -7,10 +7,10 @@
 //! - `nfa`          — the same `Glob`, `is_match` forced onto the segment
 //!   engine's NFA instead of its anchored chains (`Glob::is_match_nfa`)
 //!
-//! Single-pattern `is_match` rows live in `tests/corpus/corpus*.txt`
+//! Single-pattern `is_match` rows live in `fixtures/corpus/corpus*.txt`
 //! (a row may expect `err:Kind` instead of an answer); `match_dir` rows
-//! in `tests/corpus/corpus-dir.txt`; multi-pattern rows in
-//! `tests/corpus/corpus-multi.txt` and `corpus-multi-dir.txt`.
+//! in `fixtures/corpus/corpus-dir.txt`; multi-pattern rows in
+//! `fixtures/corpus/corpus-multi.txt` and `corpus-multi-dir.txt`.
 //!
 //! Nothing is skipped: a compile error where a row expects an answer is
 //! a failure, and a row the loader cannot read stops the run.
@@ -23,7 +23,7 @@ use globstar::{CompileOptions, DirMatch, Glob, GlobError};
 use std::fmt::Debug;
 use std::path::PathBuf;
 
-const CORPUS_DIR: &str = "tests/corpus";
+const CORPUS_DIR: &str = "../../fixtures/corpus";
 
 const SINGLE_FILES: &[&str] = &[
     "corpus.txt",

@@ -43,26 +43,22 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-#[doc(hidden)]
-pub mod ast;
 mod dir_match;
-mod distribute;
 mod engine;
 pub mod error;
-mod factor;
 #[doc(hidden)]
-pub mod parser;
-mod resolve;
+pub mod parse;
+mod union;
 
 pub use dir_match::DirMatch;
 pub use error::GlobError;
 
 use std::collections::HashSet;
 
-use ast::Node;
 use engine::literal::LiteralMatcher;
 use engine::segment::SegmentMatcher;
-use factor::factor_branches;
+use parse::ast::Node;
+use union::factor_branches;
 
 /// Compile-time options for [`Glob::new_with`] and [`Glob::union_with`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -146,7 +142,7 @@ impl Glob {
 
     /// Compile a pattern with explicit [`CompileOptions`].
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
-        let ast = parser::parse(pattern.as_bytes())?;
+        let ast = parse::parse(pattern.as_bytes())?;
         Self::from_body(&ast.body, ast.is_negated(), opts)
     }
 
@@ -189,7 +185,7 @@ impl Glob {
             if seen.as_mut().is_some_and(|seen| !seen.insert(pattern)) {
                 continue;
             }
-            let parsed = parser::parse_within(pattern.as_bytes(), &mut budget).map_err(|e| {
+            let parsed = parse::parse_within(pattern.as_bytes(), &mut budget).map_err(|e| {
                 GlobError::InMember {
                     index,
                     error: Box::new(e),

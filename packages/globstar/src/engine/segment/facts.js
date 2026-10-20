@@ -3,8 +3,8 @@
 // `crates/globstar/src/engine/segment/facts.rs`.
 
 import { patByteEq, IS_WINDOWS_SEP } from "../../bytes.js";
-import { N_BRACE, N_LITERAL, N_SEPARATOR, endsWithGlobstar, seq } from "../../ast.js";
-import { nodeWeight } from "./compile.js";
+import { N_BRACE, N_LITERAL, N_SEPARATOR, endsWithGlobstar, seq } from "../../parse/ast.js";
+import { nodeWeight } from "./graph.js";
 
 // Literal suffixes one of which every match ends with: the trailing
 // literal/separator run (separators as `/`), or when the pattern ends in

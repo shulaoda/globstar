@@ -24,4 +24,4 @@ These notes record the formal foundations of the engine modules under `crates/gl
 - An NFA is a 5-tuple `(Q, Σ, δ, q₀, F)`: states, alphabet, transition relation, initial state, accepting set.
 - For a regular expression `r`, `L(r) ⊆ Σ*` is its language. `|r|` is its size (count of grammar symbols).
 
-References to the implementation use the source-file path and identifier name (`segment/compile.rs::Graph::build`, etc.).
+References to the implementation use the source-file path and identifier name (`segment/graph.rs::Graph::build`, etc.).

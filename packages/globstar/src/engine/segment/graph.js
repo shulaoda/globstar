@@ -1,5 +1,5 @@
-// AST → segment graph → chains and NFA. JS twin of
-// `crates/globstar/src/engine/segment/compile.rs`.
+// AST → the segment graph. JS twin of `crates/globstar/src/engine/
+// segment/graph.rs`.
 //
 // The walk keeps one *group* per distinct (boundary, partial segment)
 // reaching a point of the pattern, so a brace whose branches end at a
@@ -10,41 +10,23 @@ import {
   CI_BYTE,
   brace,
   concat,
-  N_ANYCHAR,
   N_BRACE,
   N_CLASS,
   N_CONCAT,
   N_GLOBSTAR,
   N_LITERAL,
   N_SEPARATOR,
-  N_STAR,
   seq,
-} from "../../ast.js";
+} from "../../parse/ast.js";
 import { IS_WINDOWS_SEP } from "../../bytes.js";
 import { flat } from "../../utf8.js";
-import {
-  EL_LIT,
-  EL_WILD,
-  EL_G0,
-  EL_G1,
-  WK_AFFIX,
-  WK_AFFIX_SET,
-  WK_AFFIX_INDEX,
-  WK_GENERIC,
-  MAX_CHAINS,
-  NO_G,
-  MANY_G,
-  NFA_SMALL,
-  NFA_SPARSE,
-  elemSatisfiable,
-  NEVER_LEN,
-  exact,
-} from "./elem.js";
-import { compileSegNfa, nfaTableBytes } from "./seg-nfa.js";
+import { EL_LIT, EL_WILD, EL_G0, EL_G1, WK_AFFIX, WK_GENERIC, NEVER_LEN, exact } from "./elem.js";
+import { nfaTableBytes } from "./seg-nfa.js";
+import { compileWild, concatLits, makeWild } from "./wild.js";
 import { GlobError } from "../../error.js";
 
 // Successor marker for "the pattern ends here".
-const ACCEPT = -1;
+export const ACCEPT = -1;
 // Tail marker for "the graph start".
 const START = -2;
 
@@ -53,17 +35,6 @@ const B_START = 0; // pattern start
 const B_SEP = 1; // after a separator or a `**/`
 const B_OPEN = 2; // a bare `**` absorbs the rest of the path
 
-const EMPTY = "";
-
-export function compileSegment(body, dot, ci, forceNfa) {
-  const graph = buildGraph(body, dot, ci);
-  const chainList = chains(graph);
-  // A lone chain serves `matchDir` too; anything else needs the NFA
-  // (the test hook always does).
-  const nfa = forceNfa || chainList.length !== 1 ? anyNfa(graph, ci) : null;
-  return { elems: graph.elems, chains: exact(chainList), nfa };
-}
-
 function makeElem(kind, litStr, wild) {
   return { kind, litStr: litStr === null ? null : flat(litStr), wild };
 }
@@ -71,10 +42,6 @@ function makeElem(kind, litStr, wild) {
 // shares one.
 const G0_ELEM = makeElem(EL_G0, null, null);
 const G1_ELEM = makeElem(EL_G1, null, null);
-
-const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
-// Absorbs zero segments too.
-const nullable = (e) => e.kind === EL_G0;
 
 // The nodes with each crossing brace's in-segment branches as one
 // choice: `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such
@@ -133,7 +100,7 @@ function crosses(node) {
 // The graph as the walk leaves it. A pattern without a
 // separator-crossing brace is one path, emitted in order: its edges
 // and start are implied and never stored.
-function buildGraph(body, dot, ci) {
+export function buildGraph(body, dot, ci) {
   const nodes = seq(body);
   const linear = !nodes.some((n) => n.tag === N_BRACE && crosses(n));
   // A linear walk keeps one group and takes a few units per weight, so
@@ -316,13 +283,6 @@ function merge(out, g) {
 const LINEAR_NODES = 16;
 // `at` is a lone predecessor (a number) or the list joined (a string).
 const memoKey = (kind, lit, at) => `${kind}:${lit ?? ""}|${at}`;
-
-// The bytes of the literal nodes `nodes[from..to]`.
-function concatLits(nodes, from, to) {
-  let s = "";
-  for (let i = from; i < to; i++) s += nodes[i].str;
-  return s;
-}
 
 class Builder {
   constructor(dot, ci, linear, budget) {
@@ -533,415 +493,4 @@ class Builder {
     // Empty, one literal, or literals glued across a brace edge.
     return makeElem(EL_LIT, concatLits(buf, 0, buf.length), null);
   }
-}
-
-// ── chains ──────────────────────────────────────────────────────────
-
-// Every path through the graph as a chain, in pattern order, or none
-// when there are more than MAX_CHAINS, or a path with several globstars
-// is the only path or has more than 32 states (the NFA takes those).
-function chains(graph) {
-  if (graph.linear) {
-    const chain = makeChain(graph, null, true);
-    return chain === null ? [] : [chain];
-  }
-  // Depth-first, first branch first, along one path: a level per node
-  // on it (the start's below them) and the successor it tries next. A
-  // path is copied only when it reaches the end.
-  const paths = [];
-  const path = [];
-  const succs = [graph.start];
-  const next = [0];
-  while (succs.length > 0) {
-    const top = succs.length - 1;
-    if (next[top] === succs[top].length) {
-      succs.pop();
-      next.pop();
-      path.pop();
-      continue;
-    }
-    const id = succs[top][next[top]++];
-    if (id === ACCEPT) {
-      paths.push(path.slice());
-      if (paths.length > MAX_CHAINS) return [];
-      continue;
-    }
-    path.push(id);
-    succs.push(graph.succs[id]);
-    next.push(0);
-  }
-  const out = [];
-  for (const nodes of paths) {
-    const chain = makeChain(graph, nodes, paths.length === 1);
-    if (chain === null) return [];
-    out.push(chain);
-  }
-  return out;
-}
-
-// The chain of a path (`null`: the lone path of a brace-free pattern,
-// whose nodes are `0..elems.length`), or `null` when it has several
-// globstars and is the graph's `lone` path (the graph's NFA serves) or
-// its NFA would not fit an int32.
-function makeChain(graph, nodes, lone) {
-  const elems = graph.elems;
-  const n = nodes === null ? elems.length : nodes.length;
-  const elem = (i) => elems[nodes === null ? i : nodes[i]];
-  let globstar = NO_G;
-  for (let i = 0; i < n; i++) {
-    if (!isGlobstar(elem(i))) continue;
-    if (globstar !== NO_G) {
-      globstar = MANY_G;
-      break;
-    }
-    globstar = i;
-  }
-
-  // Several globstars: the NFA over this path alone.
-  let nfa = null;
-  if (globstar === MANY_G) {
-    if (lone || n + 1 > 32) return null;
-    nfa = nfaSmall(graph, nodes);
-  }
-  // A chain's own NFA keeps the chain's elements: no node list then.
-  const chainNodes = nfa === null ? nodes : null;
-  // A lone chain runs as it is; a union's chains also carry what a path
-  // must start and end with, read off their first and last elements:
-  // cheap rejects before a chain runs (`_anyChainMatches`).
-  if (lone) return { nodes: chainNodes, globstar, nfa };
-  const first = elem(0);
-  const last = elem(n - 1);
-  const quickHead = first.kind === EL_LIT ? first.litStr.charCodeAt(0) : -1;
-  let quickSuffixStr = "";
-  let quickPrefixStr = "";
-  // A 64-slot sketch (two int32s, by `code & 63`) of a set's last
-  // characters: a path ending in a character outside it matches none.
-  // All ones when a suffix is empty, as anything ends it.
-  let quickLastLo = -1;
-  let quickLastHi = -1;
-  if (last.kind === EL_LIT) quickSuffixStr = last.litStr;
-  else if (last.kind === EL_WILD) {
-    const w = last.wild;
-    if (w.kind === WK_AFFIX) {
-      if (w.suffixStr.length > 0) quickSuffixStr = w.suffixStr;
-      else quickPrefixStr = w.prefixStr;
-    } else if (w.kind === WK_AFFIX_SET || w.kind === WK_AFFIX_INDEX) {
-      const set = w.suffixSetStr;
-      quickLastLo = 0;
-      quickLastHi = 0;
-      for (let i = 0; i < set.length && quickLastLo !== -1; i++) {
-        const s = set[i];
-        if (s.length === 0) quickLastLo = quickLastHi = -1;
-        else {
-          const c = s.charCodeAt(s.length - 1) & 63;
-          if (c < 32) quickLastLo |= 1 << c;
-          else quickLastHi |= 1 << (c - 32);
-        }
-      }
-    }
-  }
-  return {
-    nodes: chainNodes,
-    globstar,
-    nfa,
-    quickHead,
-    quickSuffixStr,
-    quickPrefixStr,
-    quickLastLo,
-    quickLastHi,
-  };
-}
-
-// ── the NFA ─────────────────────────────────────────────────────────
-
-// The NFA over the positions of a path (`nodes === null`: the graph
-// itself). Positions of a path follow one another; only the graph of
-// a brace pattern has stored edges. States are numbered by position;
-// the accept state comes last.
-function layout(graph, nodes) {
-  const elems = graph.elems;
-  const n = nodes === null ? elems.length : nodes.length;
-  const chained = nodes !== null || graph.linear;
-  return {
-    elems,
-    n,
-    nodeAt: (i) => (nodes === null ? i : nodes[i]),
-    succs: chained ? null : graph.succs,
-    start: chained ? [0] : graph.start,
-  };
-}
-
-// One int32 of states up to 32, sparse beyond.
-function anyNfa(graph, ci) {
-  return graph.elems.length + 1 <= 32 ? nfaSmall(graph, null) : nfaSparse(graph, ci);
-}
-
-// Int32 active set: at most 32 states. `after` holds per state the
-// closure entered after consuming a segment there (a globstar's
-// includes itself); state `i` takes what `elems[i]` takes: the graph's
-// elements, or a chain's in path order.
-function nfaSmall(graph, nodes) {
-  const { elems, n, nodeAt, succs, start } = layout(graph, nodes);
-  const accept = n;
-  const after = [];
-  for (let s = 0; s <= n; s++) after.push(0);
-  let reach1 = 0;
-  // The closure a target adds, from the last position back: successors
-  // always lie ahead, so each is complete when needed, and a nullable
-  // successor contributes its own successors.
-  const addTarget = (c, t) => {
-    if (t === ACCEPT) return c | (1 << accept);
-    if (nullable(elems[nodeAt(t)])) c |= after[t];
-    return c | (1 << t);
-  };
-  for (let i = n - 1; i >= 0; i--) {
-    const el = elems[nodeAt(i)];
-    let c = 0;
-    if (succs === null) c = addTarget(c, i + 1 < n ? i + 1 : ACCEPT);
-    else for (const t of succs[i]) c = addTarget(c, t);
-    // A state reaches accept through ≥ 1 segment iff its element can
-    // consume one and what follows reaches accept.
-    if (elemSatisfiable(el) && ((c & (1 << accept)) !== 0 || (c & reach1) !== 0)) reach1 |= 1 << i;
-    // A globstar stays after taking a segment.
-    after[i] = isGlobstar(el) ? c | (1 << i) : c;
-  }
-  let init = 0;
-  for (const t of start) init = addTarget(init, t);
-  const own = nodes === null ? elems : nodes.map((i) => elems[i]);
-  return { kind: NFA_SMALL, elems: own, after: exact(after), init, accept, reach1 };
-}
-
-// Past 32 states the graph NFA is stepped sparsely. A position keeps
-// its successors, not a closure row (the start is the last position):
-// the literal ones sorted by literal (`litKeys` folded when
-// insensitive) at `lits[litAt[p]..litAt[p + 1]]`, and the others at
-// `others[otherAt[p]..otherAt[p + 1]]`, the nullable ones (`**/`) first,
-// up to `nullEnd[p]`. The active set holds states and whole positions;
-// see `nfaRunSparse`.
-function nfaSparse(graph, ci) {
-  const { elems, n, succs, start } = layout(graph, null);
-  const succOf = (p) => (p === n ? start : succs === null ? null : succs[p]);
-  // Linear graphs store no edges: position `p` is followed by `p + 1`.
-  const eachSucc = (p, f) => {
-    const list = succOf(p);
-    if (list === null) f(p + 1 < n ? p + 1 : ACCEPT);
-    else for (const t of list) f(t);
-  };
-  // State `p` is position `p`; the accept state is `n`.
-  const accept = n;
-
-  // A position reaches accept through ≥ 1 segment iff its element can
-  // consume one and what it enters reaches accept: from the last
-  // position back, as successors always lie ahead.
-  // The flags are bytes (1 or 0) and the offsets int32: a plain array
-  // takes 8 bytes per entry, booleans included.
-  // (A nullable successor is a `**/`, which reaches accept through one
-  // segment whenever it reaches it at all.)
-  const base = n + 1;
-  // Positions sit past the states, as the sparse active set indexes them
-  // (`base + p`, see `nfaRunSparse`).
-  const reach1 = new Uint8Array(2 * n + 2);
-  for (let i = n - 1; i >= 0; i--) {
-    let o = 0;
-    eachSucc(i, (t) => {
-      if (t === ACCEPT || reach1[t]) o = 1;
-    });
-    reach1[i] = o && elemSatisfiable(elems[i]) ? 1 : 0;
-  }
-
-  const key = (t) => (ci ? asciiLower(elems[t].litStr) : elems[t].litStr);
-  const litAt = new Int32Array(n + 2);
-  const otherAt = new Int32Array(n + 2);
-  const nullEnd = new Int32Array(n + 1);
-  const ends = new Uint8Array(n + 1);
-  const lits = [];
-  const litKeys = [];
-  const others = [];
-  for (let p = 0; p <= n; p++) {
-    litAt[p] = lits.length;
-    otherAt[p] = others.length;
-    const litPos = [];
-    const rest = [];
-    eachSucc(p, (t) => {
-      if (t === ACCEPT) {
-        ends[p] = 1;
-        return;
-      }
-      if (reach1[t]) reach1[base + p] = 1;
-      if (elems[t].kind === EL_LIT) litPos.push(t);
-      else if (nullable(elems[t])) others.push(t);
-      else rest.push(t);
-    });
-    nullEnd[p] = others.length;
-    for (const t of rest) others.push(t);
-    const keys = litPos.map(key);
-    const order = litPos.map((_, i) => i);
-    order.sort((a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : litPos[a] - litPos[b]));
-    for (const i of order) {
-      lits.push(litPos[i]);
-      litKeys.push(keys[i]);
-    }
-  }
-  litAt[n + 1] = lits.length;
-  otherAt[n + 1] = others.length;
-  return {
-    kind: NFA_SPARSE,
-    n,
-    litAt,
-    lits: Int32Array.from(lits),
-    litKeys: exact(litKeys),
-    otherAt,
-    others: Int32Array.from(others),
-    nullEnd,
-    ends,
-    reach1,
-    accept,
-    // Mark arrays reused across calls (see `nfaRunSparse`).
-    scratch: null,
-  };
-}
-
-// ── in-segment matchers ─────────────────────────────────────────────
-
-function makeWild(kind, fields) {
-  return {
-    kind,
-    prefixStr: flat(fields.prefixStr ?? ""),
-    suffixStr: flat(fields.suffixStr ?? ""),
-    suffixSetStr: fields.suffixSetStr?.map(flat) ?? null,
-    runs: fields.runs ?? null,
-    minLen: fields.minLen ?? 0,
-    variable: fields.variable ?? true,
-    dotProtect: fields.dotProtect ?? false,
-    anychars: fields.anychars ?? 0,
-    nfa: fields.nfa ?? null,
-    // Its wildcards alone match every non-empty segment (`*`, `?*`,
-    // `{a,*}`); drives `matchDir`'s all-below bit.
-    anySeg: fields.anySeg ?? false,
-  };
-}
-
-function compileWild(nodes, dot, ci) {
-  let idx = 0;
-  while (idx < nodes.length && nodes[idx].tag === N_LITERAL) idx++;
-  const prefix = concatLits(nodes, 0, idx);
-  let anychars = 0;
-  let hasStar = false;
-  while (idx < nodes.length) {
-    const t = nodes[idx].tag;
-    if (t === N_STAR) hasStar = true;
-    else if (t === N_ANYCHAR) anychars += 1;
-    else break;
-    idx += 1;
-  }
-  // A literal product after the wildcards (one empty suffix when nothing
-  // follows them) keeps the segment anchored at both ends; anything else
-  // runs the NFA.
-  const suffixes = suffixProduct(nodes, idx);
-  if (suffixes === null) return makeWild(WK_GENERIC, compileSegNfa(nodes, dot, ci));
-  const fields = {
-    prefixStr: prefix,
-    minLen: prefix.length + anychars,
-    variable: hasStar,
-    dotProtect: !dot && prefix.length === 0 && (hasStar || anychars > 0),
-    anychars,
-    // `*` or `?*` with nothing literal around it, up to a suffix that
-    // may be empty.
-    anySeg: prefix.length === 0 && hasStar && anychars <= 1 && suffixes.some((s) => s.length === 0),
-  };
-  if (suffixes.length === 1) {
-    fields.suffixStr = suffixes[0];
-    fields.minLen += suffixes[0].length;
-    return makeWild(WK_AFFIX, fields);
-  }
-  if (suffixes.length <= LINEAR_SUFFIXES) {
-    fields.suffixSetStr = suffixes;
-    return makeWild(WK_AFFIX_SET, fields);
-  }
-  const { set, runs } = indexSuffixes(suffixes, ci);
-  fields.suffixSetStr = set;
-  fields.runs = runs;
-  return makeWild(WK_AFFIX_INDEX, fields);
-}
-
-// Literal suffix alternatives one segment enumerates (`*.{a,b,…}`, a
-// factored union of names). A product of alternatives (`{a,b}{c,d}…`)
-// past this many suffixes stays an NFA, which holds it without
-// multiplying it out; a single list is no product and is enumerated
-// whatever its length.
-const MAX_SUFFIX_PRODUCT = 1024;
-// An affix set up to this size is scanned in pattern order; a larger
-// one is sorted and binary-searched per suffix length.
-const LINEAR_SUFFIXES = 8;
-// The enumerated suffixes, one byte more each, may not take more than
-// this or four times their nodes: a long literal next to a product
-// would be copied into every suffix.
-const MAX_SUFFIX_BYTES = 64 * 1024;
-
-function suffixProduct(nodes, from) {
-  if (from + 1 === nodes.length && nodes[from].tag === N_LITERAL) {
-    return [nodes[from].str];
-  }
-  let parts = [""];
-  // Σ (part + 1) bytes, and what the nodes themselves hold.
-  let size = 1;
-  let source = 1;
-  const fits = () => size <= Math.max(MAX_SUFFIX_BYTES, source * 4);
-  for (let i = from; i < nodes.length; i++) {
-    const node = nodes[i];
-    if (node.tag === N_LITERAL) {
-      size += parts.length * node.str.length;
-      source += node.str.length;
-      if (!fits()) return null;
-      parts = parts.map((p) => p + node.str);
-    } else if (node.tag === N_BRACE) {
-      const lits = [];
-      let branchBytes = 0;
-      for (const branch of node.branches) {
-        const b = seq(branch);
-        if (b.length === 0) lits.push(EMPTY);
-        else if (b.length === 1 && b[0].tag === N_LITERAL) lits.push(b[0].str);
-        else return null;
-        branchBytes += lits[lits.length - 1].length + 1;
-      }
-      if (parts.length > 1 && parts.length * lits.length > MAX_SUFFIX_PRODUCT) return null;
-      // Σ (|p| + |l| + 1) over every pair.
-      size = lits.length * (size - parts.length) + parts.length * branchBytes;
-      source += branchBytes;
-      if (!fits()) return null;
-      const next = [];
-      for (const p of parts) for (const l of lits) next.push(p + l);
-      parts = next;
-    } else {
-      return null;
-    }
-  }
-  return parts;
-}
-
-// Past LINEAR_SUFFIXES the set is sorted by (length, bytes), ASCII-
-// lowercased when case-insensitive, and indexed per length so
-// wildConsumes can binary-search it. Latin-1 strings order by byte.
-function indexSuffixes(suffixes, ci) {
-  let set = suffixes;
-  if (ci) set = set.map(asciiLower);
-  set.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
-  set = set.filter((s, i) => i === 0 || s !== set[i - 1]);
-  const runs = [];
-  for (let i = 0; i < set.length; i++) {
-    const len = set[i].length;
-    const last = runs.length > 0 ? runs[runs.length - 1] : null;
-    if (last !== null && last.len === len) last.end = i + 1;
-    else runs.push({ len, start: i, end: i + 1 });
-  }
-  return { set: exact(set), runs: exact(runs) };
-}
-
-function asciiLower(s) {
-  let out = "";
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    out += c >= 0x41 && c <= 0x5a ? String.fromCharCode(c + 32) : s[i];
-  }
-  return out;
 }

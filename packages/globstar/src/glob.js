@@ -1,8 +1,8 @@
-import { parse } from "./parser.js";
+import { parse } from "./parse/parser.js";
 import { LiteralMatcher } from "./engine/literal.js";
 import { SegmentMatcher } from "./engine/segment/index.js";
-import { nodeToLiteral } from "./ast.js";
-import { factorBranches } from "./factor.js";
+import { nodeToLiteral } from "./parse/ast.js";
+import { factorBranches } from "./union.js";
 import { GlobError, MAX_EXPANSION } from "./error.js";
 import { DirMatch } from "./dir-match.js";
 

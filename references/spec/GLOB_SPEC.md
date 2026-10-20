@@ -6,7 +6,7 @@
 
 **Conventions.** The key words MUST, MUST NOT, SHOULD and MAY are to be read as described in RFC 2119. They state requirements on an implementation or on a caller. Sentences without a key word define the pattern language itself. A paragraph marked *Note*, *Rationale* or *Implementation note* is informative. Examples are informative.
 
-**Conformance.** The executable form of this document is the corpus in `crates/globstar/tests/corpus/` (one row per pattern, path and expected answer; its README states the format) and the fixtures in `fixtures/`. Both runtimes run every row; a behavior counts as specified only when a row pins it.
+**Conformance.** The executable form of this document is the corpus in `fixtures/corpus/` (one row per pattern, path and expected answer; its README states the format) and the other fixtures in `fixtures/`. Both runtimes run every row; a behavior counts as specified only when a row pins it.
 
 ## Table of Contents
 
