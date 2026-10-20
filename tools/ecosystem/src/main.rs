@@ -10,7 +10,7 @@
 //! pattern, the path. The fields use the corpus escapes (`\\`, `\t`, `\n`).
 //! One answer line per request, tab-separated, in this order:
 //!
-//! `globstar`, `globset`, `fast-glob@1`, `fast-glob@0.4`, `wax`
+//! `globstar`, `globset`, `fast-glob`, `wax`
 //!
 //! Each token is `match`, `no-match`, `err:<Kind>` (globstar), `error:<text>`
 //! (another library refused the pattern) or `panic`. The probe does not
@@ -18,16 +18,15 @@
 //! `case_insensitive` as asked and every library on the path as given; the
 //! generator masks the rows a library cannot be asked about.
 //!
-//! globset runs with `literal_separator(true)` and `backslash_escape(true)`,
-//! the configuration closest to this dialect (and the one GLOB_SPEC
-//! Appendix A compares against).
+//! globset runs with `literal_separator(true)`, `backslash_escape(true)` and
+//! `empty_alternates(true)`, the configuration closest to this dialect.
 
 use std::io::{self, BufRead, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 
 use globstar::{CompileOptions, Glob};
-use wax::Pattern as _;
+use wax::Program as _;
 
 fn main() {
     // A panicking library is an answer (`panic`), not the end of the run.
@@ -55,7 +54,6 @@ fn main() {
         let answers = [
             guarded(|| ours(&pattern, &path, dot, ci)),
             guarded(|| globset_answer(&pattern, &path, ci)),
-            guarded(|| verdict(fast_glob_1::glob_match(&pattern, &path))),
             guarded(|| verdict(fast_glob::glob_match(&pattern, &path))),
             guarded(|| wax_answer(&pattern, &path)),
         ];
@@ -89,6 +87,7 @@ fn globset_answer(pattern: &str, path: &str, ci: bool) -> String {
     let built = globset::GlobBuilder::new(pattern)
         .literal_separator(true)
         .backslash_escape(true)
+        .empty_alternates(true)
         .case_insensitive(ci)
         .build();
     match built {

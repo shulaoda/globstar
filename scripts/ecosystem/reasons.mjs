@@ -127,7 +127,7 @@ const DISAGREE = [
     when: (p) => /\{,|,\}|,,/.test(p),
     text:
       `An empty branch is a branch (${SPEC} §6.1): \`foo{,.txt}\` matches \`foo\` and \`foo.txt\`. ` +
-      "globset drops empty alternates unless `empty_alternates` is set; the JS libraries keep them.",
+      "The library drops the empty branch, or reads the brace as literal text.",
   },
   {
     id: "brace-degenerate",
@@ -165,7 +165,7 @@ const DISAGREE = [
     when: (p) => /\/\*\*\/?$/.test(p) || /\/\*\*\/?[},]/.test(p),
     text:
       `\`a/**\` needs the \`a/\` prefix: it matches \`a/\` and everything below, not \`a\` itself ` +
-      `(${SPEC} §9.5). picomatch and micromatch match \`a\` too unless \`strictSlashes\` is set.`,
+      `(${SPEC} §9.5). The library matches \`a\` too.`,
   },
   {
     id: "globstar-in-brace",

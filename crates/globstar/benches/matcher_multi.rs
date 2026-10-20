@@ -10,7 +10,7 @@ use fast_glob::glob_match as fg_glob_match;
 use globset::GlobBuilder;
 use globstar::Glob;
 use std::path::Path;
-use wax::Pattern as WaxPattern;
+use wax::Program as WaxPattern;
 
 mod common;
 use common::{MISS, PATHS};

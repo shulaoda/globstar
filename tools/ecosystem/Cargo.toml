@@ -11,9 +11,8 @@ publish = false
 [dependencies]
 globstar = { path = "../../crates/globstar" }
 globset = "0.4"
-wax = "0.6"
-fast-glob = "0.4"
-fast-glob-1 = { package = "fast-glob", version = "1.1" }
+wax = "0.7"
+fast-glob = "1.1"
 
 [[bin]]
 name = "ecosystem-probe"

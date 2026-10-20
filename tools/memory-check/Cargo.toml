@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 globstar = { path = "../../crates/globstar" }
 globset = "0.4"
-wax = "0.6"
+wax = "0.7"
 
 [dev-dependencies]
 globstar-walk = { path = "../../crates/globstar-walk" }

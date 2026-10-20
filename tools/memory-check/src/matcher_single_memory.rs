@@ -9,7 +9,7 @@ use std::path::Path;
 
 use globset::GlobBuilder;
 use globstar::{CompileOptions, Glob};
-use wax::Pattern as _;
+use wax::Program as _;
 
 #[path = "../../../crates/globstar/benches/common/mod.rs"]
 mod common;

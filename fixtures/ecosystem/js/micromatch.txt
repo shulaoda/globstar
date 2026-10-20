@@ -3,9 +3,10 @@
 #   micromatch 4.0.8 (picomatch 2 inside; what fast-glob (npm) and globby match with)
 # Answers: micromatch 4.0.8 and globstar 0.0.4, run on every case.
 # Rows without a flag run with dot=false, the library's default.
+# micromatch runs with `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3).
 # Rows where globstar and micromatch agree (both answers, or both refusing the pattern).
 # Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]; see fixtures/corpus/README.md.
-# 2406 rows: 2141 agree (5 as a refusal), 183 disagree, 82 globstar refuses, 0 micromatch refuses.
+# 2406 rows: 2146 agree (5 as a refusal), 178 disagree, 82 globstar refuses, 0 micromatch refuses.
 
 ## micromatch.all_should_return_true_when_all_patterns_match_the_given
 b	b	match	dot=false
@@ -128,6 +129,7 @@ z*.js	zzjs	no-match	dot=false
 
 ## micromatch.ismatch_matching_issue_24
 **	a	match	dot=false
+a/**	a	no-match	dot=false
 **	a/	match	dot=false
 **	a/b/c/d	match	dot=false
 **	a/b/c/d/	match	dot=false
@@ -156,6 +158,7 @@ foo?bar	foo/bar	no-match	dot=false
 **/bar**	foo/bar/baz	no-match	dot=false
 foo**bar	foo/baz/bar	no-match	dot=false
 foo*bar	foo/baz/bar	no-match	dot=false
+foo/**	foo	no-match	dot=false
 a/**/j/**/z/*.md	a/b/j/c/z/x.md	match	dot=false
 a/**/j/**/z/*.md	a/j/z/x.md	match	dot=false
 **/foo	bar/baz/foo	match	dot=false
@@ -695,6 +698,7 @@ a[X-]b	aXb	match	dot=false
 [a-y]*[^c]	baz	match	dot=false
 [a-y]*[^c]	bb	match	dot=false
 [a-y]*[^c]	bcd	match	dot=false
+[a-y]*[^c]	bdir/	no-match	dot=false
 [a-y]*[^c]	beware	match	dot=false
 [a-y]*[^c]	bzz	match	dot=false
 [a-y]*[^c]	c	no-match	dot=false
@@ -1034,6 +1038,7 @@ a{,b}.txt	ab.txt	match	dot=false
 a{b,}.txt	ab.txt	match	dot=false
 
 ## micromatch.braces_should_support_braces_containing_slashes
+{a/,}a/**	a	no-match	dot=false
 a{a,b/}*.txt	aa.txt	match	dot=false
 a{a,b/}*.txt	ab/a.txt	match	dot=false
 {a/,}a/**	a/	match	dot=false
@@ -2020,8 +2025,10 @@ a*	a!b	match	dot=false
 **/.x/**	a/b/.x/c	match	dot=false
 **/.x/**	a/b/.x/c/d	match	dot=false
 **/.x/**	a/b/.x/c/d/e	match	dot=false
+**/.x/**	a/b/.x	no-match	dot=false
 **/.x/**	a/b/.x/	match	dot=false
 **/.x/**	a/.x/b	match	dot=false
+**/.x/**	.x	no-match	dot=false
 **/.x/**	.x/	match	dot=false
 **/.x/**	.x/a	match	dot=false
 **/.x/**	.x/a/b	match	dot=false
@@ -2641,7 +2648,6 @@ a/**/b	a/bb	no-match	dot=false
 */*	foo/bar	match	dot=false
 */**	foo/bar	match	dot=false
 **/	foo/bar/	match	dot=false
-**/*	foo/bar/	match	dot=false
 **/*/	foo/bar/	match	dot=false
 */**	foo/bar/	match	dot=false
 */*/	foo/bar/	match	dot=false

@@ -41,11 +41,35 @@ const LIBS = [
   { id: "micromatch", side: "js", dot: true, ci: true },
   { id: "minimatch", side: "js", dot: true, ci: true },
   { id: "globset", side: "rust", dot: false, ci: true },
-  { id: "fast-glob@1", side: "rust", dot: false, ci: false },
-  { id: "fast-glob@0.4", side: "rust", dot: false, ci: false },
+  { id: "fast-glob", side: "rust", dot: false, ci: false },
   { id: "wax", side: "rust", dot: false, ci: false },
 ];
-const PROBE_ORDER = ["globstar", "globset", "fast-glob@1", "fast-glob@0.4", "wax"];
+const PROBE_ORDER = ["globstar", "globset", "fast-glob", "wax"];
+
+// Every library runs in the configuration closest to this dialect, so
+// what is left differs in meaning, not in settings. A suite's test that
+// sets one of these options to this value is imported; one that sets it
+// to the other value is not (it tests the other behavior).
+const CONFIG = {
+  picomatch: {
+    options: { strictSlashes: true },
+    text: "`strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3)",
+  },
+  micromatch: {
+    options: { strictSlashes: true },
+    text: "`strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3)",
+  },
+  minimatch: {
+    options: { preserveMultipleSlashes: true, optimizationLevel: 0 },
+    text: "`preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §12.3); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1)",
+  },
+  globset: {
+    options: {},
+    text: "`literal_separator(true)`: `*` stops at `/` (GLOB_SPEC §9.1); `backslash_escape(true)`: `\\` escapes (§4); `empty_alternates(true)`: an empty branch is a branch (§6.1)",
+  },
+  "fast-glob": { options: {}, text: "no options" },
+  wax: { options: {}, text: "no options" },
+};
 
 const hasDotName = (path) => /(^|\/)\.[^/]/.test(path);
 const comparable = (lib, row) =>
@@ -68,11 +92,14 @@ const RUNNING = {
   minimatch: jsVersion("minimatch"),
   globset: lockVersions("globset")[0],
   wax: lockVersions("wax")[0],
-  "fast-glob@1": lockVersions("fast-glob").find((v) => v.startsWith("1.")),
-  "fast-glob@0.4": lockVersions("fast-glob").find((v) => v.startsWith("0.4")),
+  "fast-glob": lockVersions("fast-glob")[0],
 };
+for (const name of ["globset", "wax", "fast-glob"]) {
+  if (lockVersions(name).length !== 1)
+    throw new Error(`${name}: Cargo.lock holds more than one version`);
+}
 for (const s of SOURCES) {
-  const running = RUNNING[s.id === "fast-glob" ? "fast-glob@1" : s.id];
+  const running = RUNNING[s.id];
   if (running !== s.version) {
     throw new Error(
       `${s.id}: the suite is pinned at ${s.version} but the workspace runs ${running}`,
@@ -142,11 +169,14 @@ function normalize(source, c) {
     dot = false; // the three libraries' default
     const options =
       c.options && typeof c.options === "object" && !Array.isArray(c.options) ? c.options : {};
+    const aligned = CONFIG[source.id].options;
     for (const [k, v] of Object.entries(options)) {
       if (v === undefined || v === null) continue;
       if (k === "dot") dot = Boolean(v);
       else if (k === "nocase") ci = Boolean(v);
-      else if (!JS_IGNORED.has(k)) return drop(`option: ${k}`);
+      else if (k in aligned) {
+        if (v !== aligned[k]) return drop(`option: ${k}=${JSON.stringify(v)}`);
+      } else if (!JS_IGNORED.has(k)) return drop(`option: ${k}`);
     }
   } else if (source.id === "globset" && c.options.globset) {
     const o = GLOBSET_OPTS[c.options.globset];
@@ -197,9 +227,18 @@ const JS_ANSWER = {
       throw e;
     }
   },
-  picomatch: (r) => attempt(() => pm.isMatch(r.path, r.pattern, { dot: r.dot, nocase: r.ci })),
-  micromatch: (r) => attempt(() => mm.isMatch(r.path, r.pattern, { dot: r.dot, nocase: r.ci })),
-  minimatch: (r) => attempt(() => minimatch(r.path, r.pattern, { dot: r.dot, nocase: r.ci })),
+  picomatch: (r) =>
+    attempt(() =>
+      pm.isMatch(r.path, r.pattern, { dot: r.dot, nocase: r.ci, ...CONFIG.picomatch.options }),
+    ),
+  micromatch: (r) =>
+    attempt(() =>
+      mm.isMatch(r.path, r.pattern, { dot: r.dot, nocase: r.ci, ...CONFIG.micromatch.options }),
+    ),
+  minimatch: (r) =>
+    attempt(() =>
+      minimatch(r.path, r.pattern, { dot: r.dot, nocase: r.ci, ...CONFIG.minimatch.options }),
+    ),
 };
 
 const esc = (s) => s.replaceAll("\\", "\\\\").replaceAll("\t", "\\t").replaceAll("\n", "\\n");
@@ -309,7 +348,7 @@ function status(lib, row) {
 
 // ── write ─────────────────────────────────────────────────────────────
 
-const sourceLib = (s) => (s.id === "fast-glob" ? "fast-glob@1" : s.id);
+const sourceLib = (s) => s.id;
 const showAnswer = (a) => (typeof a === "string" ? a : `error (${a.err})`);
 const flagsOf = (row) => {
   const f = [];
@@ -340,8 +379,8 @@ function header(source, kind, suite, counts) {
   ];
   if (source.side === "js")
     lines.push("# Rows without a flag run with dot=false, the library's default.");
-  if (source.id === "globset")
-    lines.push("# globset runs with literal_separator(true) and backslash_escape(true).");
+  if (CONFIG[source.id].text !== "no options")
+    lines.push(`# ${source.id} runs with ${CONFIG[source.id].text}.`);
   lines.push(
     kind === "diff"
       ? `# Rows where globstar and ${source.id} differ, by reason; each row asserts globstar's answer and`
@@ -476,15 +515,24 @@ The answers come from running the libraries, not from the suites'
 expectations, so a row says what each library does at that version. Each
 library is asked only what it can express: a \`case_insensitive\` row is not
 put to a library without the option, and a \`dot=false\` row is not put to a
-library without the option when a name in the path starts with \`.\`.
-globset runs with \`literal_separator(true)\` and \`backslash_escape(true)\`,
-the configuration closest to this dialect. The three JS libraries default
-to \`dot: false\`, so their rows carry \`dot=false\` unless the test set
-\`dot\`.
+library without the option when a name in the path starts with \`.\`. The
+three JS libraries default to \`dot: false\`, so their rows carry
+\`dot=false\` unless the test set \`dot\`.
+
+## Configuration
+
+Every library runs in the configuration closest to this dialect, so what
+is left differs in meaning, not in settings. A test that sets one of these
+options to this value is imported; one that sets it to the other value
+tests the other behavior and is not.
+
+| Library | Runs with |
+| --- | --- |
+${SOURCES.map((s) => `| ${s.id} | ${CONFIG[s.id].text} |`).join("\n")}
 
 Not imported, and counted below: syntax globstar does not have (extglobs,
 POSIX classes) and options it does not have (\`windows\`, \`bash\`,
-\`strictSlashes\`, \`matchBase\`, \`noglobstar\`, …). A test that passes a list
+\`ignore\`, \`matchBase\`, \`noglobstar\`, …). A test that passes a list
 of patterns is a union and is not a single-pattern row.
 
 The suites were run on POSIX, where the libraries behave as recorded
@@ -578,11 +626,9 @@ for (const suite of suites) {
 md += `
 Versions run: ${LIBS.map((l) => `${l.id} ${RUNNING[l.id]}`).join(", ")}.
 micromatch matches through picomatch 2, which is also what fast-glob (npm)
-and globby use; tinyglobby uses picomatch 4. The fast-glob columns show
-how far the crate moved between the version the benchmarks pin and the
-one its suite belongs to. wax refuses much of what the others accept
-(\`a//b\`, \`**/**\`, \`***\`), which is most of its distance from every
-column.
+and globby use; tinyglobby uses picomatch 4. wax refuses much of what the
+others accept (\`a//b\`, \`**/**\`, \`***\`), which is most of its distance
+from every column.
 `;
 writeFileSync(join(OUT, "README.md"), md);
 

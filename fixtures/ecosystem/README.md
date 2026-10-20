@@ -17,15 +17,29 @@ The answers come from running the libraries, not from the suites'
 expectations, so a row says what each library does at that version. Each
 library is asked only what it can express: a `case_insensitive` row is not
 put to a library without the option, and a `dot=false` row is not put to a
-library without the option when a name in the path starts with `.`.
-globset runs with `literal_separator(true)` and `backslash_escape(true)`,
-the configuration closest to this dialect. The three JS libraries default
-to `dot: false`, so their rows carry `dot=false` unless the test set
-`dot`.
+library without the option when a name in the path starts with `.`. The
+three JS libraries default to `dot: false`, so their rows carry
+`dot=false` unless the test set `dot`.
+
+## Configuration
+
+Every library runs in the configuration closest to this dialect, so what
+is left differs in meaning, not in settings. A test that sets one of these
+options to this value is imported; one that sets it to the other value
+tests the other behavior and is not.
+
+| Library | Runs with |
+| --- | --- |
+| picomatch | `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3) |
+| micromatch | `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3) |
+| minimatch | `preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §12.3); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1) |
+| globset | `literal_separator(true)`: `*` stops at `/` (GLOB_SPEC §9.1); `backslash_escape(true)`: `\` escapes (§4); `empty_alternates(true)`: an empty branch is a branch (§6.1) |
+| fast-glob | no options |
+| wax | no options |
 
 Not imported, and counted below: syntax globstar does not have (extglobs,
 POSIX classes) and options it does not have (`windows`, `bash`,
-`strictSlashes`, `matchBase`, `noglobstar`, …). A test that passes a list
+`ignore`, `matchBase`, `noglobstar`, …). A test that passes a list
 of patterns is a union and is not a single-pattern row.
 
 The suites were run on POSIX, where the libraries behave as recorded
@@ -54,12 +68,12 @@ other paths the suite tried it on.
 
 | Suite | Version | Files | Harvested | Rows | Agree | Disagree | globstar refuses | Library refuses |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [picomatch](https://github.com/micromatch/picomatch/tree/4.0.4/test) | 4.0.4 | [agree](js/picomatch.txt) · [diff](js/picomatch-diff.txt) | 10955 | 4194 | 3859 (92%) | 328 | 7 | 0 |
-| [micromatch](https://github.com/micromatch/micromatch/tree/4.0.8/test) | 4.0.8 | [agree](js/micromatch.txt) · [diff](js/micromatch-diff.txt) | 7140 | 2406 | 2141 (89%) | 183 | 82 | 0 |
-| [minimatch](https://github.com/isaacs/minimatch/tree/v10.2.5/test) | 10.2.5 | [agree](js/minimatch.txt) · [diff](js/minimatch-diff.txt) | 1647 | 1208 | 1033 (85.5%) | 27 | 148 | 0 |
-| [globset](https://github.com/BurntSushi/ripgrep/blob/master/crates/globset/src/glob.rs) | 0.4.18 | [agree](rust/globset.txt) · [diff](rust/globset-diff.txt) | 138 | 133 | 127 (95.5%) | 3 | 1 | 2 |
+| [picomatch](https://github.com/micromatch/picomatch/tree/4.0.7/test) | 4.0.7 | [agree](js/picomatch.txt) · [diff](js/picomatch-diff.txt) | 10979 | 4216 | 3891 (92.3%) | 318 | 7 | 0 |
+| [micromatch](https://github.com/micromatch/micromatch/tree/4.0.8/test) | 4.0.8 | [agree](js/micromatch.txt) · [diff](js/micromatch-diff.txt) | 7140 | 2406 | 2146 (89.2%) | 178 | 82 | 0 |
+| [minimatch](https://github.com/isaacs/minimatch/tree/v10.2.6/test) | 10.2.6 | [agree](js/minimatch.txt) · [diff](js/minimatch-diff.txt) | 1647 | 1208 | 1037 (85.8%) | 23 | 148 | 0 |
+| [globset](https://github.com/BurntSushi/ripgrep/blob/master/crates/globset/src/glob.rs) | 0.4.20 | [agree](rust/globset.txt) · [diff](rust/globset-diff.txt) | 138 | 133 | 128 (96.2%) | 2 | 1 | 2 |
 | [fast-glob](https://github.com/oxc-project/fast-glob/blob/v1.1.2/tests/test.rs) | 1.1.2 | [agree](rust/fast-glob.txt) · [diff](rust/fast-glob-diff.txt) | 1444 | 1290 | 1270 (98.4%) | 4 | 16 | 0 |
-| [wax](https://github.com/olson-sean-k/wax/blob/v0.6.0/src/lib.rs) | 0.6.0 | [agree](rust/wax.txt) · [diff](rust/wax-diff.txt) | 170 | 159 | 69 (43.4%) | 18 | 1 | 71 |
+| [wax](https://github.com/olson-sean-k/wax/blob/v0.7.0/src/lib.rs) | 0.7.0 | [agree](rust/wax.txt) · [diff](rust/wax-diff.txt) | 171 | 168 | 63 (37.5%) | 18 | 7 | 80 |
 
 "Harvested" counts every assertion the suite makes, duplicates included;
 "Rows" is what is left after the drops below and after merging identical
@@ -67,24 +81,24 @@ other paths the suite tried it on.
 
 ## What was not imported
 
-- **picomatch**: syntax: extglob (2742), option: format (787), option: windows (726), option: strictSlashes (575), option: ignore (504), option: bash (270), syntax: POSIX class (154), a list of patterns (66), option: nonegate (12), option: matchBase (10), option: unescape (8), option: posix (7), option: noglobstar (7), longer than 512 bytes (6), option: keepQuotes (6), option: flags (6), option: nobracket (3), option: regex (2), nonString (1), option: noextglob (1), option: relaxSlashes (1); 934 duplicate rows merged.
-- **micromatch**: syntax: extglob (2843), a list of patterns (1107), option: bash (289), option: windows (198), option: format (169), syntax: POSIX class (152), option: strictSlashes (83), option: posix (17), option: nobrace (9), option: regex (5), nonString (3), longer than 512 bytes (3), option: toPosixSlashes (2); 964 duplicate rows merged.
+- **picomatch**: syntax: extglob (2756), option: format (787), option: windows (726), option: ignore (504), option: bash (270), syntax: POSIX class (154), a list of patterns (66), option: posix (48), option: matchBase (14), option: nonegate (12), option: unescape (8), option: noglobstar (7), longer than 512 bytes (6), option: keepQuotes (6), option: flags (6), option: nobracket (3), option: regex (2), nonString (1), option: basename (1), option: noextglob (1), option: relaxSlashes (1); 1451 duplicate rows merged.
+- **micromatch**: syntax: extglob (2843), a list of patterns (1107), option: bash (289), option: windows (198), option: format (169), syntax: POSIX class (152), option: posix (99), option: nobrace (9), option: regex (5), nonString (3), longer than 512 bytes (3), option: toPosixSlashes (2); 965 duplicate rows merged.
 - **minimatch**: syntax: extglob (351), syntax: POSIX class (35), option: noglobstar (13), option: nonegate (6), option: matchBase (4), option: nocomment (3); 27 duplicate rows merged.
 - **globset**: option: NOBSESC (3), option: EALTRE (1); 1 duplicate rows merged.
 - **fast-glob**: syntax: extglob (24); 130 duplicate rows merged.
-- **wax**: compiles-only assertion (no path) (118), syntax: extglob (3); 8 duplicate rows merged.
+- **wax**: compiles-only assertion (no path) (116), syntax: extglob (3); 0 duplicate rows merged.
 
 ## Why they differ
 
 The reasons, per suite, most frequent first; the `-diff.txt` files hold the
 rows and a paragraph on each reason.
 
-- **picomatch**: A `.` or `..` segment (228), A `+` after a class, brace or group (33), Regex syntax in the pattern (31), A trailing `/**` and the directory itself (10), A trailing `/` (10), Quotes in the pattern (9), A `[` that never closes (7), A backslash in the pattern (3), A class matching its own text (3), A negated class and a `/` (1).
-- **micromatch**: A `+` after a class, brace or group (77), Regex syntax in the pattern (69), A reversed class range (36), A `{` that never closes (30), A `[` that never closes (12), A trailing `/` (8), A backslash in the pattern (8), A `.` or `..` segment (4), A trailing `/**` and the directory itself (4), Quotes in the pattern (4), A pattern ending in `\` (3), A `{a..z}` range (3), A name starting with `.` (3), A negated class and a `/` (1), An empty brace branch (1), A class matching its own text (1), An escaped separator (1).
-- **minimatch**: A reversed class range (108), A `{` that never closes (30), A `.` or `..` segment (18), A `[` that never closes (8), A trailing `/` (4), A backslash in the pattern (2), Case folding beyond ASCII (2), A negated class and a `/` (1), The empty pattern (1), A pattern ending in `\` (1).
-- **globset**: The library refuses the pattern (2), A brace with one branch (2), An empty brace branch (1), A `[` that never closes (1).
+- **picomatch**: A `.` or `..` segment (228), A `+` after a class, brace or group (33), Regex syntax in the pattern (32), A trailing `/` (10), Quotes in the pattern (9), A `[` that never closes (7), A backslash in the pattern (3), A class matching its own text (3).
+- **micromatch**: A `+` after a class, brace or group (77), Regex syntax in the pattern (69), A reversed class range (36), A `{` that never closes (30), A `[` that never closes (12), A trailing `/` (9), A backslash in the pattern (8), A `.` or `..` segment (4), Quotes in the pattern (4), A pattern ending in `\` (3), A `{a..z}` range (3), A name starting with `.` (3), A class matching its own text (1), An escaped separator (1).
+- **minimatch**: A reversed class range (108), A `{` that never closes (30), A `.` or `..` segment (14), A `[` that never closes (8), A trailing `/` (4), A backslash in the pattern (2), Case folding beyond ASCII (2), A negated class and a `/` (1), The empty pattern (1), A pattern ending in `\` (1).
+- **globset**: The library refuses the pattern (2), A brace with one branch (2), A `[` that never closes (1).
 - **fast-glob**: A `{` that never closes (7), A `[` that never closes (6), A brace with one branch (3), A pattern ending in `\` (3), A backslash in the pattern (1).
-- **wax**: The library refuses the pattern (71), wax's own syntax (13), A non-ASCII character in a class (2), Regex syntax in the pattern (2), A `[` that never closes (1), A negated class and a `/` (1).
+- **wax**: The library refuses the pattern (80), wax's own syntax (14), A `[` that never closes (5), The empty pattern (2), A non-ASCII character in a class (2), Regex syntax in the pattern (2).
 
 ## Across the ecosystem
 
@@ -92,19 +106,17 @@ How often each library gives the same answer as the library whose suite
 the rows came from (two refusals count as the same answer). A cell counts
 only the rows the library can be asked about.
 
-| Suite | globstar | picomatch | micromatch | minimatch | globset | fast-glob@1 | fast-glob@0.4 | wax |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| picomatch | 92% (4194) | 100% (4194) | 100% (4194) | 96.4% (4194) | 86.9% (3719) | 89.6% (3718) | 89.5% (3718) | 69% (3718) |
-| micromatch | 88.8% (2406) | 100% (2406) | 100% (2406) | 92.3% (2406) | 85.5% (2281) | 91.6% (2255) | 91.4% (2255) | 58.7% (2255) |
-| minimatch | 85.5% (1208) | 98.6% (1208) | 98.6% (1208) | 100% (1208) | 88.3% (883) | 96.2% (786) | 96.3% (786) | 67.7% (786) |
-| globset | 89.5% (133) | 83.5% (133) | 83.5% (133) | 88.7% (133) | 100% (133) | 90.7% (129) | 91.5% (129) | 77.5% (129) |
-| fast-glob | 98.4% (1290) | 97.3% (1290) | 97.3% (1290) | 97.8% (1290) | 89.9% (1290) | 100% (1290) | 97.3% (1290) | 66% (1290) |
-| wax | 42.8% (159) | 39% (159) | 39% (159) | 44.7% (159) | 40.3% (159) | 43.4% (159) | 41.5% (159) | 100% (159) |
+| Suite | globstar | picomatch | micromatch | minimatch | globset | fast-glob | wax |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| picomatch | 92.3% (4216) | 100% (4216) | 100% (4216) | 96.5% (4216) | 87.1% (3735) | 89.9% (3734) | 68.8% (3734) |
+| micromatch | 89% (2406) | 100% (2406) | 100% (2406) | 92.5% (2406) | 86.2% (2281) | 91.7% (2255) | 58.6% (2255) |
+| minimatch | 85.8% (1208) | 98.5% (1208) | 98.5% (1208) | 100% (1208) | 88.8% (883) | 96.7% (786) | 68.2% (786) |
+| globset | 90.2% (133) | 85% (133) | 85% (133) | 89.5% (133) | 100% (133) | 91.5% (129) | 77.5% (129) |
+| fast-glob | 98.4% (1290) | 97.8% (1290) | 97.8% (1290) | 97.8% (1290) | 90.9% (1290) | 100% (1290) | 66% (1290) |
+| wax | 36.9% (168) | 36.3% (168) | 36.3% (168) | 42.3% (168) | 38.7% (168) | 41.1% (168) | 100% (168) |
 
-Versions run: globstar 0.0.4, picomatch 4.0.4, micromatch 4.0.8, minimatch 10.2.5, globset 0.4.18, fast-glob@1 1.1.2, fast-glob@0.4 0.4.5, wax 0.6.0.
+Versions run: globstar 0.0.4, picomatch 4.0.7, micromatch 4.0.8, minimatch 10.2.6, globset 0.4.20, fast-glob 1.1.2, wax 0.7.0.
 micromatch matches through picomatch 2, which is also what fast-glob (npm)
-and globby use; tinyglobby uses picomatch 4. The fast-glob columns show
-how far the crate moved between the version the benchmarks pin and the
-one its suite belongs to. wax refuses much of what the others accept
-(`a//b`, `**/**`, `***`), which is most of its distance from every
-column.
+and globby use; tinyglobby uses picomatch 4. wax refuses much of what the
+others accept (`a//b`, `**/**`, `***`), which is most of its distance
+from every column.

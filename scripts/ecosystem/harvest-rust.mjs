@@ -125,41 +125,45 @@ export function harvestFastGlob(dir) {
 
 // ── wax ───────────────────────────────────────────────────────────────
 
-// `let glob = Glob::new(pat).unwrap();` followed by
-// `assert!(glob.is_match(Path::new(path)))` and its negation;
-// `Glob::new(pat).is_err()` is a rejected pattern. A `Glob::new(pat)
-// .unwrap()` with no match after it only says the pattern compiles and
-// is counted, not harvested.
+// rstest suites: a `#[rstest]` block lists `#[case(…)]` rows, then a fn
+// whose body says what the rows are. `assert_match_program_with(
+// harness::assert_new_glob_is_ok("pat"), path, f)` matches one pattern
+// against each row's path; with `expression` in place of the literal,
+// each row is a (pattern, path) pair. `assert_new_glob_is_err(expression)`
+// rows are rejected patterns; `assert_new_glob_is_ok(expression)` alone
+// only says the pattern compiles and is counted, not harvested.
 export function harvestWax(dir) {
   const file = "src/lib.rs";
   const src = readFileSync(join(dir, file), "utf8");
-  const start = src.indexOf("#[cfg(test)]");
-  const tests = start === -1 ? src : src.slice(start);
-  const offset = start === -1 ? 0 : start;
   const cases = [];
   let acceptOnly = 0;
-  let current = null;
-  const re = /let glob = Glob::new\(|Glob::new\(|assert!\(\s*!?\s*glob\.is_match\(/g;
-  for (const m of tests.matchAll(re)) {
-    const abs = offset + m.index;
-    const at = `${file}:${lineOf(src, abs)}`;
-    const group = enclosingFn(src, abs);
-    if (m[0].startsWith("assert!")) {
-      let i = m.index + m[0].length;
-      if (tests.startsWith("Path::new(", i)) i += "Path::new(".length;
-      const path = literalAt(tests, i);
-      if (path && current) cases.push(makeCase(current, path.value, {}, at, group));
-      continue;
+  const blocks = /#\[rstest\]([\s\S]*?)\n    fn ([a-z_0-9]+)[\s\S]*?\{([\s\S]*?)\n    \}/g;
+  for (const m of src.matchAll(blocks)) {
+    const [, caseBlock, name, body] = m;
+    const at = `${file}:${lineOf(src, m.index)}`;
+    // The string literals each `#[case(` starts with.
+    const rows = [];
+    for (const c of caseBlock.matchAll(/#\[case\(\s*/g)) {
+      const first = literalAt(caseBlock, c.index + c[0].length);
+      if (!first) continue;
+      const second = literalAt(caseBlock, skipSpace(caseBlock, first.end));
+      rows.push([first.value, second ? second.value : null]);
     }
-    const pat = literalAt(tests, m.index + m[0].length);
-    if (!pat) continue;
-    const rest = tests.slice(pat.end, pat.end + 20);
-    if (m[0].startsWith("let glob")) {
-      current = pat.value;
-    } else if (/^\)\s*\.is_err\(\)/.test(rest)) {
-      cases.push(makeCase(pat.value, "-", {}, at, group, "reject"));
-    } else if (/^\)\s*\.unwrap\(\)/.test(rest)) {
-      acceptOnly++;
+    const fixed = body.match(/assert_match_program_with\(\s*harness::assert_new_glob_is_ok\(/);
+    if (fixed) {
+      const i = fixed.index + fixed[0].length;
+      const pat = literalAt(body, i);
+      if (pat) {
+        for (const [path] of rows) cases.push(makeCase(pat.value, path, {}, at, name));
+      } else if (body.slice(i).startsWith("expression")) {
+        for (const [pattern, path] of rows) {
+          if (path !== null) cases.push(makeCase(pattern, path, {}, at, name));
+        }
+      }
+    } else if (/assert_new_glob_is_err\(expression\)/.test(body)) {
+      for (const [pattern] of rows) cases.push(makeCase(pattern, "-", {}, at, name, "reject"));
+    } else if (/assert_new_glob_is_ok\(expression\)/.test(body)) {
+      acceptOnly += rows.length;
     }
   }
   return { cases, skipped: { acceptOnly }, failures: 0, files: 1 };
