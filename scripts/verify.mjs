@@ -49,20 +49,38 @@ if (SKIP_RUST && SKIP_JS) {
   process.exit(2);
 }
 
-const CORPUS_DIR = resolve(ROOT, "fixtures/corpus");
+const FIXTURES_DIR = resolve(ROOT, "fixtures");
 
+// The spec corpus, and the ecosystem corpus (`fixtures/ecosystem/`): the
+// cases other libraries' suites assert, with our answers. The suites were
+// run on POSIX, where the libraries themselves behave as recorded, so the
+// ecosystem rows run everywhere but Windows.
 const SINGLE_FILES = [
-  "corpus.txt",
-  "corpus-realworld.txt",
-  "corpus-fast-glob.txt",
-  "corpus-fast-glob-diff.txt",
-  "corpus-utf8.txt",
-  "corpus-absolute.txt",
-  "corpus-case.txt",
-  "corpus-class.txt",
-  "corpus-comprehensive.txt",
-  "corpus-err.txt",
-  process.platform === "win32" ? "corpus-windows.txt" : "corpus-unix.txt",
+  "corpus/corpus.txt",
+  "corpus/corpus-realworld.txt",
+  "corpus/corpus-utf8.txt",
+  "corpus/corpus-absolute.txt",
+  "corpus/corpus-case.txt",
+  "corpus/corpus-class.txt",
+  "corpus/corpus-comprehensive.txt",
+  "corpus/corpus-err.txt",
+  process.platform === "win32" ? "corpus/corpus-windows.txt" : "corpus/corpus-unix.txt",
+  ...(process.platform === "win32"
+    ? []
+    : [
+        "ecosystem/js/picomatch.txt",
+        "ecosystem/js/picomatch-diff.txt",
+        "ecosystem/js/micromatch.txt",
+        "ecosystem/js/micromatch-diff.txt",
+        "ecosystem/js/minimatch.txt",
+        "ecosystem/js/minimatch-diff.txt",
+        "ecosystem/rust/globset.txt",
+        "ecosystem/rust/globset-diff.txt",
+        "ecosystem/rust/fast-glob.txt",
+        "ecosystem/rust/fast-glob-diff.txt",
+        "ecosystem/rust/wax.txt",
+        "ecosystem/rust/wax-diff.txt",
+      ]),
 ];
 
 // ── shared helpers ──────────────────────────────────────────────────
@@ -140,7 +158,7 @@ function record(stats, why, describe) {
 // the default `dot`). A short row stops the run.
 function rowsOf(file, defaultDot) {
   const rows = [];
-  const lines = readFileSync(join(CORPUS_DIR, file), "utf8").split("\n");
+  const lines = readFileSync(join(FIXTURES_DIR, file), "utf8").split("\n");
   lines.forEach((raw, i) => {
     const line = raw.replace(/\r$/, "");
     if (!line || line.startsWith("#")) return;
@@ -230,7 +248,7 @@ async function runJsVerify() {
     SINGLE_FILES.flatMap((f) => rowsOf(f, true)),
     (row) => unescape(row.raw),
   );
-  const multi = lanes(rowsOf("corpus-multi.txt", true), patternsOf);
+  const multi = lanes(rowsOf("corpus/corpus-multi.txt", true), patternsOf);
 
   // ── match_dir corpora — public API vs truth. Rows default to
   // `dot=false` (the walker convention); negated rows run too, a negated
@@ -255,8 +273,8 @@ async function runJsVerify() {
     }
     return stats;
   };
-  const dir = dirLane(rowsOf("corpus-dir.txt", false), (row) => unescape(row.raw));
-  const multiDir = dirLane(rowsOf("corpus-multi-dir.txt", false), patternsOf);
+  const dir = dirLane(rowsOf("corpus/corpus-dir.txt", false), (row) => unescape(row.raw));
+  const multiDir = dirLane(rowsOf("corpus/corpus-multi-dir.txt", false), patternsOf);
 
   return [
     { corpus: "single", engine: "globstar", ...single.globstar },

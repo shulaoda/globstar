@@ -8,9 +8,8 @@ implementation claiming spec conformance must pass every test here.
 Single-pattern `is_match` corpora: `corpus.txt` (core, spec-sourced),
 `corpus-class.txt`, `corpus-case.txt`, `corpus-utf8.txt`,
 `corpus-absolute.txt`, `corpus-comprehensive.txt`,
-`corpus-realworld.txt`, `corpus-fast-glob.txt`,
-`corpus-fast-glob-diff.txt`, `corpus-err.txt` (the parse errors the
-others do not pin), plus the platform-gated `corpus-unix.txt` and
+`corpus-realworld.txt`, `corpus-err.txt` (the parse errors the others do
+not pin), plus the platform-gated `corpus-unix.txt` and
 `corpus-windows.txt`.
 
 Other surfaces: `corpus-dir.txt` (`match_dir`), `corpus-multi.txt` /
@@ -74,9 +73,11 @@ walker-layer default), case-sensitive everywhere.
 ## Provenance
 
 Each case in `corpus.txt` / `corpus-dir.txt` is sourced
-from a specific section of `GLOB_SPEC.md`. Cases pulled from external
-corpora (fast-glob, real-world repos) live in separate files so the
-spec-authoritative corpus stays clean.
+from a specific section of `GLOB_SPEC.md`. Cases from real-world repos
+live in `corpus-realworld.txt`, and the cases other glob libraries assert
+in their own test suites, with where they differ from us, live in
+[`../ecosystem/`](../ecosystem/README.md), so the spec-authoritative
+corpus stays clean.
 
 ## Scope
 

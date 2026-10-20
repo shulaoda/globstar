@@ -23,28 +23,54 @@ use globstar::{CompileOptions, DirMatch, Glob, GlobError};
 use std::fmt::Debug;
 use std::path::PathBuf;
 
-const CORPUS_DIR: &str = "../../fixtures/corpus";
+const FIXTURES_DIR: &str = "../../fixtures";
 
+/// The spec corpus, and the ecosystem corpus (`fixtures/ecosystem/`): the
+/// cases other libraries' suites assert, with our answers. The suites were
+/// run on POSIX, where the libraries themselves behave as recorded, so the
+/// ecosystem rows run everywhere but Windows.
 const SINGLE_FILES: &[&str] = &[
-    "corpus.txt",
-    "corpus-realworld.txt",
-    "corpus-fast-glob.txt",
-    "corpus-fast-glob-diff.txt",
-    "corpus-utf8.txt",
-    "corpus-absolute.txt",
-    "corpus-case.txt",
-    "corpus-class.txt",
-    "corpus-comprehensive.txt",
-    "corpus-err.txt",
+    "corpus/corpus.txt",
+    "corpus/corpus-realworld.txt",
+    "corpus/corpus-utf8.txt",
+    "corpus/corpus-absolute.txt",
+    "corpus/corpus-case.txt",
+    "corpus/corpus-class.txt",
+    "corpus/corpus-comprehensive.txt",
+    "corpus/corpus-err.txt",
     #[cfg(windows)]
-    "corpus-windows.txt",
+    "corpus/corpus-windows.txt",
     #[cfg(not(windows))]
-    "corpus-unix.txt",
+    "corpus/corpus-unix.txt",
+    #[cfg(not(windows))]
+    "ecosystem/js/picomatch.txt",
+    #[cfg(not(windows))]
+    "ecosystem/js/picomatch-diff.txt",
+    #[cfg(not(windows))]
+    "ecosystem/js/micromatch.txt",
+    #[cfg(not(windows))]
+    "ecosystem/js/micromatch-diff.txt",
+    #[cfg(not(windows))]
+    "ecosystem/js/minimatch.txt",
+    #[cfg(not(windows))]
+    "ecosystem/js/minimatch-diff.txt",
+    #[cfg(not(windows))]
+    "ecosystem/rust/globset.txt",
+    #[cfg(not(windows))]
+    "ecosystem/rust/globset-diff.txt",
+    #[cfg(not(windows))]
+    "ecosystem/rust/fast-glob.txt",
+    #[cfg(not(windows))]
+    "ecosystem/rust/fast-glob-diff.txt",
+    #[cfg(not(windows))]
+    "ecosystem/rust/wax.txt",
+    #[cfg(not(windows))]
+    "ecosystem/rust/wax-diff.txt",
 ];
 
 fn corpus_path(name: &str) -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
-    PathBuf::from(manifest).join(CORPUS_DIR).join(name)
+    PathBuf::from(manifest).join(FIXTURES_DIR).join(name)
 }
 
 /// What a row expects: an answer, or a compile error of this kind.
@@ -360,7 +386,7 @@ fn corpus_single_engines_vs_truth() {
 fn corpus_multi_engines_vs_truth() {
     let mut globstar = Stats::default();
     let mut nfa = Stats::default();
-    let rows = rows_of("corpus-multi.txt", true);
+    let rows = rows_of("corpus/corpus-multi.txt", true);
     assert!(!rows.is_empty(), "no multi-pattern corpus rows loaded");
     for row in &rows {
         let patterns = row.patterns();
@@ -389,7 +415,7 @@ fn corpus_multi_engines_vs_truth() {
 #[test]
 fn corpus_dir_engines_vs_truth() {
     let mut globstar = Stats::default();
-    let rows = rows_of("corpus-dir.txt", false);
+    let rows = rows_of("corpus/corpus-dir.txt", false);
     assert!(!rows.is_empty(), "no dir corpus rows loaded");
     for row in &rows {
         let pattern = row.pattern();
@@ -404,7 +430,7 @@ fn corpus_dir_engines_vs_truth() {
 #[test]
 fn corpus_multi_dir_engines_vs_truth() {
     let mut globstar = Stats::default();
-    let rows = rows_of("corpus-multi-dir.txt", false);
+    let rows = rows_of("corpus/corpus-multi-dir.txt", false);
     assert!(!rows.is_empty(), "no multi-dir corpus rows loaded");
     for row in &rows {
         let patterns = row.patterns();

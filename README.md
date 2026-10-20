@@ -37,7 +37,8 @@ painful to track down.
 implementation and a JavaScript port that match byte-for-byte on every
 documented edge case. The Rust crate is the canonical implementation
 and the JS package is held to the same semantics via the differential
-test corpus under `fixtures/corpus/`.
+test corpus under `fixtures/corpus/`; `fixtures/ecosystem/` runs the other
+glob libraries' own test suites against both and records every difference.
 
 ## Documentation
 
