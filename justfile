@@ -56,6 +56,11 @@ test:
     node packages/globstar/tests/large.mjs
     node packages/globstar-walk/tests/walk.mjs
 
+# Regenerate fixtures/ecosystem/ from the other glob libraries' test suites
+# (fetched once into node_modules/.cache/ecosystem/).
+ecosystem:
+    node scripts/ecosystem/generate.mjs
+
 # Wipe build artifacts (Rust target + JS workspace node_modules). BENCHMARKS.md
 # is tracked and stays.
 clean:

@@ -208,6 +208,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecosystem"
+version = "0.0.0"
+dependencies = [
+ "fast-glob 0.4.5",
+ "fast-glob 1.1.2",
+ "globset",
+ "globstar",
+ "wax",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -218,6 +229,15 @@ name = "fast-glob"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39ea3f6bbcf4dbe2076b372186fc7aeecd5f6f84754582e56ee7db262b15a6f0"
+dependencies = [
+ "arrayvec",
+]
+
+[[package]]
+name = "fast-glob"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a044ed96eb57253e806d08b74260638af189687e583f04947a5e11e75e0b0d1"
 dependencies = [
  "arrayvec",
 ]
@@ -240,7 +260,7 @@ name = "globstar"
 version = "0.0.4"
 dependencies = [
  "criterion",
- "fast-glob",
+ "fast-glob 0.4.5",
  "globset",
  "wax",
 ]

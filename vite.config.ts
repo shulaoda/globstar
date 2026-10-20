@@ -8,6 +8,7 @@ const ignorePatterns = [
   "tools/**",
   "references/**",
   "BENCHMARKS.md",
+  "fixtures/ecosystem/README.md",
   "docs/.vitepress/cache/**",
   "docs/.vitepress/dist/**",
 ];

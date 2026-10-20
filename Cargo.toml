@@ -4,6 +4,7 @@ members = [
     "crates/globstar",
     "crates/globstar-walk",
     "tools/difftest",
+    "tools/ecosystem",
     "tools/memory-check",
 ]
 

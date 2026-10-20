@@ -1,0 +1,20 @@
+[package]
+name = "ecosystem"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# The Rust half of `scripts/ecosystem/`: answers one (pattern, path) per
+# line with every Rust matcher the benchmarks compare against, so the
+# ecosystem corpus (`fixtures/ecosystem/`) records what each library
+# really does at the version the workspace pins.
+[dependencies]
+globstar = { path = "../../crates/globstar" }
+globset = "0.4"
+wax = "0.6"
+fast-glob = "0.4"
+fast-glob-1 = { package = "fast-glob", version = "1.1" }
+
+[[bin]]
+name = "ecosystem-probe"
+path = "src/main.rs"
