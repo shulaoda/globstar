@@ -40,6 +40,9 @@ export class LiteralMatcher {
 
   staticPrefixes() {
     const lit = this.litStr;
+    // An escaped `\` on Windows is a separator the literal can never
+    // match (§4.2): nothing to seed.
+    if (IS_WINDOWS_SEP && lit.includes("\\")) return [];
     let end = lit.length;
     while (end > 0 && lit.charCodeAt(end - 1) === 0x2f) end--;
     return [latin1Bytes(lit.slice(0, end))];

@@ -88,6 +88,7 @@ if (process.platform === "win32") {
   const text = (m) => m.staticPrefixes().map((b) => new TextDecoder().decode(b));
   assert.deepEqual(text(compileMatcher(["src\\\\sub/*.ts", "src/sub/*.ts"])), ["src/sub"]);
   assert.deepEqual(text(compileMatcher("src\\\\sub/*.ts")), []);
+  assert.deepEqual(text(compileMatcher("a\\\\b")), []);
   assert.equal(compileMatcher("a/b\\\\c/*.ts").matchDir("a"), DirMatch.Pruned);
   console.log("✓ an escaped backslash is dead on Windows");
 }

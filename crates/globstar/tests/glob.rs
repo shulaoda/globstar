@@ -4,8 +4,8 @@ use globstar::{CompileOptions, Glob};
 
 #[test]
 fn large_shapes_stay_on_segment_engine() {
-    // A wide name list, a deep path and a brace product all compile to
-    // the one segment engine; nothing falls back.
+    // A wide name list, a deep path and a brace product all compile and
+    // match right on the segment engine.
     let names: Vec<String> = (0..500).map(|i| format!("a{i}")).collect();
     let wide = format!("{{{}}}/**", names.join(","));
     let deep = (0..120)
@@ -51,7 +51,7 @@ fn long_segments_compile_on_a_small_stack() {
 
 #[test]
 fn huge_segments_match_without_kept_closures() {
-    // About 4,200 in-segment states: past the closure budget, each step
+    // About 3,500 in-segment states: past the closure budget, each step
     // closes its set as it goes.
     let list: Vec<String> = (0..600).map(|i| format!("*x{i}")).collect();
     let list = format!("{{{}}}", list.join(","));
@@ -72,7 +72,7 @@ fn huge_segments_match_without_kept_closures() {
 #[test]
 fn wide_graphs_step_by_what_is_active() {
     // 18,000 states, two of them active: a step touches what is active,
-    // not every literal sibling group (100 matches took minutes).
+    // not every literal sibling group.
     let g = Glob::new(&("{a/,b/}".repeat(9000) + "x")).unwrap();
     let path = "a/".repeat(100) + "x";
     let start = std::time::Instant::now();
@@ -85,7 +85,7 @@ fn wide_graphs_step_by_what_is_active() {
 #[test]
 fn match_dir_stays_cheap_on_long_wildcard_chains() {
     // The all-below proof feeds at most 64 wildcard-only segments, and
-    // the chain's tail tokens are budgeted: each call took seconds.
+    // the chain's tail tokens are budgeted.
     let union = Glob::union(["**".to_string(), format!("**/{}x", "*/".repeat(16_000))]).unwrap();
     let chain = Glob::new(&format!("**/{}*", "*/".repeat(32_000))).unwrap();
     let deep = "a/".repeat(32_000) + "a";
@@ -145,7 +145,7 @@ fn invalid_range_points_at_the_range() {
 
 #[test]
 fn glob_debug_is_short() {
-    // The compiled tables stay out of Debug (a union's ran to kilobytes).
+    // The compiled tables stay out of Debug (a union's run to kilobytes).
     let names: Vec<String> = (0..50).map(|i| format!("src/m{i}/**/*.ts")).collect();
     let text = format!("{:?}", Glob::union(&names).unwrap());
     assert_eq!(text, r#"Glob { engine: "Segment", negated: false }"#);
@@ -196,8 +196,7 @@ fn prefix_expansion_stays_within_the_budget() {
 }
 
 // A class is a byte table: one lookup per byte, however many items it
-// lists (it was a scan of every item for every byte: 30,000 items over
-// 65,000 bytes took seconds). Twin of the check in large.mjs.
+// lists: 30,000 items over 65,000 bytes. Twin of the check in large.mjs.
 #[test]
 fn a_long_class_costs_one_lookup_per_byte() {
     let glob = Glob::new(&format!("*[{}]", "b".repeat(30_000))).unwrap();
@@ -223,4 +222,6 @@ fn an_escaped_backslash_is_dead_on_windows() {
     );
     let dead = Glob::new("a/b\\\\c/*.ts").unwrap();
     assert_eq!(dead.match_dir(b"a"), globstar::DirMatch::Pruned);
+    // A pure literal too: the literal engine seeds nothing either.
+    assert!(Glob::new("a\\\\b").unwrap().static_prefixes().is_empty());
 }

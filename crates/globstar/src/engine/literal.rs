@@ -17,6 +17,16 @@ impl LiteralMatcher {
     }
 
     pub(crate) fn static_prefixes(&self) -> Vec<Vec<u8>> {
+        // An escaped `\` on Windows is a separator the literal can never
+        // match (§4.2): nothing to seed.
+        if cfg!(windows)
+            && self
+                .literal
+                .iter()
+                .any(|&b| b != b'/' && std::path::is_separator(char::from(b)))
+        {
+            return Vec::new();
+        }
         let mut bytes = &self.literal[..];
         while let [rest @ .., b'/'] = bytes {
             bytes = rest;
