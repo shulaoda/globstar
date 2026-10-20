@@ -88,21 +88,11 @@ fn a_member_error_names_the_member() {
 }
 
 #[test]
-fn a_union_tier_is_its_highest_members() {
-    use globstar::Tier;
-    let tier = |ps: &[&str]| Glob::union(ps).unwrap().tier();
-    assert_eq!(tier(&["a", "b"]), Tier::Literal);
-    assert_eq!(tier(&["a", "*.ts"]), Tier::SimpleWildcard);
-    assert_eq!(tier(&["a", "**/b"]), Tier::Globstar);
-    assert_eq!(tier(&["{a,b}"]), Tier::Globstar);
-}
-
-#[test]
 fn duplicate_members_count_once() {
     // Factored into `p{,}`, a duplicated literal would lose the Literal
     // engine and most of its static prefix.
     let twice = Glob::union(["src/main.rs", "src/main.rs"]).unwrap();
-    assert_eq!(twice.engine_name(), "Literal");
+    assert_eq!(twice.shape(), "literal");
     assert_eq!(
         twice.static_prefixes(),
         Glob::new("src/main.rs").unwrap().static_prefixes()
@@ -133,7 +123,7 @@ fn members_spelled_differently_fold_into_one() {
             assert_eq!(union.match_dir(path), single.match_dir(path), "{a} {b}");
         }
     }
-    assert_eq!(Glob::union(["\\a", "a"]).unwrap().engine_name(), "Literal");
+    assert_eq!(Glob::union(["\\a", "a"]).unwrap().shape(), "literal");
 }
 
 #[test]
@@ -153,7 +143,7 @@ fn single_pattern_degenerates() {
     let u = Glob::union(["foo.txt"]).unwrap();
     assert!(u.is_match(b"foo.txt"));
     assert!(!u.is_match(b"foo.tx"));
-    assert_eq!(u.engine_name(), "Literal");
+    assert_eq!(u.shape(), "literal");
 }
 
 #[test]

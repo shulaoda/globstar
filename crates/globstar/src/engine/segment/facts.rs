@@ -83,7 +83,7 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
 }
 
 /// How deep brace expansions may nest along one static prefix, and the
-/// part of its budget that does not depend on the pattern.
+/// part of the budget for reading them that every pattern gets.
 const MAX_HEAD_DEPTH: usize = 64;
 const HEAD_BUDGET_FLOOR: usize = 4096;
 
@@ -93,21 +93,18 @@ const HEAD_BUDGET_FLOOR: usize = 4096;
 /// `b/c`), so a factored union keeps its members' heads.
 ///
 /// Every byte read and every branch taken costs one unit of a budget of
-/// `HEAD_BUDGET_FLOOR` plus twice the pattern's weight (`node_weight`,
-/// only worked out once the floor is spent): reading each node once
-/// costs at most its weight, and re-reading what follows a brace for
-/// each branch is what the rest pays for. Past the budget, or past
-/// `MAX_HEAD_DEPTH` nested braces, the head ends at its last whole
-/// segment, a shorter prefix that still holds: `{a,b}{c,d}…` stops after
-/// a few braces instead of doubling, and a brace before a long literal
-/// copies it a few times, not once per branch.
-pub(super) fn static_prefixes(body: &Node) -> Box<[Bytes]> {
+/// `HEAD_BUDGET_FLOOR` plus twice the pattern's `weight` (`node_weight`):
+/// reading each node once costs at most its weight, and re-reading what
+/// follows a brace for each branch is what the rest pays for. Past the
+/// budget, or past `MAX_HEAD_DEPTH` nested braces, the head ends at its
+/// last whole segment, a shorter prefix that still holds: `{a,b}{c,d}…`
+/// stops after a few braces instead of doubling, and a brace before a
+/// long literal copies it a few times, not once per branch.
+pub(super) fn static_prefixes(body: &Node, weight: usize) -> Box<[Bytes]> {
     let nodes = body.seq();
     let mut heads = Heads {
-        root: nodes,
         spent: 0,
-        limit: HEAD_BUDGET_FLOOR,
-        weighed: false,
+        budget: HEAD_BUDGET_FLOOR + 2 * weight,
         out: Vec::with_capacity(1),
     };
     heads.read(nodes, None, &mut Vec::new(), 0, 0);
@@ -125,23 +122,16 @@ struct Then<'a> {
     next: Option<&'a Then<'a>>,
 }
 
-struct Heads<'r> {
-    root: &'r [Node],
+struct Heads {
     spent: usize,
-    /// The floor until it is spent, then the floor plus twice the weight.
-    limit: usize,
-    weighed: bool,
+    budget: usize,
     out: Vec<Bytes>,
 }
 
-impl Heads<'_> {
-    /// Spend `n` units, unless that passes the limit.
+impl Heads {
+    /// Spend `n` units, unless that passes the budget.
     fn afford(&mut self, n: usize) -> bool {
-        if self.spent + n > self.limit && !self.weighed {
-            self.weighed = true;
-            self.limit += 2 * self.root.iter().map(node_weight).sum::<usize>();
-        }
-        if self.spent + n > self.limit {
+        if self.spent + n > self.budget {
             return false;
         }
         self.spent += n;

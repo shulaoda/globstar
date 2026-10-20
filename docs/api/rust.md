@@ -20,13 +20,10 @@ impl Glob {
     pub fn is_match(&self, path: &[u8]) -> bool;
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch;
     pub fn static_prefixes(&self) -> Vec<Vec<u8>>;
-
-    pub fn tier(&self) -> Tier;
-    pub fn engine_name(&self) -> &'static str;
 }
 ```
 
-`Glob` is `Debug + Clone + Send + Sync`; compile once and share it across threads (its `Debug` shows the tier, the engine and the negation, not the compiled tables). A union is an ordinary `Glob`, not a separate set type. `union` rejects a negated member (an odd number of leading `!`; `!!x` is just `x`) with `GlobError::NegatedInUnion`, an empty iterator with `GlobError::EmptyPatternSet`, and a member that does not compile with `GlobError::InMember`, which names it by index; a pattern given twice counts once.
+`Glob` is `Debug + Clone + Send + Sync`; compile once and share it across threads (its `Debug` shows the engine and the negation, not the compiled tables). A union is an ordinary `Glob`, not a separate set type. `union` rejects a negated member (an odd number of leading `!`; `!!x` is just `x`) with `GlobError::NegatedInUnion`, an empty iterator with `GlobError::EmptyPatternSet`, and a member that does not compile with `GlobError::InMember`, which names it by index; a pattern given twice counts once.
 
 ```rust
 let glob = Glob::new("src/**/*.rs")?;
@@ -36,8 +33,6 @@ let set = Glob::union(["src/**/*.rs", "docs/**/*.md"])?;
 assert!(set.is_match(b"docs/guide/intro.md"));
 assert_eq!(set.static_prefixes(), vec![b"src".to_vec(), b"docs".to_vec()]);
 ```
-
-`tier()` and `engine_name()` are diagnostics: the pattern's syntactic class (`Tier::Literal`, `Tier::SimpleWildcard`, `Tier::Globstar`; for a union the highest of its members') and which engine compilation chose. Neither is consulted at match time.
 
 ## `CompileOptions`
 

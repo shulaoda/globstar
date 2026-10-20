@@ -34,8 +34,7 @@
 //! Patterns are `&str` (their UTF-8 bytes are what match); paths are
 //! arbitrary `&[u8]`, so non-UTF-8 filenames compare byte-for-byte.
 //! Compilation picks one of two engines automatically (pure-literal or
-//! segment-structured) — [`Glob::engine_name`] reveals the choice for
-//! diagnostics.
+//! segment-structured).
 //!
 //! Only the items re-exported at the crate root are supported API; the
 //! `#[doc(hidden)]` modules are internal and may change shape in any
@@ -64,20 +63,6 @@ use ast::Node;
 use engine::literal::LiteralMatcher;
 use engine::segment::SegmentMatcher;
 use factor::factor_branches;
-
-/// Syntactic complexity class of a compiled pattern — useful for
-/// diagnostics, not consulted at match time. A union's tier is the
-/// highest of its members' (`Literal` < `SimpleWildcard` < `Globstar`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum Tier {
-    /// Pure literal (no metacharacter).
-    Literal,
-    /// Simple wildcards (`*`, `?`, `[]`) without `**` or brace.
-    SimpleWildcard,
-    /// Contains `**` or brace expansion.
-    Globstar,
-}
 
 /// Compile-time options for [`Glob::new_with`] and [`Glob::union_with`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,18 +110,20 @@ impl CompileOptions {
 /// repository's `GLOB_SPEC.md` for the dialect.
 #[derive(Clone)]
 pub struct Glob {
-    tier: Tier,
     engine: Engine,
     negated: bool,
 }
 
-/// The tier, the engine and the negation; the compiled tables are left
-/// out (a union's run to kilobytes).
+/// The engine and the negation; the compiled tables are left out (a
+/// union's run to kilobytes).
 impl std::fmt::Debug for Glob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let engine = match &self.engine {
+            Engine::Literal(_) => "Literal",
+            Engine::Segment(_) => "Segment",
+        };
         f.debug_struct("Glob")
-            .field("tier", &self.tier)
-            .field("engine", &self.engine_name())
+            .field("engine", &engine)
             .field("negated", &self.negated)
             .finish()
     }
@@ -160,7 +147,7 @@ impl Glob {
     /// Compile a pattern with explicit [`CompileOptions`].
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
         let ast = parser::parse(pattern.as_bytes())?;
-        Self::from_body(&ast.body, ast.is_negated(), opts, None)
+        Self::from_body(&ast.body, ast.is_negated(), opts)
     }
 
     /// Compile the boolean-OR union of several patterns into one `Glob`
@@ -175,8 +162,7 @@ impl Glob {
     /// ([`GlobError::BraceExpansionTooLarge`]) and, compiled as one,
     /// one bound on compile work: a [`GlobError::TooComplex`] is the
     /// list's, not wrapped in `InMember`, and members that each compile
-    /// alone can fail together. The [`tier`](Self::tier) is the highest
-    /// of the members'.
+    /// alone can fail together.
     pub fn union<I, S>(patterns: I) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -198,7 +184,6 @@ impl Glob {
         let mut seen = (patterns.len() > 1).then(|| HashSet::with_capacity(patterns.len()));
         let mut bodies: Vec<Node> = Vec::with_capacity(patterns.len());
         let mut budget = error::MAX_EXPANSION;
-        let mut tier = Tier::Literal;
         for (index, pattern) in patterns.iter().enumerate() {
             let pattern = pattern.as_ref();
             if seen.as_mut().is_some_and(|seen| !seen.insert(pattern)) {
@@ -216,7 +201,6 @@ impl Glob {
                     pattern: pattern.to_string(),
                 });
             }
-            tier = tier.max(tier_of(&parsed.body));
             bodies.push(parsed.body);
         }
         let body = match bodies.len() {
@@ -224,47 +208,19 @@ impl Glob {
             1 => bodies.pop().unwrap(),
             _ => factor_branches(bodies),
         };
-        Self::from_body(&body, false, opts, Some(tier))
+        Self::from_body(&body, false, opts)
     }
 
-    /// `tier` is a union's, from its members; a single pattern's comes
-    /// from its body here.
-    fn from_body(
-        body: &Node,
-        negated: bool,
-        opts: CompileOptions,
-        tier: Option<Tier>,
-    ) -> Result<Self, GlobError> {
-        let (tier, engine) = match body.to_literal_bytes() {
-            Some(lit) => (
-                tier.unwrap_or(Tier::Literal),
-                Engine::Literal(LiteralMatcher::new(lit.into(), opts.case_insensitive)),
-            ),
-            None => {
-                let tier = tier.unwrap_or_else(|| tier_of(body));
-                let matcher = SegmentMatcher::build(body, opts.dot, opts.case_insensitive)?;
-                (tier, Engine::Segment(matcher))
-            }
+    fn from_body(body: &Node, negated: bool, opts: CompileOptions) -> Result<Self, GlobError> {
+        let engine = match body.to_literal_bytes() {
+            Some(lit) => Engine::Literal(LiteralMatcher::new(lit.into(), opts.case_insensitive)),
+            None => Engine::Segment(SegmentMatcher::build(
+                body,
+                opts.dot,
+                opts.case_insensitive,
+            )?),
         };
-        Ok(Self {
-            tier,
-            engine,
-            negated,
-        })
-    }
-
-    /// The pattern's syntactic [`Tier`].
-    pub fn tier(&self) -> Tier {
-        self.tier
-    }
-
-    /// Which engine compilation chose: `"Literal"` or `"Segment"`.
-    /// Diagnostic only.
-    pub fn engine_name(&self) -> &'static str {
-        match &self.engine {
-            Engine::Literal(_) => "Literal",
-            Engine::Segment(_) => "Segment",
-        }
+        Ok(Self { engine, negated })
     }
 
     /// Whole-path match against raw path bytes. The path is matched as
@@ -340,20 +296,6 @@ impl Glob {
             Engine::Segment(m) => m.match_dir(dir_path),
         }
     }
-}
-
-/// A body's syntactic tier, read off its sequence (which holds no
-/// sequence; a `**` in a brace is in a brace).
-fn tier_of(body: &Node) -> Tier {
-    let mut tier = Tier::Literal;
-    for node in body.seq() {
-        match node {
-            Node::Literal(_) | Node::Separator => {}
-            Node::Globstar | Node::Brace(_) => return Tier::Globstar,
-            _ => tier = Tier::SimpleWildcard,
-        }
-    }
-    tier
 }
 
 /// The matcher surface, implemented by [`Glob`]. Object-safe, so a

@@ -1,21 +1,6 @@
 //! Integration tests for the Glob type.
 
-use globstar::{CompileOptions, Glob, Tier};
-
-// The tier is syntax only: a brace counts as `Globstar`, a negation
-// does not count.
-#[test]
-fn a_tier_follows_the_syntax() {
-    for (pattern, tier) in [
-        ("README.md", Tier::Literal),
-        ("!foo", Tier::Literal),
-        ("*.ts", Tier::SimpleWildcard),
-        ("src/**/*.ts", Tier::Globstar),
-        ("*.{ts,tsx}", Tier::Globstar),
-    ] {
-        assert_eq!(Glob::new(pattern).unwrap().tier(), tier, "{pattern}");
-    }
-}
+use globstar::{CompileOptions, Glob};
 
 #[test]
 fn large_shapes_stay_on_segment_engine() {
@@ -163,10 +148,7 @@ fn glob_debug_is_short() {
     // The compiled tables stay out of Debug (a union's ran to kilobytes).
     let names: Vec<String> = (0..50).map(|i| format!("src/m{i}/**/*.ts")).collect();
     let text = format!("{:?}", Glob::union(&names).unwrap());
-    assert_eq!(
-        text,
-        r#"Glob { tier: Globstar, engine: "Segment", negated: false }"#
-    );
+    assert_eq!(text, r#"Glob { engine: "Segment", negated: false }"#);
 }
 
 /// The static prefixes of the rows of `fixtures/static-prefixes.tsv`,

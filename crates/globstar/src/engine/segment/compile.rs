@@ -51,7 +51,7 @@ pub(super) fn compile(body: &Node, dot: bool, ci: bool) -> Result<SegmentMatcher
         chains,
         nfa,
         elems: graph.elems.into_boxed_slice(),
-        prefixes: facts::static_prefixes(body),
+        prefixes: facts::static_prefixes(body, graph.weight),
         case_insensitive: ci,
         dot,
     })
@@ -63,6 +63,8 @@ pub(super) fn compile(body: &Node, dot: bool, ci: bool) -> Result<SegmentMatcher
 struct Graph {
     elems: Vec<Elem>,
     edges: Option<Edges>,
+    /// The pattern's `node_weight`.
+    weight: usize,
 }
 
 /// Successor lists in CSR form, the start's last (position `n`).
@@ -80,17 +82,7 @@ impl Edges {
 impl Graph {
     fn build(body: &Node, dot: bool, ci: bool) -> Result<Self, GlobError> {
         let nodes = body.seq();
-        let (mut boundaries, linear, weight) = survey(nodes);
-        // The `/` of a `**/` makes no element, nor does the empty last
-        // segment after a bare `**`: a linear pattern then gets its
-        // elements' exact count.
-        if linear {
-            boundaries -= nodes
-                .windows(2)
-                .filter(|w| matches!(w, [Node::Globstar, Node::Separator]))
-                .count();
-            boundaries -= usize::from(matches!(nodes.last(), Some(Node::Globstar)));
-        }
+        let (boundaries, linear, weight) = survey(nodes);
         // Only a separator-crossing brace can need regrouping.
         let nodes = if linear {
             Cow::Borrowed(nodes)
@@ -120,7 +112,7 @@ impl Graph {
         if b.over() {
             return Err(GlobError::TooComplex { max: b.budget });
         }
-        Ok(b.finish())
+        Ok(b.finish(weight))
     }
 
     /// Every path through the graph as a `Chain`, in pattern order;
@@ -391,9 +383,9 @@ pub(super) fn chain_nfa(m: &SegmentMatcher) -> (Cow<'_, SegmentMatcher>, AnyNfa)
     (m, nfa)
 }
 
-/// Elements a brace-free pattern needs (one per boundary plus the last
-/// segment; with braces a floor), whether the pattern has a
-/// separator-crossing brace at all, and its weight (`node_weight`).
+/// How many segment boundaries the pattern has (a floor for its
+/// elements), whether it has a separator-crossing brace at all, and its
+/// weight (`node_weight`).
 fn survey(nodes: &[Node]) -> (usize, bool, usize) {
     let mut boundaries = 0;
     let mut linear = true;
@@ -547,11 +539,12 @@ impl Builder {
         }
     }
 
-    fn finish(self) -> Graph {
+    fn finish(self, weight: usize) -> Graph {
         let edges = (!self.linear).then(|| self.successors());
         Graph {
             elems: self.elems,
             edges,
+            weight,
         }
     }
 
