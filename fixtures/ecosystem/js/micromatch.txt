@@ -369,76 +369,76 @@ a/[a-z]	a/x	match	dot=false
 !a/(*)	b/c	match	dot=false
 
 ## micromatch.match_windows_paths_should_return_an_array_of_matches_for_a
-(a/b)	a\\a	no-match	dot=false
-(a/b)	a\\b	no-match	dot=false
-(a/b)	a\\c	no-match	dot=false
-(a/b)	b\\a	no-match	dot=false
-(a/b)	b\\b	no-match	dot=false
-(a/b)	b\\c	no-match	dot=false
-a/b	a\\a	no-match	dot=false
-a/b	a\\b	no-match	dot=false
-a/b	a\\c	no-match	dot=false
-a/b	b\\a	no-match	dot=false
-a/b	b\\b	no-match	dot=false
-a/b	b\\c	no-match	dot=false
+(a/b)	a\a	no-match	dot=false
+(a/b)	a\b	no-match	dot=false
+(a/b)	a\c	no-match	dot=false
+(a/b)	b\a	no-match	dot=false
+(a/b)	b\b	no-match	dot=false
+(a/b)	b\c	no-match	dot=false
+a/b	a\a	no-match	dot=false
+a/b	a\b	no-match	dot=false
+a/b	a\c	no-match	dot=false
+a/b	b\a	no-match	dot=false
+a/b	b\b	no-match	dot=false
+a/b	b\c	no-match	dot=false
 
 ## micromatch.match_windows_paths_should_support_regex_logical_or
-a/(a|c)	a\\a	no-match	dot=false
-a/(a|c)	a\\b	no-match	dot=false
-a/(a|c)	a\\c	no-match	dot=false
-a/(a|b|c)	a\\a	no-match	dot=false
-a/(a|b|c)	a\\b	no-match	dot=false
-a/(a|b|c)	a\\c	no-match	dot=false
+a/(a|c)	a\a	no-match	dot=false
+a/(a|c)	a\b	no-match	dot=false
+a/(a|c)	a\c	no-match	dot=false
+a/(a|b|c)	a\a	no-match	dot=false
+a/(a|b|c)	a\b	no-match	dot=false
+a/(a|b|c)	a\c	no-match	dot=false
 
 ## micromatch.match_windows_paths_should_support_regex_ranges
-a/[b-c]	a\\a	no-match	dot=false
-a/[b-c]	a\\b	no-match	dot=false
-a/[b-c]	a\\c	no-match	dot=false
-a/[b-c]	a\\x\\y	no-match	dot=false
-a/[b-c]	a\\x	no-match	dot=false
-a/[a-z]	a\\a	no-match	dot=false
-a/[a-z]	a\\b	no-match	dot=false
-a/[a-z]	a\\c	no-match	dot=false
-a/[a-z]	a\\x\\y	no-match	dot=false
-a/[a-z]	a\\x	no-match	dot=false
+a/[b-c]	a\a	no-match	dot=false
+a/[b-c]	a\b	no-match	dot=false
+a/[b-c]	a\c	no-match	dot=false
+a/[b-c]	a\x\y	no-match	dot=false
+a/[b-c]	a\x	no-match	dot=false
+a/[a-z]	a\a	no-match	dot=false
+a/[a-z]	a\b	no-match	dot=false
+a/[a-z]	a\c	no-match	dot=false
+a/[a-z]	a\x\y	no-match	dot=false
+a/[a-z]	a\x	no-match	dot=false
 
 ## micromatch.match_windows_paths_should_support_negation_patterns
-!*/*	a\\a	match	dot=false
-!*/*	a\\b	match	dot=false
-!*/*	a\\c	match	dot=false
-!*/*	b\\a	match	dot=false
-!*/*	b\\b	match	dot=false
-!*/*	b\\c	match	dot=false
-!*/b	a\\a	match	dot=false
-!*/b	a\\b	match	dot=false
-!*/b	a\\c	match	dot=false
-!*/b	b\\a	match	dot=false
-!*/b	b\\b	match	dot=false
-!*/b	b\\c	match	dot=false
-!a/*	a\\a	match	dot=false
-!a/*	a\\b	match	dot=false
-!a/*	a\\c	match	dot=false
-!a/*	b\\a	match	dot=false
-!a/*	b\\b	match	dot=false
-!a/*	b\\c	match	dot=false
-!a/b	a\\a	match	dot=false
-!a/b	a\\b	match	dot=false
-!a/b	a\\c	match	dot=false
-!a/b	b\\a	match	dot=false
-!a/b	b\\b	match	dot=false
-!a/b	b\\c	match	dot=false
-!a/(b)	a\\a	match	dot=false
-!a/(b)	a\\b	match	dot=false
-!a/(b)	a\\c	match	dot=false
-!a/(b)	b\\a	match	dot=false
-!a/(b)	b\\b	match	dot=false
-!a/(b)	b\\c	match	dot=false
-!a/(*)	a\\a	match	dot=false
-!a/(*)	a\\b	match	dot=false
-!a/(*)	a\\c	match	dot=false
-!a/(*)	b\\a	match	dot=false
-!a/(*)	b\\b	match	dot=false
-!a/(*)	b\\c	match	dot=false
+!*/*	a\a	match	dot=false
+!*/*	a\b	match	dot=false
+!*/*	a\c	match	dot=false
+!*/*	b\a	match	dot=false
+!*/*	b\b	match	dot=false
+!*/*	b\c	match	dot=false
+!*/b	a\a	match	dot=false
+!*/b	a\b	match	dot=false
+!*/b	a\c	match	dot=false
+!*/b	b\a	match	dot=false
+!*/b	b\b	match	dot=false
+!*/b	b\c	match	dot=false
+!a/*	a\a	match	dot=false
+!a/*	a\b	match	dot=false
+!a/*	a\c	match	dot=false
+!a/*	b\a	match	dot=false
+!a/*	b\b	match	dot=false
+!a/*	b\c	match	dot=false
+!a/b	a\a	match	dot=false
+!a/b	a\b	match	dot=false
+!a/b	a\c	match	dot=false
+!a/b	b\a	match	dot=false
+!a/b	b\b	match	dot=false
+!a/b	b\c	match	dot=false
+!a/(b)	a\a	match	dot=false
+!a/(b)	a\b	match	dot=false
+!a/(b)	a\c	match	dot=false
+!a/(b)	b\a	match	dot=false
+!a/(b)	b\b	match	dot=false
+!a/(b)	b\c	match	dot=false
+!a/(*)	a\a	match	dot=false
+!a/(*)	a\b	match	dot=false
+!a/(*)	a\c	match	dot=false
+!a/(*)	b\a	match	dot=false
+!a/(*)	b\b	match	dot=false
+!a/(*)	b\c	match	dot=false
 
 ## micromatch.not_posix_paths_should_support_globs
 a/*	a/a	match	dot=false
@@ -507,68 +507,68 @@ a/**/**/*	a/x/y/z	match	dot=false
 a/b	a	no-match	dot=false
 
 ## micromatch.not_windows_paths_should_support_globstars
-*	a\\a	match	dot=false
-*	a\\b	match	dot=false
-*	a\\c	match	dot=false
-*	a\\x	match	dot=false
-*	a\\x\\y	match	dot=false
-*	a\\x\\y\\z	match	dot=false
-**	a\\a	match	dot=false
-**	a\\b	match	dot=false
-**	a\\c	match	dot=false
-**	a\\x	match	dot=false
-**	a\\x\\y	match	dot=false
-**	a\\x\\y\\z	match	dot=false
-*/*	a\\a	no-match	dot=false
-*/*	a\\b	no-match	dot=false
-*/*	a\\c	no-match	dot=false
-*/*	a\\x	no-match	dot=false
-*/*	a\\x\\y	no-match	dot=false
-*/*	a\\x\\y\\z	no-match	dot=false
-a/**	a\\a	no-match	dot=false
-a/**	a\\b	no-match	dot=false
-a/**	a\\c	no-match	dot=false
-a/**	a\\x	no-match	dot=false
-a/**	a\\x\\y	no-match	dot=false
-a/**	a\\x\\y\\z	no-match	dot=false
-a/x/**	a\\a	no-match	dot=false
-a/x/**	a\\b	no-match	dot=false
-a/x/**	a\\c	no-match	dot=false
-a/x/**	a\\x	no-match	dot=false
-a/x/**	a\\x\\y	no-match	dot=false
-a/x/**	a\\x\\y\\z	no-match	dot=false
-a/**/*	a\\a	no-match	dot=false
-a/**/*	a\\b	no-match	dot=false
-a/**/*	a\\c	no-match	dot=false
-a/**/*	a\\x	no-match	dot=false
-a/**/*	a\\x\\y	no-match	dot=false
-a/**/*	a\\x\\y\\z	no-match	dot=false
-a/**/**/*	a\\a	no-match	dot=false
-a/**/**/*	a\\b	no-match	dot=false
-a/**/**/*	a\\c	no-match	dot=false
-a/**/**/*	a\\x	no-match	dot=false
-a/**/**/*	a\\x\\y	no-match	dot=false
-a/**/**/*	a\\x\\y\\z	no-match	dot=false
+*	a\a	match	dot=false
+*	a\b	match	dot=false
+*	a\c	match	dot=false
+*	a\x	match	dot=false
+*	a\x\y	match	dot=false
+*	a\x\y\z	match	dot=false
+**	a\a	match	dot=false
+**	a\b	match	dot=false
+**	a\c	match	dot=false
+**	a\x	match	dot=false
+**	a\x\y	match	dot=false
+**	a\x\y\z	match	dot=false
+*/*	a\a	no-match	dot=false
+*/*	a\b	no-match	dot=false
+*/*	a\c	no-match	dot=false
+*/*	a\x	no-match	dot=false
+*/*	a\x\y	no-match	dot=false
+*/*	a\x\y\z	no-match	dot=false
+a/**	a\a	no-match	dot=false
+a/**	a\b	no-match	dot=false
+a/**	a\c	no-match	dot=false
+a/**	a\x	no-match	dot=false
+a/**	a\x\y	no-match	dot=false
+a/**	a\x\y\z	no-match	dot=false
+a/x/**	a\a	no-match	dot=false
+a/x/**	a\b	no-match	dot=false
+a/x/**	a\c	no-match	dot=false
+a/x/**	a\x	no-match	dot=false
+a/x/**	a\x\y	no-match	dot=false
+a/x/**	a\x\y\z	no-match	dot=false
+a/**/*	a\a	no-match	dot=false
+a/**/*	a\b	no-match	dot=false
+a/**/*	a\c	no-match	dot=false
+a/**/*	a\x	no-match	dot=false
+a/**/*	a\x\y	no-match	dot=false
+a/**/*	a\x\y\z	no-match	dot=false
+a/**/**/*	a\a	no-match	dot=false
+a/**/**/*	a\b	no-match	dot=false
+a/**/**/*	a\c	no-match	dot=false
+a/**/**/*	a\x	no-match	dot=false
+a/**/**/*	a\x\y	no-match	dot=false
+a/**/**/*	a\x\y\z	no-match	dot=false
 
 ## micromatch.not_windows_paths_should_support_negation_patterns
-!**	a\\a	no-match	dot=false
-!**	a\\b	no-match	dot=false
-!**	a\\c	no-match	dot=false
-!**	b\\a	no-match	dot=false
-!**	b\\b	no-match	dot=false
-!**	b\\c	no-match	dot=false
-!*	a\\a	no-match	dot=false
-!*	a\\b	no-match	dot=false
-!*	a\\c	no-match	dot=false
-!*	b\\a	no-match	dot=false
-!*	b\\b	no-match	dot=false
-!*	b\\c	no-match	dot=false
+!**	a\a	no-match	dot=false
+!**	a\b	no-match	dot=false
+!**	a\c	no-match	dot=false
+!**	b\a	no-match	dot=false
+!**	b\b	no-match	dot=false
+!**	b\c	no-match	dot=false
+!*	a\a	no-match	dot=false
+!*	a\b	no-match	dot=false
+!*	a\c	no-match	dot=false
+!*	b\a	no-match	dot=false
+!*	b\b	no-match	dot=false
+!*	b\c	no-match	dot=false
 
 ## micromatch.bash_options_and_features_bash_should_handle_regular
-a*	\\\\	no-match	dot=false
+a*	\\	no-match	dot=false
 a*	*	no-match	dot=false
 a*	**	no-match	dot=false
-a*	\\*	no-match	dot=false
+a*	\*	no-match	dot=false
 a*	a	match	dot=false
 a*	a/*	no-match	dot=false
 a*	abc	match	dot=false
@@ -585,32 +585,32 @@ a*	cb	no-match	dot=false
 a*	d	no-match	dot=false
 a*	dd	no-match	dot=false
 a*	de	no-match	dot=false
-\\a*	\\\\	no-match	dot=false
-\\a*	*	no-match	dot=false
-\\a*	**	no-match	dot=false
-\\a*	\\*	no-match	dot=false
-\\a*	a	match	dot=false
-\\a*	a/*	no-match	dot=false
-\\a*	abc	match	dot=false
-\\a*	abd	match	dot=false
-\\a*	abe	match	dot=false
-\\a*	b	no-match	dot=false
-\\a*	bb	no-match	dot=false
-\\a*	bcd	no-match	dot=false
-\\a*	bdir/	no-match	dot=false
-\\a*	Beware	no-match	dot=false
-\\a*	c	no-match	dot=false
-\\a*	ca	no-match	dot=false
-\\a*	cb	no-match	dot=false
-\\a*	d	no-match	dot=false
-\\a*	dd	no-match	dot=false
-\\a*	de	no-match	dot=false
+\a*	\\	no-match	dot=false
+\a*	*	no-match	dot=false
+\a*	**	no-match	dot=false
+\a*	\*	no-match	dot=false
+\a*	a	match	dot=false
+\a*	a/*	no-match	dot=false
+\a*	abc	match	dot=false
+\a*	abd	match	dot=false
+\a*	abe	match	dot=false
+\a*	b	no-match	dot=false
+\a*	bb	no-match	dot=false
+\a*	bcd	no-match	dot=false
+\a*	bdir/	no-match	dot=false
+\a*	Beware	no-match	dot=false
+\a*	c	no-match	dot=false
+\a*	ca	no-match	dot=false
+\a*	cb	no-match	dot=false
+\a*	d	no-match	dot=false
+\a*	dd	no-match	dot=false
+\a*	de	no-match	dot=false
 
 ## micromatch.bash_options_and_features_bash_should_match_directories
-b*/	\\\\	no-match	dot=false
+b*/	\\	no-match	dot=false
 b*/	*	no-match	dot=false
 b*/	**	no-match	dot=false
-b*/	\\*	no-match	dot=false
+b*/	\*	no-match	dot=false
 b*/	a	no-match	dot=false
 b*/	a/*	no-match	dot=false
 b*/	abc	no-match	dot=false
@@ -633,10 +633,10 @@ b*/	de	no-match	dot=false
 "*"*	bar	no-match	dot=false
 
 ## micromatch.bash_options_and_features_bash_pattern_from_larry_wall_s
-[a-c]b*	\\\\	no-match	dot=false
+[a-c]b*	\\	no-match	dot=false
 [a-c]b*	*	no-match	dot=false
 [a-c]b*	**	no-match	dot=false
-[a-c]b*	\\*	no-match	dot=false
+[a-c]b*	\*	no-match	dot=false
 [a-c]b*	a	no-match	dot=false
 [a-c]b*	a/*	no-match	dot=false
 [a-c]b*	abc	match	dot=false
@@ -660,8 +660,8 @@ a*[^c]	**	no-match	dot=false
 a*[^c]	BZZ	no-match	dot=false
 a*[^c]	BewAre	no-match	dot=false
 a*[^c]	Beware	no-match	dot=false
-a*[^c]	\\*	no-match	dot=false
-a*[^c]	\\\\	no-match	dot=false
+a*[^c]	\*	no-match	dot=false
+a*[^c]	\\	no-match	dot=false
 a*[^c]	a	no-match	dot=false
 a*[^c]	a/*	no-match	dot=false
 a*[^c]	abc	no-match	dot=false
@@ -687,8 +687,8 @@ a[X-]b	aXb	match	dot=false
 [a-y]*[^c]	BZZ	no-match	dot=false
 [a-y]*[^c]	BewAre	no-match	dot=false
 [a-y]*[^c]	Beware	no-match	dot=false
-[a-y]*[^c]	\\*	no-match	dot=false
-[a-y]*[^c]	\\\\	no-match	dot=false
+[a-y]*[^c]	\*	no-match	dot=false
+[a-y]*[^c]	\\	no-match	dot=false
 [a-y]*[^c]	a	no-match	dot=false
 [a-y]*[^c]	a/*	no-match	dot=false
 [a-y]*[^c]	abc	no-match	dot=false
@@ -707,15 +707,15 @@ a[X-]b	aXb	match	dot=false
 [a-y]*[^c]	d	no-match	dot=false
 [a-y]*[^c]	dd	match	dot=false
 [a-y]*[^c]	de	match	dot=false
-a\\*b/*	a*b/ooo	match	dot=false
-a\\*?/*	a*b/ooo	match	dot=false
+a\*b/*	a*b/ooo	match	dot=false
+a\*?/*	a*b/ooo	match	dot=false
 a[b]c	*	no-match	dot=false
 a[b]c	**	no-match	dot=false
 a[b]c	BZZ	no-match	dot=false
 a[b]c	BewAre	no-match	dot=false
 a[b]c	Beware	no-match	dot=false
-a[b]c	\\*	no-match	dot=false
-a[b]c	\\\\	no-match	dot=false
+a[b]c	\*	no-match	dot=false
+a[b]c	\\	no-match	dot=false
 a[b]c	a	no-match	dot=false
 a[b]c	a/*	no-match	dot=false
 a[b]c	abc	match	dot=false
@@ -739,8 +739,8 @@ a["b"]c	**	no-match	dot=false
 a["b"]c	BZZ	no-match	dot=false
 a["b"]c	BewAre	no-match	dot=false
 a["b"]c	Beware	no-match	dot=false
-a["b"]c	\\*	no-match	dot=false
-a["b"]c	\\\\	no-match	dot=false
+a["b"]c	\*	no-match	dot=false
+a["b"]c	\\	no-match	dot=false
 a["b"]c	a	no-match	dot=false
 a["b"]c	a/*	no-match	dot=false
 a["b"]c	abc	match	dot=false
@@ -759,40 +759,16 @@ a["b"]c	cb	no-match	dot=false
 a["b"]c	d	no-match	dot=false
 a["b"]c	dd	no-match	dot=false
 a["b"]c	de	no-match	dot=false
-a[\\\\b]c	*	no-match	dot=false
-a[\\\\b]c	**	no-match	dot=false
-a[\\\\b]c	BZZ	no-match	dot=false
-a[\\\\b]c	BewAre	no-match	dot=false
-a[\\\\b]c	Beware	no-match	dot=false
-a[\\\\b]c	\\*	no-match	dot=false
-a[\\\\b]c	\\\\	no-match	dot=false
-a[\\\\b]c	a	no-match	dot=false
-a[\\\\b]c	a/*	no-match	dot=false
-a[\\\\b]c	abc	match	dot=false
-a[\\\\b]c	abd	no-match	dot=false
-a[\\\\b]c	abe	no-match	dot=false
-a[\\\\b]c	b	no-match	dot=false
-a[\\\\b]c	baz	no-match	dot=false
-a[\\\\b]c	bb	no-match	dot=false
-a[\\\\b]c	bcd	no-match	dot=false
-a[\\\\b]c	bdir/	no-match	dot=false
-a[\\\\b]c	beware	no-match	dot=false
-a[\\\\b]c	bzz	no-match	dot=false
-a[\\\\b]c	c	no-match	dot=false
-a[\\\\b]c	ca	no-match	dot=false
-a[\\\\b]c	cb	no-match	dot=false
-a[\\\\b]c	d	no-match	dot=false
-a[\\\\b]c	dd	no-match	dot=false
-a[\\\\b]c	de	no-match	dot=false
 a[\\b]c	*	no-match	dot=false
 a[\\b]c	**	no-match	dot=false
 a[\\b]c	BZZ	no-match	dot=false
 a[\\b]c	BewAre	no-match	dot=false
 a[\\b]c	Beware	no-match	dot=false
-a[\\b]c	\\*	no-match	dot=false
-a[\\b]c	\\\\	no-match	dot=false
+a[\\b]c	\*	no-match	dot=false
+a[\\b]c	\\	no-match	dot=false
 a[\\b]c	a	no-match	dot=false
 a[\\b]c	a/*	no-match	dot=false
+a[\\b]c	abc	match	dot=false
 a[\\b]c	abd	no-match	dot=false
 a[\\b]c	abe	no-match	dot=false
 a[\\b]c	b	no-match	dot=false
@@ -808,13 +784,37 @@ a[\\b]c	cb	no-match	dot=false
 a[\\b]c	d	no-match	dot=false
 a[\\b]c	dd	no-match	dot=false
 a[\\b]c	de	no-match	dot=false
+a[\b]c	*	no-match	dot=false
+a[\b]c	**	no-match	dot=false
+a[\b]c	BZZ	no-match	dot=false
+a[\b]c	BewAre	no-match	dot=false
+a[\b]c	Beware	no-match	dot=false
+a[\b]c	\*	no-match	dot=false
+a[\b]c	\\	no-match	dot=false
+a[\b]c	a	no-match	dot=false
+a[\b]c	a/*	no-match	dot=false
+a[\b]c	abd	no-match	dot=false
+a[\b]c	abe	no-match	dot=false
+a[\b]c	b	no-match	dot=false
+a[\b]c	baz	no-match	dot=false
+a[\b]c	bb	no-match	dot=false
+a[\b]c	bcd	no-match	dot=false
+a[\b]c	bdir/	no-match	dot=false
+a[\b]c	beware	no-match	dot=false
+a[\b]c	bzz	no-match	dot=false
+a[\b]c	c	no-match	dot=false
+a[\b]c	ca	no-match	dot=false
+a[\b]c	cb	no-match	dot=false
+a[\b]c	d	no-match	dot=false
+a[\b]c	dd	no-match	dot=false
+a[\b]c	de	no-match	dot=false
 a[b-d]c	*	no-match	dot=false
 a[b-d]c	**	no-match	dot=false
 a[b-d]c	BZZ	no-match	dot=false
 a[b-d]c	BewAre	no-match	dot=false
 a[b-d]c	Beware	no-match	dot=false
-a[b-d]c	\\*	no-match	dot=false
-a[b-d]c	\\\\	no-match	dot=false
+a[b-d]c	\*	no-match	dot=false
+a[b-d]c	\\	no-match	dot=false
 a[b-d]c	a	no-match	dot=false
 a[b-d]c	a/*	no-match	dot=false
 a[b-d]c	abc	match	dot=false
@@ -838,8 +838,8 @@ a?c	**	no-match	dot=false
 a?c	BZZ	no-match	dot=false
 a?c	BewAre	no-match	dot=false
 a?c	Beware	no-match	dot=false
-a?c	\\*	no-match	dot=false
-a?c	\\\\	no-match	dot=false
+a?c	\*	no-match	dot=false
+a?c	\\	no-match	dot=false
 a?c	a	no-match	dot=false
 a?c	a/*	no-match	dot=false
 a?c	abc	match	dot=false
@@ -865,8 +865,8 @@ a[]-]b	a-b	match	dot=false
 [^a-c]*	BZZ	match	dot=false
 [^a-c]*	BewAre	match	dot=false
 [^a-c]*	Beware	match	dot=false
-[^a-c]*	\\*	match	dot=false
-[^a-c]*	\\\\	match	dot=false
+[^a-c]*	\*	match	dot=false
+[^a-c]*	\\	match	dot=false
 [^a-c]*	a	no-match	dot=false
 [^a-c]*	a/*	no-match	dot=false
 [^a-c]*	abc	no-match	dot=false
@@ -890,8 +890,8 @@ a[]-]b	a-b	match	dot=false
 [^a-c]*	BZZ	no-match	dot=false,case_insensitive=true
 [^a-c]*	BewAre	no-match	dot=false,case_insensitive=true
 [^a-c]*	Beware	no-match	dot=false,case_insensitive=true
-[^a-c]*	\\*	match	dot=false,case_insensitive=true
-[^a-c]*	\\\\	match	dot=false,case_insensitive=true
+[^a-c]*	\*	match	dot=false,case_insensitive=true
+[^a-c]*	\\	match	dot=false,case_insensitive=true
 [^a-c]*	a	no-match	dot=false,case_insensitive=true
 [^a-c]*	a/*	no-match	dot=false,case_insensitive=true
 [^a-c]*	abc	no-match	dot=false,case_insensitive=true
@@ -917,7 +917,7 @@ a[]-]b	aab	no-match	dot=false
 ]	]	match	dot=false
 a[]-]b	a]b	match	dot=false
 a[]]b	a]b	match	dot=false
-a[\\]a\\-]b	aab	match	dot=false
+a[\]a\-]b	aab	match	dot=false
 t[a-g]n	ten	match	dot=false
 t[^a-g]n	ton	match	dot=false
 
@@ -926,8 +926,8 @@ f[^eiu][^eiu][^eiu][^eiu][^eiu]r	foo/bar	no-match	dot=false
 f[^eiu][^eiu][^eiu][^eiu][^eiu]r	foo-bar	match	dot=false
 
 ## micromatch.bash_options_and_features_bash_should_match_escaped
-\\[ab]	[ab]	match	dot=false
-[\\[:]ab]	[ab]	match	dot=false
+\[ab]	[ab]	match	dot=false
+[\[:]ab]	[ab]	match	dot=false
 
 ## micromatch.bash_options_and_features_bash_should_match_brackets
 [^]-]	]	no-match	dot=false
@@ -980,8 +980,8 @@ a********???*******	abc	no-match	dot=false
 *f	foo	no-match	dot=false
 ??	foo	no-match	dot=false
 bar	foo	no-match	dot=false
-foo\\*bar	foobar	no-match	dot=false
-\\??\\?b	?a?b	match	dot=false
+foo\*bar	foobar	no-match	dot=false
+\??\?b	?a?b	match	dot=false
 *ab	aaaaaaabababab	match	dot=false
 *	foo	match	dot=false
 *foo*	foo	match	dot=false
@@ -1056,26 +1056,26 @@ a{,/}*.txt	a/b.txt	match	dot=false
 a{,/}*.txt	a/ab.txt	match	dot=false
 
 ## micromatch.braces_should_support_braces_with_escaped_parens_and_stars
-a{,.*{foo,db},\\(bar\\)}.txt	a.txt	match	dot=false
-a{,.*{foo,db},\\(bar\\)}.txt	adb.txt	no-match	dot=false
-a{,.*{foo,db},\\(bar\\)}.txt	a.db.txt	match	dot=false
-a{,*.{foo,db},\\(bar\\)}.txt	a.txt	match	dot=false
-a{,*.{foo,db},\\(bar\\)}.txt	adb.txt	no-match	dot=false
-a{,*.{foo,db},\\(bar\\)}.txt	a.db.txt	match	dot=false
-a{,.*{foo,db},\\(bar\\)}	a	match	dot=false
-a{,.*{foo,db},\\(bar\\)}	adb	no-match	dot=false
-a{,.*{foo,db},\\(bar\\)}	a.db	match	dot=false
-a{,*.{foo,db},\\(bar\\)}	a	match	dot=false
-a{,*.{foo,db},\\(bar\\)}	adb	no-match	dot=false
-a{,*.{foo,db},\\(bar\\)}	a.db	match	dot=false
-{,.*{foo,db},\\(bar\\)}	a	no-match	dot=false
-{,.*{foo,db},\\(bar\\)}	adb	no-match	dot=false
-{,.*{foo,db},\\(bar\\)}	a.db	no-match	dot=false
-{,.*{foo,db},\\(bar\\)}	.db	match	dot=false
-{,*.{foo,db},\\(bar\\)}	a	no-match	dot=false
-{*,*.{foo,db},\\(bar\\)}	a	match	dot=false
-{,*.{foo,db},\\(bar\\)}	adb	no-match	dot=false
-{,*.{foo,db},\\(bar\\)}	a.db	match	dot=false
+a{,.*{foo,db},\(bar\)}.txt	a.txt	match	dot=false
+a{,.*{foo,db},\(bar\)}.txt	adb.txt	no-match	dot=false
+a{,.*{foo,db},\(bar\)}.txt	a.db.txt	match	dot=false
+a{,*.{foo,db},\(bar\)}.txt	a.txt	match	dot=false
+a{,*.{foo,db},\(bar\)}.txt	adb.txt	no-match	dot=false
+a{,*.{foo,db},\(bar\)}.txt	a.db.txt	match	dot=false
+a{,.*{foo,db},\(bar\)}	a	match	dot=false
+a{,.*{foo,db},\(bar\)}	adb	no-match	dot=false
+a{,.*{foo,db},\(bar\)}	a.db	match	dot=false
+a{,*.{foo,db},\(bar\)}	a	match	dot=false
+a{,*.{foo,db},\(bar\)}	adb	no-match	dot=false
+a{,*.{foo,db},\(bar\)}	a.db	match	dot=false
+{,.*{foo,db},\(bar\)}	a	no-match	dot=false
+{,.*{foo,db},\(bar\)}	adb	no-match	dot=false
+{,.*{foo,db},\(bar\)}	a.db	no-match	dot=false
+{,.*{foo,db},\(bar\)}	.db	match	dot=false
+{,*.{foo,db},\(bar\)}	a	no-match	dot=false
+{*,*.{foo,db},\(bar\)}	a	match	dot=false
+{,*.{foo,db},\(bar\)}	adb	no-match	dot=false
+{,*.{foo,db},\(bar\)}	a.db	match	dot=false
 
 ## micromatch.braces_should_support_braces_in_patterns_with_globstars
 a/b/**/c{d,e}/**/xyz.md	a/b/cd/xyz.md	match	dot=false
@@ -1117,10 +1117,10 @@ a/b{,/**}/bar{,/**}/*.*	a/b/bar/baz.qux	match	dot=false
 {a,b,c}	cc	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_should_not_match_a_b
-\\*\\(a\\|b\\[\\)	*(a|b[)	match	dot=false
+\*\(a\|b\[\)	*(a|b[)	match	dot=false
 
 ## micromatch.extglobs_minimatch_should_match
-\\*\\*\\*	***	match	dot=false
+\*\*\*	***	match	dot=false
 
 ## micromatch.extglobs_minimatch_x_y_z_should_match_x_y_z
 /x/y/z	/x/y/z	match	dot=false
@@ -1138,7 +1138,7 @@ ab**	123abc	no-match	dot=false
 ab***ef	123abc	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_c_should_not_match_abc
-abc	\\a\\b\\c	no-match	dot=false
+abc	\a\b\c	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_should_not_match_b
 (b)	a	no-match	dot=false
@@ -1159,7 +1159,7 @@ a(*b	a((((b	match	dot=false
 a(b	a((((b	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_should_not_match_a_b
-a\\(b	a((((b	no-match	dot=false
+a\(b	a((((b	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_should_match_a_b
 a(*b	a((b	match	dot=false
@@ -1168,7 +1168,7 @@ a(*b	a((b	match	dot=false
 a(b	a((b	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_should_not_match_a_b
-a\\(b	a((b	no-match	dot=false
+a\(b	a((b	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_should_match_a_b
 a(*b	a(b	match	dot=false
@@ -1177,7 +1177,7 @@ a(*b	a(b	match	dot=false
 a(b	a(b	match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_should_match_a_b
-a\\(b	a(b	match	dot=false
+a\(b	a(b	match	dot=false
 
 ## micromatch.extglobs_minimatch_a_aa_a_should_not_match_b_a_a
 (b|a).(a)	a.aa.a	no-match	dot=false
@@ -1195,13 +1195,13 @@ a\\(b	a(b	match	dot=false
 !*.(a|b)*	a.ccc	match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_should_not_match_a_b
-a(*b	a\\(b	no-match	dot=false
+a(*b	a\(b	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_b_should_not_match_a_b
-a(b	a\\(b	no-match	dot=false
+a(b	a\(b	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_a_z_should_not_match_a_z
-a\\\\z	a\\z	match	dot=false
+a\\z	a\z	match	dot=false
 
 ## micromatch.extglobs_minimatch_aa_should_not_match
 ?	aa	no-match	dot=false
@@ -1228,7 +1228,7 @@ a(*b	ab	no-match	dot=false
 a(b	ab	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_ab_should_not_match_a_b
-a\\(b	ab	no-match	dot=false
+a\(b	ab	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_ab_should_match_ab
 ab**	ab	match	dot=false
@@ -1306,7 +1306,7 @@ ab**	acd	no-match	dot=false
 ab***ef	acd	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_az_should_not_match_a_z
-a\\\\z	az	no-match	dot=false
+a\\z	az	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_c_a_should_not_match_b_a_a
 (b|a).(a)	c.a	no-match	dot=false
@@ -1327,13 +1327,13 @@ c/z/v	c/z/v	match	dot=false
 ()ef	def	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_foo_bar_should_match_foo_bar
-foo\\*bar	foo*bar	match	dot=false
+foo\*bar	foo*bar	match	dot=false
 
 ## micromatch.extglobs_minimatch_foob_should_not_match_foo_bb
 (foo)bb	foob	no-match	dot=false
 
 ## micromatch.extglobs_minimatch_foo_bb_should_match_foo_bb
-\\(foo\\)bb	(foo)bb	match	dot=false
+\(foo\)bb	(foo)bb	match	dot=false
 
 ## micromatch.extglobs_minimatch_zz_should_not_match_a_b
 (a+|b)*	zz	no-match	dot=false
@@ -1353,12 +1353,12 @@ foo\\*bar	foo*bar	match	dot=false
 ???	abcdefg	no-match	dot=false
 
 ## micromatch.extglobs_should_match_escaped_parens
-a\\\\\\(b	a\\(b	match	dot=false
-a\\(*b	a(ab	match	dot=false
+a\\\(b	a\(b	match	dot=false
+a\(*b	a(ab	match	dot=false
 
 ## micromatch.extglobs_should_match_escaped_backslashes
-a\\\\(b	a(b	no-match	dot=false
-a\\b	a/b	no-match	dot=false
+a\\(b	a(b	no-match	dot=false
+a\b	a/b	no-match	dot=false
 
 ## micromatch.extglobs_should_support_regex_characters
 a/b	ab	no-match	dot=false
@@ -1452,44 +1452,44 @@ a*c	axy zc	match	dot=false
 a*c	axy	no-match	dot=false
 a*c	axy.zc	match	dot=false
 a*c	axyzc	match	dot=false
-a[\\w]+c	a c	no-match	dot=false
-a[\\w]+c	a.c	no-match	dot=false
-a[\\w]+c	a.xy.zc	no-match	dot=false
-a[\\w]+c	a.zc	no-match	dot=false
-a[\\w]+c	abq	no-match	dot=false
-a[\\w]+c	axy zc	no-match	dot=false
-a[\\w]+c	axy	no-match	dot=false
-a[\\w]+c	axy.zc	no-match	dot=false
-a[\\W]+c	a.xy.zc	no-match	dot=false
-a[\\W]+c	a.zc	no-match	dot=false
-a[\\W]+c	a123c	no-match	dot=false
-a[\\W]+c	a1c	no-match	dot=false
-a[\\W]+c	abbbbc	no-match	dot=false
-a[\\W]+c	abbbc	no-match	dot=false
-a[\\W]+c	abbc	no-match	dot=false
-a[\\W]+c	abc	no-match	dot=false
-a[\\W]+c	abq	no-match	dot=false
-a[\\W]+c	axy zc	no-match	dot=false
-a[\\W]+c	axy	no-match	dot=false
-a[\\W]+c	axy.zc	no-match	dot=false
-a[\\W]+c	axyzc	no-match	dot=false
-a[\\d]+c	a c	no-match	dot=false
-a[\\d]+c	a.c	no-match	dot=false
-a[\\d]+c	a.xy.zc	no-match	dot=false
-a[\\d]+c	a.zc	no-match	dot=false
-a[\\d]+c	abbbbc	no-match	dot=false
-a[\\d]+c	abbbc	no-match	dot=false
-a[\\d]+c	abbc	no-match	dot=false
-a[\\d]+c	abc	no-match	dot=false
-a[\\d]+c	abq	no-match	dot=false
-a[\\d]+c	axy zc	no-match	dot=false
-a[\\d]+c	axy	no-match	dot=false
-a[\\d]+c	axy.zc	no-match	dot=false
-a[\\d]+c	axyzc	no-match	dot=false
-[\\d]+	foo@#$%123ASD #$$%^&	no-match	dot=false
-[\\d]+	foo!@#$asdfl;	no-match	dot=false
-a[\\D]+c	a123c	no-match	dot=false
-(f|o)+\\b	 foo 	no-match	dot=false
+a[\w]+c	a c	no-match	dot=false
+a[\w]+c	a.c	no-match	dot=false
+a[\w]+c	a.xy.zc	no-match	dot=false
+a[\w]+c	a.zc	no-match	dot=false
+a[\w]+c	abq	no-match	dot=false
+a[\w]+c	axy zc	no-match	dot=false
+a[\w]+c	axy	no-match	dot=false
+a[\w]+c	axy.zc	no-match	dot=false
+a[\W]+c	a.xy.zc	no-match	dot=false
+a[\W]+c	a.zc	no-match	dot=false
+a[\W]+c	a123c	no-match	dot=false
+a[\W]+c	a1c	no-match	dot=false
+a[\W]+c	abbbbc	no-match	dot=false
+a[\W]+c	abbbc	no-match	dot=false
+a[\W]+c	abbc	no-match	dot=false
+a[\W]+c	abc	no-match	dot=false
+a[\W]+c	abq	no-match	dot=false
+a[\W]+c	axy zc	no-match	dot=false
+a[\W]+c	axy	no-match	dot=false
+a[\W]+c	axy.zc	no-match	dot=false
+a[\W]+c	axyzc	no-match	dot=false
+a[\d]+c	a c	no-match	dot=false
+a[\d]+c	a.c	no-match	dot=false
+a[\d]+c	a.xy.zc	no-match	dot=false
+a[\d]+c	a.zc	no-match	dot=false
+a[\d]+c	abbbbc	no-match	dot=false
+a[\d]+c	abbbc	no-match	dot=false
+a[\d]+c	abbc	no-match	dot=false
+a[\d]+c	abc	no-match	dot=false
+a[\d]+c	abq	no-match	dot=false
+a[\d]+c	axy zc	no-match	dot=false
+a[\d]+c	axy	no-match	dot=false
+a[\d]+c	axy.zc	no-match	dot=false
+a[\d]+c	axyzc	no-match	dot=false
+[\d]+	foo@#$%123ASD #$$%^&	no-match	dot=false
+[\d]+	foo!@#$asdfl;	no-match	dot=false
+a[\D]+c	a123c	no-match	dot=false
+(f|o)+\b	 foo 	no-match	dot=false
 
 ## micromatch.extglobs_from_the_bash_spec_should_match_negation_extglobs
 (foo)bb	ffffffo	no-match	dot=false
@@ -1529,13 +1529,13 @@ a[\\D]+c	a123c	no-match	dot=false
 [1-6]([0-9])	555	no-match	dot=false
 
 ## micromatch.extglobs_from_the_bash_spec_should_work_with_character
-a[-.,:\\;\\ _]b	a.b	match	dot=false
-a[-.,:\\;\\ _]b	a,b	match	dot=false
-a[-.,:\\;\\ _]b	a:b	match	dot=false
-a[-.,:\\;\\ _]b	a-b	match	dot=false
-a[-.,:\\;\\ _]b	a;b	match	dot=false
-a[-.,:\\;\\ _]b	a b	match	dot=false
-a[-.,:\\;\\ _]b	a_b	match	dot=false
+a[-.,:\;\ _]b	a.b	match	dot=false
+a[-.,:\;\ _]b	a,b	match	dot=false
+a[-.,:\;\ _]b	a:b	match	dot=false
+a[-.,:\;\ _]b	a-b	match	dot=false
+a[-.,:\;\ _]b	a;b	match	dot=false
+a[-.,:\;\ _]b	a b	match	dot=false
+a[-.,:\;\ _]b	a_b	match	dot=false
 
 ## micromatch.issue_related_tests_micromatch_issue_140
 **/b/**/c.md	a/b/some/c.md	match	dot=false
@@ -1575,11 +1575,11 @@ a/b/**/bar/**/*.*	a/b/foo/bar/baz.qux	match	dot=false
 a/b/**/bar/**/*.*	a/b/bar/baz.qux	match	dot=false
 
 ## micromatch.micromatch_posix_paths_should_match_literal_brackets
-a \\[b\\]	a [b]	match	dot=false
-a \\[b\\]*	a [b]	match	dot=false
-a \\[bc\\]*	a [bc]	match	dot=false
-a \\[b\\].*	a [b]	no-match	dot=false
-a \\[b\\].*	a [b].js	match	dot=false
+a \[b\]	a [b]	match	dot=false
+a \[b\]*	a [b]	match	dot=false
+a \[bc\]*	a [bc]	match	dot=false
+a \[b\].*	a [b]	no-match	dot=false
+a \[b\].*	a [b].js	match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_1_a
 a*	bdir/cfile	no-match	dot=false
@@ -1602,55 +1602,55 @@ X*	bdir/	no-match	dot=false
 X*	bdir/cfile	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_6
-\\*	a	no-match	dot=false
-\\*	b	no-match	dot=false
-\\*	c	no-match	dot=false
-\\*	d	no-match	dot=false
-\\*	abc	no-match	dot=false
-\\*	abd	no-match	dot=false
-\\*	abe	no-match	dot=false
-\\*	bb	no-match	dot=false
-\\*	bcd	no-match	dot=false
-\\*	ca	no-match	dot=false
-\\*	cb	no-match	dot=false
-\\*	dd	no-match	dot=false
-\\*	de	no-match	dot=false
-\\*	bdir/	no-match	dot=false
-\\*	bdir/cfile	no-match	dot=false
+\*	a	no-match	dot=false
+\*	b	no-match	dot=false
+\*	c	no-match	dot=false
+\*	d	no-match	dot=false
+\*	abc	no-match	dot=false
+\*	abd	no-match	dot=false
+\*	abe	no-match	dot=false
+\*	bb	no-match	dot=false
+\*	bcd	no-match	dot=false
+\*	ca	no-match	dot=false
+\*	cb	no-match	dot=false
+\*	dd	no-match	dot=false
+\*	de	no-match	dot=false
+\*	bdir/	no-match	dot=false
+\*	bdir/cfile	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_7
-\\**	a	no-match	dot=false
-\\**	b	no-match	dot=false
-\\**	c	no-match	dot=false
-\\**	d	no-match	dot=false
-\\**	abc	no-match	dot=false
-\\**	abd	no-match	dot=false
-\\**	abe	no-match	dot=false
-\\**	bb	no-match	dot=false
-\\**	bcd	no-match	dot=false
-\\**	ca	no-match	dot=false
-\\**	cb	no-match	dot=false
-\\**	dd	no-match	dot=false
-\\**	de	no-match	dot=false
-\\**	bdir/	no-match	dot=false
-\\**	bdir/cfile	no-match	dot=false
+\**	a	no-match	dot=false
+\**	b	no-match	dot=false
+\**	c	no-match	dot=false
+\**	d	no-match	dot=false
+\**	abc	no-match	dot=false
+\**	abd	no-match	dot=false
+\**	abe	no-match	dot=false
+\**	bb	no-match	dot=false
+\**	bcd	no-match	dot=false
+\**	ca	no-match	dot=false
+\**	cb	no-match	dot=false
+\**	dd	no-match	dot=false
+\**	de	no-match	dot=false
+\**	bdir/	no-match	dot=false
+\**	bdir/cfile	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_8
-\\*\\*	a	no-match	dot=false
-\\*\\*	b	no-match	dot=false
-\\*\\*	c	no-match	dot=false
-\\*\\*	d	no-match	dot=false
-\\*\\*	abc	no-match	dot=false
-\\*\\*	abd	no-match	dot=false
-\\*\\*	abe	no-match	dot=false
-\\*\\*	bb	no-match	dot=false
-\\*\\*	bcd	no-match	dot=false
-\\*\\*	ca	no-match	dot=false
-\\*\\*	cb	no-match	dot=false
-\\*\\*	dd	no-match	dot=false
-\\*\\*	de	no-match	dot=false
-\\*\\*	bdir/	no-match	dot=false
-\\*\\*	bdir/cfile	no-match	dot=false
+\*\*	a	no-match	dot=false
+\*\*	b	no-match	dot=false
+\*\*	c	no-match	dot=false
+\*\*	d	no-match	dot=false
+\*\*	abc	no-match	dot=false
+\*\*	abd	no-match	dot=false
+\*\*	abe	no-match	dot=false
+\*\*	bb	no-match	dot=false
+\*\*	bcd	no-match	dot=false
+\*\*	ca	no-match	dot=false
+\*\*	cb	no-match	dot=false
+\*\*	dd	no-match	dot=false
+\*\*	de	no-match	dot=false
+\*\*	bdir/	no-match	dot=false
+\*\*	bdir/cfile	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_9_b
 b*/	bdir/cfile	no-match	dot=false
@@ -1689,38 +1689,38 @@ c*	bdir/cfile	no-match	dot=false
 **	de	match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_12
-\\.\\./*/	a	no-match	dot=false
-\\.\\./*/	abc	no-match	dot=false
-\\.\\./*/	abd	no-match	dot=false
-\\.\\./*/	abe	no-match	dot=false
-\\.\\./*/	b	no-match	dot=false
-\\.\\./*/	bb	no-match	dot=false
-\\.\\./*/	bcd	no-match	dot=false
-\\.\\./*/	bdir/	no-match	dot=false
-\\.\\./*/	bdir/cfile	no-match	dot=false
-\\.\\./*/	c	no-match	dot=false
-\\.\\./*/	ca	no-match	dot=false
-\\.\\./*/	cb	no-match	dot=false
-\\.\\./*/	d	no-match	dot=false
-\\.\\./*/	dd	no-match	dot=false
-\\.\\./*/	de	no-match	dot=false
+\.\./*/	a	no-match	dot=false
+\.\./*/	abc	no-match	dot=false
+\.\./*/	abd	no-match	dot=false
+\.\./*/	abe	no-match	dot=false
+\.\./*/	b	no-match	dot=false
+\.\./*/	bb	no-match	dot=false
+\.\./*/	bcd	no-match	dot=false
+\.\./*/	bdir/	no-match	dot=false
+\.\./*/	bdir/cfile	no-match	dot=false
+\.\./*/	c	no-match	dot=false
+\.\./*/	ca	no-match	dot=false
+\.\./*/	cb	no-match	dot=false
+\.\./*/	d	no-match	dot=false
+\.\./*/	dd	no-match	dot=false
+\.\./*/	de	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_13_s
-s/\\..*//	a	no-match	dot=false
-s/\\..*//	abc	no-match	dot=false
-s/\\..*//	abd	no-match	dot=false
-s/\\..*//	abe	no-match	dot=false
-s/\\..*//	b	no-match	dot=false
-s/\\..*//	bb	no-match	dot=false
-s/\\..*//	bcd	no-match	dot=false
-s/\\..*//	bdir/	no-match	dot=false
-s/\\..*//	bdir/cfile	no-match	dot=false
-s/\\..*//	c	no-match	dot=false
-s/\\..*//	ca	no-match	dot=false
-s/\\..*//	cb	no-match	dot=false
-s/\\..*//	d	no-match	dot=false
-s/\\..*//	dd	no-match	dot=false
-s/\\..*//	de	no-match	dot=false
+s/\..*//	a	no-match	dot=false
+s/\..*//	abc	no-match	dot=false
+s/\..*//	abd	no-match	dot=false
+s/\..*//	abe	no-match	dot=false
+s/\..*//	b	no-match	dot=false
+s/\..*//	bb	no-match	dot=false
+s/\..*//	bcd	no-match	dot=false
+s/\..*//	bdir/	no-match	dot=false
+s/\..*//	bdir/cfile	no-match	dot=false
+s/\..*//	c	no-match	dot=false
+s/\..*//	ca	no-match	dot=false
+s/\..*//	cb	no-match	dot=false
+s/\..*//	d	no-match	dot=false
+s/\..*//	dd	no-match	dot=false
+s/\..*//	de	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_18_a_c_b
 [a-c]b*	bdir/cfile	no-match	dot=false
@@ -1800,57 +1800,57 @@ a*?/*	a*b/ooo	match	dot=false
 a*?/*	ab/ooo	match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_29_a_b
-a\\*b/*	a	no-match	dot=false
-a\\*b/*	abc	no-match	dot=false
-a\\*b/*	abd	no-match	dot=false
-a\\*b/*	abe	no-match	dot=false
-a\\*b/*	b	no-match	dot=false
-a\\*b/*	bb	no-match	dot=false
-a\\*b/*	bcd	no-match	dot=false
-a\\*b/*	bdir/	no-match	dot=false
-a\\*b/*	bdir/cfile	no-match	dot=false
-a\\*b/*	c	no-match	dot=false
-a\\*b/*	ca	no-match	dot=false
-a\\*b/*	cb	no-match	dot=false
-a\\*b/*	d	no-match	dot=false
-a\\*b/*	dd	no-match	dot=false
-a\\*b/*	de	no-match	dot=false
-a\\*b/*	a-b	no-match	dot=false
-a\\*b/*	aXb	no-match	dot=false
-a\\*b/*	.x	no-match	dot=false
-a\\*b/*	.y	no-match	dot=false
-a\\*b/*	ab/ooo	no-match	dot=false
+a\*b/*	a	no-match	dot=false
+a\*b/*	abc	no-match	dot=false
+a\*b/*	abd	no-match	dot=false
+a\*b/*	abe	no-match	dot=false
+a\*b/*	b	no-match	dot=false
+a\*b/*	bb	no-match	dot=false
+a\*b/*	bcd	no-match	dot=false
+a\*b/*	bdir/	no-match	dot=false
+a\*b/*	bdir/cfile	no-match	dot=false
+a\*b/*	c	no-match	dot=false
+a\*b/*	ca	no-match	dot=false
+a\*b/*	cb	no-match	dot=false
+a\*b/*	d	no-match	dot=false
+a\*b/*	dd	no-match	dot=false
+a\*b/*	de	no-match	dot=false
+a\*b/*	a-b	no-match	dot=false
+a\*b/*	aXb	no-match	dot=false
+a\*b/*	.x	no-match	dot=false
+a\*b/*	.y	no-match	dot=false
+a\*b/*	ab/ooo	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_30_a
-a\\*?/*	a	no-match	dot=false
-a\\*?/*	abc	no-match	dot=false
-a\\*?/*	abd	no-match	dot=false
-a\\*?/*	abe	no-match	dot=false
-a\\*?/*	b	no-match	dot=false
-a\\*?/*	bb	no-match	dot=false
-a\\*?/*	bcd	no-match	dot=false
-a\\*?/*	bdir/	no-match	dot=false
-a\\*?/*	bdir/cfile	no-match	dot=false
-a\\*?/*	c	no-match	dot=false
-a\\*?/*	ca	no-match	dot=false
-a\\*?/*	cb	no-match	dot=false
-a\\*?/*	d	no-match	dot=false
-a\\*?/*	dd	no-match	dot=false
-a\\*?/*	de	no-match	dot=false
-a\\*?/*	a-b	no-match	dot=false
-a\\*?/*	aXb	no-match	dot=false
-a\\*?/*	.x	no-match	dot=false
-a\\*?/*	.y	no-match	dot=false
-a\\*?/*	ab/ooo	no-match	dot=false
+a\*?/*	a	no-match	dot=false
+a\*?/*	abc	no-match	dot=false
+a\*?/*	abd	no-match	dot=false
+a\*?/*	abe	no-match	dot=false
+a\*?/*	b	no-match	dot=false
+a\*?/*	bb	no-match	dot=false
+a\*?/*	bcd	no-match	dot=false
+a\*?/*	bdir/	no-match	dot=false
+a\*?/*	bdir/cfile	no-match	dot=false
+a\*?/*	c	no-match	dot=false
+a\*?/*	ca	no-match	dot=false
+a\*?/*	cb	no-match	dot=false
+a\*?/*	d	no-match	dot=false
+a\*?/*	dd	no-match	dot=false
+a\*?/*	de	no-match	dot=false
+a\*?/*	a-b	no-match	dot=false
+a\*?/*	aXb	no-match	dot=false
+a\*?/*	.x	no-match	dot=false
+a\*?/*	.y	no-match	dot=false
+a\*?/*	ab/ooo	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_31
-*\\\\!*	echo !7	no-match	dot=false
+*\\!*	echo !7	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_32
-*\\!*	echo !7	match	dot=false
+*\!*	echo !7	match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_33
-*.\\*	r.*	match	dot=false
+*.\*	r.*	match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_34_a_b_c
 a[b]c	bdir/cfile	no-match	dot=false
@@ -1863,14 +1863,14 @@ a[b]c	a*b/ooo	no-match	dot=false
 a[b]c	ab/ooo	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_35_a_b_c
-a[\\\\b]c	bdir/cfile	no-match	dot=false
-a[\\\\b]c	a-b	no-match	dot=false
-a[\\\\b]c	aXb	no-match	dot=false
-a[\\\\b]c	.x	no-match	dot=false
-a[\\\\b]c	.y	no-match	dot=false
-a[\\\\b]c	a*b/	no-match	dot=false
-a[\\\\b]c	a*b/ooo	no-match	dot=false
-a[\\\\b]c	ab/ooo	no-match	dot=false
+a[\\b]c	bdir/cfile	no-match	dot=false
+a[\\b]c	a-b	no-match	dot=false
+a[\\b]c	aXb	no-match	dot=false
+a[\\b]c	.x	no-match	dot=false
+a[\\b]c	.y	no-match	dot=false
+a[\\b]c	a*b/	no-match	dot=false
+a[\\b]c	a*b/ooo	no-match	dot=false
+a[\\b]c	ab/ooo	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_36_a_c
 a?c	bdir/cfile	no-match	dot=false
@@ -1883,7 +1883,7 @@ a?c	a*b/ooo	no-match	dot=false
 a?c	ab/ooo	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_37_a_c
-a\\*c	abc	no-match	dot=false
+a\*c	abc	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_40_man_bash
 */man*/bash.*	a	no-match	dot=false
@@ -2015,11 +2015,11 @@ a*	!abc	no-match	dot=false
 a*	a!b	match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_106_a
-!\\!a*	d	match	dot=false
-!\\!a*	e	match	dot=false
-!\\!a*	!ab	no-match	dot=false
-!\\!a*	!abc	no-match	dot=false
-!\\!a*	a!b	match	dot=false
+!\!a*	d	match	dot=false
+!\!a*	e	match	dot=false
+!\!a*	!ab	no-match	dot=false
+!\!a*	!abc	no-match	dot=false
+!\!a*	a!b	match	dot=false
 
 ## micromatch.basic_tests_minimatch_parity_110_x
 **/.x/**	a/b/.x/c	match	dot=false
@@ -2044,15 +2044,15 @@ n/axios/a.js	n/!(axios)/**	no-match	dot=false
 foo/bar/a.js	./foo/!(bar)/**	no-match	dot=false
 
 ## micromatch.basic_tests_minimatch_issues_as_of_12_7_2016_https_github
-foo/**/*-\\[ABC\\].txt	foo/bar-[ABC].txt	match	dot=false
-foo/**/*-\\[abc\\].txt	foo/bar-[ABC].txt	no-match	dot=false
-foo/**/*-\\[abc\\].txt	foo/bar-[ABC].txt	match	dot=false,case_insensitive=true
+foo/**/*-\[ABC\].txt	foo/bar-[ABC].txt	match	dot=false
+foo/**/*-\[abc\].txt	foo/bar-[ABC].txt	no-match	dot=false
+foo/**/*-\[abc\].txt	foo/bar-[ABC].txt	match	dot=false,case_insensitive=true
 
 ## micromatch.basic_tests_minimatch_issues_as_of_12_7_2016_https_github
 node_modules/foobar/**/*.bar	node_modules/foobar/foo.bar	match	dot=false
 
 ## micromatch.basic_tests_minimatch_issues_as_of_12_7_2016_https_github
-a/**/*.txt	a\\b\\c.txt	no-match	dot=false
+a/**/*.txt	a\b\c.txt	no-match	dot=false
 a/**/*.txt	a/b/c.txt	match	dot=false
 
 ## micromatch.basic_tests_minimatch_issues_as_of_12_7_2016_https_github
@@ -2106,9 +2106,9 @@ foo!.md	bar.md	no-match	dot=false
 *!*.md	foo!bar.md	match	dot=false
 *!*.md	foo!.md	match	dot=false
 *!*.md	!foo!.md	match	dot=false
-\\!*!*.md	foo!bar.md	no-match	dot=false
-\\!*!*.md	foo!.md	no-match	dot=false
-\\!*!*.md	!foo!.md	match	dot=false
+\!*!*.md	foo!bar.md	no-match	dot=false
+\!*!*.md	foo!.md	no-match	dot=false
+\!*!*.md	!foo!.md	match	dot=false
 **/*!*.*	foo!.md	match	dot=false
 **/*!*.*	ba!r.js	match	dot=false
 
@@ -2244,9 +2244,9 @@ a/*/?/**/e.md	a/bbb/c/d/efgh.ijk/e.md	match	dot=false
 
 ## micromatch.qmarks_and_stars_question_marks_should_not_match_slashes
 aaa?bbb	aaa//bbb	no-match	dot=false
-aaa?bbb	aaa\\bbb	match	dot=false
-aaa?bbb	aaa\\\\bbb	no-match	dot=false
-aaa??bbb	aaa\\\\bbb	match	dot=false
+aaa?bbb	aaa\bbb	match	dot=false
+aaa?bbb	aaa\\bbb	no-match	dot=false
+aaa??bbb	aaa\\bbb	match	dot=false
 
 ## micromatch.qmarks_and_stars_question_marks_should_match_arbitrary_dots
 aaa?bbb	aaa.bbb	match	dot=false
@@ -2265,12 +2265,12 @@ a/bbb/ab??.md	a/bbb/abcd.md	match	dot=false
 a/bbb/ab???md	a/bbb/abcd.md	match	dot=false
 
 ## micromatch.regex_features_back_references_should_support_regex
-(*)/\\1	1/2	no-match	dot=false
-(*)/\\1/\\1/\\1	1/11/111/1111	no-match	dot=false
-(*)/\\1/\\1/\\1	1/2/1/1	no-match	dot=false
-(*)/\\1/\\1/\\1	1/1/2/1	no-match	dot=false
-(*)/\\1/\\1/\\1	1/1/1/2	no-match	dot=false
-(*)/\\1/(*)/\\2	1/1/2/1	no-match	dot=false
+(*)/\1	1/2	no-match	dot=false
+(*)/\1/\1/\1	1/11/111/1111	no-match	dot=false
+(*)/\1/\1/\1	1/2/1/1	no-match	dot=false
+(*)/\1/\1/\1	1/1/2/1	no-match	dot=false
+(*)/\1/\1/\1	1/1/1/2	no-match	dot=false
+(*)/\1/(*)/\2	1/1/2/1	no-match	dot=false
 
 ## micromatch.regex_features_character_classes_should_match_regex
 **/[jkl]*	foo/bar	no-match	dot=false
@@ -2368,46 +2368,46 @@ ab*c	^abc$	no-match	dot=false
 a.c	^abc$	no-match	dot=false
 a.*c	^abc$	no-match	dot=false
 a*c	^abc$	no-match	dot=false
-a(\\w)+c	a c	no-match	dot=false
-a(\\w)+c	a.c	no-match	dot=false
-a(\\w)+c	a.xy.zc	no-match	dot=false
-a(\\w)+c	a.zc	no-match	dot=false
-a(\\w)+c	abq	no-match	dot=false
-a(\\w)+c	axy zc	no-match	dot=false
-a(\\w)+c	axy	no-match	dot=false
-a(\\w)+c	axy.zc	no-match	dot=false
-a(\\w)+c	^abc$	no-match	dot=false
-a(\\W)+c	a1c	no-match	dot=false
-a(\\W)+c	a123c	no-match	dot=false
-a(\\W)+c	a.xy.zc	no-match	dot=false
-a(\\W)+c	a.zc	no-match	dot=false
-a(\\W)+c	abbbbc	no-match	dot=false
-a(\\W)+c	abbbc	no-match	dot=false
-a(\\W)+c	abbc	no-match	dot=false
-a(\\W)+c	abc	no-match	dot=false
-a(\\W)+c	abq	no-match	dot=false
-a(\\W)+c	axy zc	no-match	dot=false
-a(\\W)+c	axy	no-match	dot=false
-a(\\W)+c	axy.zc	no-match	dot=false
-a(\\W)+c	axyzc	no-match	dot=false
-a(\\W)+c	^abc$	no-match	dot=false
-a(\\d)+c	a c	no-match	dot=false
-a(\\d)+c	a.c	no-match	dot=false
-a(\\d)+c	a.xy.zc	no-match	dot=false
-a(\\d)+c	a.zc	no-match	dot=false
-a(\\d)+c	abbbbc	no-match	dot=false
-a(\\d)+c	abbbc	no-match	dot=false
-a(\\d)+c	abbc	no-match	dot=false
-a(\\d)+c	abc	no-match	dot=false
-a(\\d)+c	abq	no-match	dot=false
-a(\\d)+c	axy zc	no-match	dot=false
-a(\\d)+c	axy	no-match	dot=false
-a(\\d)+c	axy.zc	no-match	dot=false
-a(\\d)+c	axyzc	no-match	dot=false
-a(\\d)+c	^abc$	no-match	dot=false
-(\\d)+	foo@#$%123ASD #$$%^&	no-match	dot=false
-(\\d)+	foo!@#$asdfl;	no-match	dot=false
-a(\\D)+c	a123c	no-match	dot=false
+a(\w)+c	a c	no-match	dot=false
+a(\w)+c	a.c	no-match	dot=false
+a(\w)+c	a.xy.zc	no-match	dot=false
+a(\w)+c	a.zc	no-match	dot=false
+a(\w)+c	abq	no-match	dot=false
+a(\w)+c	axy zc	no-match	dot=false
+a(\w)+c	axy	no-match	dot=false
+a(\w)+c	axy.zc	no-match	dot=false
+a(\w)+c	^abc$	no-match	dot=false
+a(\W)+c	a1c	no-match	dot=false
+a(\W)+c	a123c	no-match	dot=false
+a(\W)+c	a.xy.zc	no-match	dot=false
+a(\W)+c	a.zc	no-match	dot=false
+a(\W)+c	abbbbc	no-match	dot=false
+a(\W)+c	abbbc	no-match	dot=false
+a(\W)+c	abbc	no-match	dot=false
+a(\W)+c	abc	no-match	dot=false
+a(\W)+c	abq	no-match	dot=false
+a(\W)+c	axy zc	no-match	dot=false
+a(\W)+c	axy	no-match	dot=false
+a(\W)+c	axy.zc	no-match	dot=false
+a(\W)+c	axyzc	no-match	dot=false
+a(\W)+c	^abc$	no-match	dot=false
+a(\d)+c	a c	no-match	dot=false
+a(\d)+c	a.c	no-match	dot=false
+a(\d)+c	a.xy.zc	no-match	dot=false
+a(\d)+c	a.zc	no-match	dot=false
+a(\d)+c	abbbbc	no-match	dot=false
+a(\d)+c	abbbc	no-match	dot=false
+a(\d)+c	abbc	no-match	dot=false
+a(\d)+c	abc	no-match	dot=false
+a(\d)+c	abq	no-match	dot=false
+a(\d)+c	axy zc	no-match	dot=false
+a(\d)+c	axy	no-match	dot=false
+a(\d)+c	axy.zc	no-match	dot=false
+a(\d)+c	axyzc	no-match	dot=false
+a(\d)+c	^abc$	no-match	dot=false
+(\d)+	foo@#$%123ASD #$$%^&	no-match	dot=false
+(\d)+	foo!@#$asdfl;	no-match	dot=false
+a(\D)+c	a123c	no-match	dot=false
 
 ## micromatch.special_characters_slashes_should_match_forward_slashes
 /	/	match	dot=false

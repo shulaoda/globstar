@@ -475,43 +475,43 @@ abc/*/**/*	abc/abc/..	match
 # picomatch and micromatch read `[a]+`, `{a,b}+` and `(a)+` as regex
 # repetition. `+` is a literal character here (GLOB_SPEC §2).
 # picomatch: match  [test/bash.js:663]
-[A-Z]+/\\\\	XXX/\\	no-match	dot=false
+[A-Z]+/\\	XXX/\	no-match	dot=false
 # picomatch: match  [test/extglobs.js:765]
-a[\\w]+c	a123c	no-match	dot=false
+a[\w]+c	a123c	no-match	dot=false
 # picomatch: match  [test/extglobs.js:765]
-a[\\w]+c	a1c	no-match	dot=false
+a[\w]+c	a1c	no-match	dot=false
 # picomatch: match  [test/extglobs.js:765]
-a[\\w]+c	abbbbc	no-match	dot=false
+a[\w]+c	abbbbc	no-match	dot=false
 # picomatch: match  [test/extglobs.js:765]
-a[\\w]+c	abbbc	no-match	dot=false
+a[\w]+c	abbbc	no-match	dot=false
 # picomatch: match  [test/extglobs.js:765]
-a[\\w]+c	abbc	no-match	dot=false
+a[\w]+c	abbc	no-match	dot=false
 # picomatch: match  [test/extglobs.js:765]
-a[\\w]+c	abc	no-match	dot=false
+a[\w]+c	abc	no-match	dot=false
 # picomatch: match  [test/extglobs.js:765]
-a[\\w]+c	axyzc	no-match	dot=false
+a[\w]+c	axyzc	no-match	dot=false
 # picomatch: match  [test/extglobs.js:766]
-a[\\W]+c	a c	no-match	dot=false
+a[\W]+c	a c	no-match	dot=false
 # picomatch: match  [test/extglobs.js:766]
-a[\\W]+c	a.c	no-match	dot=false
+a[\W]+c	a.c	no-match	dot=false
 # picomatch: match  [test/extglobs.js:767]
-a[\\d]+c	a123c	no-match	dot=false
+a[\d]+c	a123c	no-match	dot=false
 # picomatch: match  [test/extglobs.js:767]
-a[\\d]+c	a1c	no-match	dot=false
+a[\d]+c	a1c	no-match	dot=false
 # picomatch: match  [test/extglobs.js:768]
-[\\d]+	123	no-match	dot=false
+[\d]+	123	no-match	dot=false
 # picomatch: match  [test/extglobs.js:769]
-a[\\D]+c	abbbc	no-match	dot=false
+a[\D]+c	abbbc	no-match	dot=false
 # picomatch: match  [test/extglobs.js:770]
-(f|o)+\\b	foo	no-match	dot=false
+(f|o)+\b	foo	no-match	dot=false
 # picomatch: match  [test/regex-features.js:33]
-(*)/(\\1)+/(\\1)+/(\\1)+	1/11/111/1111	no-match	dot=false
+(*)/(\1)+/(\1)+/(\1)+	1/11/111/1111	no-match	dot=false
 # picomatch: match  [test/regex-features.js:86]
 a[b-d]+	abd	no-match	dot=false
 # picomatch: match  [test/regex-features.js:138]
-[\\de]+	0123e456	no-match	dot=false
+[\de]+	0123e456	no-match	dot=false
 # picomatch: match  [test/regex-features.js:139]
-[\\de]+	01234	no-match	dot=false
+[\de]+	01234	no-match	dot=false
 # picomatch: no-match  [test/regex-features.js:202]
 ![a-b]+.[a-b]+	a.a	match	dot=false
 # picomatch: no-match  [test/regex-features.js:203]
@@ -577,15 +577,15 @@ test(/utils/**)	test/utils/file	no-match	dot=false
 # picomatch: match  [test/parens.js:15]
 (a|b)*	aaabbb	no-match	dot=false
 # picomatch: match  [test/regex-features.js:14]
-(a\\b)	a	no-match	dot=false
+(a\b)	a	no-match	dot=false
 # picomatch: match  [test/regex-features.js:30]
-(*)/\\1	1/1	no-match	dot=false
+(*)/\1	1/1	no-match	dot=false
 # picomatch: match  [test/regex-features.js:31]
-(*)/\\1/\\1/\\1	1/1/1/1	no-match	dot=false
+(*)/\1/\1/\1	1/1/1/1	no-match	dot=false
 # picomatch: match  [test/regex-features.js:37]
-(*)/\\1/(*)/\\2	1/1/1/1	no-match	dot=false
+(*)/\1/(*)/\2	1/1/1/1	no-match	dot=false
 # picomatch: match  [test/regex-features.js:40]
-(*)/\\1/(*)/\\2	1/1/2/2	no-match	dot=false
+(*)/\1/(*)/\2	1/1/2/2	no-match	dot=false
 # picomatch: match  [test/regex-features.js:232]
 a/(a|c)	a/a	no-match	dot=false
 # picomatch: match  [test/regex-features.js:234]
@@ -688,11 +688,11 @@ a[	a[	err:UnterminatedClass	dot=false
 # and a path is never unescaped. The library gives some escapes another
 # meaning (`\b`, `\w`), keeps the backslash, or unescapes the path.
 # picomatch: match  [test/bash.js:88]
-\\*	\\*	no-match	dot=false
+\*	\*	no-match	dot=false
 # picomatch: no-match  [test/bash.js:544]
-a[\\b]c	abc	match	dot=false
+a[\b]c	abc	match	dot=false
 # picomatch: match  [test/regex-features.js:10]
-a\\b	a	no-match	dot=false
+a\b	a	no-match	dot=false
 
 ## picomatch.diff.class-or-literal
 # A class matching its own text (3 rows)

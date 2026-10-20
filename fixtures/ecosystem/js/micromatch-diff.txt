@@ -35,7 +35,7 @@
 # micromatch: match  [test/bash.js:111]
 foo[bar()]+baz	foo(bar)baz	no-match	dot=false
 # micromatch: match  [test/bash.js:122]
-[A-Z]+/\\\\	XXX/\\	no-match	dot=false
+[A-Z]+/\\	XXX/\	no-match	dot=false
 # micromatch: match  [test/braces.js:68]
 foo[{a,b}]+baz	foo{}baz	no-match	dot=false
 # micromatch: match  [test/braces.js:69]
@@ -105,35 +105,35 @@ foo[{a,b}]+baz	foo{}baz	no-match	dot=false
 # micromatch: match  [test/extglobs-minimatch.js:874]
 (a+|b)+	abab	no-match	dot=false
 # micromatch: match  [test/extglobs.js:637]
-a[\\w]+c	a123c	no-match	dot=false
+a[\w]+c	a123c	no-match	dot=false
 # micromatch: match  [test/extglobs.js:637]
-a[\\w]+c	a1c	no-match	dot=false
+a[\w]+c	a1c	no-match	dot=false
 # micromatch: match  [test/extglobs.js:637]
-a[\\w]+c	abbbbc	no-match	dot=false
+a[\w]+c	abbbbc	no-match	dot=false
 # micromatch: match  [test/extglobs.js:637]
-a[\\w]+c	abbbc	no-match	dot=false
+a[\w]+c	abbbc	no-match	dot=false
 # micromatch: match  [test/extglobs.js:637]
-a[\\w]+c	abbc	no-match	dot=false
+a[\w]+c	abbc	no-match	dot=false
 # micromatch: match  [test/extglobs.js:637]
-a[\\w]+c	abc	no-match	dot=false
+a[\w]+c	abc	no-match	dot=false
 # micromatch: match  [test/extglobs.js:637]
-a[\\w]+c	axyzc	no-match	dot=false
+a[\w]+c	axyzc	no-match	dot=false
 # micromatch: match  [test/extglobs.js:638]
-a[\\W]+c	a c	no-match	dot=false
+a[\W]+c	a c	no-match	dot=false
 # micromatch: match  [test/extglobs.js:638]
-a[\\W]+c	a.c	no-match	dot=false
+a[\W]+c	a.c	no-match	dot=false
 # micromatch: match  [test/extglobs.js:639]
-a[\\d]+c	a123c	no-match	dot=false
+a[\d]+c	a123c	no-match	dot=false
 # micromatch: match  [test/extglobs.js:639]
-a[\\d]+c	a1c	no-match	dot=false
+a[\d]+c	a1c	no-match	dot=false
 # micromatch: match  [test/extglobs.js:640]
-[\\d]+	123	no-match	dot=false
+[\d]+	123	no-match	dot=false
 # micromatch: match  [test/extglobs.js:641]
-a[\\D]+c	abbbc	no-match	dot=false
+a[\D]+c	abbbc	no-match	dot=false
 # micromatch: match  [test/extglobs.js:642]
-(f|o)+\\b	foo	no-match	dot=false
+(f|o)+\b	foo	no-match	dot=false
 # micromatch: match  [test/regex-features.js:16]
-(*)/(\\1)+/(\\1)+/(\\1)+	1/11/111/1111	no-match	dot=false
+(*)/(\1)+/(\1)+/(\1)+	1/11/111/1111	no-match	dot=false
 # micromatch: no-match  [test/regex-features.js:105]
 ![a-b]+.[a-b]+	a.a	match	dot=false
 # micromatch: no-match  [test/regex-features.js:106]
@@ -141,31 +141,31 @@ a[\\D]+c	abbbc	no-match	dot=false
 # micromatch: no-match  [test/regex-features.js:110]
 ![a-b]+.[a-b]+	a.bb	match	dot=false
 # micromatch: match  [test/special-characters.js:36]
-a(\\w)+c	a1c	no-match	dot=false
+a(\w)+c	a1c	no-match	dot=false
 # micromatch: match  [test/special-characters.js:36]
-a(\\w)+c	a123c	no-match	dot=false
+a(\w)+c	a123c	no-match	dot=false
 # micromatch: match  [test/special-characters.js:36]
-a(\\w)+c	abbbbc	no-match	dot=false
+a(\w)+c	abbbbc	no-match	dot=false
 # micromatch: match  [test/special-characters.js:36]
-a(\\w)+c	abbbc	no-match	dot=false
+a(\w)+c	abbbc	no-match	dot=false
 # micromatch: match  [test/special-characters.js:36]
-a(\\w)+c	abbc	no-match	dot=false
+a(\w)+c	abbc	no-match	dot=false
 # micromatch: match  [test/special-characters.js:36]
-a(\\w)+c	abc	no-match	dot=false
+a(\w)+c	abc	no-match	dot=false
 # micromatch: match  [test/special-characters.js:36]
-a(\\w)+c	axyzc	no-match	dot=false
+a(\w)+c	axyzc	no-match	dot=false
 # micromatch: match  [test/special-characters.js:37]
-a(\\W)+c	a c	no-match	dot=false
+a(\W)+c	a c	no-match	dot=false
 # micromatch: match  [test/special-characters.js:37]
-a(\\W)+c	a.c	no-match	dot=false
+a(\W)+c	a.c	no-match	dot=false
 # micromatch: match  [test/special-characters.js:38]
-a(\\d)+c	a1c	no-match	dot=false
+a(\d)+c	a1c	no-match	dot=false
 # micromatch: match  [test/special-characters.js:38]
-a(\\d)+c	a123c	no-match	dot=false
+a(\d)+c	a123c	no-match	dot=false
 # micromatch: match  [test/special-characters.js:39]
-(\\d)+	123	no-match	dot=false
+(\d)+	123	no-match	dot=false
 # micromatch: match  [test/special-characters.js:40]
-a(\\D)+c	abbbc	no-match	dot=false
+a(\D)+c	abbbc	no-match	dot=false
 
 ## micromatch.diff.regex-syntax
 # Regex syntax in the pattern (69 rows)
@@ -259,21 +259,21 @@ a/(a|b|c)	a/c	no-match	dot=false
 # micromatch: match  [test/extglobs-minimatch.js:2294]
 (foo)bb	foobb	no-match	dot=false
 # micromatch: match  [test/extglobs.js:605]
-a\\(b	a\\(b	no-match	dot=false
+a\(b	a\(b	no-match	dot=false
 # micromatch: match  [test/extglobs.js:609]
-a\\\\(b	a\\\\(b	no-match	dot=false
+a\\(b	a\\(b	no-match	dot=false
 # micromatch: no-match  [test/extglobs.js:611]
-a\\\\(b	a\\(b	match	dot=false
+a\\(b	a\(b	match	dot=false
 # micromatch: match  [test/extglobs.js:1506]
 [1-6]([0-9])	12	no-match	dot=false
 # micromatch: match  [test/regex-features.js:13]
-(*)/\\1	1/1	no-match	dot=false
+(*)/\1	1/1	no-match	dot=false
 # micromatch: match  [test/regex-features.js:14]
-(*)/\\1/\\1/\\1	1/1/1/1	no-match	dot=false
+(*)/\1/\1/\1	1/1/1/1	no-match	dot=false
 # micromatch: match  [test/regex-features.js:20]
-(*)/\\1/(*)/\\2	1/1/1/1	no-match	dot=false
+(*)/\1/(*)/\2	1/1/1/1	no-match	dot=false
 # micromatch: match  [test/regex-features.js:23]
-(*)/\\1/(*)/\\2	1/1/2/2	no-match	dot=false
+(*)/\1/(*)/\2	1/1/2/2	no-match	dot=false
 # micromatch: match  [test/regex-features.js:135]
 a/??/?/(dd)/e.md	a/bb/c/dd/e.md	no-match	dot=false
 # micromatch: match  [test/regex-features.js:136]
@@ -327,7 +327,7 @@ a/[2015-03-10T00:23:08.647Z]/z	a/b/.x/c	err:InvalidRange	dot=false
 # An unclosed `{` is a parse error (GLOB_SPEC §6.4); the library keeps the
 # brace as literal text.
 # micromatch: no-match  [test/minimatch.js:37]  (and 14 more paths)
-/^root:/{s/^[^:]*:[^:]*:([^:]*).*$/\\1/	a	err:UnterminatedBrace	dot=false
+/^root:/{s/^[^:]*:[^:]*:([^:]*).*$/\1/	a	err:UnterminatedBrace	dot=false
 # micromatch: no-match  [test/minimatch.js:37]  (and 14 more paths)
 /^root:/{s/^[^:]*:[^:]*:([^:]*).*$//	a	err:UnterminatedBrace	dot=false
 
@@ -352,9 +352,9 @@ aaa[/]bbb	aaa/bbb	err:UnterminatedClass	dot=false
 # micromatch: match  [test/minimatch.js:37]  (and 1 more path)
 [!a*	[!ab	err:UnterminatedClass	dot=false
 # micromatch: match  [test/special-characters.js:51]
-[\\\\/]	\\	err:UnterminatedClass	dot=false
+[\\/]	\	err:UnterminatedClass	dot=false
 # micromatch: match  [test/special-characters.js:52]  (and 2 more paths)
-[\\\\/]+	\\	err:UnterminatedClass	dot=false
+[\\/]+	\	err:UnterminatedClass	dot=false
 
 ## micromatch.diff.trailing-slash
 # A trailing `/` (9 rows)
@@ -386,21 +386,21 @@ a/**/**/**/*	a/	match	dot=false
 # and a path is never unescaped. The library gives some escapes another
 # meaning (`\b`, `\w`), keeps the backslash, or unescapes the path.
 # micromatch: no-match  [test/bash.js:70]
-a[\\b]c	abc	match	dot=false
+a[\b]c	abc	match	dot=false
 # micromatch: match  [test/bash.js:178]
-f\\oo	f\\oo	no-match	dot=false
+f\oo	f\oo	no-match	dot=false
 # micromatch: match  [test/extglobs-minimatch.js:638]
-a\\\\z	a\\\\z	no-match	dot=false
+a\\z	a\\z	no-match	dot=false
 # micromatch: no-match  [test/extglobs-minimatch.js:934]
-\\a\\b\\c	abc	match	dot=false
+\a\b\c	abc	match	dot=false
 # micromatch: match  [test/extglobs.js:606]
-a\\b	a\\b	no-match	dot=false
+a\b	a\b	no-match	dot=false
 # micromatch: no-match  [test/extglobs.js:617]
-a\\b	ab	match	dot=false
+a\b	ab	match	dot=false
 # micromatch: no-match  [test/minimatch.js:37]
-a\\*b/*	a*b/	match	dot=false
+a\*b/*	a*b/	match	dot=false
 # micromatch: no-match  [test/minimatch.js:37]
-a\\*?/*	a*b/	match	dot=false
+a\*?/*	a*b/	match	dot=false
 
 ## micromatch.diff.dot-segment
 # A `.` or `..` segment (4 rows)
@@ -435,9 +435,9 @@ a/.*/b	a/../b	match	dot=false
 # A `\` at the end escapes nothing and is refused (GLOB_SPEC §4.1); the
 # library drops it or keeps it as a literal backslash.
 # micromatch: no-match  [test/bash.js:115]  (and 1 more path)
-\\		err:TrailingBackslash	dot=false
+\		err:TrailingBackslash	dot=false
 # micromatch: match  [test/bash.js:121]
-[A-Z]+/\\	XXX/\\	err:TrailingBackslash	dot=false
+[A-Z]+/\	XXX/\	err:TrailingBackslash	dot=false
 
 ## micromatch.diff.brace-range
 # A `{a..z}` range (3 rows)
@@ -476,4 +476,4 @@ a [b] c	a [b] c	no-match	dot=false
 # `\/` is refused: a separator has no literal form (GLOB_SPEC §4.2). The
 # library reads it as a plain `/`.
 # micromatch: match  [test/special-characters.js:80]
-D:\\/\\/*	D://foo	err:EscapedSeparator	dot=false
+D:\/\/*	D://foo	err:EscapedSeparator	dot=false

@@ -85,22 +85,9 @@ const SINGLE_FILES = [
 
 // ── shared helpers ──────────────────────────────────────────────────
 
-function unescape(s) {
-  let out = "";
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === "\\" && i + 1 < s.length) {
-      const n = s[i + 1];
-      if (n === "\\") out += "\\";
-      else if (n === "t") out += "\t";
-      else if (n === "n") out += "\n";
-      else out += "\\" + n;
-      i++;
-    } else {
-      out += s[i];
-    }
-  }
-  return out;
-}
+// A field as it is, except that a tab is `⇥` and a newline `⏎`, which a
+// tab-separated line cannot hold.
+const decode = (s) => s.replaceAll("⇥", "\t").replaceAll("⏎", "\n");
 
 // The flags column: `dot=` and `case_insensitive=`, each `true` or
 // `false`; anything else is a typo and stops the run.
@@ -169,7 +156,7 @@ function rowsOf(file, defaultDot) {
       cols.length >= 4
         ? parseFlags(cols[3], defaultDot, at)
         : { dot: defaultDot, caseInsensitive: false };
-    rows.push({ at, raw: cols[0], path: unescape(cols[1]), expected: cols[2], ...flags });
+    rows.push({ at, raw: cols[0], path: decode(cols[1]), expected: cols[2], ...flags });
   });
   return rows;
 }
@@ -246,7 +233,7 @@ async function runJsVerify() {
   };
   const single = lanes(
     SINGLE_FILES.flatMap((f) => rowsOf(f, true)),
-    (row) => unescape(row.raw),
+    (row) => decode(row.raw),
   );
   const multi = lanes(rowsOf("corpus/corpus-multi.txt", true), patternsOf);
 
@@ -273,7 +260,7 @@ async function runJsVerify() {
     }
     return stats;
   };
-  const dir = dirLane(rowsOf("corpus/corpus-dir.txt", false), (row) => unescape(row.raw));
+  const dir = dirLane(rowsOf("corpus/corpus-dir.txt", false), (row) => decode(row.raw));
   const multiDir = dirLane(rowsOf("corpus/corpus-multi-dir.txt", false), patternsOf);
 
   return [

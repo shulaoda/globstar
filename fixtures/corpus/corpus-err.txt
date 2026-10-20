@@ -31,7 +31,7 @@ foo[abc	-	err:UnterminatedClass
 foo[]	-	err:UnterminatedClass
 # fast-glob divergence: fast-glob tolerates `[]` as literal text (line 25
 # upstream: the "webpack" pattern). We reject at parse via POSIX first-`]`.
-\\\\/$^+?.()=!|{},[].*	-	err:UnterminatedClass
+\\/$^+?.()=!|{},[].*	-	err:UnterminatedClass
 
 ## unterminated.brace
 {	-	err:UnterminatedBrace

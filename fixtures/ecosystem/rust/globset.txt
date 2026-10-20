@@ -193,7 +193,7 @@ a[^0-9]b	a_b	match
 *hello.txt	some/path/to/hello.txt	no-match
 
 ## globset.matchpat4
-*hello.txt	some\\path\\to\\hello.txt	match
+*hello.txt	some\path\to\hello.txt	match
 
 ## globset.matchpat5
 *hello.txt	/an/absolute/path/to/hello.txt	no-match
@@ -272,28 +272,28 @@ abc/def	abc/def	match
 
 ## globset.matchslash2
 abc?def	abc/def	no-match
-abc?def	abc\\def	match
+abc?def	abc\def	match
 
 ## globset.matchslash3
 abc*def	abc/def	no-match
 
 ## globset.matchslash5
-abc\\def	abc/def	no-match
+abc\def	abc/def	no-match
 
 ## globset.matchbackslash1
-\\[	[	match
+\[	[	match
 
 ## globset.matchbackslash2
-\\?	?	match
+\?	?	match
 
 ## globset.matchbackslash3
-\\*	*	match
+\*	*	match
 
 ## globset.matchbackslash7
-\\a	a	match
+\a	a	match
 
 ## globset.matchbackslash8
-\\a	/a	no-match
+\a	/a	no-match
 
 ## globset.matchnot1
 a*b*c	abcd	no-match

@@ -46,10 +46,10 @@ a/[金銀]/**	a/銅/file.ext	no-match
 a/[金銀]/**	a/b/file.ext	no-match
 
 ## wax.match_glob_with_literal_escaped_class
-a/[\\[\\]\\-]/**	a/[/file.ext	match
-a/[\\[\\]\\-]/**	a/]/file.ext	match
-a/[\\[\\]\\-]/**	a/-/file.ext	match
-a/[\\[\\]\\-]/**	a/b/file.ext	no-match
+a/[\[\]\-]/**	a/[/file.ext	match
+a/[\[\]\-]/**	a/]/file.ext	match
+a/[\[\]\-]/**	a/-/file.ext	match
+a/[\[\]\-]/**	a/b/file.ext	no-match
 
 ## wax.match_glob_with_negated_class
 a[!b0-4]c	a-c	match
@@ -108,4 +108,4 @@ log<-<[0-9]:3>:1,2>.txt	log-123-456-789.txt	no-match
 (?-i)photos/**/*.(?i){jpg,jpeg}	Photos/flower.jpeg	no-match
 
 ## wax.match_glob_with_literal_escaped_flag
-a\\(b\\)	a(b)	match
+a\(b\)	a(b)	match

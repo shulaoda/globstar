@@ -241,7 +241,10 @@ const JS_ANSWER = {
     ),
 };
 
-const esc = (s) => s.replaceAll("\\", "\\\\").replaceAll("\t", "\\t").replaceAll("\n", "\\n");
+// The probe's wire escapes.
+const wire = (s) => s.replaceAll("\\", "\\\\").replaceAll("\t", "\\t").replaceAll("\n", "\\n");
+// A corpus field: as it is, except a tab is `⇥` and a newline `⏎`.
+const esc = (s) => s.replaceAll("\t", "⇥").replaceAll("\n", "⏎");
 
 function rustAnswers(rows) {
   execFileSync("cargo", ["build", "-q", "--release", "-p", "ecosystem"], {
@@ -250,7 +253,7 @@ function rustAnswers(rows) {
   });
   const input =
     rows
-      .map((r) => `${r.dot ? 1 : 0}${r.ci ? 1 : 0}\t${esc(r.pattern)}\t${esc(r.path)}`)
+      .map((r) => `${r.dot ? 1 : 0}${r.ci ? 1 : 0}\t${wire(r.pattern)}\t${wire(r.path)}`)
       .join("\n") + "\n";
   const res = spawnSync(join(ROOT, "target/release/ecosystem-probe"), {
     input,
@@ -358,6 +361,7 @@ const flagsOf = (row) => {
 };
 const tsv = (row) =>
   `${esc(row.pattern)}\t${esc(row.path)}\t${row.answers.globstar}${flagsOf(row)}`;
+
 // The upstream test's name as a section id, cut at a word past 60 chars.
 function groupId(title) {
   const id = title

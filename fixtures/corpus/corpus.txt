@@ -496,15 +496,15 @@ x=y	x=y	match
 # platform-dependent: on Unix `\` ∉ Seps (regular byte), on Windows
 # `\` ∈ Seps and classes are segment-local (§8.2). Platform-specific
 # rows live in corpus-windows.txt / corpus-unix.txt.
-[\\\\]	/	no-match
-[\\\\]	a	no-match
-[\\\\a]	a	match
-[\\\\a]	b	no-match
+[\\]	/	no-match
+[\\]	a	no-match
+[\\a]	a	match
+[\\a]	b	no-match
 # Negated class with explicit `\` in items — both platforms agree:
 # `\` is excluded (Unix: items.has(\)=T, !T=F; Windows: Seps short-circuit).
-[^\\\\]	\\	no-match
-[^\\\\]	a	match
-[^\\\\]	/	no-match
+[^\\]	\	no-match
+[^\\]	a	match
+[^\\]	/	no-match
 # Negated class without `\` in items — rows with non-sep paths are
 # cross-platform; the `\` path is platform-dep and lives in the
 # per-platform corpus files.

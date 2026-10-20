@@ -28,7 +28,7 @@ src/**/*.{js,ts	src/app.js	err:UnterminatedBrace
 # after that is a parse error. The library accepts the pattern, as literal
 # text or with the class crossing `/`; its answer is the row's comment.
 # fast-glob: no-match  [tests/test.rs:50]
-\\\\/$^+?.()=!|{},[].*	\\/$^+?.()=!|{},[].*	err:UnterminatedClass
+\\/$^+?.()=!|{},[].*	\/$^+?.()=!|{},[].*	err:UnterminatedClass
 # fast-glob: no-match  [tests/test.rs:710]
 foo[/]bar	foo/bar	err:UnterminatedClass
 # fast-glob: no-match  [tests/test.rs:717]
@@ -54,11 +54,11 @@ src/[abpp.js	src/app.js	err:UnterminatedClass
 # A `\` at the end escapes nothing and is refused (GLOB_SPEC §4.1); the
 # library drops it or keeps it as a literal backslash.
 # fast-glob: no-match  [tests/test.rs:1827]
-src/app.js\\	src/app.js	err:TrailingBackslash
+src/app.js\	src/app.js	err:TrailingBackslash
 # fast-glob: no-match  [tests/test.rs:1828]
-!src/app.js\\	src/app.js	err:TrailingBackslash
+!src/app.js\	src/app.js	err:TrailingBackslash
 # fast-glob: no-match  [tests/test.rs:1836]
-!abc\\	xyz	err:TrailingBackslash
+!abc\	xyz	err:TrailingBackslash
 
 ## fast-glob.diff.backslash
 # A backslash in the pattern (1 row)
@@ -66,4 +66,4 @@ src/app.js\\	src/app.js	err:TrailingBackslash
 # and a path is never unescaped. The library gives some escapes another
 # meaning (`\b`, `\w`), keeps the backslash, or unescapes the path.
 # fast-glob: no-match  [tests/test.rs:597]
-a[\\b]c	abc	match
+a[\b]c	abc	match

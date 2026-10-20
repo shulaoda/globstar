@@ -17,13 +17,13 @@
 # minimatch: no-match  [test/patterns.js#131]  (and 12 more paths)
 a/[2015-03-10T00:23:08.647Z]/z	a/b/.x/c	err:InvalidRange	dot=false
 # minimatch: no-match  [test/patterns.js#132]  (and 12 more paths)
-a/[2015-03-10T00:23:08.647Z\\]/z	a/b/.x/c	err:InvalidRange	dot=false
+a/[2015-03-10T00:23:08.647Z\]/z	a/b/.x/c	err:InvalidRange	dot=false
 # minimatch: no-match  [test/patterns.js#133]  (and 12 more paths)
 [a-0][a-Ā]	a/b/.x/c	err:InvalidRange	dot=false
 # minimatch: no-match  [test/patterns.js#137]  (and 12 more paths)
-[\\z-a]	a/b/.x/c	err:InvalidRange	dot=false
+[\z-a]	a/b/.x/c	err:InvalidRange	dot=false
 # minimatch: no-match  [test/patterns.js#138]  (and 12 more paths)
-[\\b-a]	a/b/.x/c	err:InvalidRange	dot=false
+[\b-a]	a/b/.x/c	err:InvalidRange	dot=false
 # minimatch: no-match  [test/patterns.js#205]  (and 4 more paths)
 [a-[:alpha:]*]	åéîøü	err:InvalidRange	dot=false
 # minimatch: no-match  [test/patterns.js#206]  (and 4 more paths)
@@ -42,7 +42,7 @@ a/[2015-03-10T00:23:08.647Z\\]/z	a/b/.x/c	err:InvalidRange	dot=false
 # An unclosed `{` is a parse error (GLOB_SPEC §6.4); the library keeps the
 # brace as literal text.
 # minimatch: no-match  [test/patterns.js#16]  (and 14 more paths)
-/^root:/{s/^[^:]*:[^:]*:([^:]*).*$/\\1/	a	err:UnterminatedBrace	dot=false
+/^root:/{s/^[^:]*:[^:]*:([^:]*).*$/\1/	a	err:UnterminatedBrace	dot=false
 # minimatch: no-match  [test/patterns.js#17]  (and 14 more paths)
 /^root:/{s/^[^:]*:[^:]*:([^:]*).*$//	a	err:UnterminatedBrace	dot=false
 
@@ -119,9 +119,9 @@ a/.*/b	a/../b	match	dot=false
 # and a path is never unescaped. The library gives some escapes another
 # meaning (`\b`, `\w`), keeps the backslash, or unescapes the path.
 # minimatch: no-match  [test/patterns.js#27]
-a\\*b/*	a*b/	match	dot=false
+a\*b/*	a*b/	match	dot=false
 # minimatch: no-match  [test/patterns.js#28]
-a\\*?/*	a*b/	match	dot=false
+a\*?/*	a*b/	match	dot=false
 
 ## minimatch.diff.non-ascii-case
 # Case folding beyond ASCII (2 rows)
@@ -151,4 +151,4 @@ a\\*?/*	a*b/	match	dot=false
 # A `\` at the end escapes nothing and is refused (GLOB_SPEC §4.1); the
 # library drops it or keeps it as a literal backslash.
 # minimatch: match  [test/patterns.js#59]
-\\	\\	err:TrailingBackslash	dot=false
+\	\	err:TrailingBackslash	dot=false

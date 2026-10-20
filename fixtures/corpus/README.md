@@ -49,17 +49,12 @@ an answer is a failure, and a short row, an unknown EXPECTED word or an
 unknown flag stops the run, in both runners (`crates/globstar/tests/corpus.rs`,
 `scripts/verify.mjs`).
 
-### Escape rules
+### Fields are written as they are
 
-Inside the PATTERN and PATH fields the following escapes are recognized:
-
-- `\\` → literal `\`
-- `\t` → tab
-- `\n` → newline
-- every other byte is taken literally
-
-This lets a pattern embed `\\*` (an escaped star, matching a literal `*`)
-without colliding with the TSV tab separator.
+A PATTERN or PATH field holds its bytes as they are: a `\` in the file is
+a `\` in the pattern, so `\*` is an escaped star. The only two bytes a
+tab-separated line cannot hold are written as symbols: a tab is `⇥` and a
+newline `⏎`.
 
 **Empty fields**: two consecutive tabs denote the empty string. For
 example, `*<TAB><TAB>match` is "pattern `*` matches the empty path".

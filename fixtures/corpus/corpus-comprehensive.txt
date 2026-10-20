@@ -401,9 +401,9 @@ file[!0-9].txt	file_.txt	match
 ## class.edge.spaces_in_class
 [ ]	 	match
 [ ]	a	no-match
-[ \t]	 	match
-[ \t]	\t	match
-[ \t]	a	no-match
+[ ⇥]	 	match
+[ ⇥]	⇥	match
+[ ⇥]	a	no-match
 
 # ----------------------------------------------------------------------------
 # globstar.leading — `**/foo`, `**/foo/bar`, `**/.config`
@@ -1071,14 +1071,14 @@ foo	x	no-match
 {x,\*}	x	match
 
 ## edge.tab_in_pattern_and_path
-foo\tbar	foo\tbar	match
-foo\tbar	foobar	no-match
-foo\tbar	foo bar	no-match
+foo⇥bar	foo⇥bar	match
+foo⇥bar	foobar	no-match
+foo⇥bar	foo bar	no-match
 
 ## edge.newline_in_pattern_and_path
-foo\nbar	foo\nbar	match
-foo\nbar	foobar	no-match
-foo\nbar	foo/bar	no-match
+foo⏎bar	foo⏎bar	match
+foo⏎bar	foobar	no-match
+foo⏎bar	foo/bar	no-match
 
 # ----------------------------------------------------------------------------
 # combos — interactions between multiple features in single patterns

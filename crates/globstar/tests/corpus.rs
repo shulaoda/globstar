@@ -147,28 +147,10 @@ fn finish(corpus: &str, stats: &[(&str, &Stats)]) {
     }
 }
 
-fn unescape(s: &str) -> Vec<u8> {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            match bytes[i + 1] {
-                b'\\' => out.push(b'\\'),
-                b't' => out.push(b'\t'),
-                b'n' => out.push(b'\n'),
-                c => {
-                    out.push(b'\\');
-                    out.push(c);
-                }
-            }
-            i += 2;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    out
+/// A field as bytes: written as it is, except that a tab is `⇥` and a
+/// newline `⏎`, which a tab-separated line cannot hold.
+fn decode(s: &str) -> Vec<u8> {
+    s.replace('⇥', "\t").replace('⏎', "\n").into_bytes()
 }
 
 /// The flags column: `dot=` and `case_insensitive=`, each `true` or
@@ -227,7 +209,7 @@ fn rows_of(file: &str, default_dot: bool) -> Vec<Cols> {
         };
         rows.push(Cols {
             pattern: cols[0].to_string(),
-            path: unescape(cols[1]),
+            path: decode(cols[1]),
             expected: cols[2].to_string(),
             dot,
             case_insensitive,
@@ -240,7 +222,7 @@ fn rows_of(file: &str, default_dot: bool) -> Vec<Cols> {
 impl Cols {
     /// The pattern column as text.
     fn pattern(&self) -> String {
-        String::from_utf8(unescape(&self.pattern))
+        String::from_utf8(decode(&self.pattern))
             .unwrap_or_else(|_| panic!("{}: pattern is not UTF-8", self.at))
     }
 
