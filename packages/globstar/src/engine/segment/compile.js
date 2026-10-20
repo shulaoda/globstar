@@ -40,7 +40,7 @@ import {
   NEVER_LEN,
   exact,
 } from "./elem.js";
-import { compileSegNfa } from "./seg-nfa.js";
+import { compileSegNfa, nfaTableBytes } from "./seg-nfa.js";
 import { GlobError } from "../../error.js";
 
 // Successor marker for "the pattern ends here".
@@ -161,12 +161,27 @@ function buildGraph(body, dot, ci) {
 }
 
 // The work the graph walk may take: 64 units per unit of pattern weight
-// (`nodeWeight`), and never less than 2^20. Patterns of ordinary shape
-// need one to three per unit; only a shape whose segments multiply
-// (`a{a,/}` repeated, one node per pair of braces) reaches it, and it
-// fails before it costs much.
+// (`nodeWeight`), and never less than 2^20. A unit is a node, an edge, a
+// copied token, or a byte of the tables a wildcard segment builds
+// (`tableBytes`). Patterns of ordinary shape need one to three per
+// unit; only a shape whose segments multiply (`a{a,/}` repeated, one
+// node per pair of braces) reaches it, and it fails before it costs
+// much.
 const BUDGET_PER_WEIGHT = 64;
 const MIN_BUDGET = 1 << 20;
+
+// What the wild's tables take, in the bytes the Rust tables take, so
+// both runtimes refuse the same patterns: a set's suffixes (one byte
+// more each), an NFA's states and kept closures. The walk charges it,
+// so a brace pattern whose segments multiply cannot keep big tables in
+// each of them (TooComplex).
+function tableBytes(w) {
+  if (w.kind === WK_AFFIX) return 0;
+  if (w.kind === WK_GENERIC) return nfaTableBytes(w.nfa.kinds.length);
+  let bytes = 0;
+  for (const s of w.suffixSetStr) bytes += s.length + 1;
+  return bytes;
+}
 
 function tooComplex(max) {
   throw new GlobError("TooComplex", { max });
@@ -322,9 +337,10 @@ class Builder {
     // also an index by key.
     this.memo = [];
     this.memoIndex = null;
-    // The walk's work so far: nodes and their edges, and the groups it
-    // copied and closed by their cost and weight. Past `budget` the walk
-    // stops and the pattern is too complex.
+    // The walk's work so far: nodes and their edges, the groups it
+    // copied and closed by their cost and weight, and the tables its
+    // wildcard segments built. Past `budget` the walk stops and the
+    // pattern is too complex.
     this.cost = 0;
     this.budget = budget;
     this.dot = dot;
@@ -497,6 +513,9 @@ class Builder {
     for (const g of groups) dedupeTails(g);
   }
 
+  // The element of a closed segment. A wildcard's tables are charged to
+  // the walk: a brace pattern whose segments multiply fails early
+  // instead of keeping big tables in each of them.
   close(buf) {
     // An escaped `\` on Windows: no segment holds a separator, so a
     // segment with one is a silent miss (§4.2), kept as a wildcard that
@@ -505,7 +524,11 @@ class Builder {
       return makeElem(EL_WILD, null, makeWild(WK_AFFIX, { minLen: NEVER_LEN, variable: false }));
     }
     for (const n of buf) {
-      if (n.tag !== N_LITERAL) return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
+      if (n.tag !== N_LITERAL) {
+        const wild = compileWild(buf, this.dot, this.ci);
+        this.cost += tableBytes(wild);
+        return makeElem(EL_WILD, null, wild);
+      }
     }
     // Empty, one literal, or literals glued across a brace edge.
     return makeElem(EL_LIT, concatLits(buf, 0, buf.length), null);

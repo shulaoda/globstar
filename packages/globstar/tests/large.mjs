@@ -283,6 +283,9 @@ for (const [pattern, path] of [
     lists(2048),
     "{**,a}/".repeat(8192) + "x",
     "{a/,}".repeat(8192),
+    // Segments with big tables (suffix products, NFAs): charged too.
+    "{a,b,/}".repeat(96),
+    "{a,b,c,d,e,f,g,h,/}".repeat(3421),
   ]) {
     const start = performance.now();
     assert.throws(() => compileMatcher(pattern), { kind: "TooComplex" });

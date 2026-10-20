@@ -33,6 +33,14 @@ const UNSET = -1;
 // the step goes wins and keeps memory linear.
 const MAX_CLOSURE_BYTES = 128 * 1024;
 
+// The bytes `states` NFA states take in the Rust twin (16 each), with
+// their closures while those are kept: what the compile walk charges
+// for a segment's NFA (`tableBytes` in compile.js).
+export function nfaTableBytes(states) {
+  const closures = states * Math.ceil(states / 64) * 8;
+  return states * 16 + (closures <= MAX_CLOSURE_BYTES ? closures : 0);
+}
+
 // The segment's NFA and what the graph reads off it, as `makeWild`
 // fields: one that accepts nothing gets NEVER_LEN, and it is
 // dot-protected when nothing that may take a protected leading `.` (a

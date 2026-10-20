@@ -27,10 +27,12 @@ const ACCEPT: u32 = u32::MAX;
 const START: u32 = u32::MAX;
 
 /// The work the graph walk may take: 64 units per unit of pattern
-/// weight (`node_weight`), and never less than 2^20. Patterns of ordinary
-/// shape need one to three per unit; only a shape whose segments
-/// multiply (`a{a,/}` repeated, one node per pair of braces) reaches
-/// it, and it fails before it costs much.
+/// weight (`node_weight`), and never less than 2^20. A unit is a node,
+/// an edge, a copied token, or a byte of the tables a wildcard segment
+/// builds (`Wild::table_bytes`). Patterns of ordinary shape need one to
+/// three per unit; only a shape whose segments multiply (`a{a,/}`
+/// repeated, one node per pair of braces) reaches it, and it fails
+/// before it costs much.
 const BUDGET_PER_WEIGHT: usize = 64;
 const MIN_BUDGET: usize = 1 << 20;
 
@@ -110,7 +112,8 @@ impl Graph {
                 }
             } else {
                 b.cost += g.weight;
-                let id = b.emit(b.close(&g.buf), &g.tails);
+                let elem = b.close(&g.buf);
+                let id = b.emit(elem, &g.tails);
                 b.end_after(id);
             }
         }
@@ -515,9 +518,10 @@ struct Builder {
     pred_at: Vec<u32>,
     ends: Vec<u32>,
     memo: HashMap<u64, u32, BuildHasherDefault<Fnv>>,
-    /// The walk's work so far: nodes and their edges, and the groups it
-    /// copied and closed by their `cost` and weight. Past `budget` the
-    /// walk stops and the pattern is too complex.
+    /// The walk's work so far: nodes and their edges, the groups it
+    /// copied and closed by their `cost` and weight, and the tables its
+    /// wildcard segments built. Past `budget` the walk stops and the
+    /// pattern is too complex.
     cost: usize,
     budget: usize,
     dot: bool,
@@ -808,7 +812,10 @@ impl Builder {
         }
     }
 
-    fn close(&self, buf: &[&Node]) -> Elem {
+    /// The element of a closed segment. A wildcard's tables are charged
+    /// to the walk: a brace pattern whose segments multiply fails early
+    /// instead of keeping big tables in each of them.
+    fn close(&mut self, buf: &[&Node]) -> Elem {
         // An escaped `\` on Windows: no segment holds a separator, so a
         // segment with one is a silent miss (§4.2), kept as a wildcard
         // that wants more bytes than any segment has.
@@ -825,7 +832,9 @@ impl Builder {
             });
         }
         if !buf.iter().all(|node| matches!(node, Node::Literal(_))) {
-            return Elem::Wild(compile_wild(buf, self.dot, self.ci));
+            let wild = compile_wild(buf, self.dot, self.ci);
+            self.cost += wild.table_bytes();
+            return Elem::Wild(wild);
         }
         // Empty, one literal, or literals glued across a brace edge.
         Elem::Lit(concat_lits(buf))

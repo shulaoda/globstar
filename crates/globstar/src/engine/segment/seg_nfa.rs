@@ -110,6 +110,14 @@ impl SegNfa {
             SegNfa::Wide(n) => n.matches(seg),
         }
     }
+
+    /// The states and the kept closures, in bytes (`Wild::table_bytes`).
+    pub(super) fn table_bytes(&self) -> usize {
+        match self {
+            SegNfa::Small(n) => n.table_bytes(),
+            SegNfa::Wide(n) => n.table_bytes(),
+        }
+    }
 }
 
 /// A class as the bytes it takes, one bit each, with its negation applied
@@ -206,6 +214,10 @@ enum SegState {
 }
 
 impl<B: Bits> SegNfaImpl<B> {
+    fn table_bytes(&self) -> usize {
+        self.states.len() * size_of::<SegState>() + self.closures.len() * self.words * 8
+    }
+
     #[inline]
     fn matches(&self, seg: &[u8]) -> bool {
         // Under dot=true the blocked closure equals `init`, so the compile

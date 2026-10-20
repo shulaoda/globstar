@@ -142,6 +142,23 @@ struct Wild {
     any_seg: bool,
 }
 
+impl Wild {
+    /// What the kind's tables take: a set's suffixes (one byte more
+    /// each), an NFA's states and kept closures. The compile walk
+    /// charges it (`GlobError::TooComplex`), so a brace pattern whose
+    /// segments multiply cannot keep big tables in each of them.
+    fn table_bytes(&self) -> usize {
+        match &self.kind {
+            WildKind::Affix(_) => 0,
+            WildKind::AffixSet(set) => set.parts[1..].iter().map(|s| s.len() + 1).sum(),
+            WildKind::AffixIndex(index) => {
+                index.suffixes.len() + index.runs.iter().map(|r| r.count as usize).sum::<usize>()
+            }
+            WildKind::Generic(nfa) => nfa.table_bytes(),
+        }
+    }
+}
+
 /// The rarer kinds are boxed so an `Elem` stays 40 bytes.
 #[derive(Debug, Clone)]
 enum WildKind {

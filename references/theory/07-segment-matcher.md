@@ -117,9 +117,10 @@ made, one finds a group by its key past the first 16 (JS scans its
 first 16 nodes before it keys them). Every pattern
 the parser accepts compiles unless its separator-crossing braces make
 its segments multiply: the walk counts its work — a unit per node and
-edge, plus each group it copies and each segment it closes by their
-size — and fails with `TooComplex` past max(2^20, 64 × the pattern's
-weight). Ordinary patterns and big unions need one to three units
+edge, each group it copies and each segment it closes by their size,
+and the tables a wildcard segment builds (its suffix list, its NFA's
+states and closures) by their bytes — and fails with `TooComplex` past
+max(2^20, 64 × the pattern's weight). Ordinary patterns and big unions need one to three units
 per weight, and a walk without a crossing brace has no budget at
 all. The other limits are the parser's — 64 KiB of pattern, 32 levels
 of brace nesting, the brace-expansion budget — and the 64-chain,

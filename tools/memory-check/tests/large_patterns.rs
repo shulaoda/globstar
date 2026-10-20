@@ -186,12 +186,16 @@ fn too_complex_patterns_fail_early() {
         lists(2048),
         "{**,a}/".repeat(8192) + "x",
         "{a/,}".repeat(8192),
+        // Segments with big tables (suffix products, NFAs): charged
+        // too, so neither shape keeps them up to the budget.
+        "{a,b,/}".repeat(96),
+        "{a,b,c,d,e,f,g,h,/}".repeat(3421),
     ] {
         let base = LIVE.load(Relaxed);
         PEAK.store(base, Relaxed);
         let err = Glob::new(&pattern).unwrap_err();
         assert!(matches!(err, GlobError::TooComplex { .. }), "{err:?}");
         let peak = PEAK.load(Relaxed) - base;
-        assert!(peak <= 32 * MB, "{}: peaks at {peak} bytes", &pattern[..16]);
+        assert!(peak <= 16 * MB, "{}: peaks at {peak} bytes", &pattern[..16]);
     }
 }
