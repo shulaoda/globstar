@@ -57,7 +57,10 @@ pub enum GlobError {
     },
     /// Compiling would take more than `max` steps of work: braces whose
     /// segments multiply (`a{a,/}` repeated many times). `max` grows with
-    /// the pattern, so every pattern of ordinary shape compiles.
+    /// the pattern, so every pattern of ordinary shape compiles. A list
+    /// given to `Glob::union` compiles as one, so this is the list's
+    /// error (never inside [`InMember`](Self::InMember)), and members
+    /// that each compile alone can fail together.
     TooComplex {
         /// The work this pattern was allowed.
         max: usize,
@@ -82,7 +85,8 @@ pub enum GlobError {
         pattern: String,
     },
     /// A member of the list given to `Glob::union` does not compile:
-    /// `error` says why, with offsets into that member.
+    /// `error` says why, with offsets into that member. A failure of the
+    /// list as a whole ([`TooComplex`](Self::TooComplex)) is not wrapped.
     InMember {
         /// The member's position in the list, counting every member given.
         index: usize,

@@ -318,7 +318,7 @@ Three bounds keep compilation linear in practice. Each is a resource guard, not 
 
 ### 6.3 Reference error types
 
-`at` is a byte offset into the UTF-8 pattern (for `InvalidRange`, where the range starts). An error that one member of a pattern list raises names the member by its position in the list, counting every member given: Rust wraps it in `InMember`, JS adds `index` and keeps the member's `kind`.
+`at` is a byte offset into the UTF-8 pattern (for `InvalidRange`, where the range starts). An error that one member of a pattern list raises names the member by its position in the list, counting every member given: Rust wraps it in `InMember`, JS adds `index` and keeps the member's `kind`. A `TooComplex` is raised by the list as a whole, which compiles as one pattern (§16.1), and names no member.
 
 ```rust
 // Rust
@@ -865,7 +865,7 @@ function compileMatcher(patterns: string | Iterable<string>, opts?: GlobstarOpti
 union.is_match(path) ≡ ∃ g ∈ members.  g.is_match(path)
 ```
 
-A union answers the boolean questions only (`is_match`, `match_dir`, `static_prefixes`); which member matched is not part of the API. An empty list is `EmptyPatternSet` (§6). A pattern given twice counts once. All members share one expansion budget (§6.2), and an error one member raises names the member (§6.3).
+A union answers the boolean questions only (`is_match`, `match_dir`, `static_prefixes`); which member matched is not part of the API. An empty list is `EmptyPatternSet` (§6). A pattern given twice counts once. All members share one expansion budget and, compiled as one pattern, one bound on compile work (§6.2): members that each compile alone can fail together with `TooComplex`. An error one member raises names the member; `TooComplex` names none (§6.3).
 
 Negated members differ by language. Rust rejects them (`NegatedInUnion`, §6). JS accepts them, and each contributes its complement to the OR: `["src/**", "!**/*.test.ts"]` matches `lib/a.ts`, because the second member does. A `!` member never subtracts from the others; include/exclude filtering belongs to the walker (WALKER_SPEC.md §4).
 

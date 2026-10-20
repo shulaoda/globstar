@@ -92,7 +92,7 @@ try {
 }
 ```
 
-A pattern or path that is not a string throws a plain `TypeError`, not a `GlobError`. This is the only thing `match()` can throw.
+A pattern or path that is not a string throws a plain `TypeError`, not a `GlobError`. This is the only thing `match()` can throw, short of a non-ASCII path too long for the runtime to hold as bytes (hundreds of megabytes), which fails with the runtime's own error.
 
 ## Catching errors in Rust
 

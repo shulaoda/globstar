@@ -171,6 +171,16 @@ console.log("✓ matcher options are checked");
   assert.equal(member.at, 4);
   assert.ok(member.message.startsWith("pattern 2: "), member.message);
   assert.equal(thrown(() => compileMatcher("lib/[a")).index, undefined);
+  // A `TooComplex` is the list's own: the list compiles as one pattern,
+  // so it names no member, and members that each compile alone can fail
+  // together. Twin of `members_share_one_compile_work_bound`.
+  const heavy = "{a,b,/}".repeat(100);
+  const whole = thrown(() => compileMatcher(["a", heavy]));
+  assert.equal(whole.kind, "TooComplex");
+  assert.equal(whole.index, undefined);
+  const each = "{a,b,/}".repeat(30);
+  compileMatcher(each);
+  assert.equal(thrown(() => compileMatcher([each, `x/${each}`])).kind, "TooComplex");
   const range = thrown(() => compileMatcher("src/[abcz-a].ts"));
   assert.equal(range.at, 8);
   const json = JSON.parse(JSON.stringify(range));

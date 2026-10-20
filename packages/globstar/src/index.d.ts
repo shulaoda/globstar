@@ -42,9 +42,11 @@ export interface GlobstarOptions {
  * notTest("a.test.ts");     // false
  * ```
  *
- * Throws a {@link GlobError} if any pattern fails to compile, and a
- * `TypeError` if a pattern is not a string or holds a lone surrogate, or
- * the options are not a plain object of known boolean flags.
+ * Throws a {@link GlobError} if any pattern fails to compile (a list
+ * member's error carries its `index`; a `TooComplex` for the list as a
+ * whole, which compiles as one, has none), and a `TypeError` if a
+ * pattern is not a string or holds a lone surrogate, or the options are
+ * not a plain object of known boolean flags.
  */
 export function globstar(
   patterns: string | Iterable<string>,
@@ -106,8 +108,10 @@ export declare const DirMatch: {
 /** Compiled pattern set returned by {@link compileMatcher}. */
 export interface Matcher {
   /**
-   * Full-path match — same predicate {@link globstar} returns.
-   * Throws a `TypeError` on non-string input.
+   * Full-path match — same predicate {@link globstar} returns. The path
+   * is matched as given: with `dot: true` the names `.` and `..` are
+   * plain bytes, so `src/**` matches `src/../secret.txt`; normalize
+   * paths from outside first. Throws a `TypeError` on non-string input.
    */
   match(input: string): boolean;
   /**
@@ -138,9 +142,11 @@ export interface Matcher {
  * traversal seeding (`staticPrefixes`) alongside the plain `match`
  * predicate. `@globstar/walk` is built on this.
  *
- * Throws a {@link GlobError} if any pattern fails to compile, and a
- * `TypeError` if a pattern is not a string or holds a lone surrogate, or
- * the options are not a plain object of known boolean flags.
+ * Throws a {@link GlobError} if any pattern fails to compile (a list
+ * member's error carries its `index`; a `TooComplex` for the list as a
+ * whole, which compiles as one, has none), and a `TypeError` if a
+ * pattern is not a string or holds a lone surrogate, or the options are
+ * not a plain object of known boolean flags.
  */
 export function compileMatcher(
   patterns: string | Iterable<string>,

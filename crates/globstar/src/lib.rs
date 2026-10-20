@@ -172,8 +172,11 @@ impl Glob {
     /// not compile with [`GlobError::InMember`], which names it by index
     /// ([`GlobError::root`] gives the error inside). A pattern given
     /// twice counts once. The members share one expansion budget
-    /// ([`GlobError::BraceExpansionTooLarge`]). The [`tier`](Self::tier)
-    /// is the highest of the members'.
+    /// ([`GlobError::BraceExpansionTooLarge`]) and, compiled as one,
+    /// one bound on compile work: a [`GlobError::TooComplex`] is the
+    /// list's, not wrapped in `InMember`, and members that each compile
+    /// alone can fail together. The [`tier`](Self::tier) is the highest
+    /// of the members'.
     pub fn union<I, S>(patterns: I) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -264,8 +267,11 @@ impl Glob {
         }
     }
 
+    /// Whole-path match against raw path bytes. The path is matched as
+    /// given: with `dot: true` the names `.` and `..` are plain bytes,
+    /// so `src/*/a.ts` matches `src/../a.ts`. Normalize paths from
+    /// outside first (GLOB_SPEC §3.1).
     #[inline]
-    /// Whole-path match against raw path bytes.
     pub fn is_match(&self, path: &[u8]) -> bool {
         let raw = match &self.engine {
             Engine::Literal(m) => m.is_match(path),

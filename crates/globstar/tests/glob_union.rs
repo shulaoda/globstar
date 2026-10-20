@@ -43,6 +43,28 @@ fn members_share_one_expansion_budget() {
 }
 
 #[test]
+fn members_share_one_compile_work_bound() {
+    // A list compiles as one pattern, so `TooComplex` is the list's:
+    // not wrapped in `InMember`, even when one member alone is to blame.
+    let heavy = "{a,b,/}".repeat(100);
+    assert!(matches!(
+        Glob::new(&heavy),
+        Err(GlobError::TooComplex { .. })
+    ));
+    assert!(matches!(
+        Glob::union(["a", heavy.as_str()]),
+        Err(GlobError::TooComplex { .. })
+    ));
+    // Members that each compile alone can fail together.
+    let member = "{a,b,/}".repeat(30);
+    assert!(Glob::new(&member).is_ok());
+    assert!(matches!(
+        Glob::union([member.as_str(), &format!("x/{member}")]),
+        Err(GlobError::TooComplex { .. })
+    ));
+}
+
+#[test]
 fn a_member_error_names_the_member() {
     use std::error::Error;
     let err = Glob::union(["src/**", "lib/**", "lib/[a"]).unwrap_err();
