@@ -1,9 +1,11 @@
 //! Multi-pattern bench: `Glob::union` against third-party baselines,
 //! mirroring JS's `matcher_multi.js`.
 //!
-//! Columns:
-//!   globstar       — `Glob::union`
-//!   globset / wax / fast_glob — third-party baselines
+//! Each library matches a set the way it offers to: globset through one
+//! `GlobSet`, wax through `wax::any` (one program over the set). The
+//! fast-glob crate has no such facility, so its column loops its
+//! single-pattern function over the set, stopping at the first hit, as a
+//! caller would.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;
@@ -36,11 +38,8 @@ fn build_globset(patterns: &[&str]) -> globset::GlobSet {
     b.build().expect("globset build")
 }
 
-fn build_wax(patterns: &[&str]) -> Vec<wax::Glob<'static>> {
-    patterns
-        .iter()
-        .map(|p| wax::Glob::new(p).expect("wax parse").into_owned())
-        .collect()
+fn build_wax<'a>(patterns: &[&'a str]) -> wax::Any<'a> {
+    wax::any(patterns.iter().copied()).expect("wax any")
 }
 
 // ---------- BUILD bench ----------
@@ -73,12 +72,7 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
         b.iter(|| black_box(build_globset(black_box(patterns)).is_match(Path::new(first))));
     });
     group.bench_function("wax", |b| {
-        b.iter(|| {
-            let any = build_wax(black_box(patterns))
-                .iter()
-                .any(|g| g.is_match(first));
-            black_box(any)
-        });
+        b.iter(|| black_box(build_wax(black_box(patterns)).is_match(first)));
     });
     group.finish();
 }
@@ -107,8 +101,7 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.bench_function("wax", |b| {
         b.iter(|| {
             for p in PATHS.iter() {
-                let any = wax_g.iter().any(|g| g.is_match(black_box(*p)));
-                black_box(any);
+                black_box(wax_g.is_match(black_box(*p)));
             }
         });
     });
@@ -137,7 +130,7 @@ fn assert_all_agree() {
             let want = union.is_match(path.as_bytes());
             for (name, got) in [
                 ("globset", gset.is_match(Path::new(path))),
-                ("wax", wax_g.iter().any(|g| g.is_match(path))),
+                ("wax", wax_g.is_match(path)),
                 (
                     "fast_glob",
                     patterns.iter().any(|pat| fg_glob_match(pat, path)),

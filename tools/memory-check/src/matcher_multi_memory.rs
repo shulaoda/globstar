@@ -1,9 +1,8 @@
 //! Multi-pattern memory comparison: globstar union (one merged matcher),
-//! globset (one GlobSet over Aho-Corasick + N regexes), wax (N
-//! independent matchers, as a user without a union API holds them).
-//! Mirrors the JS-side `matcher_multi.js`; a cell is what the matcher,
-//! or the N of them, keeps once it has matched every bench path
-//! (`counter::kept`).
+//! globset (one GlobSet over Aho-Corasick + N regexes), wax (one
+//! `wax::any` program over the set). Mirrors the JS-side
+//! `matcher_multi.js`; a cell is what the matcher keeps once it has
+//! matched every bench path (`counter::kept`).
 
 use std::hint::black_box;
 use std::path::Path;
@@ -56,15 +55,10 @@ fn main() {
         );
         let wax = kept(
             TRIALS,
-            || {
-                patterns
-                    .iter()
-                    .map(|p| wax::Glob::new(p).unwrap().into_owned())
-                    .collect::<Vec<_>>()
-            },
-            |gs| {
+            || wax::any(patterns.iter().copied()).unwrap(),
+            |g| {
                 for p in PATHS.iter() {
-                    black_box(gs.iter().any(|g| g.is_match(*p)));
+                    black_box(g.is_match(*p));
                 }
             },
         );

@@ -416,6 +416,13 @@ sections.push(`## Test corpus
 | \`ignore-list-40\` | 40 ignore entries of unlike shapes (\`fixtures/bench-ignore-list.txt\`): chains for the match, a 38-state graph NFA for \`match_dir\` (a u64 in Rust, sparse in JS) |
 | \`file-list-100\` | 100 literal files over 10 folders (\`src/<area>/mod_<i>.ts\`): past 64 chains, the graph NFA alone (dense rows in Rust, sparse in JS) |
 
+Each library matches a set the way it offers to: globstar through
+\`Glob::union\` / \`globstar(list)\`, globset through one \`GlobSet\`, wax
+through \`wax::any\`, picomatch and micromatch through their list form
+(their matcher tries the members in order and stops at the first hit).
+minimatch and the fast-glob crate have no list form, so their columns loop
+one single-pattern matcher per member the same way, as a caller would.
+
 ### Match input — ${PATHS.length} paths (identical on both runtimes)
 
 \`\`\`

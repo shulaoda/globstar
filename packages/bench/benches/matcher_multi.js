@@ -1,6 +1,6 @@
-// Multi-pattern matcher comparison: globstar (default API) vs
-// picomatch / minimatch / micromatch (per-pattern matchers OR'd at
-// runtime). Output is consumed by `scripts/bench.mjs`.
+// Multi-pattern matcher comparison: globstar's union vs picomatch /
+// minimatch / micromatch, each matching a set the way it offers to.
+// Output is consumed by `scripts/bench.mjs`.
 
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
@@ -8,12 +8,13 @@ import micro from "micromatch";
 import { globstar } from "@globstar/core";
 import { PATTERN_SETS, freshSet, matcherBench } from "./shared.js";
 
-// One matcher per pattern for the third-party libs (no native union API).
+// picomatch and micromatch take a list of patterns themselves (their
+// matcher tries the members in order and stops at the first hit).
+// minimatch has no list form, so its column loops one matcher per
+// pattern the same way, as a caller would.
 function buildPerPattern(compileSingle) {
   return (patterns) => patterns.map(compileSingle);
 }
-// Stops at the first hit, as a user's loop would (and as the Rust
-// baselines' `.any()` does).
 function runPerPattern(matchOne) {
   return (arr, s) => {
     for (let i = 0; i < arr.length; i++) {
@@ -32,13 +33,13 @@ await matcherBench(
   PATTERN_SETS,
   [
     ["globstar", (patterns) => globstar(patterns), (fn, s) => fn(s)],
-    ["picomatch", buildPerPattern((b) => pico(b, DOT)), runPerPattern((m, s) => m(s))],
+    ["picomatch", (patterns) => pico(patterns, DOT), (m, s) => m(s)],
     [
       "minimatch",
       buildPerPattern((b) => new Minimatch(b, DOT)),
       runPerPattern((m, s) => m.match(s)),
     ],
-    ["micromatch", buildPerPattern((b) => micro.matcher(b, DOT)), runPerPattern((m, s) => m(s))],
+    ["micromatch", (patterns) => micro.matcher(patterns, DOT), (m, s) => m(s)],
   ],
   freshSet,
 );
