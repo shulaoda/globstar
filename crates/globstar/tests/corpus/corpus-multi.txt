@@ -167,3 +167,14 @@
 ["**/*.log","**/*.tmp","src/**/x"]	a/.b.log	match
 ["**/*.log","**/*.tmp","src/**/x"]	src/a/x	match
 ["**/*.log","**/*.tmp","src/**/x"]	a/log	no-match
+
+## or.lifted_names_and_wildcards (a lifted `**/` taken back: a set chain and a wildcard chain)
+["**/.DS_Store","**/Thumbs.db","**/*.log"]	a/.DS_Store	match	dot=false
+["**/.DS_Store","**/Thumbs.db","**/*.log"]	x/y/Thumbs.db	match
+["**/.DS_Store","**/Thumbs.db","**/*.log"]	a/b.log	match
+["**/.DS_Store","**/Thumbs.db","**/*.log"]	a/.b.log	no-match	dot=false
+["**/.DS_Store","**/Thumbs.db","**/*.log"]	DS_Store	no-match
+["**/.DS_Store","**/Thumbs.db","**/*.log"]	a/thumbs.db	no-match
+["**/a*","**/b*"]	x/abc	match
+["**/a*","**/b*"]	b	match
+["**/a*","**/b*"]	x/c	no-match

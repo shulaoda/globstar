@@ -7,14 +7,50 @@ use crate::ast::Node;
 /// their static prefixes: `{src/**,spec/**}` stays, `s{rc,pec}/**` would
 /// not; `src/mod{1,2}/index.ts` is fine. What is left of members that
 /// differ only in the literal ending one segment is merged into one
-/// member with a brace there (`merge_segments`).
+/// member with a brace there (`merge_segments`). The members the lift
+/// leaves within one segment share a brace there, which is kept only if
+/// it is a set (literal branches, no wildcard after them in the segment)
+/// or holds no literal at all (`?` with `??*`: an in-segment NFA, whose
+/// facts are exact). A mix would be one in-segment NFA over all of them,
+/// so the tokens go back and the members stay apart.
 #[inline(never)]
 pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches.into_iter().map(Node::into_seq).collect();
     let mut out = lift_tokens(&mut seqs, true);
+    let mut suffix = lift_tokens(&mut seqs, false);
+    // The members left within one segment: how many, whether each is a
+    // literal (or nothing), whether any holds a literal.
+    let (mut single, mut literals, mut some_literal) = (0, true, false);
+    'members: for s in &seqs {
+        let mut has_literal = false;
+        for n in s {
+            match n {
+                Node::Separator => continue 'members,
+                Node::Literal(_) => has_literal = true,
+                _ => {}
+            }
+        }
+        single += 1;
+        literals &= s.len() <= 1 && (s.is_empty() || has_literal);
+        some_literal |= has_literal;
+    }
+    let a_set = literals
+        && suffix
+            .iter()
+            .take_while(|n| !matches!(n, Node::Separator))
+            .all(|n| matches!(n, Node::Literal(_)));
+    if single > 1 && !a_set && some_literal && !(out.is_empty() && suffix.is_empty()) {
+        for s in &mut seqs {
+            let mut whole = out.clone();
+            whole.append(s);
+            whole.extend(suffix.iter().cloned());
+            *s = whole;
+        }
+        out.clear();
+        suffix.clear();
+    }
     let bytes = !out.is_empty();
     let head = bytes.then(|| lift_bytes(&mut seqs, true)).flatten();
-    let mut suffix = lift_tokens(&mut seqs, false);
     let tail = bytes.then(|| lift_bytes(&mut seqs, false)).flatten();
     let lifted_wild = out.iter().chain(&suffix).any(Node::is_wildcard);
     merge_segments(&mut seqs, lifted_wild);

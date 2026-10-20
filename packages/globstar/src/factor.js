@@ -27,13 +27,42 @@ const isWildcard = (n) => n === STAR || n === GLOBSTAR || n === ANYCHAR;
 // `{src/**,spec/**}` stays, `s{rc,pec}/**` would not; `src/mod{1,2}/index.ts`
 // is fine. What is left of members that differ only in the literal ending
 // one segment is merged into one member with a brace there
-// (`mergeSegments`).
+// (`mergeSegments`). The members the lift leaves within one segment share
+// a brace there, which is kept only if it is a set (literal branches, no
+// wildcard after them in the segment) or holds no literal at all (`?` with
+// `??*`: an in-segment NFA, whose facts are exact). A mix would be one
+// in-segment NFA over all of them, so the tokens go back and the members
+// stay apart.
 export function factorBranches(branches) {
   const seqs = branches.map((n) => (n.tag === N_CONCAT ? n.children.slice() : [n]));
-  const prefix = liftTokens(seqs, true);
+  let prefix = liftTokens(seqs, true);
+  let suffix = liftTokens(seqs, false);
+  // The members left within one segment: how many, whether each is a
+  // literal (or nothing), whether any holds a literal.
+  let single = 0;
+  let literals = true;
+  let someLiteral = false;
+  members: for (const s of seqs) {
+    let hasLiteral = false;
+    for (const n of s) {
+      if (n === SEP) continue members;
+      if (n.tag === N_LITERAL) hasLiteral = true;
+    }
+    single++;
+    literals &&= s.length <= 1 && (s.length === 0 || hasLiteral);
+    someLiteral ||= hasLiteral;
+  }
+  let aSet = literals;
+  for (let i = 0; aSet && i < suffix.length && suffix[i] !== SEP; i++) {
+    aSet = suffix[i].tag === N_LITERAL;
+  }
+  if (single > 1 && !aSet && someLiteral && (prefix.length > 0 || suffix.length > 0)) {
+    for (let i = 0; i < seqs.length; i++) seqs[i] = prefix.concat(seqs[i], suffix);
+    prefix = [];
+    suffix = [];
+  }
   const bytes = prefix.length > 0;
   const head = bytes ? liftBytes(seqs, true) : null;
-  const suffix = liftTokens(seqs, false);
   const tail = bytes ? liftBytes(seqs, false) : null;
   const liftedWild = prefix.some(isWildcard) || suffix.some(isWildcard);
 

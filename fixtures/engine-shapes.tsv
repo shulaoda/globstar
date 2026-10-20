@@ -29,6 +29,11 @@ L W:set G1 L G0 W:affix | chains 2 | nfa small	a/x/**	a/y/**	b/**/*.ts
 G0 L G0 W:set L | chains 2 | nfa small	**/*.log	**/*.tmp	src/**/x
 L W:affix L W:affix W:set L G1 | chains 2 | nfa small	packages/*/dist/**	packages/*/coverage/**	apps/*/out/**
 G0 L G0 W:affix(2) L | chains 3 | nfa small	**/.env.*	**/vite.config.*	src/**/x
+# A lifted `**/` that would leave names and wildcards in one segment is
+# taken back: the names make a set chain, each wildcard its own chain.
+G0 W:set W:affix | chains 2 | nfa small	**/.DS_Store	**/Thumbs.db	**/*.log
+G0 L G1 L W:affix | chains 3 | nfa small	**/.DS_Store	**/*.log	**/node_modules/**
+G0 W:affix(2) | chains 2 | nfa small	**/a*	**/b*
 L G0 L G0 L G0(2) L G0 L G0 L G0 W:set W:affix W:set W:affix L W:affix(4) | chains 9 | nfa small	src/**/*.ts	src/**/*.tsx	tests/**/*.test.ts	lib/**/*.{js,mjs}	**/*.json	**/package.json	**/.env*	components/**/*.vue	scripts/**/*.sh	docs/**/*.md
 L(7) | chains 8 | nfa small	{a/,b/}{a/,b/}{a/,b/}x
 G0 W:nfa | chains 1 | nfa none	**/?	**/??*
