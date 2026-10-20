@@ -6,9 +6,9 @@
 #   cd docs
 #   npx void@1.1.12 connect api.void.cloud
 #   pnpm build
-#   npx void@1.1.12 deploy --platform void --project globstar-docs --dir .vitepress/dist
+#   npx void@1.1.12 deploy --platform void --project globstar --dir .vitepress/dist
 #   npx void@1.1.12 github install
-#   npx void@1.1.12 github connect globstar-docs --repo shulaoda/globstar \
+#   npx void@1.1.12 github connect globstar --repo shulaoda/globstar \
 #     --branch main --executor github_actions --workflow .github/workflows/void-deploy.yml
 #
 # The last command is what lets this workflow deploy: the platform then
@@ -39,7 +39,7 @@ permissions:
 
 env:
   VOID_API_URL: ${{ vars.VOID_API_URL || 'https://api.void.cloud' }}
-  VOID_PROJECT: ${{ vars.VOID_PROJECT || 'globstar-docs' }}
+  VOID_PROJECT: ${{ vars.VOID_PROJECT || 'globstar' }}
   # The CLI is not a dependency of the repository (it pulls in a full
   # application stack); it is fetched here, pinned.
   VOID_VERSION: 1.1.12
