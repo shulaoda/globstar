@@ -413,9 +413,11 @@ await check("cwd resolves `..` as text", async () => {
   const root = tmpTree("cwddotdot", ["top.txt", "real/inner/in.txt", "real/r.txt"], {
     jump: "real/inner",
   });
-  assert.deepEqual(globSync(["*.txt"], { cwd: path.join(root, "jump", "..") }), [
-    path.join(root, "top.txt"),
-  ]);
+  const out = globSync(["*.txt"], { cwd: path.join(root, "jump", "..") });
+  // Through `rel`: after the resolved cwd the walker joins with `/` on
+  // every platform (WALKER_SPEC §8.2), where `path.join` writes `\`.
+  assert.deepEqual(rel(root, out), ["top.txt"]);
+  assert.ok(!out[0].includes(".."), out[0]);
 });
 
 await check("an empty cwd is the current folder", async () => {
