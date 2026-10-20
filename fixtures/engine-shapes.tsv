@@ -17,15 +17,15 @@ L G0 W:set(2) | chains 1 | nfa none	src/**/{tob,crazy}/?*.{png,txt}
 W:index | chains 1 | nfa none	*.{e0,e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e14,e15,e16,e17,e18,e19}
 W:set G0 W:affix | chains 1 | nfa none	{src,lib}/**/*.ts
 G0 L G0 L | chains 0 | nfa small	**/a/**/b
-L G0 L G0 L G0 W:affix(2) | chains 3 | nfa small	src/**/*.ts	tests/**/*.ts	lib/**/*.js
-# Members that differ only in the literal ending the segment after a `**`
-# or `*` merge into a set there; a literal at a known depth, or one that
-# starts the segment, stays a chain of its own.
+W:set G0 L G0 W:affix(2) | chains 2 | nfa small	src/**/*.ts	tests/**/*.ts	lib/**/*.js
+# Members that differ only in the literal ending one segment merge into a
+# set there; a literal member, or one that starts its segment, stays as it
+# is.
 G0 W:set G1 W:affix | chains 2 | nfa small	**/node_modules/**	**/.git/**	**/*.log
 L G0(2) W:set W:affix | chains 2 | nfa small	**/.DS_Store	**/Thumbs.db	src/**/*.ts
 L(5) | chains 3 | nfa small	src/a/x.ts	src/a/y.ts	src/b/x.ts
 L(4) G1 | chains 2 | nfa small	a/x/**	b/y/**
-L(2) G1 L G1 L G0 W:affix | chains 3 | nfa small	a/x/**	a/y/**	b/**/*.ts
+L W:set G1 L G0 W:affix | chains 2 | nfa small	a/x/**	a/y/**	b/**/*.ts
 G0 L G0 W:set L | chains 2 | nfa small	**/*.log	**/*.tmp	src/**/x
 L W:affix L W:affix W:set L G1 | chains 2 | nfa small	packages/*/dist/**	packages/*/coverage/**	apps/*/out/**
 G0 L G0 W:affix(2) L | chains 3 | nfa small	**/.env.*	**/vite.config.*	src/**/x

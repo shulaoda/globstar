@@ -110,6 +110,11 @@ impl Node {
         }
     }
 
+    /// A `*`, `?` or `**`.
+    pub(crate) fn is_wildcard(&self) -> bool {
+        matches!(self, Node::Star | Node::AnyChar | Node::Globstar)
+    }
+
     /// [`Node::seq`], owned.
     pub(crate) fn into_seq(self) -> Vec<Node> {
         match self {

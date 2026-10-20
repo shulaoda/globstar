@@ -6,8 +6,8 @@ use crate::ast::Node;
 /// token, so the union still starts the way its members do and keeps
 /// their static prefixes: `{src/**,spec/**}` stays, `s{rc,pec}/**` would
 /// not; `src/mod{1,2}/index.ts` is fine. What is left of members that
-/// differ only in the literal ending the segment after a `**` or `*` is
-/// merged into one member with a brace there (`merge_segments`).
+/// differ only in the literal ending one segment is merged into one
+/// member with a brace there (`merge_segments`).
 #[inline(never)]
 pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches.into_iter().map(Node::into_seq).collect();
@@ -16,14 +16,8 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let head = bytes.then(|| lift_bytes(&mut seqs, true)).flatten();
     let mut suffix = lift_tokens(&mut seqs, false);
     let tail = bytes.then(|| lift_bytes(&mut seqs, false)).flatten();
-    let after_wild = matches!(
-        out.as_slice(),
-        [.., Node::Globstar, Node::Separator] | [Node::Star, Node::Separator]
-    ) || matches!(
-        out.as_slice(),
-        [.., Node::Separator, Node::Star, Node::Separator]
-    );
-    merge_segments(&mut seqs, after_wild);
+    let lifted_wild = out.iter().chain(&suffix).any(Node::is_wildcard);
+    merge_segments(&mut seqs, lifted_wild);
 
     // Members that differ only in spelling (`**` and `**/**`, `\a` and
     // `a`) leave nothing behind; one empty branch stands for them all,
@@ -57,42 +51,45 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     Node::of_seq(out)
 }
 
-/// Members that differ only in the literal ending the segment after a
-/// `**` or `*` become one member with a brace there: `**/a/**` and
-/// `**/b/**` are `**/{a,b}/**`, `**/*.log` and `**/*.tmp` are
-/// `**/*{.log,.tmp}`. A chain compares that segment wherever the
-/// wildcard lands, so N chains each looking for a name become one
-/// looking in a set; a literal at a known depth is one compare per
-/// chain and is left alone. `lifted` says the lifted prefix ends in such
-/// a wildcard segment, so segment 0 follows one. Members with nothing
-/// `node_eq` compares are left out; the rest are grouped by segment and
-/// a hash of everything else, then compared node by node.
-fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted: bool) {
-    // (segment, cheap key, member, node) per such literal.
+/// Members that differ only in the literal ending one segment become
+/// one member with a brace there: `**/a/**` and `**/b/**` are
+/// `**/{a,b}/**`, `**/*.log` and `**/*.tmp` are `**/*{.log,.tmp}`,
+/// `src/**/*.ts` and `tests/**/*.ts` are `{src,tests}/**/*.ts`. N chains
+/// each comparing a name become one comparing a set. Members with a
+/// wildcard take part (in what was lifted, `lifted_wild`, or in what is
+/// left: a literal member sits in the literal trie already) and with
+/// nothing `node_eq` cannot compare. Members alike so far are grouped by
+/// segment and a cheap key, then by a hash of everything else, then
+/// compared node by node. Segments are taken from the last back: a
+/// member joins the deepest group it fits, and what that makes of it is
+/// not keyed again at the shallower segments, where roots would collide
+/// in vain.
+fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
+    // (segment, cheap key, member, node) per literal ending a segment.
     let mut entries: Vec<(usize, u64, usize, usize)> = Vec::new();
     for (i, s) in seqs.iter().enumerate() {
-        // A wildcard to follow, and nothing `node_eq` cannot compare.
-        let mut wilds = lifted;
+        let mut wild = lifted_wild;
         let plain = s.iter().all(|n| match n {
-            Node::Globstar | Node::Star => {
-                wilds = true;
+            Node::Globstar | Node::Star | Node::AnyChar => {
+                wild = true;
                 true
             }
+            Node::Separator | Node::Literal(_) => true,
             Node::Class(_) | Node::Brace(_) | Node::Concat(_) => false,
-            _ => true,
         });
-        if !(plain && wilds) {
+        // A lone node merges with nothing: a literal is a brace
+        // alternative as it is, a wildcard ends in no literal.
+        if !(plain && wild && s.len() > 1) {
             continue;
         }
-        let (mut k, mut start, mut after_wild) = (0, 0, lifted);
+        let (mut k, mut start) = (0, 0);
         for end in 0..=s.len() {
             if end < s.len() && !matches!(s[end], Node::Separator) {
                 continue;
             }
-            if after_wild && end > start && matches!(s[end - 1], Node::Literal(_)) {
+            if end > start && matches!(s[end - 1], Node::Literal(_)) {
                 entries.push((k, cheap_key(s, end - 1), i, end - 1));
             }
-            after_wild = end - start == 1 && matches!(s[start], Node::Globstar | Node::Star);
             k += 1;
             start = end + 1;
         }
@@ -100,7 +97,7 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted: bool) {
     if entries.len() < 2 {
         return;
     }
-    entries.sort_unstable();
+    entries.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
     // Per member once a group forms: 0 free, 1 heads a group, 2 absorbed.
     let mut state: Vec<u8> = Vec::new();
     let mut run = 0;
@@ -162,34 +159,29 @@ fn merge_runs(seqs: &mut [Vec<Node>], keyed: &[(u64, usize, usize)], state: &mut
     }
 }
 
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0100_0000_01b3;
-
-/// A cheap key (FNV-1a): the node count and the first node, or the
-/// last when the first is the literal `at` itself; enough to tell most
-/// members apart before `hash_without` has to.
+/// A cheap key: the node count and the first node (or the last, when
+/// the first is the literal `at` itself) by kind, length and edge
+/// bytes; enough to tell most members apart before `hash_without` has
+/// to.
 fn cheap_key(s: &[Node], at: usize) -> u64 {
-    let mut hash = (FNV_OFFSET ^ s.len() as u64).wrapping_mul(FNV_PRIME);
-    match &s[if at == 0 { s.len() - 1 } else { 0 }] {
-        Node::Literal(b) => {
-            for &x in b.iter() {
-                hash = (hash ^ x as u64).wrapping_mul(FNV_PRIME);
-            }
-        }
-        Node::Separator => hash ^= 3,
-        Node::Globstar => hash ^= 4,
-        Node::Star => hash ^= 5,
-        Node::AnyChar => hash ^= 6,
+    let edge = |b: &[u8]| (b.len() as u64) << 16 | (b[0] as u64) << 8 | *b.last().unwrap() as u64;
+    let node = match &s[if at == 0 { s.len() - 1 } else { 0 }] {
+        Node::Literal(b) if !b.is_empty() => 2 << 32 | edge(b),
+        Node::Literal(_) => 2 << 32,
+        Node::Separator => 3 << 32,
+        Node::Globstar => 4 << 32,
+        Node::Star => 5 << 32,
+        Node::AnyChar => 6 << 32,
         Node::Class(_) | Node::Brace(_) | Node::Concat(_) => unreachable!("not a candidate"),
-    }
-    hash
+    };
+    (s.len() as u64) << 40 ^ node
 }
 
 /// `s` hashed for equality (FNV-1a), with a marker in place of node `skip`.
 fn hash_without(s: &[Node], skip: usize) -> u64 {
-    let mut hash = FNV_OFFSET;
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut mix = |b: u8| {
-        hash = (hash ^ b as u64).wrapping_mul(FNV_PRIME);
+        hash = (hash ^ b as u64).wrapping_mul(0x0100_0000_01b3);
     };
     for (i, node) in s.iter().enumerate() {
         match node {

@@ -46,10 +46,10 @@ matched on its own, in pattern order, after two quick looks at the
 path's ends: its first segment against a chain's leading literal, its
 last against a literal suffix, an affix's prefix or a set's last
 bytes. Before that, union members that differ only in the literal
-ending the segment after a `**` or `*` (`**/node_modules/**` and
-`**/.git/**`, `**/*.log` and `**/*.tmp`) are one chain with a set in
-that segment: a chain compares that segment wherever the wildcard
-lands, so N such chains would be N searches.
+ending one segment (`**/node_modules/**` and `**/.git/**`, `**/*.log`
+and `**/*.tmp`, `src/**/*.ts` and `tests/**/*.ts`) are one chain with a
+set in that segment: N chains each comparing a name become one
+comparing a set.
 Past 64 paths the NFA over the whole graph runs instead. `match_dir`
 goes the same way: one chain with at most one globstar — the common
 case — answers it by the same anchored compares, reading the tokens
