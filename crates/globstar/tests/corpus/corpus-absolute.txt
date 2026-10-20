@@ -8,8 +8,8 @@
 #   - Windows drive-letter paths      (C:/a/foo, handled naturally because
 #                                      `C:` is a valid segment body)
 #
-# `**` alone is `GlobstarAny` ≡ regex `.*` — matches anything including
-# standalone separators (`/`, `\`).
+# `**` alone matches any bytes, separators included (§9.2), even a lone
+# `/` or `\`.
 #
 # `**/` alone expects a trailing segment boundary — matches paths ending
 # with a separator (incl. the single `/`), but NOT e.g. `/a` (there's
@@ -76,8 +76,8 @@
 /**/foo	a/foo	no-match
 
 ## abs.middle_globstar_unaffected
-# `a/**/b` — `**` in the middle. Pattern requires path to start with `a/`,
-# not affected by the leading-seps rule (first op is Lit, not OSS).
+# `a/**/b` — `**` in the middle. Only a pattern-leading `**/` accepts
+# leading separators (§9.4); this pattern starts with the literal `a`.
 a/**/b	/a/b	no-match
 
 ## abs.literal_pattern_unaffected
@@ -94,14 +94,14 @@ foo/bar	/foo/bar	no-match
 #   `a`     : literal, doesn't cross /, no absorption → no-match
 #   `*`     : Star doesn't cross /, no leading absorb → no-match
 #   `/*`    : explicit Sep + Star → match
-#   `**/*`  : LeadingSeps eats `/`, OSS 0 iter, Star eats `a` → match
-#   `**`    : GlobstarAny ≡ .* → match everything
+#   `**/*`  : a leading `**/` accepts the root `/` (§9.4), `*` takes `a` → match
+#   `**`    : any bytes, separators included → match everything
 a	/a	no-match
 /*	/a	match
 **/*	/a	match
 
 ## abs.dot_protection_not_bypassed
-# LeadingSeps must not bypass dot protection for subsequent segments.
+# The leading separators a `**/` accepts do not lift dot protection (§9.2, §12).
 # `**/a` cannot cross `.hidden` segment when dot=false (see §12).
 **/a	/.hidden/a	no-match	dot=false
 **/a	.hidden/a	no-match	dot=false
@@ -111,9 +111,9 @@ a	/a	no-match
 **/.config	a/.config	match
 **/.config	/a/.config	match
 
-## abs.brace_per_branch_leadingseps
-# Top-level brace at pattern start: per-branch LeadingSeps absorbs leading
-# seps ONLY on `**/`-rooted branches. Literal branches stay strict.
+## abs.brace_leading_globstar
+# Top-level brace at pattern start: only the expansions that begin with
+# `**/` accept leading separators (§9.4, §10.1). Literal branches stay strict.
 {**/a,**/b}	a	match
 {**/a,**/b}	/a	match
 {**/a,**/b}	/b	match
@@ -128,12 +128,13 @@ a	/a	no-match
 {**/a,README}	README	match
 {**/a,README}	/README	no-match
 {**/a,README}	x/README	no-match
-# Nested brace: recurse into inner Alternation.
+# Nested brace: the inner branches also begin with `**/`.
 {{**/a,**/b},c}	/a	match
 {{**/a,**/b},c}	/b	match
 {{**/a,**/b},c}	c	match
 {{**/a,**/b},c}	/c	no-match
-# Mid-pattern brace: NOT affected — first op is Lit, not Alternation.
+# Mid-pattern brace: the pattern does not begin with `**/`, so a leading
+# `/` does not match (§9.4).
 a/{**/x,**/y}	a/x	match
 a/{**/x,**/y}	a/sub/x	match
 a/{**/x,**/y}	/a/x	no-match

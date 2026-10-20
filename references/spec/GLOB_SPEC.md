@@ -289,7 +289,7 @@ Next to a brace, whether a `**` owns a segment is judged on each expansion (§10
 
 ### 6.1 Compile-time errors
 
-The parser MUST reject the following inputs. Compilation has no other failure modes: a pattern either compiles into a matcher or raises one of these.
+Compilation MUST reject the following inputs (`TooComplex`: MAY, §6.2). It has no other failure modes: a pattern either compiles into a matcher or raises one of these.
 
 | Error                    | Example                    | Reason                                                             |
 | ------------------------ | -------------------------- | ------------------------------------------------------------------ |
@@ -656,7 +656,7 @@ Case folding is a matching behavior, not a syntax rule. The parser MUST NOT cons
 
 Folding covers ASCII only (§14.3). Non-ASCII bytes compare verbatim: `café.txt` matches `CAFé.txt` but not `CAFÉ.txt`. Callers who need Unicode folding MUST normalize both pattern and path first (for example NFKC plus lowercase).
 
-Static prefixes are reported in the pattern's case (§17); WALKER_SPEC.md §6 says how the walker seeds under this option.
+Static prefixes are reported in the pattern's case (§17); WALKER_SPEC.md §5 says how the walker seeds under this option.
 
 ---
 
@@ -739,7 +739,7 @@ Walkers get directory paths from `readdir` without a trailing separator, so the 
 
 The forms of `a` against `a/**` (§9.3), under `dot = false`:
 
-| Directory | `match_dir(d, "a/**")` | Reason                                                   |
+| Directory | `match_dir("a/**", d)` | Reason                                                   |
 | --------- | ---------------------- | -------------------------------------------------------- |
 | `a`       | Descend                | `a` does not match; `a/x` may                            |
 | `a/`      | DescendAndMatch        | `a/` matches; `a//x` matches too (lenient boundary, §9.5) |
@@ -878,13 +878,13 @@ union.match_dir(d) := combine(
   all_below(⋃ L(g), d) )
 ```
 
-with `combine` the table of §15.2. If any member may match below `d`, the union may: it MUST NOT report `Pruned` unless every member does. A negated member (JS) contributes `Descend` (§15.4).
+with `combine` the table of §15.2. If any member may match below `d`, the union may: it MUST NOT report `Pruned` unless every member does. A negated member (JS) contributes its own match and may-below (§15.4).
 
 All-below is a property of the union's language (§15.5): one covering member is enough, and members that each cover a part cover together (`a/*` the children, `a/*/**` everything deeper).
 
 ### 16.3 Literal acceleration
 
-An implementation MAY use literal facts (prefix, suffix, substring, exact) to reject paths before running the full matcher, for a single pattern as for a union. See [`../theory/05-literal-prefilter.md`](../theory/05-literal-prefilter.md) and [`../theory/06-walker-and-pruning.md`](../theory/06-walker-and-pruning.md) for the facts the reference implementations build on.
+An implementation MAY use literal facts (prefix, suffix, substring, exact) to reject paths before running the full matcher, for a single pattern as for a union. See [`../theory/03-literal-prefilter.md`](../theory/03-literal-prefilter.md) and [`../theory/04-walker-and-pruning.md`](../theory/04-walker-and-pruning.md) for the facts the reference implementations build on.
 
 ---
 

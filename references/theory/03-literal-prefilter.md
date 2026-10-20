@@ -1,4 +1,4 @@
-# 05 — Literal Suffix Prefilter
+# 03 — Literal Suffix Prefilter
 
 The matcher composes a fast prefilter with the exact engine (`SegmentMatcher`). The prefilter rejects byte strings that cannot match the pattern by checking a guaranteed literal suffix; it is sound (no false negatives) and approximate (some false positives).
 
@@ -47,8 +47,9 @@ The pattern in our setting is generic enough to call by its literature name: _fi
 For a pattern `P` with language `L(P)`, define
 
 ```
-suffix(P) := the longest s ∈ Σ* such that
-             every w ∈ L(P) ends with s
+suffix(P) := the trailing literal run of P: an s ∈ Σ* such that
+             every w ∈ L(P) ends with s (not always the longest
+             such s: `{xa,ya}c` gives `c`)
 ```
 
 (`s` may be `ε` if no non-empty common suffix exists). Then
@@ -66,13 +67,13 @@ suffix_set(P) := { s_i : s_i is the suffix contributed by branch i }
 prefilter_P(w) := ∃ s ∈ suffix_set(P). w ends with s
 ```
 
-This handles common idioms like `**/*.{ts,tsx,js}` whose single longest common suffix is empty (`.ts` and `.tsx` end differently) but whose suffix-set is `{".ts", ".tsx", ".js"}`, providing a stronger filter. A brace with more than 16 branches gets no prefilter. When its branches are literals, the engine indexes them itself (`AffixIndex`, §07, at any count); a brace with a wildcard branch, or braces whose product passes 1,024 names, is matched by the segment's NFA instead.
+This handles common idioms like `**/*.{ts,tsx,js}` whose single longest common suffix is empty (`.ts` and `.tsx` end differently) but whose suffix-set is `{".ts", ".tsx", ".js"}`, providing a stronger filter. A brace with more than 16 branches gets no prefilter. When its branches are literals, the engine indexes them itself (`AffixIndex`, §02, at any count); a brace with a wildcard branch, or braces whose product passes 1,024 names, is matched by the segment's NFA instead.
 
 ## 3. Why suffix and not prefix
 
-The exact engines are left-to-right. A prefix mismatch is detected at the first conflicting segment or byte, so a separate prefix prefilter would duplicate work.
+The engine starts from the left: a chain matches its head first, the NFA reads left to right. A prefix mismatch is detected at the first conflicting segment or byte, so a separate prefix prefilter would duplicate work.
 
-A suffix mismatch is not detected until the engine has consumed the full input, because the engine has no native notion of an end anchor. Adding an end-anchored test at the matcher entry rejects mismatched tails in `O(|suffix(P)|)` without entering the engine at all, which is the win on walker workloads dominated by paths that share a prefix with the pattern's literal head but differ at the extension.
+A suffix mismatch is found late: the NFA sees the end last, and a chain finds its tail from the end only after its head. Adding an end-anchored test at the matcher entry rejects mismatched tails in `O(|suffix(P)|)` without entering the engine at all, which is the win on walker workloads dominated by paths that share a prefix with the pattern's literal head but differ at the extension.
 
 The implementation accordingly stores only suffix facts.
 

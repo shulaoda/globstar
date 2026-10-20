@@ -38,7 +38,7 @@ assert.deepEqual(
 console.log("✓ large patterns compile on a small stack");
 
 // A union too big for the chains agrees with its members: its graph NFA
-// keeps dense rows at 100 members and goes sparse at 600. Twin of
+// is sparse at both 100 and 600 members (Rust keeps dense rows at 100). Twin of
 // `big_unions_agree_with_their_members` in crates/globstar/tests/glob_union.rs.
 {
   const bigUnion = (n) =>
@@ -185,8 +185,7 @@ for (const { name, patterns, path, matches, maxKept } of [
 }
 
 // A matcher keeps its arrays at their length: one more state costs a few
-// slots, not the room V8 leaves after `push` (half again plus 16 slots;
-// it was a 1 KB step at 18 segment states). Each range stays in one NFA
+// slots, not the room V8 leaves after `push` (half again plus 16 slots). Each range stays in one NFA
 // form, whose switch is a real step.
 // The heap one matcher keeps, counted over 4,000. Each count is a call
 // of its own: the matchers of one must be gone before the next begins.
@@ -229,8 +228,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
 }
 
 // A class is a byte table: one lookup per byte, however many items it
-// lists (it was a scan of every item for every byte: 30,000 items over
-// 65,000 bytes took seconds). Twin of `a_long_class_costs_one_lookup_per_byte`.
+// lists: 30,000 items over 65,000 bytes. Twin of `a_long_class_costs_one_lookup_per_byte`.
 {
   const m = compileMatcher(`*[${"b".repeat(30_000)}]`);
   const path = "a".repeat(65_000);
@@ -241,8 +239,8 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 300, `a 30,000-item class over 65,000 bytes took ${ms.toFixed(0)} ms`);
 }
 
-// Braces that cross a `/` keep the walk to a few groups: these took
-// seconds and gigabytes, or ran out of heap.
+// Braces that cross a `/` keep the walk to a few groups: each compiles
+// in milliseconds.
 for (const [pattern, path] of [
   ["{**,a}/".repeat(80) + "x", "a/x"],
   ["{a,b,/}".repeat(14), "abababa/bababa"],
@@ -295,8 +293,8 @@ for (const [pattern, path] of [
 }
 
 // `matchDir` on long wildcard chains: the all-below proof feeds at most
-// 64 wildcard-only segments and the chain's tail tokens are budgeted
-// (each call took seconds). Twin of
+// 64 wildcard-only segments and the chain's tail tokens are budgeted.
+// Twin of
 // `match_dir_stays_cheap_on_long_wildcard_chains` in crates/globstar/tests/glob.rs.
 {
   const union = compileMatcher(["**", `**/${"*/".repeat(16_000)}x`]);

@@ -1,21 +1,21 @@
 # Theory Notes — Index
 
-These notes record the formal foundations of the engine modules under `crates/globstar/src/engine/`. Their scope is the algorithms actually compiled into this implementation; algorithms surveyed during exploration but not adopted are out of scope.
+These notes record the formal foundations of the engine modules under `crates/globstar/src/engine/`. They cover the algorithms in the current code only.
 
 ## Reading order
 
 1. [01-glob-as-regular-language.md](01-glob-as-regular-language.md) — the glob dialect specified in `references/spec/GLOB_SPEC.md` is a regular language under the closure operations of union, concatenation, and Kleene star. The leading `!` and the absence of `!(...)` extglobs are discussed.
-2. [07-segment-matcher.md](07-segment-matcher.md) — the segment-structured matcher (SSM), the one engine for every non-literal pattern: patterns as a graph of per-segment elements, anchored matching of linear paths, the NFA over the graph behind unions and `match_dir`, and the JS string/byte dual-mode execution.
-3. [05-literal-prefilter.md](05-literal-prefilter.md) — the suffix-anchored literal prefilter used to short-circuit the matcher; its correctness invariant.
-4. [06-walker-and-pruning.md](06-walker-and-pruning.md) — static-prefix extraction and the six-valued `match_dir` predicate, which together drive directory-level pruning.
+2. [02-segment-engine.md](02-segment-engine.md) — the segment engine, the one engine for every non-literal pattern: patterns as a graph of per-segment elements, anchored matching of linear paths, the NFA over the graph behind unions and `match_dir`, and the JS string/byte dual-mode execution.
+3. [03-literal-prefilter.md](03-literal-prefilter.md) — the suffix-anchored literal prefilter used to short-circuit the matcher; its correctness invariant.
+4. [04-walker-and-pruning.md](04-walker-and-pruning.md) — static-prefix extraction and the six-valued `match_dir` predicate, which together drive directory-level pruning.
 
 ## Engine map
 
 | Source file               | Theory note | Role                                                       |
 | ------------------------- | ----------- | ---------------------------------------------------------- |
 | `engine/literal.rs`       | —           | Byte-equality matcher for pure-literal patterns.           |
-| `engine/segment/`         | §07         | Segment-structured matcher for every non-literal pattern.  |
-| `engine/segment/facts.rs` | §05, §06    | Suffix prefilter (§05) and static-prefix analysis (§06).   |
+| `engine/segment/`         | §02         | The segment engine, for every non-literal pattern.         |
+| `engine/segment/facts.rs` | §03, §04    | Suffix prefilter (§03) and static-prefix analysis (§04).   |
 
 ## Notation
 

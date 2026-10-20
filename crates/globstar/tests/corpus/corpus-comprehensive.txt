@@ -251,16 +251,16 @@ a??d	abd	no-match
 [A-Fa-f0-9]	G	no-match
 
 ## class.positive.boundary_ranges
-# Note: ranges that include `/` are parse errors (§8.2). Use ranges that
-# stay strictly above (`0`–`~`) or below (`!`–`.`) `/` to test punctuation
-# coverage.
+# A `/` written in a class is an error (§8.2); a range may span `/` and
+# still never matches a separator. These ranges stay above (`0`–`~`) or
+# below (`!`–`.`) `/` to test punctuation coverage.
 [0-~]	0	match
 [0-~]	A	match
 [0-~]	z	match
 [0-~]	~	match
 [0-~]	 	no-match
 [0-~]	.	no-match
-# Path-side `/` cannot match because class is segment-local, even when range covers it.
+# Path-side `/` cannot match: a class is segment-local (§8.2).
 [0-~]	/	no-match
 [\ -\.]	 	match
 [\ -\.]	#	match
@@ -474,10 +474,10 @@ src/**/tests/**/*.rs	src/tests/foo.ts	no-match
 {a,b}/**/{x,y}	a/z	no-match
 
 # ----------------------------------------------------------------------------
-# globstar.trailing — `a/**` D-003: does NOT match `a` alone
+# globstar.trailing — `a/**` does NOT match `a` alone (§9.3)
 # ----------------------------------------------------------------------------
 
-## globstar.trailing.d003
+## globstar.trailing.not_bare_dir
 foo/**	foo	no-match
 foo/**	foo/	match
 foo/**	foo/bar	match
@@ -666,7 +666,7 @@ file{,.bak}	file.txt	no-match
 {a,,b,}		match
 
 ## brace.empty.with_globstar
-# `{a,}/**` lowers to alternation of `a/**` and `/**`. `a/**` requires
+# `{a,}/**` means `a/**` ∪ `/**` (§10.1). `a/**` requires
 # leading `a/`; `/**` requires a leading `/`. Bare relative paths like
 # `x` don't match either branch.
 {a,}/**	a/x	match
@@ -783,9 +783,8 @@ foo\,bar	foobar	no-match
 \[\]	a	no-match
 
 # ----------------------------------------------------------------------------
-# separator.strict — strict semantics on both sides: each `/` in pattern
-# becomes its own `Sep`, consuming exactly one separator byte from the
-# path. Pattern `a//b` requires exactly two separator bytes; pattern
+# separator.strict — each `/` in the pattern takes exactly one separator
+# byte from the path (§7.4). Pattern `a//b` requires exactly two separator bytes; pattern
 # `a/b` rejects `a//b`. Aligned with picomatch / globset / fast-glob /
 # bash on simple-separator patterns.
 # ----------------------------------------------------------------------------
@@ -802,14 +801,13 @@ src/main.rs	src///main.rs	no-match
 src/main.rs	src/main.rs///	no-match
 
 ## separator.lenient.through_globstar
-# `**`-derived ops (`OptSegmentsSlash`, `SlashAnything`, `LeadingSeps`)
-# are deliberately lenient on the separator runs they cross — they
-# represent "any path traversal" and shouldn't choke on `//` produced
-# by user-side path concatenation. Same as picomatch.
+# The `/` beside a `**` and a leading `**/` accept separator runs (§9.5):
+# a `**` stands for "any path traversal" and does not choke on the `//`
+# that path concatenation produces. Same as picomatch.
 **/foo	a//foo	match
 **/foo	a///foo	match
 a/**/b	a//x/b	match
-# `a/**/b` against `a//b`: OSS lenient sep absorbs run, then Star=empty.
+# `a/**/b` against `a//b`: the `**` takes the empty segment (§9.5).
 a/**/b	a//b	match
 a/**/b	a/x//y/b	match
 
@@ -1232,8 +1230,8 @@ a/*/c/*/e/*/g	a/b/c/d/e/g	no-match
 # Pattern parser does NOT collapse `//`. Pattern `//server/share`
 # requires exactly two leading separator bytes in the path —
 # matches the UNC literal, rejects the single-`/` Unix-absolute form.
-# `**/share` uses `LeadingSeps` (lenient 0+) at the head, so leading
-# `//` runs are absorbed — UNC-style paths still match the catch-all.
+# A leading `**/` accepts any run of root separators (§9.4), so UNC-style
+# `//server/share` paths still match the catch-all.
 //server/share	//server/share	match
 //server/share	/server/share	no-match
 //server/share	server/share	no-match
@@ -1297,17 +1295,17 @@ README	.readme	no-match	case_insensitive=true,dot=false
 [abcdefghij][klmnop]	aq	no-match
 
 # ----------------------------------------------------------------------------
-# Pure-literal heavy patterns (Tier 0 candidates)
+# Pure-literal patterns (the literal engine)
 # ----------------------------------------------------------------------------
 
-## tier0.pure_literal
+## literal.engine.pure
 src/main.rs	src/main.RS	no-match
 src/lib/mod.rs	src/lib/mod.rs	match
 src/lib/mod.rs	src/lib/main.rs	no-match
 node_modules/foo/index.js	node_modules/foo/index.js	match
 node_modules/foo/index.js	node_modules/foo/index.cjs	no-match
 
-## tier0.deep_literal
+## literal.engine.deep
 a/b/c/d/e/f/g/h	a/b/c/d/e/f/g/h	match
 a/b/c/d/e/f/g/h	a/b/c/d/e/f/g	no-match
 a/b/c/d/e/f/g/h	a/b/c/d/e/f/g/h/i	no-match
@@ -1494,17 +1492,17 @@ src/**main	src/foo/main	no-match
 [a^]	b	no-match
 
 # ----------------------------------------------------------------------------
-# Final tier-coverage rows
+# Final coverage rows: literal, simple wildcard, globstar
 # ----------------------------------------------------------------------------
 
-## final.tier_literal
+## final.literal
 foo/bar/baz	foo/bar/baz	match
 foo/bar/baz	foo/bar/baz/qux	no-match
 foo/bar/baz	other	no-match
 exact-match	exact-match	match
 exact-match	exact-match.txt	no-match
 
-## final.tier_simple_wildcard
+## final.simple_wildcard
 src/*.rs	src/main.rs	match
 src/*.rs	src/lib.rs	match
 src/*.rs	src/sub/main.rs	no-match
@@ -1514,7 +1512,7 @@ src/*.rs	main.rs	no-match
 [a-z]*/[0-9]*.txt	ABC/123.txt	no-match
 [a-z]*/[0-9]*.txt	abc/abc.txt	no-match
 
-## final.tier_globstar
+## final.globstar
 src/**/*.{ts,tsx,js,jsx}	src/main.ts	match
 src/**/*.{ts,tsx,js,jsx}	src/a/b/c/d.jsx	match
 src/**/*.{ts,tsx,js,jsx}	src/main.rs	no-match
@@ -1524,6 +1522,9 @@ src/**/*.{ts,tsx,js,jsx}	other/main.ts	no-match
 {src,lib}/**/[A-Z]*.{ts,rs}	src/main.ts	no-match
 {src,lib}/**/[A-Z]*.{ts,rs}	docs/Main.ts	no-match
 
+## brace.globstar-expansion — GLOB_SPEC §10.1 expansion equation: braces are
+## pure union; `**` segment ownership is judged on the EXPANDED form, so
+## a brace never grants `**` powers it lacks outside (`a{**,x}b` ≡
 ## `a{*,x}b`) and never takes away powers it has (`{**,x}/b` ≡ `**/b ∪ x/b`).
 a{**,x}b	a/x/b	no-match
 a{**,x}b	a/b	no-match
@@ -1555,6 +1556,9 @@ a{/**/,x}b	a/y/b	match
 a{/**/,x}b	axb	match
 {a,**}/{**,b}	a/b	match
 {a,**}/{**,b}	x/y	match
+## A `**` touching a brace is judged per expansion, the brace-free
+## neighbor of each branch deciding: `**{/a,b}` ≡ `**/a ∪ **b` (the
+## second a plain star), `{a,}**` ≡ `a** ∪ **`. Spliced stars never fuse
 ## into a new `**` (`a/*{*,x}/b` ≡ `a/*/b ∪ a/*x/b`).
 **{/a,/b}	a	match
 **{/a,/b}	x/y/b	match
@@ -1581,6 +1585,8 @@ x{/,/}{**,a}/y	x//y	match
 {src/,lib/}{**,gen}/*.ts	src//a.ts	match
 a/*{*,x}/b	a/yz/b	match
 a/*{*,x}/b	a/y/z/b	no-match
+## Only the branches a `**` can meet are taken apart: branches that all
+## hand it a `/` share that `/` (`{**,dist}{/a,/b}` ≡ `{**,dist}/{a,b}`),
 ## and a `**` beside a plain token is a star whatever the brace holds.
 {**,dist}{/a,/b}	x/y/a	match
 {**,dist}{/a,/b}	dist/b	match
@@ -1605,6 +1611,7 @@ a{,b}**	ab/c	no-match
 {a/,}{**/x,**/y,z}	a/p/q/y	match
 {a/,}{**/x,**/y,z}	az	no-match
 {,}{,}**	a/b	match
+## The `/` a `**` needs may stand outside the brace; then nothing is
 ## expanded: `**/{a,b}`, `{a,b}/**`, `{src,lib}/{**,gen}/*.ts`.
 **/{a,b}	a	match
 **/{a,b}	x/y/b	match

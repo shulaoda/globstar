@@ -18,8 +18,8 @@
 //!   walkdir's choice, saves ~64 bytes per entry (no extra `OsString`),
 //!   and path-slice access is essentially free.
 //! - **Windows metadata is eagerly cached** — `FindFirstFileW` returns
-//!   attributes at readdir time, so we preserve them across the walker's
-//!   ready buffer. On Unix, `stat` costs one syscall per call, so we
+//!   attributes at readdir time, so each entry keeps them (a seed's come
+//!   from its `lstat`). On Unix, `stat` costs one syscall per call, so we
 //!   stay lazy and only hit the filesystem when the user actually asks.
 //!
 //! The struct is deliberately slimmer than `walkdir::DirEntry` — no
@@ -68,9 +68,9 @@ impl DirEntry {
 
     /// Cached [`FileType`](std::fs::FileType) for this entry — no syscall.
     ///
-    /// `FileType` already exposes `.is_file()`, `.is_dir()`, and
-    /// `.is_symlink()` via the standard library, so this crate doesn't
-    /// duplicate those as direct methods on `DirEntry`.
+    /// `FileType` already exposes `.is_file()` and `.is_symlink()`, which
+    /// this crate does not repeat on `DirEntry`; [`is_dir`](Self::is_dir)
+    /// is kept because it differs: it is true for a symlink to a folder.
     pub fn file_type(&self) -> std::fs::FileType {
         self.file_type
     }
@@ -92,8 +92,8 @@ impl DirEntry {
     /// [`std::fs::DirEntry::metadata`]'s semantics. For follow-link
     /// semantics, call `std::fs::metadata(entry.path())` directly.
     ///
-    /// On Windows the metadata is cached from the original readdir call
-    /// and returned without any syscall. On Unix this issues one
+    /// On Windows the metadata the readdir (for a seed, its `lstat`) gave
+    /// is returned without any syscall. On Unix this issues one
     /// `symlink_metadata` syscall per invocation.
     pub fn metadata(&self) -> io::Result<std::fs::Metadata> {
         #[cfg(windows)]

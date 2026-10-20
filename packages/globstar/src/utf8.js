@@ -17,9 +17,8 @@ export function utf8Length(str, s = 0, t = str.length) {
 }
 
 // Bytes (a Uint8Array or a plain array of bytes) → a Latin-1 string,
-// each byte one char code. The inverse of the ASCII/byte path above,
-// used to hold short pattern literals as strings for the string-mode
-// matcher. `[]` yields `""`.
+// each byte one char code: the byte-space string `utf8Latin1` builds
+// when there is no `Buffer`, and the copy `flat` makes. `[]` yields `""`.
 const CHUNK = 4096; // `fromCharCode.apply` has an argument-count ceiling.
 export function latin1(bytes) {
   const n = bytes.length;

@@ -335,7 +335,7 @@ export function coversBelow(m, active) {
 // ── graph NFA, sparse ───────────────────────────────────────────────
 
 // An active set over `stamp`'s indices: states first, then position `p`
-// at `pos.length + p` (every successor of `p` entered). `items` lists
+// at `g.n + 1 + p` (every successor of `p` entered). `items` lists
 // them; an index is in the set while its stamp is the set's `gen`, so
 // clearing it is one increment. The sets live on the NFA and are
 // reused: a match never nests another on the same matcher.

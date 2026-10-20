@@ -15,7 +15,7 @@
 # ============================================================================
 
 # ----------------------------------------------------------------------------
-# Tier 0 — pure literals
+# Pure literals
 # Three pattern forms × matching mixed path cases:
 #   - all-lower (typical user)
 #   - all-upper
@@ -55,7 +55,7 @@ fOo.BaR.bAz	FOO.BAR.BAZ	match	case_insensitive=true
 fOo.BaR.bAz	xoo.bar.baz	no-match	case_insensitive=true
 
 # ----------------------------------------------------------------------------
-# Tier 1 — `*` `?` `[...]` (mixed case in pattern AND path)
+# `*` `?` `[...]` (mixed case in pattern AND path)
 # ----------------------------------------------------------------------------
 
 ## case.star_extension_lower_pattern
@@ -190,7 +190,7 @@ fOo?bAr	fooXbar	match	case_insensitive=true
 [A-Y]	Z	no-match	case_insensitive=true
 
 # ----------------------------------------------------------------------------
-# Tier 2 — globstar `**` and brace `{a,b}` (scrambled patterns)
+# Globstar `**` and brace `{a,b}` (scrambled patterns)
 # ----------------------------------------------------------------------------
 
 ## case.globstar_lower_pattern

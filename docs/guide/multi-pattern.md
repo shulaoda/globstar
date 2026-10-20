@@ -85,12 +85,12 @@ compileMatcher(["src/**/*.ts", "**/*.md"]).staticPrefixes(); // "" (the root)
 
 ## The shared expansion budget
 
-Braces next to `**` are taken apart at compile time, and the copies that makes are charged to one budget of 4096 units per compile: a single pattern, or a whole list together. So a long list of brace-heavy patterns can fail with `BraceExpansionTooLarge` where each member alone would compile. The compile-work limit (`TooComplex`) also covers the whole list, and it grows with the list's size; only braces whose branches cross a `/` and multiply ever reach it. Details are in [Brace expansion](./braces.md) and [Errors and limits](./errors.md).
+Braces next to `**` are taken apart at compile time, and the copies that makes are charged to one budget of 4096 units per compile: a single pattern, or a whole list together. So a long list of brace-heavy patterns can fail with `BraceExpansionTooLarge` where each member alone would compile. The compile-work limit (`TooComplex`) also covers the whole list (in JS, its positive members together), and it grows with the list's size; only braces whose branches cross a `/` and multiply ever reach it. Details are in [Brace expansion](./braces.md) and [Errors and limits](./errors.md).
 
 ## Errors
 
 - An empty list fails with `EmptyPatternSet` in both languages.
-- Any member that fails to compile fails the whole union with that member's error.
+- Any member that fails to compile fails the whole union: Rust wraps the member's error in `InMember { index, error }`, JS adds `index` to it. A `TooComplex` is the list's own error and names no member.
 - Rust: a `!`-member fails with `NegatedInUnion`, which carries the member's index and text.
 
 Spec: [GLOB_SPEC §6, §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

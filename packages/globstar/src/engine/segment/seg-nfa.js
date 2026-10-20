@@ -155,7 +155,7 @@ function closeWide(nfa, set, block) {
       const bit = todo & -todo;
       todo ^= bit;
       const s = w * 32 + ctz32(bit);
-      // As `eps`, without its array: the ε-targets `a`, `b` (-1: none).
+      // The ε-targets `a`, `b` (-1: none).
       const k = kinds[s];
       let a = -1;
       let b = -1;

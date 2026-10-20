@@ -78,7 +78,7 @@ Three distinct notions:
 
 - **Empty pattern.** The input string of length zero is rejected at parse time (`GlobError::Empty`). It denotes nothing in the language.
 - **Empty string ε.** A member of `L(*)`, of `L(**)`, of `L({a,})`, and of every Kleene-starred language. Several patterns admit it.
-- **Empty language `∅`.** Not denotable by any well-formed pattern, with one exception on Windows: there `\` is a separator, and a literal or class `\` never matches a separator, so `\\` and `[\\]` match nothing (`references/spec/GLOB_SPEC.md` §2.4, §6.2). A pattern that needs one of them denotes `∅`. Apart from that, the matcher never compiles to a `Match`-unreachable NFA from a legal source input.
+- **Empty language `∅`.** Not denotable by any well-formed pattern, with one exception on Windows: there `\` is a separator, and a literal or class `\` never matches a separator, so `\\` and `[\\]` match nothing (`references/spec/GLOB_SPEC.md` §4.2, §8.2, §14.4). A pattern that needs one of them denotes `∅`. Apart from that, the matcher never compiles to a `Match`-unreachable NFA from a legal source input.
 
 ## 7. References
 

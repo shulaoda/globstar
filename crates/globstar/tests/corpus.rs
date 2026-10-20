@@ -10,7 +10,7 @@
 //! Single-pattern `is_match` rows live in `tests/corpus/corpus*.txt`
 //! (a row may expect `err:Kind` instead of an answer); `match_dir` rows
 //! in `tests/corpus/corpus-dir.txt`; multi-pattern rows in
-//! `tests/corpus/corpus-multi.txt`.
+//! `tests/corpus/corpus-multi.txt` and `corpus-multi-dir.txt`.
 //!
 //! Nothing is skipped: a compile error where a row expects an answer is
 //! a failure, and a row the loader cannot read stops the run.
@@ -384,7 +384,8 @@ fn corpus_multi_engines_vs_truth() {
 
 /// `corpus-dir.txt` rows default to `dot=false`, the walker convention;
 /// rows for the other half of the matrix say `dot=true`. Negated rows
-/// run too: `match_dir` answers `Descend` for them (GLOB_SPEC §15.4).
+/// run too: `match_dir` answers `Descend`, or `DescendAndMatch` where the
+/// directory itself matches, for them (GLOB_SPEC §15.4).
 #[test]
 fn corpus_dir_engines_vs_truth() {
     let mut globstar = Stats::default();

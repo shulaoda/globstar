@@ -58,7 +58,7 @@
 ["src/**/foo.ts","tests/**/bar.ts"]	src/a/b/c/baz.ts	no-match
 ["src/**/foo.ts","tests/**/bar.ts"]	src/foo.ts	match
 
-## or.literal_set (all literals — Tier 0 union)
+## or.literal_set (all literals — one segment with a set)
 ["foo","bar","baz"]	foo	match
 ["foo","bar","baz"]	bar	match
 ["foo","bar","baz"]	qux	no-match
@@ -100,10 +100,9 @@
 ["**/*.ts"]	src/main.rs	no-match
 
 # ============================================================================
-# regression.audit-2026-08 — M4: Glob::union must equal the OR of its members.
-# Covers the sep-distribution corner (globstar-edged brace shared across
-# branches) plus a discriminating class-suffix case (union must NOT collapse
-# to "match everything").
+# union.equals.or — a union matches what the OR of its members matches:
+# a `**`-edged brace shared across branches, and class suffixes that must
+# not collapse to "match everything".
 # ============================================================================
 ["{**,a}/**","{**,a}/"]		match
 ["{**,a}/**","{**,a}/"]	x	match
@@ -116,8 +115,8 @@
 ["a[x]","b[x]"]	cx	no-match
 
 ## empty.brace.factoring
-# Factoring `{}`-bearing unions strands an empty literal in a branch;
-# lowering must skip it (Rust panicked at seg_nfa bytes[0], 2026-08).
+# Factoring `{}`-bearing members leaves an empty branch; the union still
+# compiles (one in-segment NFA) and matches as its members do.
 ["**{}","**{*}"]	a{}	match
 ["**{}","**{*}"]	{}	match
 ["**{}","**{*}"]	a{b}	match
@@ -137,8 +136,8 @@
 ["**/x","{a/,b/}**/x"]	x	match
 
 ## engine.paths
-# A member that is another's tail, and a union too wide for dense NFA
-# rows (mutation testing, 2026-10 audit).
+# A member that is another's tail, and a 40-member union (81 states:
+# dense rows in Rust, sparse in JS).
 ["x","**/x"]	a/x	match
 ["x","**/x"]	x	match
 ["node_modules","**/node_modules"]	node_modules/node_modules	match

@@ -234,7 +234,7 @@ async function runJsVerify() {
 
   // ── match_dir corpora — public API vs truth. Rows default to
   // `dot=false` (the walker convention); negated rows run too, a negated
-  // pattern answers `Descend` (§15.4). Indexed by JS `DirMatch` value
+  // pattern answers `Descend` or `DescendAndMatch` (§15.4). Indexed by JS `DirMatch` value
   // (Match=0, Pruned=1, Descend=2, DescendAndMatch=3, DescendAll=4,
   // DescendAllAndMatch=5).
   const DIR_TOKEN = [
@@ -311,10 +311,10 @@ console.log(
 );
 console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 4));
 
-// Stable cross-runtime row order: single → multi → dir → mdir → err,
+// Stable cross-runtime row order: single → multi → dir → mdir,
 // then globstar → nfa. Rust prints in cargo-test name
 // order (alphabetical), JS in author order — sort so both line up.
-const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, mdir: 3, err: 4 };
+const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, mdir: 3 };
 const ENGINE_ORDER = { globstar: 0, nfa: 1 };
 const rowKey = (r) => [CORPUS_ORDER[r.corpus] ?? 99, ENGINE_ORDER[r.engine] ?? 99];
 for (const side of sides) {

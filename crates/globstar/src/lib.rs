@@ -284,7 +284,7 @@ impl Glob {
     /// that something below may: [`DirMatch::DescendAndMatch`] or
     /// [`DirMatch::Descend`], never a covering verdict. Ask about a
     /// directory without a trailing separator (`a`, not `a/`; GLOB_SPEC
-    /// §15.2).
+    /// §15.3).
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
         // Anything below may match a negated pattern; whether `dir_path`
         // itself does is exact (§15.4).

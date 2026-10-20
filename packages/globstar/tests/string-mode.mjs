@@ -1,8 +1,9 @@
 // String mode ↔ byte mode differential.
 //
-// The segment engine matches JS strings directly (zero-copy) and bails to
-// the UTF-8 bytes only where a unit-counting construct meets non-ASCII
-// text; forced byte mode (`__engine: "bytes"`) is the reference. On the
+// An ASCII pattern is matched on the JS string itself, reading a segment's
+// UTF-8 bytes only where a unit-counting construct meets non-ASCII text; a
+// pattern with a non-ASCII byte matches the path's UTF-8 bytes throughout.
+// Forced byte mode (`__engine: "bytes"`) is the reference. On the
 // same pattern × path the two must agree. This sweeps random patterns ×
 // paths, including multi-byte text, `?`-vs-bytes traps, and
 // dot/class/brace shapes, asserting they agree.

@@ -118,7 +118,7 @@ fn build_tree(shape: &TreeShape) -> PathBuf {
 // 4-pattern set.
 const PATTERNS_SMALL: &[&str] = &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
 
-// 10-pattern set — exercises a larger factored SSM union.
+// 10-pattern set — exercises a larger factored union.
 const PATTERNS_HUGE: &[&str] = &[
     "src/**/*.ts",
     "src/**/*.tsx",

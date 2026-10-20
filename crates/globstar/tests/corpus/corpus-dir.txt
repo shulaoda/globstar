@@ -109,10 +109,9 @@ src/*	src/.hidden	match	dot=true
 !src/**	lib	descend-match
 !src/**	src/a	descend
 
-## leading_seps_with_match_dir
-# LeadingSeps (§15.3) must not break match_dir's "could descendant match"
-# analysis. For `**/a` every directory is a potential prefix; leading `/`
-# in the directory path is absorbed by LeadingSeps.
+## leading_globstar_with_match_dir
+# A leading `**/` accepts leading separators in match_dir too (§9.4): for
+# `**/a` every directory is a potential prefix, a leading `/` included.
 **/a	src	descend
 **/a	a	descend-match
 **/a	/src	descend
@@ -123,9 +122,8 @@ a/**/b	other	pruned
 a/**/b	/a	pruned
 
 ## trailing.wildcard.segment.dot_protection
-# Regression: under dot=false the descend check must look through the dot
-# guard, or a separator hidden behind it (the trailing `/` of `*/`) is
-# missed and the subtree wrongly pruned.
+# Under dot=false a wildcard segment followed by `/` still descends into a
+# plain directory and prunes a dot-led one.
 */	a	descend
 */	a	descend	dot=true
 ?*/	a	descend
@@ -148,14 +146,14 @@ x{/,/}{**,a}/y	x/	descend
 {a/**,b}/x	c	pruned
 
 # ============================================================================
-# regression.audit-2026-08 — match_dir coverage for the audit fixes.
-# Each pattern exercises every reachable DirMatch state (pruned / descend /
-# match / descend-match) across its branches, plus the dot=true/false matrix
+# brace.globstar.boundaries — the match_dir view of braces beside `**`.
+# Each pattern exercises every reachable DirMatch state across its
+# branches, plus the dot=true/false matrix
 # where a segment-start wildcard could expose a dotfile directory.
 # corpus-dir.txt default is dot=false; rows carry an explicit flag.
 # ============================================================================
 
-## M1.segment-engine-preserves-the-mandatory-separator (§9.3, dir view)
+## keeps-the-mandatory-separator (§9.3, dir view)
 # x/{**,a}/** : x itself no match but all below does, deeper matches, wrong root prunes.
 x/{**,a}/**	x	descend-all	dot=true
 x/{**,a}/**	x/y	descend-all-match	dot=true
@@ -170,26 +168,26 @@ x/{**,a}/**	xy	pruned	dot=true
 {a/**,b}/**	c	pruned	dot=true
 {a/**,b}/**	ab	pruned	dot=true
 
-## M5.globstar-boundary-chained-outward-across-brace (§10.1 + §9.1, dir view)
+## globstar-boundary-chained-outward-across-brace (§10.1 + §9.1, dir view)
 {src/,lib/}**	src	descend-all	dot=true
 {src/,lib/}**	src/a	descend-all-match	dot=true
 {src/,lib/}**	lib	descend-all	dot=true
 {src/,lib/}**	srcx	pruned	dot=true
 {src/,lib/}**	docs	pruned	dot=true
 
-## M2.leading-globstar-brace (§9.4) — a `**`-led pattern never prunes (dot=true).
+## leading-globstar-brace (§9.4) — a `**`-led pattern never prunes (dot=true).
 **/{**/a,b}	a	descend-match	dot=true
 **/{**/a,b}	q	descend	dot=true
 **/{**/a,b}	c	descend	dot=true
 
-## M3.single-branch-brace-literal (§10.4) — the exact `match` state.
+## single-branch-brace-literal (§10.4) — the exact `match` state.
 {**}	{a}	match	dot=true
 {**}	{a/b}	pruned	dot=true
 {a/**}	{a/b}	match	dot=true
 {**/a}	{x/a}	match	dot=true
 {**/a}	{a}	descend	dot=true
 
-## H3.negated-pattern-match_dir-conservatively-descends (§15.4)
+## negated-pattern-match_dir-conservatively-descends (§15.4)
 # Never a covering verdict; `matches` is the negation's own answer.
 !src/**	docs	descend-match	dot=true
 !src/**	src	descend-match	dot=true
@@ -332,13 +330,15 @@ x{a/b}y*	xa	pruned
 {a/{**,},x}/**	a/	descend-match
 **/a/b	/a	descend
 
-## seq.state.saturation
-# The saturated active set once leaked -1 out of matchDir.
+## nfa.int32.full
+# 31 elements plus accept fill a 32-state set, the JS int32 limit:
+# match_dir stays exact.
 **/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	descend-match
 **/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	descend
 
 ## brace.trailing-sep.lenient-globstar-boundary
-# The strict Sep once made match_dir prune a live // subtree.
+# A brace-trailing `/` beside `**` keeps the lenient boundary (§9.5), so a
+# `//` subtree is not pruned.
 {src/,lib/}**/*.ts	src//sub	descend
 {src/,lib/}**/*.ts	src/sub	descend
 {a,/**}/{**/x,b}	a//p	descend

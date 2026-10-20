@@ -15,7 +15,7 @@ export interface GlobOptions {
    * Default `"."`.
    */
   cwd?: string | undefined;
-  /** Match dot-files (paths starting with `.`). Default `false`. */
+  /** Match dot-files: names (path segments) that start with `.`. Default `false`. */
   dot?: boolean | undefined;
   /** ASCII-case-insensitive byte comparison. Default `false`. */
   caseInsensitive?: boolean | undefined;
@@ -94,10 +94,10 @@ export function globSync(patterns: string | Iterable<string>, options?: GlobOpti
  *   the offending pattern, `.reason` is the parser's message and
  *   `.cause` the `GlobError` itself (its `index` and offsets refer to
  *   the member as the walker compiled it, not to your list). When the
- *   members of a list each compile alone but not together (they share
- *   one expansion budget), `.pattern` is the whole list, formatted like
- *   `["a", "b"]`. An ignore entry that starts with `!` is refused with
- *   no `.cause`.
+ *   list fails as a whole rather than in one member (`TooComplex`, the
+ *   bound on compile work its members share), `.pattern` is the whole
+ *   list, formatted like `["a", "b"]` and cut after three members. An
+ *   ignore entry that starts with `!` is refused with no `.cause`.
  * - `"Io"` — a `readdir` / `stat` failed during traversal (missing
  *   `cwd`, EACCES, ENOENT on a vanished dir, …). `.path` is the
  *   directory we tried to read (for a seed's `lstat`, the path it

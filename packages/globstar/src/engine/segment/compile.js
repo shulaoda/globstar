@@ -207,12 +207,12 @@ export function nodeWeight(node) {
 // the next node). `tookSep`: a `**` ending a brace branch took the `/` after
 // the brace as its `**/`, so that separator closes nothing here.
 // `weight` is the `nodeWeight` of `buf`.
-function makeGroup(tails, state, buf, pendingOss, tookSep, weight) {
-  return { tails, state, buf, pendingOss, tookSep, weight };
+function makeGroup(tails, state, buf, pendingGlobstar, tookSep, weight) {
+  return { tails, state, buf, pendingGlobstar, tookSep, weight };
 }
 const firstGroup = () => makeGroup([START], B_START, [], false, false, 0);
 const forkGroup = (g) =>
-  makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingOss, g.tookSep, g.weight);
+  makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingGlobstar, g.tookSep, g.weight);
 // What copying a group costs the walk.
 const groupCost = (g) => 1 + g.tails.length + g.weight;
 
@@ -233,7 +233,7 @@ function rebase(g, id, state) {
   g.tails.length = 0;
   g.tails.push(id);
   g.state = state;
-  g.pendingOss = false;
+  g.pendingGlobstar = false;
 }
 
 function nodeEqual(a, b) {
@@ -273,12 +273,12 @@ const LINEAR_GROUPS = 16;
 
 const agrees = (o, g) =>
   o.state === g.state &&
-  o.pendingOss === g.pendingOss &&
+  o.pendingGlobstar === g.pendingGlobstar &&
   o.tookSep === g.tookSep &&
   nodesEqual(o.buf, g.buf);
 
 function groupKey(g) {
-  let key = `${g.state},${g.pendingOss ? 1 : 0},${g.tookSep ? 1 : 0}`;
+  let key = `${g.state},${g.pendingGlobstar ? 1 : 0},${g.tookSep ? 1 : 0}`;
   for (const n of g.buf) key += n.tag === N_LITERAL ? `|${n.str}` : `|#${n.tag}`;
   return key;
 }
@@ -429,10 +429,10 @@ class Builder {
         case N_GLOBSTAR:
           if (after) {
             // `**/`: zero or more whole segments, empty ones included, so
-            // the separators around it are lenient (§14.2). It is emitted
+            // the separators around it are lenient (§9.5). It is emitted
             // later, when it is known that no bare `**` absorbs it.
             for (const g of groups) {
-              g.pendingOss = true;
+              g.pendingGlobstar = true;
               g.tookSep = !sepNext;
             }
             if (sepNext) i++;
@@ -463,7 +463,7 @@ class Builder {
   // Emit a group's pending `**/`. It is always a G0: it absorbs empty
   // segments too, which makes the separators around it lenient.
   settle(g) {
-    if (!g.pendingOss) return;
+    if (!g.pendingGlobstar) return;
     rebase(g, this.emit(G0_ELEM, g.tails), B_SEP);
   }
 
@@ -538,8 +538,8 @@ class Builder {
 // ── chains ──────────────────────────────────────────────────────────
 
 // Every path through the graph as a chain, in pattern order, or none
-// when there are more than MAX_CHAINS or a chain with several
-// globstars has more than 32 states (the NFA takes those).
+// when there are more than MAX_CHAINS, or a path with several globstars
+// is the only path or has more than 32 states (the NFA takes those).
 function chains(graph) {
   if (graph.linear) {
     const chain = makeChain(graph, null, true);
@@ -711,7 +711,7 @@ function nfaSmall(graph, nodes) {
   return { kind: NFA_SMALL, elems: own, after: exact(after), init, accept, reach1 };
 }
 
-// Past 31 states the graph NFA is stepped sparsely. A position keeps
+// Past 32 states the graph NFA is stepped sparsely. A position keeps
 // its successors, not a closure row (the start is the last position):
 // the literal ones sorted by literal (`litKeys` folded when
 // insensitive) at `lits[litAt[p]..litAt[p + 1]]`, and the others at
@@ -738,7 +738,8 @@ function nfaSparse(graph, ci) {
   // (A nullable successor is a `**/`, which reaches accept through one
   // segment whenever it reaches it at all.)
   const base = n + 1;
-  // Positions sit past the states, as `Active` indexes them (`base + p`).
+  // Positions sit past the states, as the sparse active set indexes them
+  // (`base + p`, see `nfaRunSparse`).
   const reach1 = new Uint8Array(2 * n + 2);
   for (let i = n - 1; i >= 0; i--) {
     let o = 0;

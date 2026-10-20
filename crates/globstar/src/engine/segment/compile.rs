@@ -116,9 +116,9 @@ impl Graph {
     }
 
     /// Every path through the graph as a `Chain`, in pattern order;
-    /// none when there are more than `MAX_CHAINS` or a path with
-    /// several globstars has more than 64 states (the NFA takes
-    /// those).
+    /// none when there are more than `MAX_CHAINS`, or a path with
+    /// several globstars is the only path or has more than 64 states
+    /// (the NFA takes those).
     fn chains(&self) -> Box<[Chain]> {
         let Some(edges) = &self.edges else {
             return self.chain(None, true).into_iter().collect();
@@ -454,7 +454,7 @@ struct Group<'a> {
     /// More of them add nothing (`**/**/` ≡ `**/`). While set, `state`
     /// is the boundary before it and `buf` holds at most the in-segment
     /// braces read since (`**/{a,b}x`), settled with the next node.
-    pending_oss: bool,
+    pending_globstar: bool,
     /// A `**` ending a brace branch took the `/` after the brace as its
     /// `**/`: that separator closes nothing here.
     took_sep: bool,
@@ -468,7 +468,7 @@ impl Group<'_> {
             tails: vec![START],
             state: Boundary::Start,
             buf: Vec::new(),
-            pending_oss: false,
+            pending_globstar: false,
             took_sep: false,
             weight: 0,
         }
@@ -494,7 +494,7 @@ impl Group<'_> {
         self.tails.clear();
         self.tails.push(id);
         self.state = state;
-        self.pending_oss = false;
+        self.pending_globstar = false;
     }
 }
 
@@ -702,14 +702,14 @@ impl Builder {
                 }
                 Node::Separator => self.close_all(&mut groups),
                 // `**/`: zero or more whole segments, empty ones included,
-                // so the separators around it are lenient (§14.2). It is
+                // so the separators around it are lenient (§9.5). It is
                 // emitted later, when it is known that no bare `**`
                 // absorbs it.
                 Node::Globstar if after => {
                     for g in groups.iter_mut() {
                         // The parser never glues a `**` to text.
                         debug_assert!(g.buf.is_empty());
-                        g.pending_oss = true;
+                        g.pending_globstar = true;
                         g.took_sep = !sep_next;
                     }
                     i += usize::from(sep_next);
@@ -736,7 +736,7 @@ impl Builder {
     /// Emit a group's pending `**/`. It is always a `G0`: it absorbs
     /// empty segments too, which makes the separators around it lenient.
     fn settle(&mut self, g: &mut Group<'_>) {
-        if !g.pending_oss {
+        if !g.pending_globstar {
             return;
         }
         let id = self.emit(Elem::G0, &g.tails);
@@ -880,7 +880,7 @@ impl<'a> Merged<'a> {
 impl Group<'_> {
     fn agrees(&self, other: &Self) -> bool {
         self.state == other.state
-            && self.pending_oss == other.pending_oss
+            && self.pending_globstar == other.pending_globstar
             && self.took_sep == other.took_sep
             && self.buf.len() == other.buf.len()
             && self
@@ -896,7 +896,7 @@ impl Group<'_> {
         let mut h = Fnv::default();
         h.write(&[
             self.state as u8,
-            self.pending_oss as u8,
+            self.pending_globstar as u8,
             self.took_sep as u8,
         ]);
         for node in &self.buf {

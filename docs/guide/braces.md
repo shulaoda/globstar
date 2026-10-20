@@ -1,6 +1,6 @@
 # Brace expansion
 
-A brace like `{js,ts}` lists alternatives: the pattern matches if any one of them fits. This page explains what a brace means, the forms you can write (nested braces, empty branches), when braces are plain text or an error, and the two limits that keep compile time safe. For the rest of the syntax, see [Pattern syntax](./syntax.md).
+A brace like `{js,ts}` lists alternatives: the pattern matches if any one of them fits. This page explains what a brace means, the forms you can write (nested braces, empty branches), when braces are plain text or an error, and the limits that keep compile time safe. For the rest of the syntax, see [Pattern syntax](./syntax.md).
 
 All examples use the default options (`dot: true`, `caseInsensitive: false`).
 
@@ -125,7 +125,7 @@ Spec: [GLOB_SPEC §10.7](https://github.com/shulaoda/globstar/blob/main/referenc
 
 ## Limits
 
-Most brace patterns have no size limit. Two limits exist to stop a hostile or broken pattern from using too much time or memory. When one is hit, compiling throws a `GlobError`, and its `max` field holds the limit.
+Most brace patterns have no size limit. Three limits exist to stop a hostile or broken pattern from using too much time or memory: nesting depth, the expansion budget around `**`, and the compile-work bound on braces whose branches cross a `/` (`TooComplex`, described in [Errors and limits](./errors.md#the-four-limits)). When one is hit, compiling throws a `GlobError`, and its `max` field holds the limit.
 
 ### Nesting depth: 32
 
@@ -137,9 +137,9 @@ Spec: [GLOB_SPEC §6.2](https://github.com/shulaoda/globstar/blob/main/reference
 
 ### Expansion budget: 4096
 
-The number of branches and combinations has no limit. A brace with 5,000 branches compiles fine.
+The number of branches has no limit: a brace with 5,000 branches compiles fine, and so does a product of braces within one segment.
 
-The one exception is a `**` next to a brace. To judge that `**` per expansion, globstar copies the parts of the pattern around it. It counts every copy, and when the count would pass 4096, compiling fails with `BraceExpansionTooLarge`. The count covers the whole pattern, and all patterns of one list together.
+A `**` next to a brace is different. To judge that `**` per expansion, globstar copies the parts of the pattern around it. It counts every copy, and when the count would pass 4096, compiling fails with `BraceExpansionTooLarge`. The count covers the whole pattern, and all patterns of one list together.
 
 | Pattern                                              | Is it copied?                                         |
 | ---------------------------------------------------- | ----------------------------------------------------- |

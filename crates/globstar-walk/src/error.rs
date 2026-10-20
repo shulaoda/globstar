@@ -18,9 +18,10 @@ pub enum WalkError {
     /// A glob pattern (main or ignore) failed to parse/compile.
     InvalidPattern {
         /// The pattern that failed, as written (`!src/[z-a]`). When the
-        /// members of a pattern list each compile alone but not together
-        /// (they share one expansion budget, GLOB_SPEC §6.2), this is the
-        /// whole list, formatted like `["a", "b"]`.
+        /// list fails as a whole rather than in one member (`TooComplex`,
+        /// the bound on compile work its members share, GLOB_SPEC §6.2),
+        /// this is the whole list, formatted like `["a", "b"]` and cut
+        /// after three members.
         pattern: String,
         /// Human-readable reason (from the underlying parser). When the
         /// walker read the pattern differently (a leading `!` or `/`

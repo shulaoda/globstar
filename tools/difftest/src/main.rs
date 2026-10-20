@@ -220,8 +220,8 @@ fn unescape(s: &str) -> Vec<u8> {
                     let lo = hex(b[i + 3]);
                     match (hi, lo) {
                         (Some(h), Some(l)) => out.push((h << 4) | l),
-                        // Malformed \x escape: keep the backslash literally so
-                        // it round-trips deterministically instead of panicking.
+                        // A malformed `\x` escape: a lone backslash stands in
+                        // for it, and nothing panics.
                         _ => out.push(b'\\'),
                     }
                     i += 4;

@@ -2,7 +2,7 @@
 // Cross-runtime DIFFERENTIAL FUZZER — JS globstar vs Rust globstar.
 //
 // The fixed corpus (crates/globstar/tests/corpus/*.txt) proves the two
-// runtimes agree on ~3400 hand-written rows. It says nothing about the
+// runtimes agree on ~3,900 hand-written rows. It says nothing about the
 // infinite space of inputs nobody wrote down. This fuzzer closes that gap:
 // it generates random dialect-edge (pattern, path, flags) tuples, runs the
 // JS matcher, then feeds the SAME inputs to the Rust `difftest` harness over

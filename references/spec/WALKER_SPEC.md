@@ -2,9 +2,9 @@
 
 This document specifies the filesystem walker that consumes the glob matcher defined in [GLOB_SPEC.md](./GLOB_SPEC.md). Pattern syntax, match semantics, and `match_dir` semantics live in the glob spec; the walker spec covers only what is layered on top: the public API, option surface, pattern preprocessing, traversal model, and error handling.
 
-**Status.** Active, not yet released.
+**Status.** Active; released as 0.0.x and may still change.
 
-**Reference implementation.** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). Its behavior is governed by its own crate-level documentation, not this spec.
+**Reference implementation.** JS — `packages/globstar-walk` (`glob` / `globSync` exports). The Rust crate `crates/globstar-walk` adopts a different API shape (iterator yielding `Result<DirEntry, WalkError>` per item, no async path, errors surfaced inline rather than thrown). It follows this spec where its documentation says so, and its own documentation otherwise.
 
 **Conventions.** "MUST", "SHOULD", "MAY" follow RFC 2119.
 
@@ -34,7 +34,7 @@ The walker layer adds the following on top of the glob matcher:
 - A pair of public entry points returning matching file paths: a concurrent async `glob` and a sync DFS `globSync`.
 - Pattern preprocessing — auto-splitting `!`-prefixed entries into the ignore set and stripping leading `/` so static prefixes resolve relative to `cwd`.
 - Filesystem traversal driven by the matcher's `match_dir` and `static_prefixes` outputs.
-- Output shaping — files-only, absolute paths joined from `cwd` (§3.3).
+- Output shaping — files-only, absolute paths joined from `cwd` (§8).
 - Loud error semantics — IO and pattern compile failures both throw (`WalkError`), no silent swallow.
 
 ### 1.2 Out of scope
@@ -121,6 +121,7 @@ An additional set of glob patterns. A path matches the walker's final predicate 
 final_match(path) := positive.match(path)
                      AND NOT ignore.match(path)
                      AND NOT ignore.match(d) for every folder d above path, below cwd
+                     AND NOT ignore.match(d ++ "/") for every such d
 ```
 
 An ignored folder hides its whole subtree: `glob("**/*.js", { ignore: ["dist"] })` drops `dist/a.js`, though `dist` alone names no `.js` file.
@@ -148,12 +149,12 @@ The walker exposes 5 options. The following toggles, common in other walkers, ar
 
 ### 4.2 `!`-prefix split (parity rule)
 
-For each pattern in the input array — AFTER the §4.3 normalization, so a leading `/` cannot shield a `!` from the split (`/!x` ≡ `!x`; before this ordering was pinned, `/!x` reached the matcher as whole-pattern negation and walked nearly the whole tree) — the walker counts the run of leading `!` bytes and routes by parity (matching the matcher's internal parity rule from GLOB_SPEC.md §11.1):
+For each pattern in the input array — AFTER the §4.3 normalization, so a leading `/` cannot shield a `!` from the split (`/!x` ≡ `!x`) — the walker counts the run of leading `!` bytes and routes by parity (matching the matcher's internal parity rule from GLOB_SPEC.md §11.1):
 
 - count is odd → strip ALL `!`s, push the body into the ignore set;
 - count is even → strip ALL `!`s, push the body into the positive set.
 
-The body is normalized again after the strip (`!/x` exposes a fresh leading `/`), and a `!` run that this exposes counts too, so the count covers every `!` the leading `/`s, `.` segments and `!`s hide: `!/!x` ≡ `!!x` is the positive `x`. (Splitting once left the body `!x`, which the matcher read as "everything but `x`".)
+The body is normalized again after the strip (`!/x` exposes a fresh leading `/`), and a `!` run that this exposes counts too, so the count covers every `!` the leading `/`s, `.` segments and `!`s hide: `!/!x` ≡ `!!x` is the positive `x`.
 
 Examples:
 
@@ -180,16 +181,16 @@ Each individual pattern (in BOTH the positive and ignore sets, BOTH from the inp
 
 - the leading `/` run is stripped: `/a/b/*.ts` ≡ `a/b/*.ts`, `//foo` ≡ `foo`;
 - `//` runs collapse to a single `/`: `a//b/*` ≡ `a/b/*`;
-- plain `.` segments are dropped (`readdir` never yields `.`): `./src/**` ≡ `src/**`, `a/./b` ≡ `a/b`. A last `.` names the folder before it, so it becomes a trailing `/` instead: `d/.` ≡ `d/`, and `*/.` matches no file (dropping it made `*/.` mean `*`);
+- plain `.` segments are dropped (`readdir` never yields `.`): `./src/**` ≡ `src/**`, `a/./b` ≡ `a/b`. A last `.` names the folder before it, so it becomes a trailing `/` instead: `d/.` ≡ `d/`, and `*/.` matches no file (dropping it would make `*/.` mean `*`);
 - a pattern that normalizes to nothing (`.`, `./`) matches nothing and is dropped.
 
-Escaped forms (`\.`) are untouched; `/` in a pattern is always structural (`\/` is a parse error, GLOB_SPEC §4.2), so the textual rewrite is safe. Without this, `./`/`//` spellings leaked verbatim into static prefixes and therefore into emitted absolute paths — the same file got different spellings depending on how the pattern was written.
+Escaped forms (`\.`) are untouched; `/` in a pattern is always structural (`\/` is a parse error, GLOB_SPEC §4.2), so the textual rewrite is safe. Without this, `./` and `//` spellings would reach the static prefixes and the emitted absolute paths, and the same file would come out spelled differently depending on how the pattern was written.
 
-The leading-`/` strip guarantees that the matcher's static prefixes (used for traversal seeding, §6) always come out relative to `cwd`. Patterns are scoped to `cwd`; absolute filesystem paths cannot be glob'd through the walker API — callers wanting to walk `/etc/...` MUST pass `cwd: "/etc"`.
+The leading-`/` strip guarantees that the matcher's static prefixes (used for traversal seeding, §6) always come out relative to `cwd` (a brace branch that starts with `/` still gives a prefix like `/b`, which §6 drops). Patterns are scoped to `cwd`; absolute filesystem paths cannot be glob'd through the walker API — callers wanting to walk `/etc/...` MUST pass `cwd: "/etc"`.
 
 ### 4.4 Compilation
 
-After preprocessing, the walker compiles three matchers:
+After preprocessing, the walker compiles two matchers (the Rust crate, which yields folders, adds a third for the positive patterns that end in `/`):
 
 - `matcher` — the OR-union of the (preprocessed) positive set;
 - `ignore` — the OR-union of the (preprocessed) `opts.ignore` plus the `!`-routed negative set, or `null` when both are empty;
@@ -211,7 +212,7 @@ The resolved `cwd` MUST then be validated:
 
 A typo'd or non-existent `cwd` therefore fails loudly at the start of the walk, rather than silently producing an empty result.
 
-**Case-insensitive seeding caveat.** The walker's static-prefix optimization (§6) seeds traversal at literal pattern prefixes using their original case, even under `caseInsensitive: true`. On a case-SENSITIVE filesystem (Linux ext4, case-sensitive APFS) where the on-disk casing differs from the pattern, the seed does not resolve and the whole subtree is silently skipped — `walk("src/*.rs", { caseInsensitive: true })` yields nothing when the directory is named `SRC`, even though `isMatch("SRC/a.rs")` is true. On case-insensitive filesystems (default macOS APFS, Windows NTFS) the seed resolves through the filesystem's own folding and the walk works; emitted paths carry the pattern's casing rather than the on-disk casing. Workarounds: write the prefix in the actual on-disk casing, OR use an explicit class (`[Ss]rc/...`), which keeps the prefix non-literal and forces a root walk.
+**Case-insensitive seeding caveat.** The walker's static-prefix optimization (§6) seeds traversal at literal pattern prefixes using their original case, even under `caseInsensitive: true`. On a case-SENSITIVE filesystem (Linux ext4, case-sensitive APFS) where the on-disk casing differs from the pattern, the seed does not resolve and the whole subtree is silently skipped — `glob("src/*.rs", { caseInsensitive: true })` yields nothing when the directory is named `SRC`, even though `compileMatcher("src/*.rs", { caseInsensitive: true }).match("SRC/a.rs")` is true. On case-insensitive filesystems (default macOS APFS, Windows NTFS) the seed resolves through the filesystem's own folding and the walk works; emitted paths carry the pattern's casing rather than the on-disk casing. Workarounds: write the prefix in the actual on-disk casing, OR use an explicit class (`[Ss]rc/...`), which keeps the prefix non-literal and forces a root walk.
 
 The same filesystem folding cuts the OTHER way under `caseInsensitive: false` on a case-insensitive filesystem: a seed spelled `src` resolves to an on-disk `SRC`, so a literal-prefixed pattern emits paths (in the pattern's spelling) that the matcher itself would reject against the on-disk spelling — the option is effectively voided for the seeded prefix — and case-variant brace prefixes (`{src,SRC,Src}/*`) emit ONE file once per resolving spelling. This is inherent to spelling-based seeds on a folding filesystem (the same trade fast-glob makes); dedup by inode is not a fix, because different spellings legitimately select different pattern branches. Callers needing exact-case walking on such filesystems should use a class-headed prefix to force a root walk.
 
@@ -232,7 +233,7 @@ The matcher exposes `static_prefixes` (GLOB_SPEC.md §17, and see `computeStatic
 
 The walker uses these to skip directories that no branch of the pattern can possibly match. Seeding MUST be observationally equivalent to a root walk — a seed may only skip work, never change results. So a seed is reached the way a root walk reaches it, part by part from `cwd`, and each part is judged by the walk's own per-entry rule (§7.1) as its folder's only entry, with its `lstatSync` standing in for the dirent. Every rule of the walk then holds for seeds by construction: ignore entries and folder-only entries, the covered-folder prune, special files, `followSymlinks`, the cycle chain, broken links. For each prefix the walker:
 
-1. **Guards.** Skip the prefix outright when any of its segments is `..`, `.` or empty (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields none of them, so no root walk reaches such a path, and a joined `..` would escape `cwd`. A brace branch that starts with `/` gives one: `{a,/b}/x` has the prefixes `a` and `/b`, and `/b` is dropped.
+1. **Guards.** Skip the prefix outright when any of its segments is `..`, `.` or empty (split on every platform separator — on Windows a literal `\` is a separator too): `readdir` yields none of them, so no root walk reaches such a path, and a joined `..` would escape `cwd`. A brace branch that starts with `/` gives one: `{a,/b}/*` has the prefixes `a` and `/b`, and `/b` is dropped.
 2. **Walks the parts.** For each part, from `cwd` down:
    - A part whose spelling could open another entry must be in its folder's listing as written (one `readdir` per such part), or the seed is dropped: a root walk, comparing names as listed, never matches such a spelling. That is a non-ASCII name — a file system that ignores Unicode normalization (APFS) opens an NFC spelling of a name stored NFD — and, on Windows, a name Win32 rewrites: one ending in `.` or a space, a device name (`NUL`, `com1`, `con.txt`), one with a `:` (a drive, a stream; `C:/proj/src/*.ts` is never below `cwd`, so it matches nothing, as on other platforms).
    - `lstatSync` the part. If nothing can be there (§9.4: ENOENT, ENOTDIR, ELOOP, ENAMETOOLONG, EINVAL, a NUL in the name), the seed is silently dropped — this is NOT an error: `{a,b}/foo` where only `a/` exists must still produce results from the `a` branch. Any other failure (EACCES, …) is thrown, as the walk would (§9.3).
@@ -251,13 +252,13 @@ The empty prefix (an empty `Uint8Array`, produced by patterns that begin with `*
 Each frame carries a list `links` of the symlinks the walker descended through to reach it, each with the identity of its target (§10). Seed frames carry the links on their prefix, gathered as §6 step 2 walks it; the frame for `cwd` itself starts empty. Both sync and async share the same per-dirent matching logic. A child's paths are its folder's heads and its name — `childRel = relHead + name` with `relHead = parentRel === "" ? "" : parentRel + "/"`, and `childAbs = withSep(parentAbs) + name` (§7.4) — and the heads are made once per folder. For each `{ name, isDirectory, isSymbolicLink }` returned from a `readdir` of the frame's absolute path:
 
 1. **Symlink drop** — if the entry is a symbolic link AND `followSymlinks` is `false`, skip the entry (NOT emitted, NOT descended). Performed before any other work.
-2. Compute `childAbs`. A name that came back with U+FFFD and does not exist under that spelling is skipped: it was not valid UTF-8 (Linux allows any bytes), so no string names the path, and no folder can be read through it. The Rust walker, which sees the bytes, skips a name that is not valid UTF-8 the same way: it is neither yielded nor read as a folder.
+2. A name that came back with U+FFFD and does not exist under that spelling is skipped: it was not valid UTF-8 (Linux allows any bytes), so no string names the path, and no folder can be read through it. The Rust walker, which sees the bytes, skips a name that is not valid UTF-8 the same way: it is neither yielded nor read as a folder.
 3. Compute `childRel`. **Ignore filter** — if `ignore !== null` AND `ignore.match(childRel)`, skip the entry. (Performed before any stat to avoid paying for resolution of ignored symlinks.)
 4. **Type the entry.** A regular entry has its own type. A symbolic link (which by step 1 means `followSymlinks: true`) takes its target's: `fs.statSync` the link; when that fails (dangling, looping) the entry stays a link, a non-directory. See §10.
 5. **Special files** — a FIFO, a socket or a device (neither a directory nor a file nor a link) is skipped (§8.1).
 6. Branch on the type:
    - **Non-directory.** If `matcher.match(childRel)` is true, push `childAbs` into the result array. Output is always the absolute form (§8.2).
-   - **Directory.** The walker emits files only, so `matcher.match_dir(childRel)` is consulted for the descend decision alone. The folder is skipped when `ignore.match(childRel + "/")` (§3.2: asked with its `/`, under either `dot`), when `may_match_below()` is false, or when the ignore set covers the whole subtree (`ignore.match_dir(childRel).matches_all_below()`). The last check lets `**/node_modules/**` skip `node_modules` as cheaply as `node_modules` does; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §15.5) and a positive pattern may still name one. Otherwise push a child frame into the descend list, whose `links` is:
+   - **Directory.** The walker emits files only, so `matcher.match_dir(childRel)` is consulted for the descend decision alone. The folder is skipped when `ignore.match(childRel + "/")` (§3.2: asked with its `/`, under either `dot`), when `may_match_below()` is false, or when the ignore set covers the whole subtree (`ignore.match_dir(childRel).matches_all_below()`). The last check lets an entry like `**/node_modules/**/*`, which the `/` check cannot catch, skip `node_modules` whole; it only applies under `dot: true`, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §15.5) and a positive pattern may still name one. Otherwise push a child frame into the descend list, whose `links` is:
      - **non-symlink dir** — the parent's `links`, unchanged;
      - **symlink-to-dir** — the parent's `links` plus this link, unless its target is the target of one of them already (§10): then this is a cycle, and the descent is skipped.
 
@@ -299,7 +300,7 @@ function withSep(parent) {
 }
 ```
 
-This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous child path — and, for seed frames, a §4.3-normalized static prefix. §4.3's normalization (leading-`/` strip, `//` collapse, `.`-segment removal) plus §6's guard against `..`, `.` and empty seed segments are what make this premise hold for the seed join; without them, pattern spellings leaked into output paths. Measured: `path.join` is ~100 µs slower per walk than this concatenation on a small Vite project tree.
+This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous child path — and, for a seed, one part of a static prefix at a time (§6 step 1 drops `..`, `.` and empty parts). §4.3's normalization (leading-`/` strip, `//` collapse, `.`-segment removal) plus that guard are what make this premise hold for the seed join; without them, pattern spellings would reach the output paths. Measured: `path.join` is ~100 µs slower per walk than this concatenation on a small Vite project tree.
 
 ### 7.5 Result-order guarantees
 
@@ -349,14 +350,15 @@ class WalkError extends Error {
   readonly reason?: string;
   // For "Io":
   readonly path?: string;
-  // Both: the `GlobError` or the Node error underneath.
+  // Both: the `GlobError` or the Node error underneath; none for an
+  // ignore entry that starts with `!`.
   readonly cause?: Error;
 }
 ```
 
 ### 9.2 `InvalidPattern`
 
-Raised during `prepare()` when any positive or `ignore` pattern fails to compile: `globSync` throws, `glob` rejects its Promise. The walker catches the matcher's `GlobError` (GLOB_SPEC.md §6) and re-throws it wrapped in `WalkError("InvalidPattern")` so callers have a single error type to match on at the walker layer.
+Raised during `prepare()` when any positive or `ignore` pattern fails to compile, or an `ignore` entry starts with `!`: `globSync` throws, `glob` rejects its Promise. The walker catches the matcher's `GlobError` (GLOB_SPEC.md §6) and re-throws it wrapped in `WalkError("InvalidPattern")` so callers have a single error type to match on at the walker layer.
 
 ### 9.3 `Io`
 
@@ -370,7 +372,7 @@ The async path REJECTS the returned Promise with the first such error and ignore
 
 The walker MUST NOT silently swallow IO errors (no `onError` callback, no log-and-continue). Rationale: silent swallow would mask the most common failure mode — a typo'd `cwd` — by producing an empty result, which is the worst possible UX. Callers that explicitly want to ignore unreadable subtrees MUST `try`/`catch` and decide what to do at their layer.
 
-This is the walker's most visible divergence from `tinyglobby` and `fast-glob`, both of which silently suppress IO errors via `fdir`'s `suppressErrors: true` (or equivalent).
+This is the walker's most visible divergence from `tinyglobby` and `fast-glob`, tinyglobby suppresses IO errors (`fdir`'s `suppressErrors`) and fast-glob suppresses `ENOENT`.
 
 ### 9.4 Stat failures during seeding
 
@@ -390,11 +392,11 @@ Permissions are the one place a seed cannot see what a root walk would. A seed `
 Symbolic-link entries are surfaced by `readdir`'s `withFileTypes` result with `isSymbolicLink() === true` and `isDirectory() === false` — the dirent does not pre-resolve the link target. The walker's behavior depends on `followSymlinks`:
 
 - `followSymlinks: false`: the symlink is dropped entirely — NOT emitted as a file, NOT descended. Matches `fdir`'s `excludeSymlinks` mode. Each entry is judged when its parent is read: a folder replaced by a symlink after that is read through the link (Node and Rust's `std` read a folder by path, with no `O_NOFOLLOW`), so this option is no guard against a tree that changes during the walk.
-- `followSymlinks: true` (default): the walker calls `fs.statSync` on the symlink (NOT `lstatSync`), which follows it. If the result is a directory, the walker treats the symlink as a directory entry and descends into the target's contents. If the stat fails (broken link, permission error), `isDir` is silently set to `false` and the entry continues as a non-directory. Stat failures here do NOT throw `WalkError("Io")` — broken symlinks are too common in real trees to make them fatal, even in the loud-error default.
+- `followSymlinks: true` (default): the walker calls `fs.statSync` on the symlink (NOT `lstatSync`), which follows it. If the result is a directory, the walker treats the symlink as a directory entry and descends into the target's contents. If the stat fails (broken link, permission error), the entry stays a link, a non-directory, and the walk continues. Stat failures here do NOT throw `WalkError("Io")` — broken symlinks are too common in real trees to make them fatal, even in the loud-error default.
 
-**Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles: a frame carries the links descended through to reach it (§7.1), each with the identity of its target, and a link to a folder already among them is not descended. The descent is suppressed for that entry only; the link names a directory, so it is not emitted (§8.1), and the rest of the walk continues. Algorithm parity: `fdir`'s `isRecursive` plus its `state.symlinks` map.
+**Cycle detection.** When `followSymlinks: true`, the walker MUST break symlink cycles: a frame carries the links descended through to reach it (§7.1), each with the identity of its target, and a link to a folder already among them is not descended. The descent is suppressed for that entry only; the link names a directory, so it is not emitted (§8.1), and the rest of the walk continues.
 
-A folder's identity is its `(dev, ino)`, which the `statSync` of step 4 gave for free (Rust: `MetadataExt::dev`/`ino`); a hit is confirmed by comparing the two links' `fs.realpathSync.native` paths (Rust: `fs::canonicalize`), since some file systems hand out inode numbers that are not unique, and a link whose path cannot be resolved then is not descended. So a walk without a cycle costs no `realpath` at all — a pnpm `node_modules` holds one symlink per package. On Windows a stat carries no such identity, and the walker compares `realpathSync.native` paths alone: the on-disk spelling (the non-native `realpathSync` keeps a link's own spelling, so on a case-insensitive disk `../A` and `../a` looked like two folders); a link whose path cannot be resolved is not descended.
+A folder's identity is its `(dev, ino)`, which the `statSync` of step 4 gave for free (Rust: `MetadataExt::dev`/`ino`); a hit is confirmed by comparing the two links' `fs.realpathSync.native` paths (Rust: `fs::canonicalize`), since some file systems hand out inode numbers that are not unique, and a link whose path cannot be resolved then is not descended. So a walk without a cycle costs no `realpath` at all — a pnpm `node_modules` holds one symlink per package. On Windows a stat carries no such identity, and the walker compares `realpathSync.native` paths alone: the on-disk spelling (the non-native `realpathSync` keeps a link's own spelling, so on a case-insensitive disk `../A` and `../a` would look like two folders); a link whose path cannot be resolved is not descended.
 
 Output paths preserve the symlink path as discovered through `readdir`. `fs.realpath` is called purely for cycle detection — the resolved path is NEVER substituted into the output.
 
@@ -424,7 +426,7 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 ## 12. Appendix A: Glossary
 
 - **Walker.** The filesystem-traversal layer (`glob` / `globSync`) that invokes the matcher to enumerate matching file paths under `cwd`.
-- **Frame.** One unit of walker work: an absolute directory path paired with its relative-to-`cwd` form. The traversal stack / scheduler holds frames.
+- **Frame.** One unit of walker work: an absolute directory path paired with its relative-to-`cwd` form and the links descended through to reach it. The traversal stack / scheduler holds frames.
 - **Seed frame.** A frame produced from the matcher's static prefixes during initialization, before any `readdir` has been issued.
 - **Auto-split.** The walker's preprocessing of a `patterns` array that routes `!`-prefixed entries to the ignore set (§4.2).
 - **Static prefix.** The literal head of one expansion of the pattern's braces, up to its last whole segment (GLOB_SPEC.md §17). Walker uses these to skip directories no expansion can match.

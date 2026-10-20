@@ -3,8 +3,8 @@
 //! The walker matches a glob (or a union of globs) against a directory
 //! tree rooted at `base`. It uses [`globstar`]'s `match_dir` pruning to
 //! skip whole subtrees that cannot contain matches, and `static_prefixes`
-//! to jump directly into the deepest pre-determined directory (so
-//! `src/**/*.ts` never scans the top-level tree).
+//! to seed the walk at each pattern's literal head (so `src/**/*.ts`
+//! never scans the top-level tree).
 //!
 //! # Example
 //!
@@ -180,8 +180,8 @@ struct Frame {
     depth: usize,
 
     /// The symlinks descended through to reach this frame, for the
-    /// cycle break (see [`link_to_descend`]; it matches `fdir`'s
-    /// `isRecursive`). Inherited unchanged by a plain descent; a seed
+    /// cycle break (see [`link_to_descend`]). Inherited unchanged by a
+    /// plain descent; a seed
     /// starts with the links on its prefix.
     links: Vec<Link>,
 }
@@ -208,7 +208,8 @@ impl Walk {
     }
 
     /// Create a walker for the union of multiple patterns with the given
-    /// options. An empty pattern list is accepted and yields nothing.
+    /// options. An empty pattern list is accepted and yields nothing but
+    /// a bad base's `Io` error.
     ///
     /// **Leading `/` in any input pattern is stripped**, not treated as
     /// an absolute filesystem path. `opts.base` is always the scope
@@ -813,7 +814,7 @@ fn link_to_descend(links: &[Link], path: &Path, target: &fs::Metadata) -> Option
 }
 
 /// Windows has no cheap identity in a `stat`: the canonical path is
-/// compared, as before.
+/// compared.
 #[cfg(not(unix))]
 fn link_to_descend(links: &[Link], path: &Path, _target: &fs::Metadata) -> Option<Link> {
     let canonical = fs::canonicalize(path).ok()?;

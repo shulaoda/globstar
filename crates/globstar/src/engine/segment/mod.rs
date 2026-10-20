@@ -171,7 +171,7 @@ enum WildKind {
     AffixSet(AffixSet),
     /// `AffixSet` past `LINEAR_SUFFIXES` (a factored union of names).
     AffixIndex(Box<AffixIndex>),
-    /// Everything else: a mini Thompson NFA over the in-segment ops.
+    /// Everything else: a mini Thompson NFA over the in-segment nodes.
     Generic(Box<SegNfa>),
 }
 
@@ -275,8 +275,9 @@ struct State<B: Bits> {
     node: u32,
 }
 
-/// The same automaton past `MAX_ROW_BYTES` of rows, stepped sparsely. A position
-/// keeps its successors, not a closure row, and the active set holds
+/// The same automaton past `MAX_ROW_BYTES` of rows, or with a literal
+/// fan-out past `MAX_DENSE_LITS`, stepped sparsely. A position keeps its
+/// successors, not a closure row, and the active set holds
 /// states and whole positions: "every successor of `p` is entered" is
 /// one entry, whose literals are found by one binary search. A step
 /// costs what it tests, and the tables grow with the graph, not its

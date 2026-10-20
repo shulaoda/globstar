@@ -1,4 +1,4 @@
-# 07 — Segment-Structured Matcher (SSM)
+# 02 — Segment Engine
 
 Source: `crates/globstar/src/engine/segment/` (Rust),
 `packages/globstar/src/engine/segment/` (JS).
@@ -6,10 +6,10 @@ Source: `crates/globstar/src/engine/segment/` (Rust),
 ## The observation
 
 Every construct in the dialect except `**` is segment-local (GLOB_SPEC
-§8.2, §14.2): `*`, `?`, `[...]` cannot cross a separator, and
-dot-protection keys on segment starts. After the globstar fold, `**`
-appears in exactly four op forms, each of which denotes a
-_segment-run absorber_. A pattern is therefore a graph of
+§2.3): `*`, `?`, `[...]` cannot cross a separator, and dot-protection
+keys on segment starts. A `**` owns whole segments (a leading `**/`, a
+middle `/**/`, a trailing `/**`, or the whole pattern), and the compile
+walk turns each one into a _segment-run absorber_. A pattern is therefore a graph of
 segment-shaped elements — a line for a pattern without a
 separator-crossing brace, a branching graph otherwise:
 
@@ -17,10 +17,9 @@ separator-crossing brace, a branching graph otherwise:
 Element := Lit(bytes) | Wild(matcher) | G0 | G1
 ```
 
-with `G0` absorbing ≥ 0 path segments and `G1` ≥ 1. (A `G0` that may not
-begin with an empty segment is never needed: a `**/` absorbs empty
-segments too, which is what makes the separators around it lenient,
-§14.2.) Empty path segments are first-class
+with `G0` absorbing ≥ 0 path segments and `G1` ≥ 1. (A `**/` absorbs
+empty segments too, which is what makes the separators around it
+lenient, §9.5.) Empty path segments are first-class
 (`a//b` = `[a, "", b]`), which yields the strict-`Sep` semantics for
 free as element-count equality.
 
@@ -47,10 +46,11 @@ path's ends: its first segment against a chain's leading literal, its
 last against a literal suffix, an affix's prefix or a set's last
 bytes. Before that, union members that differ only in the literal
 ending one segment (`**/node_modules/**` and `**/.git/**`, `**/*.log`
-and `**/*.tmp`, `src/**/*.ts` and `tests/**/*.ts`) are one chain with a
-set in that segment: N chains each comparing a name become one
-comparing a set.
-Past 64 paths the NFA over the whole graph runs instead. `match_dir`
+and `**/*.tmp`, `src/**/*.ts` and `tests/**/*.ts`) become one path with
+a set in that segment (one chain, or the graph itself when it is the
+only path): N chains each comparing a name become one comparing a set.
+Past 64 paths, or when a member with several globstars would need more
+than 64 states (32 in JS), the NFA over the whole graph runs instead. `match_dir`
 goes the same way: one chain with at most one globstar — the common
 case — answers it by the same anchored compares, reading the tokens
 the NFA would hold after the directory off the chain, and such a
@@ -85,7 +85,7 @@ matcher keeps no NFA at all. Only a matcher whose chains cannot serve
   carries its own small NFA (its nodes alone), so `**/node_modules/**`
   in a union costs what it would alone.
   `match_dir`'s all-below bit steps the graph NFA over wildcard-only
-  segments until the set settles (§06 §2.5).
+  segments until the set settles (§04 §2.5).
 
 In-segment `Wild` matchers are classified at compile time:
 `Affix` (prefix/suffix literals + `*`/`?` runs → length bounds + two

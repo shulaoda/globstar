@@ -9,7 +9,7 @@
 #   - Star / globstar crossing multi-byte boundaries
 #   - Mid-literal Star with non-ASCII on both sides
 #   - Repeated non-ASCII bytes across positions of one literal
-#   - Prefix skip with non-ASCII Lit prefix
+#   - A non-ASCII literal head before a globstar
 #   - Mixed scripts (Latin-1 accents, CJK, emoji)
 #
 # Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]

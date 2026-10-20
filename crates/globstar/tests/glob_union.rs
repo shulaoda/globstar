@@ -89,8 +89,8 @@ fn a_member_error_names_the_member() {
 
 #[test]
 fn duplicate_members_count_once() {
-    // Factored into `p{,}`, a duplicated literal would lose the Literal
-    // engine and most of its static prefix.
+    // A pattern given twice is parsed once and counts once: the union
+    // stays literal, with the member's own prefix.
     let twice = Glob::union(["src/main.rs", "src/main.rs"]).unwrap();
     assert_eq!(twice.shape(), "literal");
     assert_eq!(
@@ -107,8 +107,8 @@ fn duplicate_members_count_once() {
 #[test]
 fn members_spelled_differently_fold_into_one() {
     // One body under two spellings: factoring lifts all of it and keeps
-    // one empty branch, so nothing follows an open `**` (debug builds
-    // asserted on that) and a literal keeps the Literal engine.
+    // one empty branch, so nothing follows an open `**` (compile.rs
+    // debug-asserts it) and a literal keeps the Literal engine.
     for (a, b) in [
         ("**", "**/**"),
         ("a/**", "a/**/**"),
@@ -129,7 +129,7 @@ fn members_spelled_differently_fold_into_one() {
 #[test]
 fn long_shared_prefixes_lift_in_one_pass() {
     // The shared tokens leave each member in one drain, not one per
-    // token: two 64 KB members took seconds.
+    // token, so two 64 KB members factor in linear time.
     let (x, y) = ("a/".repeat(32_000) + "x", "a/".repeat(32_000) + "y");
     let start = std::time::Instant::now();
     let union = Glob::union([&x, &y]).unwrap();
@@ -178,8 +178,8 @@ fn brace_meta_in_patterns_safe() {
 
 #[test]
 fn factoring_preserves_globstar_fold() {
-    // Regression: `["//", "a/**/"]` previously broke when the trailing
-    // `/` was lifted across the `**` fold boundary.
+    // Factoring must not lift the trailing `/` across a `**`: the union
+    // of `//` and `a/**/` answers as the OR of its members.
     let patterns = ["//", "a/**/"];
     let u = Glob::union(patterns).unwrap();
     let test_paths: &[&[u8]] = &[b"a/", b"a/b/", b"//", b"a/b/c/", b"foo"];
@@ -240,8 +240,8 @@ fn members_that_differ_in_one_segment_match_as_the_members_do() {
 
 #[test]
 fn factoring_lifts_shared_prefix_for_globstar_patterns() {
-    // The whole point of factoring: union should produce the same SSM
-    // as the hand-written brace, so this should match identically.
+    // The whole point of factoring: the union produces the same segment
+    // graph as the hand-written brace, so it matches identically.
     let u = Glob::union(["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.md"]).unwrap();
     let manual = Glob::new("**/*.{ts,tsx,js,jsx,md}").unwrap();
     let test_paths: &[&[u8]] = &[

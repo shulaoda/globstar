@@ -547,7 +547,7 @@ fn walker_invalid_member_of_a_list_is_named() {
         _ => panic!("expected InvalidPattern, got {err:?}"),
     }
     // Found from the core's member index, not by compiling each member
-    // again: 5,000 of them took seconds and printed the whole list.
+    // again, so 5,000 members fail fast with a short message.
     let members: Vec<String> = (0..5000)
         .map(|i| format!("{}{{**,a}}/f{i}", "{**,a}{/,b}".repeat(4)))
         .collect();
@@ -851,7 +851,7 @@ fn walker_default_options_walks_cwd() {
     std::env::set_current_dir(t.root()).expect("chdir into tmp");
 
     // WalkOptions::default() → base = "." → should walk the current dir.
-    // Collect file names (paths are yielded as `./a.rs` etc, so strip to
+    // Collect file names (paths are yielded absolute, so strip to
     // basenames for assertion).
     let files: BTreeSet<String> = Walk::new("*.rs", WalkOptions::default())
         .expect("construct walker")
@@ -1126,9 +1126,8 @@ fn walker_skips_a_name_that_is_not_utf8() {
 #[test]
 fn walker_follow_links_on_breaks_cycles() {
     // A directory symlink that loops back to its own ancestor would
-    // cause infinite descent without cycle detection. Walker must
-    // canonicalize the symlink target, see it's an ancestor, skip
-    // the descent, and produce a finite result.
+    // cause infinite descent without cycle detection: a link back to
+    // its ancestor is walked once more, then the cycle check stops it.
     use std::os::unix::fs::symlink;
     let t = TmpTree::new("follow_cycle");
     t.touch("a.txt");
@@ -1147,12 +1146,9 @@ fn walker_follow_links_on_breaks_cycles() {
         .unwrap(),
         t.root(),
     );
-    // Walker terminates. Without cycle detection it would loop
-    // forever; with it, descent into `loop` is suppressed at the
-    // first re-entry and we get the single real file (plus possibly
-    // the same file under one level of `loop/` before the cycle is
-    // tripped, depending on exact resolution timing — assert the
-    // real file is in the set and the result is finite).
+    // Without cycle detection this would loop forever; with it the
+    // descent into `loop` stops at the first re-entry, so the result is
+    // finite and holds the real file.
     assert!(
         got.contains("a.txt"),
         "cycle protection must still yield the real file; got {got:?}"
@@ -1163,12 +1159,11 @@ fn walker_follow_links_on_breaks_cycles() {
     );
 }
 
-// ── Regression: audit 2026-08 ───────────────────────────────────────────
+// ── Seeds and pattern preprocessing ─────────────────────────────────────
 
-/// C1: a union of literal patterns that share a trailing byte (e.g. the
-/// same extension) must not seed the walker at the un-terminated prefix
-/// (`package`/`tsconfig`) — that directory doesn't exist, so the walk
-/// used to return nothing.
+/// A union of literal patterns that share a trailing byte (e.g. the
+/// same extension) seeds each literal whole, not the shared prefix
+/// (`package`/`tsconfig`), which names no directory.
 #[test]
 fn walker_c1_multi_literal_shared_suffix() {
     let t = TmpTree::new("c1-multi-lit");
@@ -1186,7 +1181,7 @@ fn walker_c1_multi_literal_shared_suffix() {
     assert_eq!(got, expected);
 }
 
-/// C1: same hazard via a leading brace whose branches share a suffix.
+/// The same, via a leading brace whose branches share a suffix.
 #[test]
 fn walker_c1_brace_shared_suffix() {
     let t = TmpTree::new("c1-brace");
@@ -1201,7 +1196,7 @@ fn walker_c1_brace_shared_suffix() {
     assert_eq!(got, expected);
 }
 
-/// C2: a `..` in a pattern must not let the walk escape `base`, even
+/// A `..` in a pattern must not let the walk escape `base`, even
 /// though the sibling directory exists on disk.
 #[test]
 fn walker_c2_dotdot_stays_in_base() {
@@ -1223,9 +1218,9 @@ fn walker_c2_dotdot_stays_in_base() {
     assert_eq!(got, ["ok.txt"].iter().map(|s| s.to_string()).collect());
 }
 
-/// Seed-jump must honor `follow_links = false`: a static-prefix that
-/// lies on or beyond a symlink is never reached by a root walk (which
-/// drops symlinks), so seeding must not jump through it either.
+/// Seeding honors `follow_links = false`: a static prefix that lies on
+/// or beyond a symlink is never reached by a root walk (which drops
+/// symlinks), so a seed is not reached through it either.
 #[test]
 #[cfg(unix)]
 fn walker_seed_symlink_follow_false() {
@@ -1253,16 +1248,16 @@ fn walker_seed_symlink_follow_false() {
     let got = collect_rel(Walk::new("**/*.txt", opts(false)).unwrap(), t.root());
     assert_eq!(got, ["real/a.txt"].iter().map(|s| s.to_string()).collect());
 
-    // follow = true: the seed IS allowed to jump through the symlink.
+    // follow = true: the seed is reached through the symlink.
     let got = collect_rel(Walk::new("link/*.txt", opts(true)).unwrap(), t.root());
     assert_eq!(got, ["link/a.txt"].iter().map(|s| s.to_string()).collect());
 }
 
 #[test]
 fn walker_ignore_applies_to_seeded_prefixes() {
-    // Pinned 2026-08: static-prefix seeds (file emissions AND dir
-    // frames) skipped the ignore filter entirely, so fully-literal
-    // patterns escaped `ignore` while glob-shaped ones honored it.
+    // Seeds pass the ignore rules as walked entries do: a literal file,
+    // a seeded folder and a seed under an ignored ancestor are all
+    // dropped.
     let t = TmpTree::new("ignore_seed");
     t.touch("src/generated/api.ts");
     t.touch("src/index.ts");
@@ -1317,10 +1312,8 @@ fn walker_ignore_applies_to_seeded_prefixes() {
 
 #[test]
 fn walker_slash_bang_routes_to_ignore() {
-    // Pinned 2026-08: the leading-`/` strip ran AFTER the `!`-parity
-    // split, so `/!x` reached the matcher as whole-pattern negation
-    // (single-pattern walks matched nearly everything; unions errored).
-    // §4.3 now runs before §4.2: `/!x` ≡ `!x`.
+    // Normalization (§4.3) runs before the `!` split (§4.2): `/!x` ≡
+    // `!x`, an ignore entry, never whole-pattern negation.
     let t = TmpTree::new("slash_bang");
     t.touch("a.txt");
     t.touch("b.txt");
@@ -1342,9 +1335,8 @@ fn walker_slash_bang_routes_to_ignore() {
 #[cfg(unix)]
 #[test]
 fn walker_seed_emits_broken_symlink_like_walk() {
-    // Pinned 2026-08: a broken symlink was emitted by `links/*` (walk
-    // path, §10) but silently dropped by the literal `links/broken`
-    // (seed path, §9.4) — the seed now falls back to symlink_metadata.
+    // A literal seed yields a broken symlink as the walk does (§9.4,
+    // §10): the seed is `lstat`-ed, so the link is an entry either way.
     let t = TmpTree::new("broken_seed");
     t.mkdir("links");
     std::os::unix::fs::symlink("/nonexistent-target-xyz", t.root().join("links/broken.txt"))
@@ -1370,8 +1362,8 @@ fn walker_seed_emits_broken_symlink_like_walk() {
 #[test]
 fn walker_seed_surfaces_permission_error() {
     use std::os::unix::fs::PermissionsExt;
-    // Pinned 2026-08: an EACCES on the seed stat was silently swallowed
-    // where a root walk would have yielded a loud per-entry error.
+    // An EACCES on a seed's lstat is yielded as one Io error, as a root
+    // walk yields it per entry.
     let t = TmpTree::new("eacces_seed");
     t.touch("locked/b.txt");
     let locked = t.root().join("locked");
@@ -1393,9 +1385,8 @@ fn walker_seed_surfaces_permission_error() {
 
 #[test]
 fn walker_normalizes_dot_and_doubleslash_patterns() {
-    // Pinned 2026-08: `./` and `//` spellings leaked verbatim into
-    // emitted paths (and inflated depth); patterns now normalize to the
-    // walked-path spelling (§4.3), and a bare `.` matches nothing.
+    // `./`, `//` and `.` spellings normalize to the walked-path spelling
+    // (§4.3): same path, same depth; a bare `.` matches nothing.
     let t = TmpTree::new("normalize");
     t.touch("a/b/x.txt");
 
@@ -1421,9 +1412,8 @@ fn walker_normalizes_dot_and_doubleslash_patterns() {
 
 #[test]
 fn walker_seed_order_is_forward() {
-    // Pinned 2026-08: seeds were pushed in prefix order onto a LIFO
-    // stack without the final reverse, so brace seeds walked backwards
-    // (spec §7.2 step 1; JS walks forward).
+    // Seeds drain in sorted prefix order (WALKER_SPEC §7.2 step 1), as
+    // in JS.
     let t = TmpTree::new("seed_order");
     t.touch("sa/1.txt");
     t.touch("sb/2.txt");
@@ -1449,8 +1439,8 @@ fn walker_seed_order_is_forward() {
 #[cfg(unix)]
 #[test]
 fn walker_seed_emits_looping_symlink_like_walk() {
-    // Any stat error probes lstat: a self-loop symlink (ELOOP) exists
-    // as an entry, so seed and walk agree on emitting it.
+    // A seed part is lstat-ed, so a self-loop symlink (ELOOP) is an
+    // entry: seed and walk agree on emitting it.
     let t = TmpTree::new("loop_seed");
     t.mkdir("links");
     std::os::unix::fs::symlink("loop.txt", t.root().join("links/loop.txt")).unwrap();
@@ -1473,8 +1463,8 @@ fn walker_missing_base_yields_error() {
 
 #[test]
 fn walker_bad_base_fails_for_every_pattern_shape() {
-    // A literal head used to stat only its seed, so a typo in the base
-    // gave a silent empty walk.
+    // The base is checked whatever the pattern's shape: a missing or
+    // non-folder base gives one Io error, never a silent empty walk.
     let t = TmpTree::new("bad_base");
     t.touch("file.txt");
     let file = t.root().join("file.txt");
@@ -1546,8 +1536,8 @@ fn walker_seed_through_a_symlink_knows_its_cycle() {
 
 #[test]
 fn walker_trailing_dot_names_the_folder() {
-    // `d/.` is the folder `d` (`d/`, WALKER_SPEC §4.3): dropping the `.`
-    // made `*/.` match files. As a pattern it yields the folders it names;
+    // `d/.` is the folder `d` (`d/`, WALKER_SPEC §4.3), so `*/.` names
+    // folders only. As a pattern it yields the folders it names;
     // as an ignore entry it prunes them (§3.2).
     let t = TmpTree::new("trailing_dot");
     t.touch("x.txt");
@@ -1645,10 +1635,10 @@ fn walker_seeds_see_the_tree_when_iterated() {
 #[cfg(unix)]
 #[test]
 fn walker_skips_a_subtree_the_ignore_covers() {
-    // Under dot=true `**/node_modules/**` covers all of `node_modules`,
+    // Under dot=true `**/node_modules/**/*` covers all of `node_modules`,
     // so the walk never reads it: an unreadable `node_modules` raises
-    // no error. (`node_modules` itself does not match `**/node_modules/**`,
-    // so the plain ignore check let the walk read it.)
+    // no error. (The entry does not match `node_modules/` itself, so
+    // only the all-below check can prune it.)
     use std::os::unix::fs::PermissionsExt;
     let t = TmpTree::new("ignore_prune");
     t.touch("src/a.js");
@@ -1660,7 +1650,7 @@ fn walker_skips_a_subtree_the_ignore_covers() {
         let opts = WalkOptions {
             base: t.root().to_path_buf(),
             dot,
-            ignore: vec!["**/node_modules/**".to_string()],
+            ignore: vec!["**/node_modules/**/*".to_string()],
             ..WalkOptions::default()
         };
         Walk::new("**/*.js", opts).unwrap().collect::<Vec<_>>()
@@ -1690,8 +1680,8 @@ fn walker_bangs_exposed_by_normalization_count_too() {
 
 #[test]
 fn walker_refuses_an_ignore_entry_that_starts_with_bang() {
-    // `!src/**` as an ignore entry would ignore everything else; it used
-    // to do that alone and fail as a list member.
+    // `!src/**` as an ignore entry would ignore everything else, so it is
+    // refused, alone or in a list.
     for ignore in [vec!["!src/**"], vec!["!src/**", "node_modules"]] {
         let opts = WalkOptions {
             ignore: ignore.iter().map(|s| s.to_string()).collect(),

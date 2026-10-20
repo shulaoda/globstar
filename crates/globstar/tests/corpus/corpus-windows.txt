@@ -14,8 +14,7 @@ a/b	a\\b	match
 src/main.rs	src\\main.rs	match
 
 ## path.separator.backslash.consecutive
-# A pattern `/` is a strict `Sep`: it takes exactly ONE separator byte
-# (§14.2), whichever of `/` and `\` it is. A run of two does not match,
+# A pattern `/` takes exactly ONE separator byte (§7.4, §14.2), whichever of `/` and `\` it is. A run of two does not match,
 # the same as `a/b` against `a//b` in corpus.txt.
 a/b	a\\\\b	no-match
 a/b	a/\\b	no-match

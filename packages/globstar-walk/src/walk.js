@@ -23,11 +23,13 @@
 // drops symlinks entirely (neither emitted nor descended; matches
 // `fdir`'s `excludeSymlinks`).
 //
-// Errors are thrown, never swallowed. Compile failures land as
+// Errors are thrown, not swallowed, except where a root walk would see
+// nothing (WALKER_SPEC §9.4, §10). Compile failures land as
 // `WalkError("InvalidPattern")`; readdir failures (EACCES, ENOENT,
 // missing cwd) land as `WalkError("Io")`. We diverge from tinyglobby
-// / fast-glob here on purpose: silent IO failures mask broken cwds
-// and unreadable subtrees.
+// (which suppresses IO errors) and fast-glob (which suppresses ENOENT)
+// on purpose: silent IO failures mask broken cwds and unreadable
+// subtrees.
 
 import * as fs from "node:fs";
 import * as path from "node:path";

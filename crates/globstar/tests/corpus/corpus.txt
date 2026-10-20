@@ -440,9 +440,9 @@ Foo	Foo	match
 {src,tests}/**/*.{ts,tsx}	src/deep/nested/file.ts	match
 
 ## edge.consecutive.slashes
-# Pattern parser does NOT collapse `//` — each `/` becomes its own
-# `Sep`. Combined with strict-Sep on the path, `a//b` (pattern)
-# requires exactly two separator bytes in the path. Aligned with
+# The parser does not collapse `//`: each pattern `/` takes exactly one
+# separator byte (§7.4), so `a//b` (pattern) requires exactly two
+# separator bytes in the path. Aligned with
 # picomatch / globset / fast-glob.
 a//b	a/b	no-match
 a//b	a//b	match
@@ -543,14 +543,14 @@ x=y	x=y	match
 [\]abc]	z	no-match
 
 # ============================================================================
-# regression.audit-2026-08 — is_match coverage for the audit fixes.
+# brace.globstar.boundaries — how a `**` in or beside a brace is judged (§10.1, §9.1).
 # Each pattern is covered across ALL its branches and match depths, the
 # near-miss / impossible paths just outside its language, AND both `dot`
 # settings wherever a segment-start wildcard could expose a dotfile.
 # corpus.txt default is dot=true; dot=false rows are marked explicitly.
 # ============================================================================
 
-## M3.single-branch-brace-is-literal-globstar-degrades (§10.4 + §9.1)
+## single-branch-brace-is-literal-globstar-degrades (§10.4 + §9.1)
 # {**} degrades to literal {*}: a single-segment wildcard flanked by { }.
 {**}	{a}	match
 {**}	{}	match
@@ -580,7 +580,7 @@ x=y	x=y	match
 {a/**}	{a/.x}	match	dot=true
 {a/**}	{a/.x}	no-match	dot=false
 
-## M5.globstar-boundary-chained-outward-across-brace (§10.1 + §9.1)
+## globstar-boundary-chained-outward-across-brace (§10.1 + §9.1)
 # {src/,lib/}** is src/** union lib/** — the trailing `/` inside each branch
 # makes the following `**` a real globstar.
 {src/,lib/}**	src/a/b	match
@@ -602,7 +602,8 @@ x=y	x=y	match
 {a/,b/}**	a	no-match
 {a/,b/}**	b/z	match
 {a/,b/}**	c	no-match
-# Mixed brace (one branch lacks the trailing `/`) conservatively degrades.
+# Mixed brace: in the `src` expansion `**` is glued to text and is a star,
+# so `src/a/b` misses; the `lib/` expansion keeps its globstar.
 {src,lib/}**	src/a/b	no-match
 # dot: the trailing `**` opens a segment start, so a dotfile there is
 # protected under dot=false but matched under dot=true.
@@ -617,7 +618,7 @@ x=y	x=y	match
 {a/,b/}**	a/.x	match	dot=true
 {a/,b/}**	a/.x	no-match	dot=false
 
-## M5b.globstar-boundary-looks-past-the-braces-that-hold-it (§10.1 + §9.1)
+## globstar-boundary-looks-past-the-braces-that-hold-it (§10.1 + §9.1)
 # A `**` that opens a branch looks past the `{` to what precedes the brace;
 # one that closes a branch looks past the `}` to what follows it. Nested
 # braces are looked past too. No expansion is needed for these.
@@ -640,7 +641,7 @@ x=y	x=y	match
 {**/x,y}	.a/x	match	dot=true
 {**/x,y}	.a/x	no-match	dot=false
 
-## M2.leading-globstar-keeps-its-slash-across-a-brace (§9.4)
+## leading-globstar-keeps-its-slash-across-a-brace (§9.4)
 # **/{**/a,b} is **/a union **/b : the leading **/ still matches X at depth 0.
 **/{**/a,b}	b	match
 **/{**/a,b}	a	match
@@ -651,7 +652,8 @@ x=y	x=y	match
 **/{**/a,b}	c	no-match
 **/{**/a,b}	q/c	no-match
 **/{**/a,b}		no-match
-# **/{x,**}: the ** branch degrades to `.*`, matching anything.
+# **/{x,**}: the `**` branch is `**/**` ≡ `**` (§9.6): every path matches,
+# dot-protected under dot=false.
 **/{x,**}	x	match
 **/{x,**}	q/r	match
 # Control: no globstar-leading branch, plain "/b at any depth".
@@ -667,7 +669,7 @@ x=y	x=y	match
 **/{x,**}	.x	match	dot=true
 **/{x,**}	.x	no-match	dot=false
 
-## M1.segment-engine-preserves-the-mandatory-separator (§9.3)
+## keeps-the-mandatory-separator (§9.3)
 # x/{**,a}/** is x/** union x/a/** — both require the x/ prefix (NOT bare x).
 x/{**,a}/**	x	no-match
 x/{**,a}/**	x/	match
@@ -713,8 +715,8 @@ x/{**,a}/**	x/a/.z	no-match	dot=false
 */{**,*}/**	a/.b	no-match	dot=false
 
 ## nested.brace.globstar.boundary
-# A branch-edge `**` inside a nested brace must absorb the outer `/`
-# (distribute_seps splices Concat branches; pinned 2026-08).
+# A branch-edge `**` inside a nested brace meets the `/` outside both
+# braces and is a globstar (§10.1).
 {a/{**,},x}/y	a/y	match
 {a/{**,z},x}/y	a/y	match
 {a/{**,},x}/**	a/	match
@@ -725,21 +727,21 @@ a/{c/{**,b},x}/**	a/c/y	match
 a/{{**/c,x}d,y}	a/b/cd	match
 
 ## leading.sep.string.mode
-# Path starts with a separator, single-globstar tail scan (the JS
-# string-mode lastSepBeforeStr clamp bug, pinned 2026-08).
+# A path that starts with a separator, against a one-globstar chain: the
+# `**` takes the empty first segment.
 **//a	/a	match
 **/a/b	/a/b	match
 
-## seq.state.saturation
-# 31 alternating globstar/literal elements once saturated a 31-bit state
-# set (a 2026-08 JS false negative). Pins that long chains stay exact.
+## nfa.int32.full
+# 31 alternating globstar/literal elements plus accept fill a 32-state
+# set, the JS int32 limit. Pins that a full set stays exact.
 **/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	match
 **/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	no-match
 !**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/a	a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a	no-match
 
 ## brace.trailing-sep.lenient-globstar-boundary
-# A branch-trailing / before **/ is **-adjacent and lenient (SepRun),
-# like the flat X/**/ form (§10.1 + §9.5).
+# A branch-trailing / before **/ is **-adjacent and takes a run of
+# separators, like the flat X/**/ form (§10.1 + §9.5).
 {src/,lib/}**/*.ts	src//x.ts	match
 {src/,lib/}**/*.ts	src/x.ts	match
 {src/,lib/}**/*.ts	lib//deep//x.ts	match
@@ -758,7 +760,7 @@ a/{{**/c,x}d,y}	a/b/cd	match
 {a,/**}/{**/x,b}	/p/b	match
 
 ## engine.paths
-# Paths only these rows reach (mutation testing, 2026-10 audit): a list
+# Paths only these rows reach: a list
 # of nine suffixes (an index past eight), with its prefix, its length
 # check and case folding; short suffix lists after `?`; a brace whose
 # empty branch leaves the bare segment.
@@ -789,8 +791,8 @@ a?{b,c}	ab	no-match
 [!a]a	.a	no-match	dot=false
 a/*.txt	a/.txt	no-match	dot=false
 
-## spec.15.catalog
-# rows the spec's former edge-case catalog listed and no other row covered.
+## spec.edge.cases
+# Edge cases no other row covers.
 ?.txt	.txt	no-match	dot=false
 ?txt	.txt	no-match	dot=false
 ?txt	atxt	match	dot=false
@@ -801,7 +803,7 @@ a/*.txt	a/.txt	no-match	dot=false
 
 ## lenient.sep.through.braces (§9.5)
 # A `**` that opens or closes a brace branch keeps the `/` beside the
-# brace lenient (mutation testing, 2026-10 audit).
+# brace lenient.
 {a/**,b}/{{**/x,y},z}	b//x	match
 {a,/**}/**/x	a//a/x	match
 {a/**,b/}/**/x	b///x	match

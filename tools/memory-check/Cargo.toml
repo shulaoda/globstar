@@ -18,7 +18,7 @@ globstar-walk = { path = "../../crates/globstar-walk" }
 name = "matcher-single-memory"
 path = "src/matcher_single_memory.rs"
 
-# Multi-pattern memory: globstar (union / per-pattern) vs globset / wax,
+# Multi-pattern memory: globstar (union) vs globset / wax,
 # on the sets of `fixtures/bench-sets.tsv` and the two list files.
 [[bin]]
 name = "matcher-multi-memory"

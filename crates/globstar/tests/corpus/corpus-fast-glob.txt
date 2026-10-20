@@ -553,7 +553,7 @@ t[^a-g]n	ton	match
 ## fast_glob.bash_slashmatch
 # Row removed — `foo[/]bar`: fast-glob treats `[/]` as matching `/`, we
 # reject at parse time (class is segment-local, §8.2). Divergence in
-# corpus-err.txt.
+# corpus-class.txt.
 f[^eiu][^eiu][^eiu][^eiu][^eiu]r	foo-bar	match
 
 ## fast_glob.bash_extra_stars

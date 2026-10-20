@@ -128,7 +128,7 @@ console.log("✓ members spelled differently fold into one");
 
 // Options: booleans only, own keys only, no unknown keys, the engine
 // hook one of its two values; `undefined` keeps the default. `"false"`
-// turned case folding on.
+// is not a boolean and throws.
 for (const bad of [
   { caseInsensitive: "false" },
   { dot: 0 },

@@ -12,7 +12,7 @@ use counter::{LIVE, PEAK};
 
 const MB: usize = 1 << 20;
 
-/// (kept, peak) bytes of compiling `patterns` as one union.
+/// (kept, peak) bytes of compiling `patterns` as one union, and the union.
 fn cost(patterns: &[String]) -> (usize, usize, Glob) {
     let base = LIVE.load(Relaxed);
     PEAK.store(base, Relaxed);

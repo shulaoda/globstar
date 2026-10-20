@@ -8,7 +8,7 @@ publish = false
 globstar = { path = "../../crates/globstar" }
 
 # Cross-runtime differential harness: reads request lines on stdin and
-# emits one result token per line, using ONLY globstar's public API. The
+# emits one result token per line, using globstar's public API and its hidden `is_match_nfa` hook. The
 # JS-side driver (`scripts/fuzz.mjs`) feeds the same randomly generated
 # inputs to this binary and to the `@globstar/core` JS port, then asserts the
 # two runtimes agree — catching drift the fixed corpus cannot reach.

@@ -23,7 +23,7 @@ impl Glob {
 }
 ```
 
-`Glob` is `Debug + Clone + Send + Sync`; compile once and share it across threads (its `Debug` shows the engine and the negation, not the compiled tables). A union is an ordinary `Glob`, not a separate set type. `union` rejects a negated member (an odd number of leading `!`; `!!x` is just `x`) with `GlobError::NegatedInUnion`, an empty iterator with `GlobError::EmptyPatternSet`, and a member that does not compile with `GlobError::InMember`, which names it by index; a pattern given twice counts once.
+`Glob` is `Debug + Clone + Send + Sync`; compile once and share it across threads (its `Debug` shows the engine and the negation, not the compiled tables). A union is an ordinary `Glob`, not a separate set type. `union` rejects a negated member (an odd number of leading `!`; `!!x` is just `x`) with `GlobError::NegatedInUnion`, an empty iterator with `GlobError::EmptyPatternSet`, and a member that does not compile with `GlobError::InMember`, which names it by index (a `TooComplex` is the list's own and names no member); a pattern given twice counts once.
 
 ```rust
 let glob = Glob::new("src/**/*.rs")?;

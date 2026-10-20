@@ -13,8 +13,8 @@ use counter::{LIVE, PEAK};
 const MB: usize = 1 << 20;
 
 // A folder's entries stream out as they are read; only its child
-// folders wait. Buffering 20,000 entries took a few MB before the first
-// one came out.
+// folders wait: with 20,000 entries the heap stays small before the
+// first one comes out.
 #[test]
 fn a_walk_holds_folders_not_entries() {
     let root = std::env::temp_dir().join(format!("globstar-walk-memory-{}", std::process::id()));

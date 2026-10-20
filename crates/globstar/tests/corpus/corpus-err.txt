@@ -50,8 +50,8 @@ foo{a,b	-	err:UnterminatedBrace
 []-!]	-	err:InvalidRange
 
 ## too.deep.nesting
-# Brace nesting > 32 levels
-{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	-	err:BraceNestingTooDeep
+# 33 levels of brace nesting, one past the limit
+{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	-	err:BraceNestingTooDeep
 
 ## brace.expansion.too.large
 # Distributing braces around `**` would copy more than 4096 (§6.2).

@@ -95,7 +95,7 @@ A verdict is a statement about the pattern, not a command to the walker. `Pruned
 
 ## The `dot` option never covers a subtree
 
-With `dot: false`, no wildcard may match a name that starts with `.`. A directory can then always hold a dotfile the pattern does not match, so `matches all below` is never `true`. The walkers default to `dot: false`; an exclude list that should drop `node_modules` whole must compile with `dot: true`.
+With `dot: false`, no wildcard may match a name that starts with `.`. A directory can then always hold a dotfile the pattern does not match, so `matches all below` is never `true`. A consumer that skips a directory on `matches all below` must compile its excludes with `dot: true`; the globstar walkers default to `dot: false`, and also prune a directory when an ignore entry ending in `/` or `/**` matches it under either setting.
 
 | Pattern              | Directory      | Options      | Verdict      |
 | -------------------- | -------------- | ------------ | ------------ |
