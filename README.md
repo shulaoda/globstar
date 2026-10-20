@@ -50,6 +50,11 @@ pnpm docs:dev     # local dev server
 pnpm docs:build   # static site in docs/.vitepress/dist
 ```
 
+A push to `main` that touches the docs or the matcher deploys the site
+to [Void](https://void.cloud) through
+[`void-deploy.yml`](./.github/workflows/void-deploy.yml); the workflow's
+header lists the one-time setup.
+
 ## Specifications
 
 The pattern language and walker behavior are formalized under

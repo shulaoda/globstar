@@ -1,3 +1,5 @@
+import { copyFile, mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vitepress";
 
@@ -66,6 +68,19 @@ export default defineConfig({
     },
     outline: [2, 3],
     footer: { message: "Released under the MIT License." },
+  },
+
+  // Void serves `/guide/syntax` from `guide/syntax/index.html` and never
+  // from `guide/syntax.html`, which is what `cleanUrls` builds: give every
+  // page a nested index too, so the clean links work there as well.
+  async buildEnd(site) {
+    for (const page of site.pages) {
+      const html = page.replace(/\.md$/, ".html");
+      if (basename(html) === "index.html") continue;
+      const dir = join(site.outDir, html.slice(0, -".html".length));
+      await mkdir(dir, { recursive: true });
+      await copyFile(join(site.outDir, html), join(dir, "index.html"));
+    }
   },
 
   vite: {

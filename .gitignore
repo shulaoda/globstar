@@ -16,3 +16,7 @@ yarn.lock
 # Docs site build output
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+# Void deploy state; the project link may be committed
+.void/*
+!.void/project.json

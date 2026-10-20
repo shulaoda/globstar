@@ -1,0 +1,60 @@
+# Deploys the docs site (`docs/.vitepress/dist`) to a Void platform.
+#
+# One-time setup, from a machine with a browser, by someone with access to
+# the platform:
+#
+#   npx void@1.1.12 connect api.void.cloud
+#   pnpm docs:build
+#   npx void@1.1.12 deploy --platform void --project globstar-docs --dir docs/.vitepress/dist
+#   npx void@1.1.12 github install
+#   npx void@1.1.12 github connect globstar-docs --repo shulaoda/globstar \
+#     --branch main --executor github_actions --workflow .github/workflows/void-deploy.yml
+#
+# The last command is what lets this workflow deploy: the platform then
+# trusts the GitHub OIDC token of this repository, branch and workflow file,
+# and `void deploy` exchanges it for a short-lived, project-scoped deploy
+# token. No long-lived secret is stored anywhere. Another platform or
+# project: set the VOID_API_URL / VOID_PROJECT repository variables.
+name: Deploy docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      # The playground bundles the matcher from the package source.
+      - "packages/globstar/src/**"
+      - ".github/workflows/void-deploy.yml"
+  workflow_dispatch:
+
+# Latest push wins: a newer commit is never overtaken by an older deploy.
+concurrency:
+  group: void-deploy-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write # the job mints the GitHub OIDC token `void deploy` presents
+
+env:
+  VOID_API_URL: ${{ vars.VOID_API_URL || 'https://api.void.cloud' }}
+  VOID_PROJECT: ${{ vars.VOID_PROJECT || 'globstar-docs' }}
+  # The CLI is not a dependency of the repository (it pulls in a full
+  # application stack); it is fetched here, pinned.
+  VOID_VERSION: 1.1.12
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm docs:build
+      - name: Deploy to Void
+        run: |
+          npx --yes "void@$VOID_VERSION" connect "$VOID_API_URL" --no-login
+          npx --yes "void@$VOID_VERSION" deploy --platform void --project "$VOID_PROJECT" --dir docs/.vitepress/dist
