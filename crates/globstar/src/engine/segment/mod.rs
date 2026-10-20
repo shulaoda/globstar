@@ -180,11 +180,6 @@ impl Affix {
     fn parts(&self) -> (&[u8], &[u8]) {
         self.bytes.split_at(self.split as usize)
     }
-
-    #[inline]
-    fn suffix(&self) -> &[u8] {
-        self.parts().1
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -353,9 +348,7 @@ impl SegmentMatcher {
         match (&self.chains[..], &self.nfa) {
             ([], Some(nfa)) => nfa.is_match(self, path),
             ([_], _) => self.chain_matches(0, path),
-            (chains, _) => {
-                (0..chains.len()).any(|i| self.ends_like(i, path) && self.chain_matches(i, path))
-            }
+            _ => self.any_chain_matches(path),
         }
     }
 

@@ -18,7 +18,18 @@ W:index | chains 1 | nfa none	*.{e0,e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e
 W:set G0 W:affix | chains 1 | nfa none	{src,lib}/**/*.ts
 G0 L G0 L | chains 0 | nfa small	**/a/**/b
 L G0 L G0 L G0 W:affix(2) | chains 3 | nfa small	src/**/*.ts	tests/**/*.ts	lib/**/*.js
-L G0 L G0 L G0(2) L G0 L G0 L G0 W:affix(3) W:set W:affix L W:affix(4) | chains 10 | nfa small	src/**/*.ts	src/**/*.tsx	tests/**/*.test.ts	lib/**/*.{js,mjs}	**/*.json	**/package.json	**/.env*	components/**/*.vue	scripts/**/*.sh	docs/**/*.md
+# Members that differ only in the literal ending the segment after a `**`
+# or `*` merge into a set there; a literal at a known depth, or one that
+# starts the segment, stays a chain of its own.
+G0 W:set G1 W:affix | chains 2 | nfa small	**/node_modules/**	**/.git/**	**/*.log
+L G0(2) W:set W:affix | chains 2 | nfa small	**/.DS_Store	**/Thumbs.db	src/**/*.ts
+L(5) | chains 3 | nfa small	src/a/x.ts	src/a/y.ts	src/b/x.ts
+L(4) G1 | chains 2 | nfa small	a/x/**	b/y/**
+L(2) G1 L G1 L G0 W:affix | chains 3 | nfa small	a/x/**	a/y/**	b/**/*.ts
+G0 L G0 W:set L | chains 2 | nfa small	**/*.log	**/*.tmp	src/**/x
+L W:affix L W:affix W:set L G1 | chains 2 | nfa small	packages/*/dist/**	packages/*/coverage/**	apps/*/out/**
+G0 L G0 W:affix(2) L | chains 3 | nfa small	**/.env.*	**/vite.config.*	src/**/x
+L G0 L G0 L G0(2) L G0 L G0 L G0 W:set W:affix W:set W:affix L W:affix(4) | chains 9 | nfa small	src/**/*.ts	src/**/*.tsx	tests/**/*.test.ts	lib/**/*.{js,mjs}	**/*.json	**/package.json	**/.env*	components/**/*.vue	scripts/**/*.sh	docs/**/*.md
 L(7) | chains 8 | nfa small	{a/,b/}{a/,b/}{a/,b/}x
 G0 W:nfa | chains 1 | nfa none	**/?	**/??*
 L(200) | chains 0 | nfa sparse	dir0/file0	dir1/file1	dir2/file2	dir3/file3	dir4/file4	dir5/file5	dir6/file6	dir7/file7	dir8/file8	dir9/file9	dir10/file10	dir11/file11	dir12/file12	dir13/file13	dir14/file14	dir15/file15	dir16/file16	dir17/file17	dir18/file18	dir19/file19	dir20/file20	dir21/file21	dir22/file22	dir23/file23	dir24/file24	dir25/file25	dir26/file26	dir27/file27	dir28/file28	dir29/file29	dir30/file30	dir31/file31	dir32/file32	dir33/file33	dir34/file34	dir35/file35	dir36/file36	dir37/file37	dir38/file38	dir39/file39	dir40/file40	dir41/file41	dir42/file42	dir43/file43	dir44/file44	dir45/file45	dir46/file46	dir47/file47	dir48/file48	dir49/file49	dir50/file50	dir51/file51	dir52/file52	dir53/file53	dir54/file54	dir55/file55	dir56/file56	dir57/file57	dir58/file58	dir59/file59	dir60/file60	dir61/file61	dir62/file62	dir63/file63	dir64/file64	dir65/file65	dir66/file66	dir67/file67	dir68/file68	dir69/file69	dir70/file70	dir71/file71	dir72/file72	dir73/file73	dir74/file74	dir75/file75	dir76/file76	dir77/file77	dir78/file78	dir79/file79	dir80/file80	dir81/file81	dir82/file82	dir83/file83	dir84/file84	dir85/file85	dir86/file86	dir87/file87	dir88/file88	dir89/file89	dir90/file90	dir91/file91	dir92/file92	dir93/file93	dir94/file94	dir95/file95	dir96/file96	dir97/file97	dir98/file98	dir99/file99

@@ -146,3 +146,24 @@
 ["d0/x0","d1/x1","d2/x2","d3/x3","d4/x4","d5/x5","d6/x6","d7/x7","d8/x8","d9/x9","d10/x10","d11/x11","d12/x12","d13/x13","d14/x14","d15/x15","d16/x16","d17/x17","d18/x18","d19/x19","d20/x20","d21/x21","d22/x22","d23/x23","d24/x24","d25/x25","d26/x26","d27/x27","d28/x28","d29/x29","d30/x30","d31/x31","d32/x32","d33/x33","d34/x34","d35/x35","d36/x36","d37/x37","d38/x38","d39/x39"]	d39/x39	match
 ["d0/x0","d1/x1","d2/x2","d3/x3","d4/x4","d5/x5","d6/x6","d7/x7","d8/x8","d9/x9","d10/x10","d11/x11","d12/x12","d13/x13","d14/x14","d15/x15","d16/x16","d17/x17","d18/x18","d19/x19","d20/x20","d21/x21","d22/x22","d23/x23","d24/x24","d25/x25","d26/x26","d27/x27","d28/x28","d29/x29","d30/x30","d31/x31","d32/x32","d33/x33","d34/x34","d35/x35","d36/x36","d37/x37","d38/x38","d39/x39"]	d0/x0	match
 ["d0/x0","d1/x1","d2/x2","d3/x3","d4/x4","d5/x5","d6/x6","d7/x7","d8/x8","d9/x9","d10/x10","d11/x11","d12/x12","d13/x13","d14/x14","d15/x15","d16/x16","d17/x17","d18/x18","d19/x19","d20/x20","d21/x21","d22/x22","d23/x23","d24/x24","d25/x25","d26/x26","d27/x27","d28/x28","d29/x29","d30/x30","d31/x31","d32/x32","d33/x33","d34/x34","d35/x35","d36/x36","d37/x37","d38/x38","d39/x39"]	d39/x0	no-match
+
+## or.merged_segment (members that differ in one literal segment run as one chain with a set)
+["**/.git/**","**/dist/**","**/*.log"]	a/.git/x	match	dot=false
+["**/.git/**","**/dist/**","**/*.log"]	a/dist/x	match	dot=false
+["**/.git/**","**/dist/**","**/*.log"]	a/.hidden/x	no-match	dot=false
+["**/.git/**","**/dist/**","**/*.log"]	.x/dist/y	no-match	dot=false
+["**/.git/**","**/dist/**","**/*.log"]	src/distx/y	no-match	dot=false
+["**/.git/**","**/dist/**","**/*.log"]	a/b.log	match	dot=false
+["packages/*/dist/**","packages/*/coverage/**","apps/*/out/**"]	packages/foo/dist/x.js	match
+["packages/*/dist/**","packages/*/coverage/**","apps/*/out/**"]	packages/foo/coverage/lcov.info	match
+["packages/*/dist/**","packages/*/coverage/**","apps/*/out/**"]	apps/web/out/index.html	match
+["packages/*/dist/**","packages/*/coverage/**","apps/*/out/**"]	packages/foo/src/x.js	no-match
+["packages/*/dist/**","packages/*/coverage/**","apps/*/out/**"]	packages/dist/x.js	no-match
+["packages/*/dist/**","packages/*/coverage/**","apps/*/out/**"]	apps/web/dist/x.js	no-match
+["**/*.log","**/*.tmp","src/**/x"]	a/b.log	match
+["**/*.log","**/*.tmp","src/**/x"]	a/b.tmp	match
+["**/*.log","**/*.tmp","src/**/x"]	a/b.txt	no-match
+["**/*.log","**/*.tmp","src/**/x"]	a/.b.log	no-match	dot=false
+["**/*.log","**/*.tmp","src/**/x"]	a/.b.log	match
+["**/*.log","**/*.tmp","src/**/x"]	src/a/x	match
+["**/*.log","**/*.tmp","src/**/x"]	a/log	no-match

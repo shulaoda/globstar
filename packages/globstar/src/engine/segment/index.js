@@ -11,6 +11,7 @@ import { compileSegment } from "./compile.js";
 import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
 import {
   chainMatches,
+  lastSepBefore,
   chainDir,
   nfaRun,
   nfaRunSparse,
@@ -126,10 +127,35 @@ export class SegmentMatcher {
     const chainList = this.chains;
     if (chainList.length === 0) return this._nfaMatch(str);
     if (chainList.length === 1) return chainMatches(this, chainList[0], str);
-    // `endsWith` is exact, so the quick suffix is skipped case-insensitively.
-    const quick = !this.ci;
+    return this._anyChainMatches(chainList, str);
+  }
+
+  // Does one of the chains match the whole path? Each runs after quick
+  // looks at the path's ends: its first character against a leading
+  // literal's, its last against a literal suffix, an affix's prefix or a
+  // set's last characters (`makeChain`). Exact tests, so a
+  // case-insensitive matcher skips them. Its own method, so `_isMatch`
+  // stays small for the one-chain and NFA matchers.
+  _anyChainMatches(chainList, str) {
+    if (this.ci) {
+      for (const chain of chainList) if (chainMatches(this, chain, str)) return true;
+      return false;
+    }
+    const len = str.length;
+    const first = len > 0 ? str.charCodeAt(0) : -1;
+    const last = len > 0 ? str.charCodeAt(len - 1) & 63 : 64;
     for (const chain of chainList) {
-      if (quick && chain.quickSuffixStr.length > 0 && !str.endsWith(chain.quickSuffixStr)) continue;
+      const suffix = chain.quickSuffixStr;
+      if (suffix.length > 0) {
+        if (!str.endsWith(suffix)) continue;
+      } else if (last < 32) {
+        if (((chain.quickLastLo >>> last) & 1) === 0) continue;
+      } else if (last < 64) {
+        if (((chain.quickLastHi >>> (last - 32)) & 1) === 0) continue;
+      }
+      if (chain.quickHead >= 0 && chain.quickHead !== first) continue;
+      const prefix = chain.quickPrefixStr;
+      if (prefix.length > 0 && !str.startsWith(prefix, lastSepBefore(str, len) + 1)) continue;
       if (chainMatches(this, chain, str)) return true;
     }
     return false;

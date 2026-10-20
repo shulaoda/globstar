@@ -177,6 +177,56 @@ fn factoring_preserves_globstar_fold() {
 }
 
 #[test]
+fn members_that_differ_in_one_segment_match_as_the_members_do() {
+    // Members apart only in the literal segment after a `**` run as one
+    // chain with a set there; whatever the mix of roots, middles and
+    // tails (and whether that segment is a literal in every member), the
+    // union answers as the members do, under both dot settings.
+    let roots = ["**", "src", "tests", "packages/*", "a/**"];
+    let middles = ["node_modules", ".git", "dist", "x", "*.log", "*", "x/y"];
+    let tails = ["/**", "", "/*.ts", "/x"];
+    let paths: &[&[u8]] = &[
+        b"",
+        b"x",
+        b"dist",
+        b"a/dist/x",
+        b"a/.git/x",
+        b"a/.hidden/x",
+        b".x/dist/y",
+        b"src/node_modules/y.ts",
+        b"src/x/y/x",
+        b"src/x/y.ts",
+        b"tests/x",
+        b"packages/foo/dist/x.js",
+        b"packages/dist/x.js",
+        b"a/b/c/d.log",
+        b"a/b/x/y/x",
+    ];
+    let mut seed = 0x2545_f491_u32;
+    let mut next = |n: usize| {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        (seed >> 16) as usize % n
+    };
+    for _ in 0..300 {
+        let size = 2 + next(5);
+        let members: Vec<String> = (0..size)
+            .map(|_| format!("{}/{}{}", roots[next(5)], middles[next(7)], tails[next(4)]))
+            .collect();
+        let refs: Vec<&str> = members.iter().map(String::as_str).collect();
+        for dot in [true, false] {
+            let opts = globstar::CompileOptions::default().dot(dot);
+            let union = Glob::union_with(&refs, opts).unwrap();
+            for path in paths {
+                let want = refs
+                    .iter()
+                    .any(|p| Glob::new_with(p, opts).unwrap().is_match(path));
+                assert_eq!(union.is_match(path), want, "{members:?} dot={dot} {path:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn factoring_lifts_shared_prefix_for_globstar_patterns() {
     // The whole point of factoring: union should produce the same SSM
     // as the hand-written brace, so this should match identically.

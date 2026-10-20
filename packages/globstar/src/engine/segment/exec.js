@@ -33,7 +33,7 @@ function nextSep(str, from) {
   return i < j ? i : j;
 }
 
-function lastSepBefore(str, end) {
+export function lastSepBefore(str, end) {
   if (end <= 0) return -1;
   const i = str.lastIndexOf("/", end - 1);
   if (!IS_WINDOWS_SEP) return i;

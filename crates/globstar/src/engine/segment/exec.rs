@@ -106,9 +106,20 @@ impl SegmentMatcher {
                 .all(|(&s, &p)| pat_byte_eq(s, p, self.case_insensitive))
     }
 
-    /// Does the path end like the chain's last element (a literal, or
-    /// an affix's suffix)? Rejects most members of a union before the
-    /// chain runs; a single chain has the prefilter for that.
+    /// Does one of the chains match the whole path? Each is tried after
+    /// two cheap looks at its ends. Out of line: `is_match` stays small
+    /// for the one-chain and NFA matchers.
+    #[inline(never)]
+    pub(super) fn any_chain_matches(&self, path: &[u8]) -> bool {
+        (0..self.chains.len()).any(|i| {
+            self.ends_like(i, path) && self.starts_like(i, path) && self.chain_matches(i, path)
+        })
+    }
+
+    /// Does the path end like the chain's last element: a literal, an
+    /// affix's suffix (or, without one, its prefix at the last segment's
+    /// start), a set's last bytes? Rejects most members of a union
+    /// before the chain runs; a single chain has the prefilter for that.
     #[inline]
     pub(super) fn ends_like(&self, i: usize, path: &[u8]) -> bool {
         let chain = &self.chains[i];
@@ -116,15 +127,44 @@ impl SegmentMatcher {
             .nodes
             .last()
             .map_or(self.elems.len() - 1, |&n| n as usize);
-        let suffix: &[u8] = match &self.elems[last] {
-            Elem::Lit(lit) => lit,
-            Elem::Wild(Wild {
-                kind: WildKind::Affix(affix),
-                ..
-            }) => affix.suffix(),
-            _ => &[],
+        let kind = match &self.elems[last] {
+            Elem::Lit(lit) => return self.tail_is(path, lit),
+            Elem::Wild(w) => &w.kind,
+            _ => return true,
         };
+        match kind {
+            WildKind::Affix(affix) => match affix.parts() {
+                (_, suffix) if !suffix.is_empty() => self.tail_is(path, suffix),
+                (prefix, _) => {
+                    let start = seg_start(path, path.len());
+                    path.len() - start >= prefix.len()
+                        && self.affix_eq(prefix, &path[start..start + prefix.len()])
+                }
+            },
+            WildKind::AffixSet(set) => set.last.may_end(path),
+            WildKind::AffixIndex(index) => index.last.may_end(path),
+            WildKind::Generic(_) => true,
+        }
+    }
+
+    #[inline]
+    fn tail_is(&self, path: &[u8], suffix: &[u8]) -> bool {
         path.len() >= suffix.len() && self.affix_eq(suffix, &path[path.len() - suffix.len()..])
+    }
+
+    /// Does the path start like the chain's first element, when that is
+    /// a literal: the literal, then a separator or the end?
+    #[inline]
+    pub(super) fn starts_like(&self, i: usize, path: &[u8]) -> bool {
+        let first = self.chains[i].nodes.first().map_or(0, |&n| n as usize);
+        let Elem::Lit(lit) = &self.elems[first] else {
+            return true;
+        };
+        match path.get(lit.len()) {
+            Some(&b) if !std::path::is_separator(b as char) => false,
+            Some(_) => self.affix_eq(lit, &path[..lit.len()]),
+            None => path.len() == lit.len() && self.affix_eq(lit, path),
+        }
     }
 
     /// Does chain `i` match the whole path?

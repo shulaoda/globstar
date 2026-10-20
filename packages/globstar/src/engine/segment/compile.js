@@ -580,15 +580,53 @@ function makeChain(graph, nodes, lone) {
     if (lone || n + 1 > 32) return null;
     nfa = nfaSmall(graph, nodes);
   }
-  // What a path must end with, read off the last element: a cheap
-  // reject for the members of a union.
-  const last = elem(n - 1);
-  let quickSuffixStr = "";
-  if (last.kind === EL_LIT) quickSuffixStr = last.litStr;
-  else if (last.kind === EL_WILD && last.wild.kind === WK_AFFIX)
-    quickSuffixStr = last.wild.suffixStr;
   // A chain's own NFA keeps the chain's elements: no node list then.
-  return { nodes: nfa === null ? nodes : null, globstar, nfa, quickSuffixStr };
+  const chainNodes = nfa === null ? nodes : null;
+  // A lone chain runs as it is; a union's chains also carry what a path
+  // must start and end with, read off their first and last elements:
+  // cheap rejects before a chain runs (`_anyChainMatches`).
+  if (lone) return { nodes: chainNodes, globstar, nfa };
+  const first = elem(0);
+  const last = elem(n - 1);
+  const quickHead = first.kind === EL_LIT ? first.litStr.charCodeAt(0) : -1;
+  let quickSuffixStr = "";
+  let quickPrefixStr = "";
+  // A 64-slot sketch (two int32s, by `code & 63`) of a set's last
+  // characters: a path ending in a character outside it matches none.
+  // All ones when a suffix is empty, as anything ends it.
+  let quickLastLo = -1;
+  let quickLastHi = -1;
+  if (last.kind === EL_LIT) quickSuffixStr = last.litStr;
+  else if (last.kind === EL_WILD) {
+    const w = last.wild;
+    if (w.kind === WK_AFFIX) {
+      if (w.suffixStr.length > 0) quickSuffixStr = w.suffixStr;
+      else quickPrefixStr = w.prefixStr;
+    } else if (w.kind === WK_AFFIX_SET || w.kind === WK_AFFIX_INDEX) {
+      const set = w.suffixSetStr;
+      quickLastLo = 0;
+      quickLastHi = 0;
+      for (let i = 0; i < set.length && quickLastLo !== -1; i++) {
+        const s = set[i];
+        if (s.length === 0) quickLastLo = quickLastHi = -1;
+        else {
+          const c = s.charCodeAt(s.length - 1) & 63;
+          if (c < 32) quickLastLo |= 1 << c;
+          else quickLastHi |= 1 << (c - 32);
+        }
+      }
+    }
+  }
+  return {
+    nodes: chainNodes,
+    globstar,
+    nfa,
+    quickHead,
+    quickSuffixStr,
+    quickPrefixStr,
+    quickLastLo,
+    quickLastHi,
+  };
 }
 
 // ── the NFA ─────────────────────────────────────────────────────────
