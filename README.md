@@ -1,6 +1,24 @@
-# globstar
+<h1 align="center">globstar</h1>
 
-A compiled, segment-based glob matcher, identical in Rust and JavaScript.
+<div align="center">
+
+[![MIT licensed][badge-license]][url-license]
+[![npm version][badge-npm]][url-npm]
+[![crates.io version][badge-crates]][url-crates]
+[![CI][badge-ci]][url-ci]
+
+</div>
+
+<p align="center">A compiled, segment-based glob matcher, identical in Rust and JavaScript.</p>
+
+[badge-license]: https://img.shields.io/badge/license-MIT-blue.svg
+[url-license]: ./LICENSE
+[badge-npm]: https://img.shields.io/npm/v/%40globstar%2Fcore?label=npm
+[url-npm]: https://www.npmjs.com/package/@globstar/core
+[badge-crates]: https://img.shields.io/crates/v/globstar?label=crates.io
+[url-crates]: https://crates.io/crates/globstar
+[badge-ci]: https://github.com/shulaoda/globstar/actions/workflows/ci.yml/badge.svg
+[url-ci]: https://github.com/shulaoda/globstar/actions/workflows/ci.yml
 
 ```
 crates/globstar          — Rust crate (canonical implementation)
