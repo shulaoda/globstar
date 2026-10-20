@@ -17,6 +17,6 @@ yarn.lock
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 
-# Void deploy state; the project link may be committed
-.void/*
-!.void/project.json
+# Void deploy state (the docs site); the project link may be committed
+docs/.void/*
+!docs/.void/project.json

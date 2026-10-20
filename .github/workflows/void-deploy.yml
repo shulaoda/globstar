@@ -1,11 +1,12 @@
 # Deploys the docs site (`docs/.vitepress/dist`) to a Void platform.
 #
 # One-time setup, from a machine with a browser, by someone with access to
-# the platform:
+# the platform. The docs package is the Void project, so run it in `docs/`:
 #
+#   cd docs
 #   npx void@1.1.12 connect api.void.cloud
-#   pnpm docs:build
-#   npx void@1.1.12 deploy --platform void --project globstar-docs --dir docs/.vitepress/dist
+#   pnpm build
+#   npx void@1.1.12 deploy --platform void --project globstar-docs --dir .vitepress/dist
 #   npx void@1.1.12 github install
 #   npx void@1.1.12 github connect globstar-docs --repo shulaoda/globstar \
 #     --branch main --executor github_actions --workflow .github/workflows/void-deploy.yml
@@ -55,6 +56,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm docs:build
       - name: Deploy to Void
+        working-directory: docs
         run: |
           npx --yes "void@$VOID_VERSION" connect "$VOID_API_URL" --no-login
-          npx --yes "void@$VOID_VERSION" deploy --platform void --project "$VOID_PROJECT" --dir docs/.vitepress/dist
+          npx --yes "void@$VOID_VERSION" deploy --platform void --project "$VOID_PROJECT" --dir .vitepress/dist

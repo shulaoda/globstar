@@ -1,6 +1,5 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vitepress";
 
 const SPEC = "https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md";
@@ -83,19 +82,9 @@ export default defineConfig({
     }
   },
 
-  vite: {
-    plugins: [leanChunks()],
-    resolve: {
-      alias: {
-        // The playground runs the real matcher: the package source,
-        // straight from the workspace, so the docs always show the
-        // behavior of the checked-out code.
-        "@globstar/core": fileURLToPath(
-          new URL("../../packages/globstar/src/index.js", import.meta.url),
-        ),
-      },
-    },
-  },
+  // The playground imports `@globstar/core` from the workspace, so it
+  // always runs the checked-out matcher.
+  vite: { plugins: [leanChunks()] },
 });
 
 // VitePress makes each page's lean chunk (the page without its static
