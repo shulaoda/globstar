@@ -1,6 +1,6 @@
 # globstar
 
-A glob library purpose-built for [Vite][vite]'s `import.meta.glob` feature.
+A compiled, segment-based glob matcher, identical in Rust and JavaScript.
 
 ```
 crates/globstar          — Rust crate (canonical implementation)
@@ -20,7 +20,7 @@ brace adds. See
 
 ## Why this exists
 
-`import.meta.glob` runs glob matching on **two sides** of Vite's pipeline:
+`import.meta.glob` runs glob matching on **two sides** of [Vite][vite]'s pipeline:
 
 - the **Rust** side, where the build-time module graph and asset
   resolution happen;
