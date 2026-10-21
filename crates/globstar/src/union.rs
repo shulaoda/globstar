@@ -145,27 +145,20 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
     }
     entries.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
     let mut state: Vec<Member> = Vec::new();
-    let mut run = 0;
-    while run < entries.len() {
-        let (k, key, ..) = entries[run];
-        let end = run
-            + entries[run..]
-                .iter()
-                .take_while(|e| (e.0, e.1) == (k, key))
-                .count();
-        if end - run >= 2 {
-            // Members alike so far and still free (a group's members
-            // hold a brace or a placeholder by now), keyed by all they
-            // hold but the literal.
-            let mut keyed: Vec<(u64, usize, usize)> = entries[run..end]
-                .iter()
-                .filter(|&&(_, _, i, _)| state.get(i).is_none_or(|&st| st == Member::Free))
-                .map(|&(_, _, i, at)| (hash_without(&seqs[i], at), i, at))
-                .collect();
-            keyed.sort_unstable();
-            merge_runs(seqs, &keyed, &mut state);
+    for alike in entries.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
+        if alike.len() < 2 {
+            continue;
         }
-        run = end;
+        // Members alike so far and still free (a group's members hold a
+        // brace or a placeholder by now), keyed by all they hold but the
+        // literal.
+        let mut keyed: Vec<(u64, usize, usize)> = alike
+            .iter()
+            .filter(|&&(_, _, i, _)| state.get(i).is_none_or(|&st| st == Member::Free))
+            .map(|&(_, _, i, at)| (hash_without(&seqs[i], at), i, at))
+            .collect();
+        keyed.sort_unstable();
+        merge_runs(seqs, &keyed, &mut state);
     }
     if !state.is_empty() {
         let mut st = state.iter();
@@ -176,31 +169,25 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
 /// Merge each run of `keyed` (hash, member, node) whose members are the
 /// same node for node but for that literal, into the first of them.
 fn merge_runs(seqs: &mut [Vec<Node>], keyed: &[(u64, usize, usize)], state: &mut Vec<Member>) {
-    let mut run = 0;
-    while run < keyed.len() {
-        let hash = keyed[run].0;
-        let end = run + keyed[run..].iter().take_while(|e| e.0 == hash).count();
-        let mut head: Option<(usize, usize)> = None;
+    for run in keyed.chunk_by(|a, b| a.0 == b.0) {
+        let (_, h, h_at) = run[0];
         let mut lits = Vec::new();
-        for &(_, i, at) in &keyed[run..end] {
-            match head {
-                None => head = Some((i, at)),
-                Some((h, h_at)) if same_but(&seqs[h], &seqs[i], h_at) => {
-                    if state.is_empty() {
-                        *state = vec![Member::Free; seqs.len()];
-                    }
-                    state[i] = Member::Absorbed;
-                    lits.push(std::mem::replace(&mut seqs[i][at], Node::Separator));
-                }
-                Some(_) => {} // a hash collision stays as it is
+        for &(_, i, at) in &run[1..] {
+            // A hash collision stays as it is.
+            if !same_but(&seqs[h], &seqs[i], h_at) {
+                continue;
             }
+            if state.is_empty() {
+                *state = vec![Member::Free; seqs.len()];
+            }
+            state[i] = Member::Absorbed;
+            lits.push(std::mem::replace(&mut seqs[i][at], Node::Separator));
         }
-        if let (Some((h, at)), false) = (head, lits.is_empty()) {
+        if !lits.is_empty() {
             state[h] = Member::Head;
-            lits.insert(0, std::mem::replace(&mut seqs[h][at], Node::Separator));
-            seqs[h][at] = Node::Brace(lits);
+            lits.insert(0, std::mem::replace(&mut seqs[h][h_at], Node::Separator));
+            seqs[h][h_at] = Node::Brace(lits);
         }
-        run = end;
     }
 }
 

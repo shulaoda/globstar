@@ -139,39 +139,26 @@ function mergeSegments(seqs, liftedWild) {
   }
   if (entries.length < 2) return seqs;
   // Entries alike so far share (segment, cheap key), taken segment by
-  // segment from the last: few, as most unions have, are paired by a
-  // scan; many through a sort, where they are runs.
+  // segment from the last: sorted, they are runs. A comparator sort
+  // costs V8 more than the rest of a small union's merge, so the few
+  // entries most unions have are put in order by insertion.
+  const order = (x, y) => y[0] - x[0] || x[1] - y[1] || x[2] - y[2];
+  if (entries.length > 8) entries.sort(order);
+  else {
+    for (let i = 1; i < entries.length; i++) {
+      const e = entries[i];
+      let j = i;
+      for (; j > 0 && order(entries[j - 1], e) > 0; j--) entries[j] = entries[j - 1];
+      entries[j] = e;
+    }
+  }
   let state = null;
-  if (entries.length <= 8) {
-    for (let left = entries.length; left > 0; ) {
-      let k = -1;
-      for (const e of entries) if (e !== null && e[0] > k) k = e[0];
-      for (let a = 0; a < entries.length; a++) {
-        const ea = entries[a];
-        if (ea === null || ea[0] !== k) continue;
-        entries[a] = null;
-        left--;
-        let alike = null;
-        for (let b = a + 1; b < entries.length; b++) {
-          const eb = entries[b];
-          if (eb !== null && eb[0] === k && eb[1] === ea[1]) {
-            (alike ??= [ea]).push(eb);
-            entries[b] = null;
-            left--;
-          }
-        }
-        if (alike !== null) state = mergeAlike(seqs, alike, state);
-      }
-    }
-  } else {
-    entries.sort((x, y) => y[0] - x[0] || x[1] - y[1] || x[2] - y[2]);
-    for (let run = 0; run < entries.length; ) {
-      const e = entries[run];
-      let end = run + 1;
-      while (end < entries.length && entries[end][0] === e[0] && entries[end][1] === e[1]) end++;
-      if (end - run >= 2) state = mergeAlike(seqs, entries.slice(run, end), state);
-      run = end;
-    }
+  for (let run = 0; run < entries.length; ) {
+    const e = entries[run];
+    let end = run + 1;
+    while (end < entries.length && entries[end][0] === e[0] && entries[end][1] === e[1]) end++;
+    if (end - run >= 2) state = mergeAlike(seqs, entries.slice(run, end), state);
+    run = end;
   }
   return state === null ? seqs : seqs.filter((_, i) => state[i] !== ABSORBED);
 }
@@ -213,22 +200,16 @@ function mergeAlike(seqs, alike, state) {
 function mergeRuns(seqs, keyed, state) {
   for (let run = 0; run < keyed.length; ) {
     const hash = keyed[run][0];
-    let end = run + 1;
-    while (end < keyed.length && keyed[end][0] === hash) end++;
-    let head = -1;
-    let headAt = -1;
+    const head = keyed[run][1];
+    const headAt = keyed[run][2];
     const lits = [];
-    for (let j = run; j < end; j++) {
-      const i = keyed[j][1];
-      const at = keyed[j][2];
-      if (head < 0) {
-        head = i;
-        headAt = at;
-      } else if (sameBut(seqs[head], seqs[i], headAt)) {
-        if (state === null) state = new Uint8Array(seqs.length);
-        state[i] = ABSORBED;
-        lits.push(seqs[i][at]);
-      } // a hash collision stays as it is
+    let end = run + 1;
+    for (; end < keyed.length && keyed[end][0] === hash; end++) {
+      const i = keyed[end][1];
+      // A hash collision stays as it is.
+      if (!sameBut(seqs[head], seqs[i], headAt)) continue;
+      (state ??= new Uint8Array(seqs.length))[i] = ABSORBED;
+      lits.push(seqs[i][keyed[end][2]]);
     }
     if (lits.length > 0) {
       state[head] = HEAD;
