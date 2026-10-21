@@ -9,7 +9,6 @@
 import {
   CI_BYTE,
   brace,
-  concat,
   N_BRACE,
   N_CLASS,
   N_CONCAT,
@@ -44,41 +43,19 @@ function makeElem(kind, litStr, wild) {
 const G0_ELEM = makeElem(EL_G0, null, null);
 const G1_ELEM = makeElem(EL_G1, null, null);
 
-// The nodes with each crossing brace's in-segment branches as one
-// choice: `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such
-// branches give a group per partial segment, 2^k of them after k braces.
-function choices(nodes) {
-  return nodes.some(splitsChoices) ? nodes.map(regroup) : nodes;
-}
-
-// `node` with its crossing braces' in-segment branches regrouped.
+// Each crossing brace's in-segment branches as one choice, in place:
+// `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches give a
+// group per partial segment, 2^k of them after k braces.
 function regroup(node) {
-  if (node.tag === N_CONCAT) return concat(choices(node.children));
-  if (node.tag !== N_BRACE || !crosses(node)) return node;
-  const out = [];
-  const within = [];
-  let at = -1;
-  for (const b of node.branches) {
-    if (crosses(b)) out.push(regroup(b));
-    else {
-      if (at === -1) at = out.length;
-      within.push(b);
-    }
-  }
-  if (at !== -1) out.splice(at, 0, within.length === 1 ? within[0] : brace(within));
-  return brace(out);
-}
-
-// Does a crossing brace in `node` have two or more in-segment branches?
-function splitsChoices(node) {
-  if (node.tag === N_CONCAT) return node.children.some(splitsChoices);
-  if (node.tag !== N_BRACE || !crosses(node)) return false;
-  let within = 0;
-  for (const b of node.branches) {
-    if (!crosses(b)) within++;
-    else if (splitsChoices(b)) return true;
-  }
-  return within > 1;
+  if (node.tag === N_CONCAT) node.children.forEach(regroup);
+  if (node.tag !== N_BRACE || !node.branches.some(crosses)) return;
+  node.branches.forEach(regroup);
+  // The choice takes the first in-segment branch's place.
+  const at = node.branches.findIndex((b) => !crosses(b));
+  if (at === -1) return;
+  const within = node.branches.filter((b) => !crosses(b));
+  node.branches = node.branches.filter(crosses);
+  node.branches.splice(at, 0, within.length === 1 ? within[0] : brace(within));
 }
 
 // Does the node hold a segment boundary?
@@ -100,7 +77,8 @@ function crosses(node) {
 
 // The graph as the walk leaves it. A pattern without a
 // separator-crossing brace is one path, emitted in order: its edges
-// and start are implied and never stored.
+// and start are implied and never stored. The walk regroups the pattern
+// in place (`regroup`), so what needs it as written reads it first.
 export function buildGraph(body, dot, ci) {
   const nodes = seq(body);
   const linear = !nodes.some((n) => n.tag === N_BRACE && crosses(n));
@@ -116,7 +94,8 @@ export function buildGraph(body, dot, ci) {
   // Only a union of more paths than LINEAR_CHAINS indexes them.
   if (!linear && pathBound(nodes) > LINEAR_CHAINS) b.keys = [];
   // Only a separator-crossing brace can need regrouping.
-  const groups = b.walk(linear ? nodes : choices(nodes), false, [firstGroup()]);
+  if (!linear) regroup(body);
+  const groups = b.walk(nodes, false, [firstGroup()]);
   for (const g of groups) {
     b.settle(g);
     if (g.state === B_OPEN) {

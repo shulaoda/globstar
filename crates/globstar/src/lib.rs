@@ -143,7 +143,7 @@ impl Glob {
     /// Compile a pattern with explicit [`CompileOptions`].
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
         let ast = parse::parse(pattern.as_bytes())?;
-        Self::from_body(&ast.body, ast.negated, opts)
+        Self::from_body(ast.body, ast.negated, opts)
     }
 
     /// Compile the boolean-OR union of several patterns into one `Glob`
@@ -204,10 +204,10 @@ impl Glob {
             1 => bodies.pop().unwrap(),
             _ => factor_branches(bodies),
         };
-        Self::from_body(&body, false, opts)
+        Self::from_body(body, false, opts)
     }
 
-    fn from_body(body: &Node, negated: bool, opts: CompileOptions) -> Result<Self, GlobError> {
+    fn from_body(body: Node, negated: bool, opts: CompileOptions) -> Result<Self, GlobError> {
         let engine = match body.to_literal_bytes() {
             Some(lit) => Engine::Literal(LiteralMatcher::new(lit.into(), opts.case_insensitive)),
             None => Engine::Segment(SegmentMatcher::build(

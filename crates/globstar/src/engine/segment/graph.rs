@@ -7,7 +7,6 @@
 //! nodes too (a node is reused when its element and predecessors
 //! already exist), which turns a union of names into a trie.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
@@ -61,20 +60,25 @@ impl Edges {
 }
 
 impl Graph {
-    pub(super) fn build(body: &Node, dot: bool, ci: bool) -> Result<Self, GlobError> {
-        let nodes = body.seq();
+    /// The graph of `body`, whose `survey` the caller took. The walk
+    /// regroups the pattern in place (`regroup`), so what needs it as
+    /// written reads it first.
+    pub(super) fn build(
+        body: &mut Node,
+        survey: Survey,
+        dot: bool,
+        ci: bool,
+    ) -> Result<Self, GlobError> {
         let Survey {
             boundaries,
             linear,
             weight,
             paths,
-        } = survey(nodes);
+        } = survey;
         // Only a separator-crossing brace can need regrouping.
-        let nodes = if linear {
-            Cow::Borrowed(nodes)
-        } else {
-            choices(nodes)
-        };
+        if !linear {
+            regroup(body);
+        }
         let mut b = Builder::new(boundaries, linear, dot, ci);
         // Only a union of more paths than `LINEAR_CHAINS` indexes them.
         if paths > LINEAR_CHAINS {
@@ -85,7 +89,7 @@ impl Graph {
         if !linear {
             b.budget = MIN_BUDGET.max(weight.saturating_mul(BUDGET_PER_WEIGHT));
         }
-        let groups = b.walk(&nodes, false, vec![Group::first()]);
+        let groups = b.walk(body.seq(), false, vec![Group::first()]);
         for mut g in groups {
             b.settle(&mut g);
             if g.state == Boundary::Open {
@@ -105,13 +109,13 @@ impl Graph {
 }
 
 /// What the walk needs to know about the pattern before it starts.
-struct Survey {
+pub(super) struct Survey {
     /// Separators and globstars, inside braces too.
     boundaries: usize,
     /// No brace holds a boundary: the pattern is one path.
     linear: bool,
     /// The pattern's `node_weight`.
-    weight: usize,
+    pub(super) weight: usize,
     /// At least as many as the paths through the graph: a crossing
     /// brace adds its branches', a sequence multiplies its nodes'.
     paths: usize,
@@ -120,7 +124,7 @@ struct Survey {
 /// How many segment boundaries the pattern has (a floor for its
 /// elements), whether it has a separator-crossing brace at all, its
 /// weight (`node_weight`) and a bound on its paths.
-fn survey(nodes: &[Node]) -> Survey {
+pub(super) fn survey(nodes: &[Node]) -> Survey {
     let mut boundaries = 0;
     let mut linear = true;
     let mut weight = 0;
@@ -679,55 +683,25 @@ impl Group<'_> {
     }
 }
 
-/// The nodes with each crossing brace's in-segment branches as one
-/// choice: `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such
-/// branches give a group per partial segment, 2^k of them after k braces.
-fn choices(nodes: &[Node]) -> Cow<'_, [Node]> {
-    if !nodes.iter().any(splits_choices) {
-        return Cow::Borrowed(nodes);
-    }
-    Cow::Owned(nodes.iter().map(regroup).collect())
-}
-
-/// `node` with its crossing braces' in-segment branches regrouped.
-fn regroup(node: &Node) -> Node {
+/// Each crossing brace's in-segment branches as one choice, in place:
+/// `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches
+/// give a group per partial segment, 2^k of them after k braces.
+fn regroup(node: &mut Node) {
     match node {
-        Node::Concat(children) => Node::Concat(choices(children).into_owned()),
-        Node::Brace(branches) if crosses(node) => {
-            let mut out: Vec<Node> = Vec::with_capacity(branches.len());
-            let mut within: Vec<Node> = Vec::new();
-            let mut at = None;
-            for b in branches {
-                if crosses(b) {
-                    out.push(regroup(b));
-                } else {
-                    at.get_or_insert(out.len());
-                    within.push(b.clone());
-                }
-            }
-            if let Some(at) = at {
+        Node::Concat(children) => children.iter_mut().for_each(regroup),
+        Node::Brace(branches) if branches.iter().any(crosses) => {
+            branches.iter_mut().for_each(regroup);
+            // The choice takes the first in-segment branch's place.
+            if let Some(at) = branches.iter().position(|b| !crosses(b)) {
+                let mut within: Vec<Node> = branches.extract_if(at.., |b| !crosses(b)).collect();
                 let choice = match within.len() {
                     1 => within.pop().unwrap(),
                     _ => Node::Brace(within),
                 };
-                out.insert(at, choice);
+                branches.insert(at, choice);
             }
-            Node::Brace(out)
         }
-        other => other.clone(),
-    }
-}
-
-/// Does a crossing brace in `node` have two or more in-segment branches?
-fn splits_choices(node: &Node) -> bool {
-    match node {
-        Node::Brace(branches) => {
-            crosses(node)
-                && (branches.iter().filter(|b| !crosses(b)).count() > 1
-                    || branches.iter().any(splits_choices))
-        }
-        Node::Concat(children) => children.iter().any(splits_choices),
-        _ => false,
+        _ => {}
     }
 }
 

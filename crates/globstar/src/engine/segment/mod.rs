@@ -134,8 +134,13 @@ enum Pick {
 }
 
 impl SegmentMatcher {
-    pub(crate) fn build(body: &Node, dot: bool, ci: bool) -> Result<Box<Self>, GlobError> {
-        let graph = Graph::build(body, dot, ci)?;
+    pub(crate) fn build(mut body: Node, dot: bool, ci: bool) -> Result<Box<Self>, GlobError> {
+        // The facts read the pattern as written; the graph walk
+        // regroups it.
+        let survey = graph::survey(body.seq());
+        let suffixes = facts::suffixes(&body);
+        let prefixes = facts::static_prefixes(&body, survey.weight);
+        let graph = Graph::build(&mut body, survey, dot, ci)?;
         let chains = graph.chains(ci);
         // A lone line serves `match_dir` too; anything else needs the NFA.
         let union = match &chains[..] {
@@ -148,14 +153,13 @@ impl SegmentMatcher {
                 },
             })),
         };
-        let suffixes = facts::suffixes(body);
         Ok(Box::new(SegmentMatcher {
             suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
             suffixes,
             chains,
             union,
             elems: graph.elems.into_boxed_slice(),
-            prefixes: facts::static_prefixes(body, graph.weight),
+            prefixes,
             case_insensitive: ci,
             dot,
         }))

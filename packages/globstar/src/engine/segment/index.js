@@ -34,7 +34,7 @@ import {
 } from "./elem.js";
 
 export class SegmentMatcher {
-  constructor(compiled, body, ci, byteOnly, dot) {
+  constructor(compiled, prefixes, suf, ci, byteOnly, dot) {
     this.elems = compiled.elems;
     // The paths through the graph, tried in order (the literal ones as
     // one set, first); none past the chain module's caps.
@@ -50,9 +50,8 @@ export class SegmentMatcher {
     this.ci = ci;
     this.dot = dot;
     this.byteOnly = byteOnly;
-    this.prefixes = computeStaticPrefixes(body).map(flat);
+    this.prefixes = prefixes.map(flat);
     this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
-    const suf = suffixes(body);
     this.suffixes = suf.length > 0 ? suf.map(flat) : null;
   }
 
@@ -91,8 +90,11 @@ export class SegmentMatcher {
   // the string mode, for a pattern with a byte past ASCII (and as a
   // test hook that cross-checks the code paths).
   static build(body, dot, ci, opts) {
+    // The facts read the pattern as written; the graph walk regroups it.
+    const prefixes = computeStaticPrefixes(body);
+    const suf = suffixes(body);
     const compiled = compileSegment(body, dot, ci, opts.forceNfa);
-    return new SegmentMatcher(compiled, body, ci, opts.byteOnly, dot);
+    return new SegmentMatcher(compiled, prefixes, suf, ci, opts.byteOnly, dot);
   }
 
   staticPrefixes() {
