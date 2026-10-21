@@ -203,7 +203,9 @@ export function chainIndex(chains, elems, keys, ci) {
   // The literal paths' set, when there is one, is the first chain.
   const set = chains[0].literals !== undefined;
   const from = set ? 1 : 0;
-  if (chains.length - from <= LINEAR_CHAINS) return null;
+  // A chain is a bit of two words: 64 wildcard chains and the set are
+  // one too many, and stay a scan.
+  if (chains.length - from <= LINEAR_CHAINS || chains.length > 64) return null;
   const ix = {
     slots: null,
     bits: 0,

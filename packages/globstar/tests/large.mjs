@@ -91,6 +91,18 @@ console.log("✓ large patterns compile on a small stack");
   }
 }
 
+// 64 wildcard chains and the literal set: one chain more than two words
+// have bits, so the chain index stands aside and the scan serves. Twin
+// of `a_union_at_the_chain_cap_tries_every_chain` in
+// crates/globstar/tests/glob_union.rs.
+{
+  const members = Array.from({ length: 64 }, (_, i) => `d${i}/**/*.x${i}`);
+  const union = compileMatcher([...members, "a/b.txt", "c.txt"]);
+  for (let i = 0; i < 64; i++) assert.ok(union.match(`d${i}/q/f.x${i}`), `d${i}`);
+  assert.ok(union.match("a/b.txt") && union.match("c.txt"));
+  assert.ok(!union.match("d1/q/f.x2"));
+}
+
 // About 4,200 in-segment states: past the closure budget, each step
 // closes its set as it goes.
 {

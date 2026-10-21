@@ -72,7 +72,8 @@ runs each chain picked after its gates, as before. A chain no key
 files is tried on every call. The walk decides; the index only chooses
 which chains to ask, so a 600-member .gitignore costs a few lookups and
 one or two walks, not 60. Ten chains or fewer stay a scan: their gates
-cost less than the lookups. `match_dir` goes the same way: one chain with at most one
+cost less than the lookups. So does a union of 64 wildcard chains and
+the literal set, one chain more than a word has bits. `match_dir` goes the same way: one chain with at most one
 globstar — the common case — answers it by the same anchored compares,
 reading the tokens the NFA would hold after the directory off the
 chain, and such a matcher keeps no NFA at all. Only a matcher whose

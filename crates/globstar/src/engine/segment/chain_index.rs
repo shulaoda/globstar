@@ -292,10 +292,11 @@ impl ChainIndex {
             _ => None,
         };
         let from = usize::from(set.is_some());
-        if chains.len() - from <= LINEAR_CHAINS {
+        // A chain is a bit of a word: 64 wildcard chains and the set are
+        // one too many, and stay a scan.
+        if chains.len() - from <= LINEAR_CHAINS || chains.len() > 64 {
             return None;
         }
-        debug_assert!(chains.len() <= 64, "a chain is a bit of a word");
         let mut index = ChainIndex {
             slots: Box::default(),
             shift: 0,

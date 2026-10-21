@@ -87,6 +87,22 @@ fn literal_paths_are_one_set() {
 }
 
 #[test]
+fn a_union_at_the_chain_cap_tries_every_chain() {
+    // 64 wildcard chains and the literal set: one chain more than a word
+    // has bits, so the chain index stands aside and the scan serves.
+    let mut members: Vec<String> = (0..64).map(|i| format!("d{i}/**/*.x{i}")).collect();
+    members.extend(["a/b.txt".into(), "c.txt".into()]);
+    let union = Glob::union(&members).unwrap();
+    assert!(union.shape().contains("| chains 64 | literals 2 |"));
+    for i in 0..64 {
+        let path = format!("d{i}/q/f.x{i}");
+        assert!(union.is_match(path.as_bytes()), "{path}");
+    }
+    assert!(union.is_match(b"a/b.txt") && union.is_match(b"c.txt"));
+    assert!(!union.is_match(b"d1/q/f.x2"));
+}
+
+#[test]
 fn members_share_one_compile_work_bound() {
     // A list compiles as one pattern, so `TooComplex` is the list's:
     // not wrapped in `InMember`, even when one member alone is to blame.
