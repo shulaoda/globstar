@@ -1,0 +1,97 @@
+# The `gitignore-89` bench set: a project's .gitignore translated to globs,
+# as a walker's ignore option gets it: 27 directories anywhere
+# (`**/dir/**`), 30 extensions anywhere (`**/*.ext`), 22 file names
+# anywhere (`**/name`) and 10 rooted entries. The lists of like shape
+# merge into one chain each (a set of names, a set of suffixes). Read
+# through crates/globstar/benches/common/mod.rs (the matcher_multi bench
+# and tools/memory-check) and packages/bench/benches/shared.js. No
+# member matches a bench path's miss, `target/debug/build/foo`.
+**/node_modules/**
+**/.git/**
+**/dist/**
+**/out/**
+**/coverage/**
+**/.cache/**
+**/.turbo/**
+**/.next/**
+**/.nuxt/**
+**/.svelte-kit/**
+**/.parcel-cache/**
+**/.vercel/**
+**/.netlify/**
+**/.idea/**
+**/.vscode/**
+**/tmp/**
+**/temp/**
+**/logs/**
+**/vendor/**
+**/bower_components/**
+**/jspm_packages/**
+**/.yarn/**
+**/.pnp/**
+**/.cache-loader/**
+**/storybook-static/**
+**/__pycache__/**
+**/.pytest_cache/**
+**/*.log
+**/*.tmp
+**/*.swp
+**/*.swo
+**/*.bak
+**/*.orig
+**/*.rej
+**/*.patch
+**/*.diff
+**/*.pid
+**/*.seed
+**/*.gz
+**/*.zip
+**/*.tar
+**/*.tgz
+**/*.7z
+**/*.rar
+**/*.lock
+**/*.pyc
+**/*.pyo
+**/*.class
+**/*.o
+**/*.obj
+**/*.exe
+**/*.dll
+**/*.so
+**/*.dylib
+**/*.map
+**/*.tsbuildinfo
+**/*.lcov
+**/.env
+**/.env.local
+**/.env.*.local
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/lerna-debug.log*
+**/pnpm-debug.log*
+**/.eslintcache
+**/.stylelintcache
+**/Thumbs.db
+**/ehthumbs.db
+**/desktop.ini
+**/.DS_Store
+**/*.sublime-workspace
+**/.project
+**/.classpath
+**/.settings
+**/.history
+**/coverage.xml
+**/junit.xml
+**/report.html
+build/**
+dist/**
+out/**
+.github/workflows/*.yml
+docs/_build/**
+packages/*/dist/**
+packages/*/coverage/**
+apps/*/.next/**
+examples/**/node_modules/**
+scripts/tmp/**

@@ -381,9 +381,10 @@ between builds.
 > instead of stopping at a hit.
 
 > **Memory cells** count what a matcher keeps once it has matched
-> every bench path: JS from 1,000 distinct patterns of the row's shape
-> per trial; Rust from the allocator's count around the build and
-> those matches.
+> every bench path: JS from up to 1,000 distinct patterns of the row's
+> shape per trial (fewer for a wide union, so the regex libraries'
+> RegExps fit V8's code space); Rust from the allocator's count around
+> the build and those matches.
 
 > **Match cell semantics.** Rust criterion times the full ${PATHS.length}-path
 > batch per iter; JS mitata times one match call per iter. The
@@ -416,6 +417,8 @@ sections.push(`## Test corpus
 | \`huge-set-pos\` | 10 positives spanning roots / extensions |
 | \`ignore-list-40\` | 40 ignore entries of unlike shapes (\`fixtures/bench-ignore-list.txt\`): chains for the match, a 38-state graph NFA for \`match_dir\` (a u64 in Rust, sparse in JS) |
 | \`file-list-100\` | 100 literal files over 10 folders (\`src/<area>/mod_<i>.ts\`): past 64 chains, the graph NFA alone (dense rows in Rust, sparse in JS) |
+| \`gitignore-89\` | a project's .gitignore as globs (\`fixtures/bench-gitignore-list.txt\`): 89 directories, extensions and file names anywhere plus a few rooted entries; the like shapes merge into one chain each |
+| \`all-cases\` | every pattern of this bench in one union, each once: past 64 chains, the graph NFA with every element kind at once — the widest, most mixed set, and the shape where a per-member matcher loses to a DFA |
 
 Each library matches a set the way it offers to: globstar through
 \`Glob::union\` / \`globstar(list)\`, globset through one \`GlobSet\`, wax

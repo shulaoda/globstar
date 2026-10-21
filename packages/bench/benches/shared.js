@@ -27,7 +27,13 @@ export const PATTERN_SETS = [
   }),
   ["ignore-list-40", fixture("bench-ignore-list.txt")],
   ["file-list-100", fixture("bench-file-list.txt")],
+  ["gitignore-89", fixture("bench-gitignore-list.txt")],
 ];
+// Every pattern of the bench in one union, each once.
+PATTERN_SETS.push([
+  "all-cases",
+  [...new Set([...PATTERNS.map(([, p]) => p), ...PATTERN_SETS.flatMap(([, ps]) => ps)])],
+]);
 
 let count = 0;
 
@@ -151,7 +157,12 @@ export async function matcherBench(header, rows, libs, freshen) {
   }
 }
 
+// Matchers built per trial, and the members they may hold between
+// them: the regex libraries compile a RegExp per member, and V8's code
+// space holds about that many, so a wide union is measured from fewer
+// matchers (each big enough to measure alone).
 const N_TRIAL = 1000;
+const MEMBERS_PER_TRIAL = 50_000;
 const TRIALS = 5;
 
 function gcSweep() {
@@ -165,17 +176,19 @@ function snapHeap() {
 // What N_TRIAL matchers for distinct inputs keep once each has matched
 // every bench path.
 function trialMem(build, call, input, freshen) {
+  const members = Array.isArray(input) ? input.length : 1;
+  const n = Math.min(N_TRIAL, Math.max(20, Math.floor(MEMBERS_PER_TRIAL / members)));
   for (let i = 0; i < 100; i++) call(build(freshen(input)), PATHS[0]);
   gcSweep();
   const before = snapHeap();
-  const arr = Array.from({ length: N_TRIAL });
-  for (let i = 0; i < N_TRIAL; i++) {
+  const arr = Array.from({ length: n });
+  for (let i = 0; i < n; i++) {
     arr[i] = build(freshen(input));
     for (const path of PATHS) call(arr[i], path);
   }
   const after = snapHeap();
   if (arr[0] === undefined) console.log("!");
-  return Math.max(0, (after - before) / N_TRIAL);
+  return Math.max(0, (after - before) / n);
 }
 function median(xs) {
   return xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];

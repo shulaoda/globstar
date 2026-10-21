@@ -6,7 +6,7 @@
 
 use std::sync::LazyLock;
 
-/// A path no row matches. A first match on it runs every part a matcher
+/// A path no row matches. A first call on it runs every part a matcher
 /// left for its first use (in a list of separate matchers, each one).
 pub const MISS: &str = "target/debug/build/foo";
 
@@ -22,8 +22,9 @@ pub static SINGLE: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
         .collect()
 });
 
-/// The union rows: `(label, patterns)`. `ignore-list-40` and
-/// `file-list-100` are files of their own.
+/// The union rows: `(label, patterns)`. `ignore-list-40`, `file-list-100`
+/// and `gitignore-89` are files of their own; `all-cases` is every pattern
+/// of the bench in one union, each once.
 pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
     let mut out: Vec<_> = lines(include_str!("../../../../fixtures/bench-sets.tsv"))
         .into_iter()
@@ -40,6 +41,23 @@ pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
         "file-list-100",
         lines(include_str!("../../../../fixtures/bench-file-list.txt")),
     ));
+    out.push((
+        "gitignore-89",
+        lines(include_str!(
+            "../../../../fixtures/bench-gitignore-list.txt"
+        )),
+    ));
+    let mut all: Vec<&str> = Vec::new();
+    for p in SINGLE
+        .iter()
+        .map(|&(_, p)| p)
+        .chain(out.iter().flat_map(|(_, ps)| ps.iter().copied()))
+    {
+        if !all.contains(&p) {
+            all.push(p);
+        }
+    }
+    out.push(("all-cases", all));
     out
 }
 
