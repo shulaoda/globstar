@@ -22,7 +22,7 @@ cargo add globstar
 :::
 
 ::: tip Version
-These pages follow the main branch. The `DirMatch` helpers they use (`matches`, `mayMatchBelow`, `DirMatch.from`) are newer than 0.0.4, the last release; with 0.0.4 those examples fail until the next release is out.
+These pages follow the main branch. The `DirMatch` helpers they use (`matches`, `mayMatchBelow`, `DirMatch.from`) need 0.0.5 or later; with 0.0.4 those examples fail.
 :::
 
 The JavaScript package is pure string matching: no filesystem access, no `node:` imports, so it runs in Node, Deno, Bun and the browser. The filesystem walkers live in separate packages, `@globstar/walk` and the `globstar-walk` crate.

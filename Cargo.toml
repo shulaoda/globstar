@@ -9,13 +9,13 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/shulaoda/globstar"
 
 [workspace.dependencies]
-globstar = { path = "crates/globstar", version = "0.0.4" }
+globstar = { path = "crates/globstar", version = "0.0.5" }
 
 [profile.release]
 lto = "thin"
