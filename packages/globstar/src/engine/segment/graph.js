@@ -17,7 +17,7 @@ import {
   N_SEPARATOR,
   seq,
 } from "../../parse/ast.js";
-import { IS_WINDOWS_SEP } from "../../bytes.js";
+import { hasEscapedSep } from "../../bytes.js";
 import { flat } from "../../utf8.js";
 import { EL_LIT, EL_WILD, EL_G0, EL_G1, WK_AFFIX, WK_GENERIC, NEVER_LEN, exact } from "./elem.js";
 import { nfaTableBytes } from "./seg-nfa.js";
@@ -494,7 +494,7 @@ class Builder {
     // An escaped `\` on Windows: no segment holds a separator, so a
     // segment with one is a silent miss (§4.2), kept as a wildcard that
     // wants more bytes than any segment has.
-    if (IS_WINDOWS_SEP && buf.some((n) => n.tag === N_LITERAL && n.str.includes("\\"))) {
+    if (buf.some((n) => n.tag === N_LITERAL && hasEscapedSep(n.str))) {
       return makeElem(EL_WILD, null, makeWild(WK_AFFIX, { minLen: NEVER_LEN, variable: false }));
     }
     for (const n of buf) {

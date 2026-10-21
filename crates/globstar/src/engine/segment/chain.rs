@@ -12,12 +12,13 @@
 
 use std::cmp::Ordering;
 
+use crate::bytes::{cmp_folded, fold, is_sep, seg_end, seg_start};
 use crate::dir_match::DirMatch;
 
 use super::chain_index::{ChainIndex, Role};
 use super::graph::{ACCEPT, Graph};
-use super::wild::{ByteSketch, WildKind, fold};
-use super::{Elem, SegmentMatcher, seg_end, seg_start};
+use super::wild::{ByteSketch, WildKind};
+use super::{Elem, SegmentMatcher};
 
 // ── the chains ──────────────────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ pub(super) struct Line {
 }
 
 /// The literal paths through the graph: the bytes each matches, sorted
-/// as `cmp_lit_path` orders them against a path, laid end to end. A
+/// as `cmp_folded` orders them against a path, laid end to end. A
 /// union of file names is answered by one search of them.
 #[derive(Debug, Clone)]
 pub(super) struct Literals {
@@ -87,8 +88,8 @@ impl Literals {
     fn new(raw: &[u8], raw_bounds: &[u32], ci: bool) -> Self {
         let at = |k: usize| &raw[raw_bounds[k] as usize..raw_bounds[k + 1] as usize];
         let mut order: Vec<usize> = (0..raw_bounds.len() - 1).collect();
-        order.sort_unstable_by(|&a, &b| cmp_lit_path(at(a), at(b), ci));
-        order.dedup_by(|&mut a, &mut b| cmp_lit_path(at(a), at(b), ci) == Ordering::Equal);
+        order.sort_unstable_by(|&a, &b| cmp_folded(at(a), at(b), ci));
+        order.dedup_by(|&mut a, &mut b| cmp_folded(at(a), at(b), ci) == Ordering::Equal);
         let mut bytes = Vec::with_capacity(raw.len());
         let mut bounds = Vec::with_capacity(order.len() + 1);
         bounds.push(0);
@@ -122,7 +123,7 @@ impl Literals {
                 unreachable!("mid < len");
             };
             let lit = &self.bytes[start as usize..end as usize];
-            match cmp_lit_path(lit, path, ci) {
+            match cmp_folded(lit, path, ci) {
                 Ordering::Less => lo = mid + 1,
                 Ordering::Greater => hi = mid,
                 Ordering::Equal => return true,
@@ -130,22 +131,6 @@ impl Literals {
         }
         false
     }
-}
-
-/// A literal path against a path: bytes as they are, unless
-/// case-insensitive (ASCII folded) or on Windows (a path's separators
-/// as `/`).
-fn cmp_lit_path(lit: &[u8], path: &[u8], ci: bool) -> Ordering {
-    if !ci && !cfg!(windows) {
-        return lit.cmp(path);
-    }
-    lit.iter().map(|&b| fold(b, ci)).cmp(path.iter().map(|&b| {
-        if std::path::is_separator(char::from(b)) {
-            b'/'
-        } else {
-            fold(b, ci)
-        }
-    }))
 }
 
 /// A scanned union's cheap look at a path before a chain runs, read off
@@ -454,12 +439,12 @@ impl SegmentMatcher {
             }
             Shape::Line(line) => {
                 let g = line.g as usize;
-                self.head(elems, g, path)
+                self.run(elems, 0..g, path, 0)
                     .is_some_and(|mid_start| self.tail_and_globstar(elems, g, path, mid_start))
             }
             Shape::Block { g1, g2 } => {
                 let (g1, g2) = (*g1 as usize, *g2 as usize);
-                let Some(mid_start) = self.head(elems, g1, path) else {
+                let Some(mid_start) = self.run(elems, 0..g1, path, 0) else {
                     return false;
                 };
                 let Some(split) = self.tail_split(elems, g2, path, mid_start) else {
@@ -490,7 +475,7 @@ impl SegmentMatcher {
                 let bounded = if last {
                     end == path.len()
                 } else {
-                    end < path.len() && std::path::is_separator(path[end] as char)
+                    end < path.len() && is_sep(path[end])
                 };
                 (end, bounded && self.affix_eq(lit, &path[pos..end]))
             }
@@ -511,26 +496,26 @@ impl SegmentMatcher {
         elems: &E,
         range: std::ops::Range<usize>,
         path: &[u8],
-        mut pos: usize,
+        pos: usize,
     ) -> bool {
         let last = range.end - 1;
-        for i in range.start..last {
-            match self.consume_at(elems, i, path, pos, false) {
-                Some(end) => pos = end + 1,
-                None => return false,
-            }
-        }
-        self.consume_at(elems, last, path, pos, true).is_some()
+        self.run(elems, range.start..last, path, pos)
+            .is_some_and(|pos| self.consume_at(elems, last, path, pos, true).is_some())
     }
 
-    /// The head `elems[..g]`, one segment each: where the segment after
-    /// it starts. Every globstar wants that segment (`G1` absorbs one,
-    /// `G0` is followed by its tail), so a path that ends in the head
-    /// fails.
+    /// `elems[range]` on the segments from `pos`, one each, each followed
+    /// by a separator: where the segment after them starts. Every
+    /// globstar wants that segment (`G1` absorbs one, `G0` is followed by
+    /// its tail), so a path that ends in a head fails.
     #[inline]
-    fn head<E: ChainElems>(&self, elems: &E, g: usize, path: &[u8]) -> Option<usize> {
-        let mut pos = 0;
-        for i in 0..g {
+    fn run<E: ChainElems>(
+        &self,
+        elems: &E,
+        range: std::ops::Range<usize>,
+        path: &[u8],
+        mut pos: usize,
+    ) -> Option<usize> {
+        for i in range {
             pos = self.consume_at(elems, i, path, pos, false)? + 1;
         }
         Some(pos)
@@ -642,10 +627,7 @@ impl SegmentMatcher {
         if end >= mid_end {
             return None;
         }
-        let mut pos = end + 1;
-        for i in from + 1..to - 1 {
-            pos = self.consume_at(elems, i, path, pos, false)? + 1;
-        }
+        let pos = self.run(elems, from + 1..to - 1, path, end + 1)?;
         let last = to - 1;
         match self.consume_at(elems, last, path, pos, false) {
             Some(end) => (end <= mid_end).then_some(end),
@@ -686,9 +668,7 @@ impl SegmentMatcher {
             return from;
         }
         (from..to)
-            .find(|&i| {
-                std::path::is_separator(path[i] as char) && i + 1 < to && path[i + 1] == b'.'
-            })
+            .find(|&i| is_sep(path[i]) && i + 1 < to && path[i + 1] == b'.')
             .map_or(usize::MAX, |i| i + 1)
     }
 

@@ -14,9 +14,9 @@ import {
   isGlobstar,
   nullable,
 } from "./elem.js";
-import { asciiLower, ctz32, nextSep } from "../../bytes.js";
+import { asciiLower, cmpFolded, ctz32, litEq, nextSep } from "../../bytes.js";
 import { ACCEPT } from "./graph.js";
-import { litEq, wildConsumes } from "./wild.js";
+import { wildConsumes } from "./wild.js";
 
 // The wildcard-only segments `coversBelow` feeds before it gives up: a
 // pattern needs about one more than its longest run of them, and "not
@@ -314,19 +314,6 @@ export function initSparse(g) {
   return a;
 }
 
-// Order of a sorted literal key against segment `str[s..t]`, the
-// segment ASCII-folded when insensitive.
-function litCmp(key, str, s, t, ci) {
-  const n = Math.min(key.length, t - s);
-  for (let i = 0; i < n; i++) {
-    let c = str.charCodeAt(s + i);
-    if (ci && c >= 0x41 && c <= 0x5a) c += 0x20;
-    const d = key.charCodeAt(i) - c;
-    if (d !== 0) return d;
-  }
-  return key.length - (t - s);
-}
-
 // The active set after every segment of `str`.
 export function nfaRunSparse(m, str) {
   const g = m.nfa;
@@ -368,10 +355,10 @@ function stepSparse(m, g, active, next, str, s0, e0) {
     let top = hi;
     while (lo < top) {
       const mid = (lo + top) >>> 1;
-      if (litCmp(g.litKeys[mid], str, s0, e0, ci) < 0) lo = mid + 1;
+      if (cmpFolded(g.litKeys[mid], str, s0, e0, ci) < 0) lo = mid + 1;
       else top = mid;
     }
-    for (; lo < hi && litCmp(g.litKeys[lo], str, s0, e0, ci) === 0; lo++) {
+    for (; lo < hi && cmpFolded(g.litKeys[lo], str, s0, e0, ci) === 0; lo++) {
       fireSparse(m, g, g.lits[lo], next);
     }
     for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {

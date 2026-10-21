@@ -2,7 +2,7 @@
 // and the static prefixes a walker seeds from. JS twin of
 // `crates/globstar/src/engine/segment/facts.rs`.
 
-import { patByteEq, IS_WINDOWS_SEP } from "../../bytes.js";
+import { hasEscapedSep } from "../../bytes.js";
 import { N_BRACE, N_LITERAL, N_SEPARATOR, endsWithGlobstar, seq } from "../../parse/ast.js";
 import { nodeWeight } from "./graph.js";
 
@@ -15,16 +15,6 @@ export function suffixes(body) {
   const suffix = trailing(nodes, nodes.length);
   if (suffix.length > 0) return [suffix];
   return suffixSet(nodes);
-}
-
-// Does `str` end with `suffix`, its bytes compared by `patByteEq`?
-export function endsWithSepAware(str, suffix, ci) {
-  const at = str.length - suffix.length;
-  if (at < 0) return false;
-  for (let i = suffix.length - 1; i >= 0; i--) {
-    if (!patByteEq(suffix.charCodeAt(i), str.charCodeAt(at + i), ci)) return false;
-  }
-  return true;
 }
 
 // The bytes of the literal/separator run that ends `nodes[..end]`. The
@@ -114,7 +104,7 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
     const node = nodes[i++];
     // An escaped `\` on Windows: the expansion matches nothing (§4.2), so
     // it has no head to seed.
-    if (node.tag === N_LITERAL && IS_WINDOWS_SEP && node.str.includes("\\")) return;
+    if (node.tag === N_LITERAL && hasEscapedSep(node.str)) return;
     if (node.tag === N_LITERAL && afford(heads, node.str.length)) {
       acc += node.str;
     } else if (node.tag === N_SEPARATOR && afford(heads, 1)) {

@@ -10,6 +10,7 @@
 
 import { CI_BYTE, N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";
 import { EL_LIT, EL_WILD } from "./elem.js";
+import { fold } from "../../bytes.js";
 
 // A union of at most this many chains (the literal set aside) tries
 // them in turn after their gates, which costs less than the lookups.
@@ -41,8 +42,6 @@ export const R_INNER = 2;
 // suffix of each length up to KEY_BYTES (1 to 4), a prefix of each (5
 // to 8).
 const LOOKUPS = 1 + 2 * KEY_BYTES;
-
-const fold = (c, ci) => (ci && c >= 0x41 && c <= 0x5a ? c + 32 : c) & 0xff;
 
 // A string by its length and outer characters, folded when
 // case-insensitive: `back` holds its last KEY_BYTES (the last lowest),

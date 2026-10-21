@@ -2,14 +2,17 @@
 //! elements (literals, in-segment wildcard matchers, globstars) and a
 //! path is matched segment by segment. A path through the graph with
 //! at most one globstar, or two around a block, is matched by anchored
-//! compares, the literal-only paths by one search of a sorted set;
+//! compares, the literal-only paths by one search of a sorted set, and
+//! a union of many paths asks only those its path's segments pick;
 //! everything else runs an NFA whose active set grows with the
 //! pattern, so no pattern is too big for it. Only braces whose segments
 //! multiply are refused, by the compile walk (`GlobError::TooComplex`).
 //!
-//! `graph` builds the graph, `chain` and `nfa` match over it, `wild`
-//! (with `seg_nfa`) matches inside a segment, `facts` reads the literal
-//! facts off the AST, `bits` holds the bit sets both NFAs use.
+//! `graph` builds the graph, `chain` and `nfa` match over it,
+//! `chain_index` picks a big union's chains, `wild` (with `seg_nfa`)
+//! matches inside a segment, `facts` reads the literal facts off the
+//! AST, `bits` holds the bit sets both NFAs use; the byte comparisons
+//! are `crate::bytes`.
 
 mod bits;
 mod chain;
@@ -24,7 +27,7 @@ use crate::dir_match::DirMatch;
 use crate::error::GlobError;
 use crate::parse::ast::Node;
 
-use super::pat_byte_eq;
+use crate::bytes;
 use chain::{Chain, Gate, Shape};
 use chain_index::ChainIndex;
 use graph::Graph;
@@ -39,12 +42,6 @@ type Bytes = Box<[u8]>;
 /// escaped `\` on Windows, where a segment never holds a separator, or
 /// an in-segment NFA that accepts nothing.
 const NEVER: u32 = u32::MAX;
-
-/// Does `lit` hold a separator byte (an escaped `\` on Windows)? A
-/// literal never holds a `/`, so elsewhere it never does.
-fn has_sep(lit: &[u8]) -> bool {
-    cfg!(windows) && lit.iter().any(|&b| std::path::is_separator(char::from(b)))
-}
 
 #[derive(Debug, Clone)]
 enum Elem {
@@ -255,22 +252,12 @@ impl SegmentMatcher {
     /// The suffix prefilter: `false` means the path cannot match.
     #[inline]
     fn prefilter(&self, path: &[u8]) -> bool {
+        let ends = |s: &Bytes| bytes::ends_with_pattern(path, s, self.case_insensitive);
         match &self.suffixes[..] {
             [] => true,
-            [one] => self.ends_with(path, one),
-            set => self.suffix_last.may_end(path) && set.iter().any(|s| self.ends_with(path, s)),
+            [one] => ends(one),
+            set => self.suffix_last.may_end(path) && set.iter().any(ends),
         }
-    }
-
-    /// Suffix test, last byte first: that is where extensions differ.
-    #[inline]
-    fn ends_with(&self, path: &[u8], suffix: &[u8]) -> bool {
-        path.len() >= suffix.len()
-            && suffix
-                .iter()
-                .zip(&path[path.len() - suffix.len()..])
-                .rev()
-                .all(|(&s, &p)| pat_byte_eq(s, p, self.case_insensitive))
     }
 
     #[inline]
@@ -280,26 +267,6 @@ impl SegmentMatcher {
 
     #[inline(always)]
     fn affix_eq(&self, part: &[u8], seg_part: &[u8]) -> bool {
-        wild::affix_eq(part, seg_part, self.case_insensitive)
+        bytes::affix_eq(part, seg_part, self.case_insensitive)
     }
-}
-
-/// Index just past the segment that starts at `pos`.
-#[inline]
-fn seg_end(path: &[u8], pos: usize) -> usize {
-    let mut i = pos;
-    while i < path.len() && !std::path::is_separator(path[i] as char) {
-        i += 1;
-    }
-    i
-}
-
-/// Start of the segment that ends at `end`.
-#[inline]
-fn seg_start(path: &[u8], end: usize) -> usize {
-    let mut s = end;
-    while s > 0 && !std::path::is_separator(path[s - 1] as char) {
-        s -= 1;
-    }
-    s
 }

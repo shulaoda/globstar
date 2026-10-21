@@ -2,6 +2,7 @@
 //! to (`compile_wild`) and how it takes a path segment
 //! (`wild_consumes`). `wild_consumes` is forced inline (see `chain.rs`).
 
+use crate::bytes::{affix_eq, fold};
 use crate::parse::ast::Node;
 
 use super::seg_nfa::SegNfa;
@@ -393,22 +394,4 @@ impl SegmentMatcher {
             WildKind::Generic(nfa) => nfa.matches(seg),
         }
     }
-}
-
-/// Byte-wise, so short affixes stay inline rather than calling `bcmp`.
-#[inline(always)]
-pub(super) fn affix_eq(part: &[u8], seg_part: &[u8], ci: bool) -> bool {
-    debug_assert_eq!(part.len(), seg_part.len());
-    if ci {
-        part.iter()
-            .zip(seg_part)
-            .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
-    } else {
-        part.iter().zip(seg_part).all(|(a, b)| a == b)
-    }
-}
-
-#[inline(always)]
-pub(super) fn fold(b: u8, ci: bool) -> u8 {
-    if ci { b.to_ascii_lowercase() } else { b }
 }

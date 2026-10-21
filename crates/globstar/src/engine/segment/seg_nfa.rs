@@ -158,7 +158,7 @@ impl ByteSet {
             set.bits = set.bits.map(|w| !w);
         }
         for &b in b"/\\" {
-            if std::path::is_separator(char::from(b)) {
+            if crate::bytes::is_sep(b) {
                 set.bits[usize::from(b >> 6)] &= !(1 << (b & 63));
             }
         }

@@ -10,12 +10,13 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
+use crate::bytes::has_escaped_sep;
 use crate::error::GlobError;
 use crate::parse::ast::Node;
 
 use super::chain_index::{KeyScratch, LINEAR_CHAINS, SegKeys, segment_keys};
 use super::wild::{Affix, Wild, WildKind, compile_wild, concat_lits};
-use super::{Bytes, Elem, NEVER, has_sep};
+use super::{Bytes, Elem, NEVER};
 
 /// Successor marker for "the pattern ends here".
 pub(super) const ACCEPT: u32 = u32::MAX;
@@ -245,6 +246,36 @@ impl Group<'_> {
         self.tails.push(id);
         self.state = state;
         self.pending_globstar = false;
+    }
+
+    fn agrees(&self, other: &Self) -> bool {
+        self.state == other.state
+            && self.pending_globstar == other.pending_globstar
+            && self.took_sep == other.took_sep
+            && self.buf.len() == other.buf.len()
+            && self
+                .buf
+                .iter()
+                .zip(&other.buf)
+                .all(|(a, b)| std::ptr::eq(*a, *b) || a == b)
+    }
+
+    /// A hash of what `agrees` compares: each node by kind, a literal
+    /// by its bytes too.
+    fn key(&self) -> u64 {
+        let mut h = Fnv::default();
+        h.write(&[
+            self.state as u8,
+            self.pending_globstar as u8,
+            self.took_sep as u8,
+        ]);
+        for node in &self.buf {
+            std::mem::discriminant(*node).hash(&mut h);
+            if let Node::Literal(bytes) = node {
+                h.write(bytes);
+            }
+        }
+        h.finish()
     }
 }
 
@@ -588,7 +619,7 @@ impl Builder {
         // that wants more bytes than any segment has.
         if buf
             .iter()
-            .any(|node| matches!(node, Node::Literal(lit) if has_sep(lit)))
+            .any(|node| matches!(node, Node::Literal(lit) if has_escaped_sep(lit)))
         {
             return Elem::Wild(Wild {
                 kind: WildKind::Affix(Affix::new(Bytes::default(), Bytes::default())),
@@ -648,38 +679,6 @@ impl<'a> Merged<'a> {
             Some(i) => self.groups[i].tails.extend(g.tails),
             None => self.groups.push(g),
         }
-    }
-}
-
-impl Group<'_> {
-    fn agrees(&self, other: &Self) -> bool {
-        self.state == other.state
-            && self.pending_globstar == other.pending_globstar
-            && self.took_sep == other.took_sep
-            && self.buf.len() == other.buf.len()
-            && self
-                .buf
-                .iter()
-                .zip(&other.buf)
-                .all(|(a, b)| std::ptr::eq(*a, *b) || a == b)
-    }
-
-    /// A hash of what `agrees` compares: each node by kind, a literal
-    /// by its bytes too.
-    fn key(&self) -> u64 {
-        let mut h = Fnv::default();
-        h.write(&[
-            self.state as u8,
-            self.pending_globstar as u8,
-            self.took_sep as u8,
-        ]);
-        for node in &self.buf {
-            std::mem::discriminant(*node).hash(&mut h);
-            if let Node::Literal(bytes) = node {
-                h.write(bytes);
-            }
-        }
-        h.finish()
     }
 }
 

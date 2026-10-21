@@ -1,6 +1,9 @@
-use crate::dir_match::DirMatch;
+//! The engine for a pattern without wildcards: one compare against the
+//! literal, separators and case read as `bytes::pat_byte_eq` does. JS
+//! twin: `packages/globstar/src/engine/literal.js`.
 
-use super::pat_byte_eq;
+use crate::bytes::{ends_with_pattern, has_escaped_sep, pat_byte_eq};
+use crate::dir_match::DirMatch;
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiteralMatcher {
@@ -19,12 +22,7 @@ impl LiteralMatcher {
     pub(crate) fn static_prefixes(&self) -> Vec<Vec<u8>> {
         // An escaped `\` on Windows is a separator the literal can never
         // match (§4.2): nothing to seed.
-        if cfg!(windows)
-            && self
-                .literal
-                .iter()
-                .any(|&b| b != b'/' && std::path::is_separator(char::from(b)))
-        {
+        if has_escaped_sep(&self.literal) {
             return Vec::new();
         }
         let mut bytes = &self.literal[..];
@@ -34,9 +32,10 @@ impl LiteralMatcher {
         vec![bytes.to_vec()]
     }
 
+    /// The same length and, last byte first, the same bytes.
     pub(crate) fn is_match(&self, path: &[u8]) -> bool {
-        let n = self.prefix_len(path);
-        n == self.literal.len() && n == path.len()
+        path.len() == self.literal.len()
+            && ends_with_pattern(path, &self.literal, self.case_insensitive)
     }
 
     /// One scan: the directory is the literal itself, or a whole

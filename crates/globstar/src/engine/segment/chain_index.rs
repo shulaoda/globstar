@@ -7,11 +7,11 @@
 //! own last, first and inner segments and walks only the chains they
 //! pick: the walk decides, the index only chooses which chains to ask.
 
+use crate::bytes::{fold, seg_end, seg_start};
 use crate::parse::ast::{ClassItem, Node};
 
+use super::Elem;
 use super::chain::{Chain, Shape};
-use super::wild::fold;
-use super::{Elem, seg_end, seg_start};
 
 /// A union of at most this many chains (the literal set aside) tries
 /// them in turn after their gates, which costs less than the lookups.

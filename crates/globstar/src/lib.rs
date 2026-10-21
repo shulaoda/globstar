@@ -43,6 +43,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod bytes;
 mod dir_match;
 mod engine;
 pub mod error;

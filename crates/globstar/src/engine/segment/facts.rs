@@ -1,10 +1,11 @@
 //! Literal facts read off the AST at compile time: the suffix
 //! prefilter and the static prefixes a walker seeds from.
 
+use crate::bytes::has_escaped_sep;
 use crate::parse::ast::Node;
 
+use super::Bytes;
 use super::graph::node_weight;
-use super::{Bytes, has_sep};
 
 /// Largest suffix set worth scanning before the engine runs; a
 /// bigger alternation gets no prefilter (the engine groups it).
@@ -164,7 +165,7 @@ impl Heads {
             match node {
                 // An escaped `\` on Windows: the expansion matches nothing
                 // (§4.2), so it has no head to seed.
-                Node::Literal(bytes) if has_sep(bytes) => {
+                Node::Literal(bytes) if has_escaped_sep(bytes) => {
                     acc.truncate(mark);
                     return;
                 }

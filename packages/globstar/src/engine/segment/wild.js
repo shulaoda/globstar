@@ -3,7 +3,7 @@
 // JS twin of `crates/globstar/src/engine/segment/wild.rs`.
 
 import { N_ANYCHAR, N_BRACE, N_LITERAL, N_STAR, seq } from "../../parse/ast.js";
-import { eqByteCi } from "../../bytes.js";
+import { affixEq } from "../../bytes.js";
 import { flat, isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
 import { WK_AFFIX, WK_SUFFIXES, WK_GENERIC, exact } from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
@@ -160,23 +160,6 @@ function suffixProduct(nodes, from) {
 }
 
 // ── matching ────────────────────────────────────────────────────────
-
-export function litEq(lit, str, s, t, ci) {
-  if (t - s !== lit.length) return false;
-  if (!ci) return str.startsWith(lit, s);
-  for (let i = 0; i < lit.length; i++) {
-    if (!eqByteCi(lit.charCodeAt(i), str.charCodeAt(s + i))) return false;
-  }
-  return true;
-}
-
-export function affixEq(part, str, at, ci) {
-  if (!ci) return str.startsWith(part, at);
-  for (let i = 0; i < part.length; i++) {
-    if (!eqByteCi(part.charCodeAt(i), str.charCodeAt(at + i))) return false;
-  }
-  return true;
-}
 
 // On a path string (not `m.byteOnly`: the pattern is ASCII) the
 // literal parts compare as they are; `?` counts UTF-8 bytes, so the

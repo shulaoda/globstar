@@ -13,11 +13,20 @@ import {
   elemSatisfiable,
   isGlobstar,
 } from "./elem.js";
-import { IS_WINDOWS_SEP, asciiLower, isPathSep, nextSep, lastSepBefore } from "../../bytes.js";
+import {
+  IS_WINDOWS_SEP,
+  affixEq,
+  asciiLower,
+  cmpFolded,
+  isPathSep,
+  litEq,
+  nextSep,
+  lastSepBefore,
+} from "../../bytes.js";
 import { flat } from "../../utf8.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { ACCEPT } from "./graph.js";
-import { affixEq, litEq, wildConsumes } from "./wild.js";
+import { wildConsumes } from "./wild.js";
 
 // ── the chains ──────────────────────────────────────────────────────────
 
@@ -197,7 +206,7 @@ export function chainMatches(m, chain, str) {
       return hasLiteral(m, chain.literals, str);
     default: {
       const g = chain.globstar;
-      const midStart = head(m, ids, g, str);
+      const midStart = run(m, ids, 0, g, str, 0);
       if (midStart < 0) return false;
       if (chain.g2 < 0) return tailAndGlobstar(m, ids, g, str, midStart);
       const split = tailSplit(m, ids, chain.g2, str, midStart);
@@ -216,26 +225,18 @@ export function hasLiteral(m, literals, str) {
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
     const lit = literals[mid];
-    const d = plain ? (lit === str ? 0 : lit < str ? -1 : 1) : cmpLitPath(lit, str, m.ci);
+    const d = plain
+      ? lit === str
+        ? 0
+        : lit < str
+          ? -1
+          : 1
+      : cmpFolded(lit, str, 0, str.length, m.ci);
     if (d === 0) return true;
     if (d < 0) lo = mid + 1;
     else hi = mid;
   }
   return false;
-}
-
-// A folded literal path against a path, folding the path's characters
-// as it goes, without building a key.
-function cmpLitPath(lit, str, ci) {
-  const n = Math.min(lit.length, str.length);
-  for (let i = 0; i < n; i++) {
-    let c = str.charCodeAt(i);
-    if (ci && c >= 0x41 && c <= 0x5a) c += 32;
-    else if (IS_WINDOWS_SEP && c === 0x5c) c = 0x2f;
-    const d = lit.charCodeAt(i) - c;
-    if (d !== 0) return d;
-  }
-  return lit.length - str.length;
 }
 
 // Element `e` on the segment at `pos`, the path's last one iff `last`:
@@ -264,23 +265,17 @@ function elemConsumes(m, e, str, s, t) {
 // Do the elements `from..to` take the segments from `pos` to the end,
 // one each?
 function fixedRun(m, ids, from, to, str, pos) {
-  const elems = m.elems;
-  for (let i = from; i < to - 1; i++) {
-    const end = consumeAt(m, elemAt(elems, ids, i), str, pos, false);
-    if (end < 0) return false;
-    pos = end + 1;
-  }
-  return consumeAt(m, elemAt(elems, ids, to - 1), str, pos, true) >= 0;
+  pos = run(m, ids, from, to - 1, str, pos);
+  return pos >= 0 && consumeAt(m, elemAt(m.elems, ids, to - 1), str, pos, true) >= 0;
 }
 
-// The head (the elements before the globstar `g`), one segment each:
-// where the segment after it starts, or -1. Every globstar
-// wants that segment (G1 absorbs one, G0 is followed by its tail), so
-// a path that ends in the head fails.
-function head(m, ids, g, str) {
+// The elements `from..to` on the segments from `pos`, one each, each
+// followed by a separator: where the segment after them starts, or -1.
+// Every globstar wants that segment (G1 absorbs one, G0 is followed by
+// its tail), so a path that ends in a head fails.
+function run(m, ids, from, to, str, pos) {
   const elems = m.elems;
-  let pos = 0;
-  for (let i = 0; i < g; i++) {
+  for (let i = from; i < to; i++) {
     const end = consumeAt(m, elemAt(elems, ids, i), str, pos, false);
     if (end < 0) return -1;
     pos = end + 1;
@@ -352,12 +347,8 @@ function blockFrom(m, ids, from, to, str, pos, end, midEnd) {
   if (!elemConsumes(m, elemAt(elems, ids, from), str, pos, end)) return -1;
   if (to - from === 1) return end;
   if (end >= midEnd) return -1;
-  let p = end + 1;
-  for (let i = from + 1; i < to - 1; i++) {
-    p = consumeAt(m, elemAt(elems, ids, i), str, p, false);
-    if (p < 0) return -1;
-    p += 1;
-  }
+  const p = run(m, ids, from + 1, to - 1, str, end + 1);
+  if (p < 0) return -1;
   const last = elemAt(elems, ids, to - 1);
   const taken = consumeAt(m, last, str, p, false);
   if (taken >= 0) return taken <= midEnd ? taken : -1;

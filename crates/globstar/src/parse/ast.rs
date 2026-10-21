@@ -55,7 +55,7 @@ impl ClassItem {
 #[cfg(test)]
 impl CharClass {
     pub fn matches(&self, b: u8) -> bool {
-        if std::path::is_separator(b as char) {
+        if crate::bytes::is_sep(b) {
             return false;
         }
         let listed = self.items.iter().any(|it| it.matches(b));

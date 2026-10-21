@@ -1,7 +1,7 @@
-// Byte and bit primitives: what the Rust side gets from std
-// (`std::path::is_separator`, `u32::trailing_zeros`,
-// `u8::eq_ignore_ascii_case`) and the twins of `pat_byte_eq`
-// (`engine/mod.rs`) and `seg_end` / `seg_start` (`engine/segment/mod.rs`).
+// Byte and bit primitives the engines share: separators, ASCII case
+// folding and the comparisons built on them. Rust twin:
+// `crates/globstar/src/bytes.rs` (plus what Rust gets from std,
+// `u32::trailing_zeros` and `u8::eq_ignore_ascii_case`).
 
 // Is `\` a separator on this platform (Windows only)? Path separators
 // per GLOB_SPEC §2.2: `/` always, `\` on Windows.
@@ -23,6 +23,14 @@ export function eqByteCi(a, b) {
   return l === (b | 0x20) && l >= 0x61 && l <= 0x7a;
 }
 
+// Does the literal `str` hold an escaped `\`? On Windows that is a
+// separator no path segment holds, so the literal matches nothing
+// (§4.2); elsewhere it is a plain char.
+export const hasEscapedSep = (str) => IS_WINDOWS_SEP && str.includes("\\");
+
+// `c`, ASCII-lowercased when case-insensitive.
+export const fold = (c, ci) => (ci && c >= 0x41 && c <= 0x5a ? c + 32 : c);
+
 // A pattern byte against a path byte: `/` takes any separator, letters
 // fold when `ci`, and a separator byte of the pattern (an escaped `\`
 // on Windows) takes nothing (§2.2). The unequal case, the common one in
@@ -31,6 +39,46 @@ export function patByteEq(pat, b, ci) {
   if (pat === 0x2f) return isPathSep(b);
   if (ci ? !eqByteCi(pat, b) : pat !== b) return false;
   return !(IS_WINDOWS_SEP && b === 0x5c);
+}
+
+// Does `str` hold `part` at `at`, ASCII case folded when `ci`?
+export function affixEq(part, str, at, ci) {
+  if (!ci) return str.startsWith(part, at);
+  for (let i = 0; i < part.length; i++) {
+    if (!eqByteCi(part.charCodeAt(i), str.charCodeAt(at + i))) return false;
+  }
+  return true;
+}
+
+// Is `str[s, t)` the literal `lit`, ASCII case folded when `ci`?
+export function litEq(lit, str, s, t, ci) {
+  return t - s === lit.length && affixEq(lit, str, s, ci);
+}
+
+// Does `str` end with the pattern bytes `suffix` (`patByteEq`)? Last
+// byte first: that is where extensions differ.
+export function endsWithPattern(str, suffix, ci) {
+  const at = str.length - suffix.length;
+  if (at < 0) return false;
+  for (let i = suffix.length - 1; i >= 0; i--) {
+    if (!patByteEq(suffix.charCodeAt(i), str.charCodeAt(at + i), ci)) return false;
+  }
+  return true;
+}
+
+// A folded literal against `str[s, t)` in the order sorted literals are
+// kept, folding the path's characters as it goes: ASCII letters
+// lowercased when case-insensitive, a separator as `/`.
+export function cmpFolded(lit, str, s, t, ci) {
+  const n = Math.min(lit.length, t - s);
+  for (let i = 0; i < n; i++) {
+    let c = str.charCodeAt(s + i);
+    if (ci && c >= 0x41 && c <= 0x5a) c += 32;
+    else if (IS_WINDOWS_SEP && c === 0x5c) c = 0x2f;
+    const d = lit.charCodeAt(i) - c;
+    if (d !== 0) return d;
+  }
+  return lit.length - (t - s);
 }
 
 // Index of the first separator in `str` from `from` on, or -1.

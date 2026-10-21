@@ -5,11 +5,12 @@
 
 use std::borrow::Cow;
 
+use crate::bytes::{cmp_folded, seg_end};
 use crate::dir_match::DirMatch;
 
 use super::bits::{Bits, Wide};
 use super::graph::{ACCEPT, Edges};
-use super::{Elem, SegmentMatcher, seg_end};
+use super::{Elem, SegmentMatcher};
 
 /// The wildcard-only segments `covers_below` feeds before it gives up:
 /// a pattern needs about one more than its longest run of them, and
@@ -225,7 +226,7 @@ fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         // walk deduplicates tails before it emits after them.
         lits.sort_unstable_by(|&a, &b| {
             let lit = |t: u32| elems[t as usize].as_lit();
-            lit_cmp(lit(a), lit(b), ci).then(a.cmp(&b))
+            cmp_folded(lit(a), lit(b), ci).then(a.cmp(&b))
         });
         for part in [&mut lits, &mut nulls, &mut rest] {
             at.push(succ.len() as u32);
@@ -241,16 +242,6 @@ fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         ends,
         reach1,
     }
-}
-
-/// Byte order, ASCII case folded when insensitive.
-fn lit_cmp(a: &[u8], b: &[u8], ci: bool) -> std::cmp::Ordering {
-    if !ci {
-        return a.cmp(b);
-    }
-    a.iter()
-        .map(u8::to_ascii_lowercase)
-        .cmp(b.iter().map(u8::to_ascii_lowercase))
 }
 
 /// The NFA over the lone chain a matcher kept instead of one, and the
@@ -486,7 +477,7 @@ impl SparseNfa {
             let p = p as usize;
             // Equal literals sit together, one binary search away.
             let lits = self.succ(p, 0, 1);
-            let order = |s: u32| lit_cmp(m.elems[s as usize].as_lit(), seg, m.case_insensitive);
+            let order = |s: u32| cmp_folded(m.elems[s as usize].as_lit(), seg, m.case_insensitive);
             let first = lits.partition_point(|&s| order(s).is_lt());
             for &s in lits[first..].iter().take_while(|&&s| order(s).is_eq()) {
                 self.fire(m, s, next);

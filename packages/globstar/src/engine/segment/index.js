@@ -2,10 +2,11 @@
 // mod.rs`: a pattern becomes a graph of per-segment elements and a path
 // is matched segment by segment — anchored compares for a path through
 // the graph with at most one globstar or two around a block, one search
-// of a sorted set for the literal-only paths, an NFA over the graph for
-// everything else.
+// of a sorted set for the literal-only paths, only the chains its
+// segments pick for a union of many (`chain-index.js`), an NFA over the
+// graph for everything else.
 
-import { IS_WINDOWS_SEP, lastSepBefore, nextSep } from "../../bytes.js";
+import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph } from "./graph.js";
@@ -20,7 +21,7 @@ import {
   coversBelow,
   coversBelowSparse,
 } from "./nfa.js";
-import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
+import { computeStaticPrefixes, suffixes } from "./facts.js";
 import { R_FIRST, R_INNER, R_LAST, chainIndex, probe, probeInfix } from "./chain-index.js";
 import {
   NFA_SMALL,
@@ -225,7 +226,7 @@ export class SegmentMatcher {
     if (set === null) return true;
     const plain = this.factsPlain;
     for (let i = 0; i < set.length; i++) {
-      if (plain ? str.endsWith(set[i]) : endsWithSepAware(str, set[i], this.ci)) return true;
+      if (plain ? str.endsWith(set[i]) : endsWithPattern(str, set[i], this.ci)) return true;
     }
     return false;
   }

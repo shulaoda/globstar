@@ -1,4 +1,8 @@
-import { patByteEq, IS_WINDOWS_SEP } from "../bytes.js";
+// The engine for a pattern without wildcards: one compare against the
+// literal, separators and case read as `patByteEq` does. JS twin of
+// `crates/globstar/src/engine/literal.rs`.
+
+import { IS_WINDOWS_SEP, endsWithPattern, hasEscapedSep, patByteEq } from "../bytes.js";
 import { DirMatch } from "../dir-match.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../utf8.js";
 
@@ -21,9 +25,9 @@ export class LiteralMatcher {
   isMatch(path) {
     if (this.exact) return path === this.litStr;
     const str = this.ascii ? path : utf8Latin1(path);
+    // The same length and, last char first, the same chars.
     return (
-      str.length === this.litStr.length &&
-      prefixLen(this.litStr, str, this.caseInsensitive) === str.length
+      str.length === this.litStr.length && endsWithPattern(str, this.litStr, this.caseInsensitive)
     );
   }
 
@@ -42,7 +46,7 @@ export class LiteralMatcher {
     const lit = this.litStr;
     // An escaped `\` on Windows is a separator the literal can never
     // match (§4.2): nothing to seed.
-    if (IS_WINDOWS_SEP && lit.includes("\\")) return [];
+    if (hasEscapedSep(lit)) return [];
     let end = lit.length;
     while (end > 0 && lit.charCodeAt(end - 1) === 0x2f) end--;
     return [latin1Bytes(lit.slice(0, end))];
