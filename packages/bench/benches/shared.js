@@ -42,7 +42,7 @@ export function fresh(pattern) {
   return pattern.endsWith("}") ? pattern.slice(0, -1) + tag + "}" : pattern + tag;
 }
 
-// A path no row matches. A first match on it runs every part a matcher
+// A path no row matches. A first call on it runs every part a matcher
 // left for its first use: in a list matched one member at a time, each
 // member, where a hit would stop at the first.
 export const MISS = "target/debug/build/foo";
@@ -81,8 +81,8 @@ export function assertAgree(libs, inputs, paths) {
 }
 
 // The bench: every library's answers checked against the first's, then
-// mitata groups per row for the build, the build and first match, and
-// the match of a prebuilt matcher, then the memory table `bench.mjs`
+// mitata groups per row for the build, the build and first non-match,
+// and the match of a prebuilt matcher, then the memory table `bench.mjs`
 // parses (`header` is its hint). `rows` are `[label, input]`;
 // `freshen(input)` gives an input not built before, of the same shape.
 export async function matcherBench(header, rows, libs, freshen) {
@@ -95,10 +95,10 @@ export async function matcherBench(header, rows, libs, freshen) {
   assertMisses(libs, inputs, MISS);
 
   // A matcher for an input not seen before: the build alone, then the
-  // build and its first match, which is what a new pattern costs before
-  // it answers (a library may leave work for the first call, such as
-  // compiling its RegExp). The match misses, so a library that matches
-  // one member at a time runs every member.
+  // build and its first call, a non-match, which is what a new pattern
+  // costs before it answers (a library may leave work for the first
+  // call, such as compiling its RegExp). The miss makes a library that
+  // matches one member at a time run every member.
   console.log("===== PHASE 1: COMPILE =====\n");
   for (const [label, input] of rows) {
     group(`build: ${label}`, () => {

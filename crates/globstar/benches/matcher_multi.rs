@@ -59,9 +59,9 @@ fn bench_build(c: &mut Criterion, label: &str, patterns: &[&str]) {
 }
 
 // ---------- COMPILE bench ----------
-/// A build and its first match: regex-backed matchers build their
-/// search cache on first use, so the build alone undercounts them. The
-/// match misses, so separate matchers all run.
+/// A build and its first call, a non-match: regex-backed matchers build
+/// their search cache on first use, so the build alone undercounts
+/// them, and a miss makes separate matchers all run.
 fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let first = MISS;
     let mut group = c.benchmark_group(format!("compile_{label}"));

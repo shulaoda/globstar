@@ -91,8 +91,9 @@ fn bench_build(c: &mut Criterion, label: &str, pattern: &str) {
     group.finish();
 }
 
-/// The build and its first match: regex-backed matchers build their
-/// search cache on first use, so the build alone undercounts them.
+/// The build and its first call, a non-match: regex-backed matchers
+/// build their search cache on first use, so the build alone
+/// undercounts them.
 fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
     let first = MISS;
     let mut group = c.benchmark_group(format!("compile_{label}"));
