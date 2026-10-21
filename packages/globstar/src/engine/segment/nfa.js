@@ -1,13 +1,11 @@
 // The NFA over the graph: one state per position, stepped once per path
 // segment. One int32 of states up to 32, a sparse step beyond; it runs
-// when the chains cannot serve, and for `matchDir`'s all-below proof.
+// when the chains cannot serve, and answers `matchDir` where it is kept.
 // JS twin of `crates/globstar/src/engine/segment/nfa.rs`.
 
 import {
   EL_LIT,
   EL_WILD,
-  EL_G0,
-  EL_G1,
   NFA_SMALL,
   NFA_SPARSE,
   elemAnySeg,
@@ -29,7 +27,7 @@ const MAX_COVER_SEGMENTS = 64;
 
 // The NFA over the positions of a path (`nodes === null`: the graph
 // itself). Positions of a path follow one another; only the graph of
-// a brace pattern has stored edges. States are numbered by position;
+// a crossing brace has stored edges. States are numbered by position;
 // the accept state comes last.
 function layout(graph, nodes) {
   const elems = graph.elems;
@@ -309,8 +307,7 @@ function enterSparse(g, p, next) {
 // State `s` took a segment: a globstar stays, and its position's
 // successors are entered.
 function fireSparse(m, g, s, next) {
-  const k = m.elems[s].kind;
-  if (k === EL_G0 || k === EL_G1) addTo(next, s);
+  if (isGlobstar(m.elems[s])) addTo(next, s);
   enterSparse(g, s, next);
 }
 

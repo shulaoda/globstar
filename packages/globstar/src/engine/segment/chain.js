@@ -9,9 +9,6 @@ import {
   WK_AFFIX,
   WK_AFFIX_SET,
   WK_AFFIX_INDEX,
-  MAX_CHAINS,
-  NO_G,
-  MANY_G,
   isGlobstar,
 } from "./elem.js";
 import { isPathSep, nextSep, lastSepBefore } from "../../bytes.js";
@@ -19,6 +16,26 @@ import { DirMatch, PRUNED } from "../../dir-match.js";
 import { ACCEPT } from "./graph.js";
 import { denseNfa, nfaRun } from "./nfa.js";
 import { affixEq, litEq, wildConsumes } from "./wild.js";
+
+// Paths through the graph `isMatch` tries one by one; past that the
+// NFA over the whole graph runs.
+export const MAX_CHAINS = 64;
+
+// `chain.globstar` when the chain has none / several.
+export const NO_G = -1;
+export const MANY_G = -2;
+
+// A chain's element: `ids === null` is the identity (the lone path of
+// a linear pattern).
+const elemAt = (elems, ids, i) => (ids === null ? elems[i] : elems[ids[i]]);
+const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
+
+// The first index from which every element of the chain passes `ok`.
+export function whereFrom(elems, ids, ok) {
+  let i = chainLen(elems, ids);
+  while (i > 0 && ok(elemAt(elems, ids, i - 1))) i--;
+  return i;
+}
 
 // Every path through the graph as a chain, in pattern order, or none
 // when there are more than MAX_CHAINS, or a path with several globstars
@@ -62,14 +79,14 @@ export function chains(graph) {
   return out;
 }
 
-// The chain of a path (`null`: the lone path of a brace-free pattern,
+// The chain of a path (`null`: the lone path of a linear pattern,
 // whose nodes are `0..elems.length`), or `null` when it has several
 // globstars and is the graph's `lone` path (the graph's NFA serves) or
 // its NFA would not fit an int32.
 function chainOf(graph, nodes, lone) {
   const elems = graph.elems;
-  const n = nodes === null ? elems.length : nodes.length;
-  const elem = (i) => elems[nodes === null ? i : nodes[i]];
+  const n = chainLen(elems, nodes);
+  const elem = (i) => elemAt(elems, nodes, i);
   let globstar = NO_G;
   for (let i = 0; i < n; i++) {
     if (!isGlobstar(elem(i))) continue;
@@ -134,11 +151,6 @@ function chainOf(graph, nodes, lone) {
     quickLastHi,
   };
 }
-
-// A chain's element: `ids === null` is the identity (the lone path of
-// a brace-free pattern).
-const elemAt = (elems, ids, i) => (ids === null ? elems[i] : elems[ids[i]]);
-const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 
 // The element compares `chainDir` spends on tail tokens; past them it
 // answers what is safe ("may match below", "not all below"). Tails of
@@ -235,40 +247,26 @@ function absorbs(m, kind, str, from, split, dotAt) {
   if (split === from) return kind === EL_G0;
   // Up to the separator before the tail, or the end.
   const to = split - 1;
-  return dotAt === undefined ? dotFree(m, str, from, to) : dotAt >= to;
+  return m.dot || (dotAt === undefined ? firstDot(m, str, from, to) : dotAt) >= to;
 }
 
-// Under `dot=false`, where the first segment of `str` from `from` on
-// that starts with a `.` starts; Infinity when none does.
-function firstDot(m, str, from) {
+// Under `dot=false`, where the first segment of `str[from, to)` that
+// starts with a `.` starts; Infinity when none does, and under `dot`.
+function firstDot(m, str, from, to) {
   if (m.dot) return Infinity;
-  if (str.charCodeAt(from) === 0x2e) return from;
+  if (from < to && str.charCodeAt(from) === 0x2e) return from;
   for (let i = from; ; i++) {
     i = nextSep(str, i);
-    if (i === -1) return Infinity;
+    if (i === -1 || i + 1 >= to) return Infinity;
     if (str.charCodeAt(i + 1) === 0x2e) return i + 1;
   }
 }
 
-// Under `dot=false`, no segment within `str[from, to)` may start with
-// a `.`.
-function dotFree(m, str, from, to) {
-  if (m.dot) return true;
-  if (from < to && str.charCodeAt(from) === 0x2e) return false;
-  for (let i = from; ; ) {
-    i = nextSep(str, i);
-    if (i === -1 || i + 1 >= to) return true;
-    if (str.charCodeAt(i + 1) === 0x2e) return false;
-    i += 1;
-  }
-}
-
-// `matchDir` through the lone chain of a matcher that keeps no NFA.
-// The tokens the NFA would
-// hold after `str`, read off the chain: a head position when the
-// directory ends inside the head, the globstar when it has taken
-// everything after the head, and a tail position when the tail's
-// first elements take the last segments.
+// `matchDir` through the lone chain of a matcher that keeps no NFA: the
+// tokens the NFA would hold after `str`, read off the chain. A head
+// position when the directory ends inside the head, the globstar when it
+// has taken everything after the head, and a tail position when the
+// tail's first elements take the last segments.
 export function chainDir(m, str) {
   const elems = m.elems;
   const chain = m.chains[0];
@@ -315,7 +313,7 @@ export function chainDir(m, str) {
   // one; `all` needs them all. Each `j` is its own alignment, so the
   // compares are budgeted.
   if ((!prefix || all) && tl > 1) {
-    const dotAt = firstDot(m, str, midStart);
+    const dotAt = firstDot(m, str, midStart, str.length);
     let checks = MAX_TAIL_CHECKS;
     let end = str.length;
     for (let j = 1; j < tl; j++) {

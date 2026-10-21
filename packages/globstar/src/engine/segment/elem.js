@@ -1,10 +1,6 @@
 // The segment graph's vocabulary, shared by the compiler, the matcher
 // and the executor. JS twin of the enums in
-// `crates/globstar/src/engine/segment/mod.rs`.
-
-// Paths through the graph `isMatch` tries one by one; past that the
-// NFA over the whole graph runs.
-export const MAX_CHAINS = 64;
+// `crates/globstar/src/engine/segment/{mod,wild,nfa}.rs`.
 
 // Element kinds.
 export const EL_LIT = 0;
@@ -21,10 +17,6 @@ export const WK_AFFIX = 0;
 export const WK_AFFIX_SET = 1;
 export const WK_GENERIC = 2;
 export const WK_AFFIX_INDEX = 3;
-
-// `chain.globstar` when the chain has none / several.
-export const NO_G = -1;
-export const MANY_G = -2;
 
 // Graph NFA kinds: dense int32 rows, sparse.
 export const NFA_SMALL = 0;

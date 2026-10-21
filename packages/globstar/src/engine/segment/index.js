@@ -8,7 +8,7 @@ import { IS_WINDOWS_SEP, lastSepBefore } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph } from "./graph.js";
-import { chains, chainMatches, chainDir } from "./chain.js";
+import { chains, chainMatches, chainDir, whereFrom } from "./chain.js";
 import {
   anyNfa,
   nfaRun,
@@ -57,14 +57,8 @@ export class SegmentMatcher {
     this.anyFrom = 0;
     if (this.nfa === null) {
       const ids = this.chains[0].nodes;
-      const n = ids === null ? this.elems.length : ids.length;
-      const at = (i) => (ids === null ? this.elems[i] : this.elems[ids[i]]);
-      let i = n;
-      while (i > 0 && elemSatisfiable(at(i - 1))) i--;
-      this.openFrom = i;
-      i = n;
-      while (i > 0 && elemAnySeg(at(i - 1))) i--;
-      this.anyFrom = i;
+      this.openFrom = whereFrom(this.elems, ids, elemSatisfiable);
+      this.anyFrom = whereFrom(this.elems, ids, elemAnySeg);
     }
   }
 
@@ -99,12 +93,9 @@ export class SegmentMatcher {
   // `opts.forceNfa` bypasses the chains (a test hook); `opts.byteOnly`
   // the string mode, for a pattern with a byte past ASCII (and as a
   // test hook that cross-checks the code paths).
-  static build(body, dot, ci, opts = {}) {
-    const forceNfa = !!opts.forceNfa;
-    const compiled = compileSegment(body, dot, ci, forceNfa);
-    if (forceNfa) compiled.chains = [];
-    const byteOnly = !!opts.byteOnly;
-    return new SegmentMatcher(compiled, body, ci, byteOnly, dot);
+  static build(body, dot, ci, opts) {
+    const compiled = compileSegment(body, dot, ci, opts.forceNfa);
+    return new SegmentMatcher(compiled, body, ci, opts.byteOnly, dot);
   }
 
   staticPrefixes() {
@@ -209,11 +200,11 @@ export class SegmentMatcher {
   }
 }
 
-export function compileSegment(body, dot, ci, forceNfa) {
+function compileSegment(body, dot, ci, forceNfa) {
   const graph = buildGraph(body, dot, ci);
-  const chainList = chains(graph);
-  // A lone chain serves `matchDir` too; anything else needs the NFA
-  // (the test hook always does).
-  const nfa = forceNfa || chainList.length !== 1 ? anyNfa(graph, ci) : null;
+  // The test hook keeps no chain; a lone chain serves `matchDir` too;
+  // anything else needs the NFA.
+  const chainList = forceNfa ? [] : chains(graph);
+  const nfa = chainList.length === 1 ? null : anyNfa(graph, ci);
   return { elems: graph.elems, chains: exact(chainList), nfa };
 }

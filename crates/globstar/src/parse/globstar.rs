@@ -6,7 +6,7 @@
 //! plain tokens as it reads, and leaves one beside a brace, at the edge of
 //! a branch, or right after a `**/`, to this pass, which runs only then.
 //! Such a `**` meets a different token in every branch, so the braces are
-//! first taken apart by `distribute` (the second half of this file);
+//! first taken apart by `rewrite` (the second half of this file);
 //! `may_touch` tells when that can be the case. Then `decide` turns every
 //! `**` into a globstar or a star by the tokens beside it.
 
@@ -16,7 +16,7 @@ use crate::error::{GlobError, MAX_BRACE_NESTING, MAX_EXPANSION};
 /// `budget` is what distribution may still copy (§6.2).
 pub(crate) fn resolve_globstars(mut body: Node, budget: &mut usize) -> Result<Node, GlobError> {
     if may_touch(&body) {
-        body = distribute(body, budget)?;
+        body = node_of(rewrite(body, budget)?);
     }
     decide(&mut body, true, true);
     Ok(body)
@@ -87,7 +87,7 @@ fn decide(node: &mut Node, before: bool, after: bool) {
 // Braces taken apart around a `**` (GLOB_SPEC §10.1, §6.2).
 //
 // A `**` beside a brace meets a different token in every branch, and a
-// `**` at the edge of a branch may meet a brace outside. `distribute`
+// `**` at the edge of a branch may meet a brace outside. `rewrite`
 // rewrites such a sequence until no `**` is left facing a brace edge that
 // may be a separator, or empty, in some expansion: `**{/a,b}` becomes
 // `{**/a,**b}`, `{**,a}{/,b}` becomes `{**/,**b,a{/,b}}`. Afterwards the
@@ -98,11 +98,6 @@ fn decide(node: &mut Node, before: bool, after: bool) {
 // its expansions, which no merge changes. What a merge copies is charged
 // to a budget (§6.2), and the braces it nests are held to the nesting
 // limit (§6.2).
-
-/// `budget` is what the rewrite may still copy.
-fn distribute(node: Node, budget: &mut usize) -> Result<Node, GlobError> {
-    Ok(node_of(rewrite(node, budget)?))
-}
 
 /// What an expansion can start or end with, as a bit set.
 type Edge = u8;

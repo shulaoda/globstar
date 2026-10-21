@@ -1,4 +1,4 @@
-// Bit sets over Int32Array words for the NFA simulations that outgrow
+// Bit sets over Int32Array words for the in-segment NFA when it outgrows
 // one int32. JS twin of `crates/globstar/src/engine/segment/bits.rs`;
 // the small case stays a plain int32 in the callers.
 

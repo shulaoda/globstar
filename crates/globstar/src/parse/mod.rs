@@ -43,7 +43,7 @@ pub(crate) fn parse_within(input: &[u8], budget: &mut usize) -> Result<Ast, Glob
         body = resolve_globstars(body, budget)?;
     }
     Ok(Ast {
-        negation_count: negations as u32,
+        negated: negations % 2 == 1,
         body,
     })
 }

@@ -95,7 +95,7 @@ impl Graph {
             .unwrap_or_default()
     }
 
-    /// The chain of a path (`None`: the lone path of a brace-free
+    /// The chain of a path (`None`: the lone path of a linear
     /// pattern, whose nodes are `0..elems.len()`); `None` when it has
     /// several globstars and is the graph's `lone` path (the graph's
     /// NFA serves) or would not fit a `u64`.
@@ -132,7 +132,7 @@ impl Graph {
 }
 
 /// A chain's elements in order: the matcher's slice for the lone path
-/// of a brace-free pattern, a node list over it otherwise.
+/// of a linear pattern, a node list over it otherwise.
 trait ChainElems {
     fn len(&self) -> usize;
     fn at(&self, i: usize) -> &Elem;
@@ -181,7 +181,7 @@ impl SegmentMatcher {
     /// start), a set's last bytes? Rejects most members of a union
     /// before the chain runs; a single chain has the prefilter for that.
     #[inline]
-    pub(super) fn ends_like(&self, i: usize, path: &[u8]) -> bool {
+    fn ends_like(&self, i: usize, path: &[u8]) -> bool {
         let chain = &self.chains[i];
         let last = chain
             .nodes
@@ -215,7 +215,7 @@ impl SegmentMatcher {
     /// Does the path start like the chain's first element, when that is
     /// a literal: the literal, then a separator or the end?
     #[inline]
-    pub(super) fn starts_like(&self, i: usize, path: &[u8]) -> bool {
+    fn starts_like(&self, i: usize, path: &[u8]) -> bool {
         let first = self.chains[i].nodes.first().map_or(0, |&n| n as usize);
         let Elem::Lit(lit) = &self.elems[first] else {
             return true;
@@ -354,7 +354,7 @@ impl SegmentMatcher {
     /// Can the globstar `kind` take the segments between the head
     /// (ending before `from`) and the tail starting at `split`?
     /// `split == from` means no segment at all. `dot_at`, when given, is
-    /// `first_dot(path, from)`, which makes the dot check one compare.
+    /// `first_dot(path, from, ..)`, which makes the dot check one compare.
     #[inline(always)]
     fn absorbs(
         &self,
@@ -369,37 +369,24 @@ impl SegmentMatcher {
         }
         // Up to the separator before the tail, or the end.
         let to = split - 1;
-        match dot_at {
-            Some(at) => at >= to,
-            None => self.dot_free(path, from, to),
-        }
+        self.dot || dot_at.unwrap_or_else(|| self.first_dot(path, from, to)) >= to
     }
 
-    /// Under `dot=false`, where the first segment of `path[from..]` that
-    /// starts with a `.` starts; `usize::MAX` when none does.
-    fn first_dot(&self, path: &[u8], from: usize) -> usize {
+    /// Under `dot=false`, where the first segment of `path[from..to)`
+    /// that starts with a `.` starts; `usize::MAX` when none does, and
+    /// under `dot`.
+    fn first_dot(&self, path: &[u8], from: usize, to: usize) -> usize {
         if self.dot {
             return usize::MAX;
         }
-        if path.get(from) == Some(&b'.') {
+        if from < to && path[from] == b'.' {
             return from;
         }
-        (from..path.len())
-            .find(|&i| std::path::is_separator(path[i] as char) && path.get(i + 1) == Some(&b'.'))
+        (from..to)
+            .find(|&i| {
+                std::path::is_separator(path[i] as char) && i + 1 < to && path[i + 1] == b'.'
+            })
             .map_or(usize::MAX, |i| i + 1)
-    }
-
-    /// Under `dot=false`, no segment within `path[from..to)` may start
-    /// with a `.`.
-    fn dot_free(&self, path: &[u8], from: usize, to: usize) -> bool {
-        if self.dot {
-            return true;
-        }
-        if from < to && path[from] == b'.' {
-            return false;
-        }
-        !(from..to)
-            .any(|i| std::path::is_separator(path[i] as char) && i + 1 < to && path[i + 1] == b'.')
     }
 
     /// `match_dir` through the lone chain of a matcher that keeps no
@@ -495,7 +482,7 @@ impl SegmentMatcher {
         let open_from = line.open_from as usize;
         let tl = n - g - 1;
         let kind = elems.at(g);
-        let dot_at = Some(self.first_dot(dir, mid_start));
+        let dot_at = Some(self.first_dot(dir, mid_start, dir.len()));
         let mut checks = MAX_TAIL_CHECKS;
         let mut end = dir.len();
         for j in 1..tl {

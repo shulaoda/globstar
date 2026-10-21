@@ -1,13 +1,8 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ast {
-    pub negation_count: u32,
+    /// An odd number of leading `!`.
+    pub negated: bool,
     pub body: Node,
-}
-
-impl Ast {
-    pub fn is_negated(&self) -> bool {
-        self.negation_count % 2 == 1
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +41,8 @@ pub enum ClassItem {
     Range(u8, u8),
 }
 
+/// The oracle the byte-set tests check against.
+#[cfg(test)]
 impl ClassItem {
     pub fn matches(self, b: u8) -> bool {
         match self {
@@ -55,6 +52,7 @@ impl ClassItem {
     }
 }
 
+#[cfg(test)]
 impl CharClass {
     pub fn matches(&self, b: u8) -> bool {
         if std::path::is_separator(b as char) {

@@ -116,7 +116,24 @@ pub(crate) struct SegmentMatcher {
 
 impl SegmentMatcher {
     pub(crate) fn build(body: &Node, dot: bool, ci: bool) -> Result<Box<Self>, GlobError> {
-        compile(body, dot, ci).map(Box::new)
+        let graph = Graph::build(body, dot, ci)?;
+        let chains = graph.chains();
+        // A lone chain serves `match_dir` too; anything else needs the NFA.
+        let nfa = match &chains[..] {
+            [_] => None,
+            _ => Some(Box::new(any_nfa(&graph.elems, ci, graph.edges.as_ref()))),
+        };
+        let suffixes = facts::suffixes(body);
+        Ok(Box::new(SegmentMatcher {
+            suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
+            suffixes,
+            chains,
+            nfa,
+            elems: graph.elems.into_boxed_slice(),
+            prefixes: facts::static_prefixes(body, graph.weight),
+            case_insensitive: ci,
+            dot,
+        }))
     }
 
     /// Every matching path starts with one of these.
@@ -201,31 +218,10 @@ impl SegmentMatcher {
     }
 }
 
-fn compile(body: &Node, dot: bool, ci: bool) -> Result<SegmentMatcher, GlobError> {
-    let graph = Graph::build(body, dot, ci)?;
-    let chains = graph.chains();
-    // A lone chain serves `match_dir` too; anything else needs the NFA.
-    let nfa = match &chains[..] {
-        [_] => None,
-        _ => Some(Box::new(any_nfa(&graph.elems, ci, graph.edges.as_ref()))),
-    };
-    let suffixes = facts::suffixes(body);
-    Ok(SegmentMatcher {
-        suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
-        suffixes,
-        chains,
-        nfa,
-        elems: graph.elems.into_boxed_slice(),
-        prefixes: facts::static_prefixes(body, graph.weight),
-        case_insensitive: ci,
-        dot,
-    })
-}
-
 impl SegmentMatcher {
     /// The suffix prefilter: `false` means the path cannot match.
     #[inline]
-    pub(super) fn prefilter(&self, path: &[u8]) -> bool {
+    fn prefilter(&self, path: &[u8]) -> bool {
         match &self.suffixes[..] {
             [] => true,
             [one] => self.ends_with(path, one),

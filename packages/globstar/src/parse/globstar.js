@@ -6,7 +6,7 @@
 // tokens as it reads, and leaves one beside a brace, or at the edge of a
 // branch, to this pass, which runs only then. Such a `**` meets a different
 // token in every branch, so the braces are first taken apart by
-// `distribute`; `mayTouch` tells when that can be the case. Then `decide`
+// `rewrite`; `mayTouch` tells when that can be the case. Then `decide`
 // turns every `**` into a globstar or a star by the tokens beside it.
 
 import {
@@ -26,7 +26,7 @@ import { GlobError, MAX_BRACE_NESTING, MAX_EXPANSION } from "../error.js";
 
 // `budget.left` is what distribution may still copy (§6.2).
 export function resolveGlobstars(body, budget) {
-  if (mayTouch(body)) body = distribute(body, budget);
+  if (mayTouch(body)) body = nodeOf(rewrite(body, budget));
   return decide(body, true, true);
 }
 
@@ -96,7 +96,7 @@ function decide(node, before, after) {
 // Braces taken apart around a `**` (GLOB_SPEC §10.1, §6.2).
 //
 // A `**` beside a brace meets a different token in every branch, and a `**`
-// at the edge of a branch may meet a brace outside. `distribute` rewrites
+// at the edge of a branch may meet a brace outside. `rewrite` rewrites
 // such a sequence until no `**` is left facing a brace edge that may be a
 // separator, or empty, in some expansion: `**{/a,b}` becomes `{**/a,**b}`,
 // `{**,a}{/,b}` becomes `{**/,**b,a{/,b}}`. Afterwards the tokens beside
@@ -106,11 +106,6 @@ function decide(node, before, after) {
 // expansions, which no merge changes. What a merge copies is charged to a
 // budget (§6.2), and the braces it nests are held to the nesting limit
 // (§6.2).
-
-// `budget.left` is what the rewrite may still copy.
-function distribute(node, budget) {
-  return nodeOf(rewrite(node, budget));
-}
 
 // What an expansion can start or end with, as a bit set.
 const SEP = 1; // a separator

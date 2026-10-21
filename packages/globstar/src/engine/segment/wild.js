@@ -10,10 +10,10 @@ import { compileSegNfa } from "./seg-nfa.js";
 
 const EMPTY = "";
 
-// The bytes of the literal nodes `nodes[from..to]`.
-export function concatLits(nodes, from, to) {
+// The bytes of the literal nodes `nodes[..to]`.
+export function concatLits(nodes, to) {
   let s = "";
-  for (let i = from; i < to; i++) s += nodes[i].str;
+  for (let i = 0; i < to; i++) s += nodes[i].str;
   return s;
 }
 
@@ -40,7 +40,7 @@ export function makeWild(kind, fields) {
 export function compileWild(nodes, dot, ci) {
   let idx = 0;
   while (idx < nodes.length && nodes[idx].tag === N_LITERAL) idx++;
-  const prefix = concatLits(nodes, 0, idx);
+  const prefix = concatLits(nodes, idx);
   let anychars = 0;
   let hasStar = false;
   while (idx < nodes.length) {
@@ -150,7 +150,7 @@ function indexSuffixes(suffixes, ci) {
     if (last !== null && last.len === len) last.end = i + 1;
     else runs.push({ len, start: i, end: i + 1 });
   }
-  return { set: exact(set), runs: exact(runs) };
+  return { set, runs: exact(runs) };
 }
 
 // ── matching ────────────────────────────────────────────────────────
@@ -228,11 +228,11 @@ export function wildConsumes(m, w, str, s, t) {
     }
     case WK_AFFIX_INDEX: {
       const p = w.prefixStr;
-      if (len < p.length || (p.length > 0 && !affixEq(p, str, s, ci))) return false;
+      // `minLen` holds the prefix, so `room` bounds it too.
+      const room = len - w.minLen;
+      if (room < 0 || (p.length > 0 && !affixEq(p, str, s, ci))) return false;
       const set = w.suffixSetStr;
       const runs = w.runs;
-      const room = len - w.minLen;
-      if (room < 0) return false;
       for (let r = 0; r < runs.length; r++) {
         const run = runs[r];
         if (run.len > room) break;

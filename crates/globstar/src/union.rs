@@ -87,6 +87,16 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     Node::of_seq(out)
 }
 
+/// A member's part in the merge, once a group forms.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Member {
+    Free,
+    /// Heads a group: its trailing literal became the brace.
+    Head,
+    /// Joined a head's brace: dropped at the end.
+    Absorbed,
+}
+
 /// Members that differ only in the literal ending one segment become
 /// one member with a brace there: `**/a/**` and `**/b/**` are
 /// `**/{a,b}/**`, `**/*.log` and `**/*.tmp` are `**/*{.log,.tmp}`,
@@ -100,16 +110,6 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
 /// member joins the deepest group it fits, and what that makes of it is
 /// not keyed again at the shallower segments, where roots would collide
 /// in vain.
-/// A member's part in the merge, once a group forms.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Member {
-    Free,
-    /// Heads a group: its trailing literal became the brace.
-    Head,
-    /// Joined a head's brace: dropped at the end.
-    Absorbed,
-}
-
 fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
     // (segment, cheap key, member, node) per literal ending a segment.
     let mut entries: Vec<(usize, u64, usize, usize)> = Vec::new();

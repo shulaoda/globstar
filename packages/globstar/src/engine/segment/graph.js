@@ -491,6 +491,6 @@ class Builder {
       }
     }
     // Empty, one literal, or literals glued across a brace edge.
-    return makeElem(EL_LIT, concatLits(buf, 0, buf.length), null);
+    return makeElem(EL_LIT, concatLits(buf, buf.length), null);
   }
 }

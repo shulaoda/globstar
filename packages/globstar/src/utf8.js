@@ -56,7 +56,7 @@ export function flat(s) {
 }
 
 // Is every char of `str[s, t)` ASCII?
-export function isAscii(str, s = 0, t = str.length) {
+export function isAscii(str, s, t) {
   for (let i = s; i < t; i++) if (str.charCodeAt(i) > 0x7f) return false;
   return true;
 }

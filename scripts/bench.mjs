@@ -423,6 +423,15 @@ through \`wax::any\`, picomatch and micromatch through their list form
 minimatch and the fast-glob crate have no list form, so their columns loop
 one single-pattern matcher per member the same way, as a caller would.
 
+wax compiles the whole set into one regex and matches it with a lazy DFA:
+its match cost is flat in the member count, and it pays for that at build
+(40× globstar's on these sets) and in memory (25×). globstar matches a
+set through its chains or its NFA, whose cost grows with the members, so
+on the widest mixed set (\`ignore-list-40\`) wax's match is the faster
+one. Its \`file-list-100\` match is a length check: the regex crate
+rejects a path shorter or longer than any match can be, and no bench
+path is as long as a member (15–20 bytes).
+
 ### Match input — ${PATHS.length} paths (identical on both runtimes)
 
 \`\`\`

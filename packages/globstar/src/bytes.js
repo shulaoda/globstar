@@ -1,17 +1,14 @@
-// Byte and bit primitives the Rust side gets from std:
-// `std::path::is_separator`, `u32::trailing_zeros`,
-// `u8::eq_ignore_ascii_case`.
+// Byte and bit primitives: what the Rust side gets from std
+// (`std::path::is_separator`, `u32::trailing_zeros`,
+// `u8::eq_ignore_ascii_case`) and the twins of `pat_byte_eq`
+// (`engine/mod.rs`) and `seg_end` / `seg_start` (`engine/segment/mod.rs`).
 
-// Path separators per GLOB_SPEC §2.2: `/` always, `\` on Windows.
-const IS_WINDOWS = typeof process !== "undefined" && process.platform === "win32";
+// Is `\` a separator on this platform (Windows only)? Path separators
+// per GLOB_SPEC §2.2: `/` always, `\` on Windows.
+export const IS_WINDOWS_SEP = typeof process !== "undefined" && process.platform === "win32";
 export function isPathSep(b) {
-  if (b === 0x2f) return true;
-  if (IS_WINDOWS && b === 0x5c) return true;
-  return false;
+  return b === 0x2f || (IS_WINDOWS_SEP && b === 0x5c);
 }
-
-// Is `\` a separator on this platform (Windows only)?
-export const IS_WINDOWS_SEP = isPathSep(0x5c);
 
 // Trailing-zero count of a nonzero 32-bit word. Undefined for 0 — every
 // caller iterates set bits under a `word !== 0` guard.
@@ -33,7 +30,7 @@ export function eqByteCi(a, b) {
 export function patByteEq(pat, b, ci) {
   if (pat === 0x2f) return isPathSep(b);
   if (ci ? !eqByteCi(pat, b) : pat !== b) return false;
-  return !(IS_WINDOWS && b === 0x5c);
+  return !(IS_WINDOWS_SEP && b === 0x5c);
 }
 
 // Index of the first separator in `str` from `from` on, or -1.

@@ -35,7 +35,7 @@ const BUDGET_PER_WEIGHT: usize = 64;
 const MIN_BUDGET: usize = 1 << 20;
 
 /// The graph as the walk leaves it: the nodes and, for a pattern with
-/// a separator-crossing brace, their edges. A brace-free pattern is
+/// a separator-crossing brace, their edges. A linear pattern is
 /// one path, emitted in order; its edges are implied and never stored.
 pub(super) struct Graph {
     pub(super) elems: Vec<Elem>,
@@ -250,7 +250,7 @@ struct Builder {
 
 impl Builder {
     fn new(boundaries: usize, linear: bool, dot: bool, ci: bool) -> Self {
-        // A linear pattern stores no edges; a brace pattern has at least
+        // A linear pattern stores no edges; a crossing brace has at least
         // one node per boundary, each with a predecessor and a key.
         let edges = if linear { 0 } else { boundaries + 1 };
         Builder {

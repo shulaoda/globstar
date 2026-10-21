@@ -91,6 +91,14 @@ export function factorBranches(branches) {
   return out.length === 1 ? out[0] : concat(out);
 }
 
+// A member's part in the merge, once a group forms (`state`, a
+// Uint8Array: every member starts FREE).
+const FREE = 0;
+// Heads a group: its trailing literal became the brace.
+const HEAD = 1;
+// Joined a head's brace: dropped at the end.
+const ABSORBED = 2;
+
 // Members that differ only in the literal ending one segment become one
 // member with a brace there: `**/a/**` and `**/b/**` are `**/{a,b}/**`,
 // `**/*.log` and `**/*.tmp` are `**/*{.log,.tmp}`, `src/**/*.ts` and
@@ -103,14 +111,6 @@ export function factorBranches(branches) {
 // last back: a member joins the deepest group it fits, and what that makes
 // of it is not keyed again at the shallower segments, where roots would
 // collide in vain.
-// A member's part in the merge, once a group forms (`state`, a
-// Uint8Array: every member starts FREE).
-const FREE = 0;
-// Heads a group: its trailing literal became the brace.
-const HEAD = 1;
-// Joined a head's brace: dropped at the end.
-const ABSORBED = 2;
-
 function mergeSegments(seqs, liftedWild) {
   // [segment, cheap key, member, node] per literal ending a segment.
   const entries = [];

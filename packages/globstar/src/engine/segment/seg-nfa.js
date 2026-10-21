@@ -125,7 +125,7 @@ function satisfiable(b, entry) {
     if (!reach[s]) continue;
     const k = b.kinds[s];
     if (k === S_MATCH) return true;
-    if (k === S_SPLIT || b.splitBs[s] !== UNSET) reach[b.splitBs[s]] = 1;
+    if (b.splitBs[s] !== UNSET) reach[b.splitBs[s]] = 1;
     if (k !== S_CLASS || !setEmpty(b.clsRefs[s])) reach[b.nexts[s]] = 1;
   }
   return false;
@@ -197,7 +197,6 @@ class SegNfaSmall {
     this.kinds = exact(b.kinds);
     this.byteVals = exact(b.byteVals);
     this.nexts = exact(b.nexts);
-    this.splitBs = exact(b.splitBs);
     this.clsRefs = exact(b.clsRefs);
     const n = b.kinds.length;
 

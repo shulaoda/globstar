@@ -143,7 +143,7 @@ impl Glob {
     /// Compile a pattern with explicit [`CompileOptions`].
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
         let ast = parse::parse(pattern.as_bytes())?;
-        Self::from_body(&ast.body, ast.is_negated(), opts)
+        Self::from_body(&ast.body, ast.negated, opts)
     }
 
     /// Compile the boolean-OR union of several patterns into one `Glob`
@@ -191,7 +191,7 @@ impl Glob {
                     error: Box::new(e),
                 }
             })?;
-            if parsed.is_negated() {
+            if parsed.negated {
                 return Err(GlobError::NegatedInUnion {
                     index,
                     pattern: pattern.to_string(),

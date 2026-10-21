@@ -1,7 +1,7 @@
 //! The NFA over the graph: one state per position, stepped once per
 //! path segment. Dense rows in a `u64` up to 64 states, boxed word rows
 //! while they fit `MAX_ROW_BYTES`, a sparse step beyond; it runs when
-//! the chains cannot serve, and for `match_dir`'s all-below proof.
+//! the chains cannot serve, and answers `match_dir` where it is kept.
 
 use std::borrow::Cow;
 
@@ -125,7 +125,7 @@ fn lit_fanout(elems: &[Elem], edges: &Edges) -> usize {
 }
 
 /// The successors of position `p` (`n`: the start): the stored ones
-/// of a brace pattern's graph, else the next position.
+/// of a graph with a crossing brace, else the next position.
 fn succ_of(edges: Option<&Edges>, n: usize, p: usize) -> impl Iterator<Item = u32> + '_ {
     let (next, stored): (Option<u32>, &[u32]) = match edges {
         Some(e) => (None, e.succ(p)),
@@ -136,7 +136,7 @@ fn succ_of(edges: Option<&Edges>, n: usize, p: usize) -> impl Iterator<Item = u3
 }
 
 /// The NFA over the positions of a path, which follow one another
-/// (`None`: the graph itself, whose `edges` a brace pattern stores).
+/// (`None`: the graph itself, whose `edges` a crossing brace stores).
 /// State `i` is position `i`, the accept state last.
 pub(super) fn dense_nfa<B: Bits>(
     elems: &[Elem],
