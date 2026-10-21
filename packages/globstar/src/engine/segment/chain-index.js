@@ -276,8 +276,7 @@ function file(ix, role, kind, key, c, entries) {
   let len = 0;
   let outer = key.back;
   let compared = short;
-  // A too long exact key is filed as the suffix it ends with.
-  if (kind === K_EXACT && key.len <= 0xff) {
+  if (kind === K_EXACT) {
     len = key.len;
     compared = key.len;
   } else if (kind === K_PREFIX) {
@@ -289,6 +288,9 @@ function file(ix, role, kind, key, c, entries) {
   const at = role * LOOKUPS + lookup;
   if (bit < 32) ix.sketchLo[at] |= 1 << bit;
   else ix.sketchHi[at] |= 1 << (bit - 32);
+  // An exact key's length past 255 runs into the lookup's bits, where it
+  // can meet only a suffix or prefix key: a chain more, which its walk
+  // turns down.
   entries.push([((lookup << 8) | len) * 2 ** 32 + ((outer & mask(compared)) >>> 0), c]);
 }
 
@@ -330,7 +332,7 @@ export function probe(ix, role, str, s, t, ci) {
       compared = lookup - KEY_BYTES;
       outer = front;
     }
-    if (compared > n || len > 0xff) continue;
+    if (compared > n) continue;
     const bit = outer & 63;
     const at = role * LOOKUPS + lookup;
     const sketch = bit < 32 ? ix.sketchLo[at] >>> bit : ix.sketchHi[at] >>> (bit - 32);

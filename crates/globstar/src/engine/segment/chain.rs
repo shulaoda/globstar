@@ -148,8 +148,8 @@ fn cmp_lit_path(lit: &[u8], path: &[u8], ci: bool) -> Ordering {
     }))
 }
 
-/// A union's cheap look at a path before a chain runs, read off the
-/// chain's ends: the bytes a matching path may end with (`ALL` when
+/// A scanned union's cheap look at a path before a chain runs, read off
+/// the chain's ends: the bytes a matching path may end with (`ALL` when
 /// the last element ends with anything), and the byte it must start
 /// with when the first element is a literal, folded when
 /// case-insensitive. `NO_HEAD` says nothing about the start; a literal
@@ -379,41 +379,25 @@ impl SegmentMatcher {
         self.chains[from..]
             .iter()
             .zip(&gates[from..])
-            .any(|(chain, gate)| self.gated_matches(chain, gate, path, first, &mut last_start))
+            .any(|(chain, gate)| {
+                gate.last.may_end(path)
+                    && (gate.head == NO_HEAD || gate.head == first)
+                    && self.ends_like(chain, path, &mut last_start)
+                    && self.chain_matches(chain, path)
+            })
     }
 
     /// `any_chain_matches` through the chain index: the chains the path
-    /// picks, the literal set among them.
+    /// picks, the literal set among them, walked without gates. Most were
+    /// picked by the segment a gate looks at, and the walk turns the
+    /// others down about as fast.
     #[inline(never)]
-    pub(super) fn indexed_chain_matches(
-        &self,
-        index: &ChainIndex,
-        gates: &[Gate],
-        path: &[u8],
-    ) -> bool {
+    pub(super) fn indexed_chain_matches(&self, index: &ChainIndex, path: &[u8]) -> bool {
         let ci = self.case_insensitive;
-        let first = path.first().map_or(NO_HEAD, |&b| fold(b, ci));
-        let mut last_start = None;
         index.any(path, ci, |c| match &self.chains[c].shape {
             Shape::Set(set) => set.contains(path, ci),
-            _ => self.gated_matches(&self.chains[c], &gates[c], path, first, &mut last_start),
+            _ => self.chain_matches(&self.chains[c], path),
         })
-    }
-
-    /// A chain after its gates; `first` is the path's first byte, folded.
-    #[inline(always)]
-    fn gated_matches(
-        &self,
-        chain: &Chain,
-        gate: &Gate,
-        path: &[u8],
-        first: u8,
-        last_start: &mut Option<usize>,
-    ) -> bool {
-        gate.last.may_end(path)
-            && (gate.head == NO_HEAD || gate.head == first)
-            && self.ends_like(chain, path, last_start)
-            && self.chain_matches(chain, path)
     }
 
     /// Does the path end like the chain's last element: a literal, an
@@ -483,7 +467,7 @@ impl SegmentMatcher {
                 };
                 self.block_between(elems, g1, g2, path, mid_start, split)
             }
-            Shape::Set(_) => unreachable!("the set is searched by any_chain_matches"),
+            Shape::Set(_) => unreachable!("the set is searched on its own"),
         }
     }
 

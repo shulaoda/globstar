@@ -4,9 +4,8 @@
 //! have — its last (a tail), else its first (a head), else a block's
 //! first — read off that segment's nodes when the graph is built; the
 //! literal paths' set under their first segments. A path looks up its
-//! own last, first and inner segments and tries only the chains they
-//! pick, each after its gates: the chain walk decides, the index only
-//! chooses which chains to ask.
+//! own last, first and inner segments and walks only the chains they
+//! pick: the walk decides, the index only chooses which chains to ask.
 
 use crate::parse::ast::{ClassItem, Node};
 
@@ -380,10 +379,9 @@ impl ChainIndex {
     /// File chain `c` under `key` for `role`.
     fn file(&mut self, role: Role, kind: Kind, key: Key, c: usize, entries: &mut Vec<(u64, u32)>) {
         let short = key.len.min(KEY_BYTES);
-        // A too long exact key is filed as the suffix it ends with.
         let (lookup, len, outer, compared) = match kind {
-            Kind::Exact if key.len <= usize::from(u8::MAX) => (0, key.len, key.back, key.len),
-            Kind::Exact | Kind::Suffix => (short, 0, key.back, short),
+            Kind::Exact => (0, key.len, key.back, key.len),
+            Kind::Suffix => (short, 0, key.back, short),
             Kind::Prefix => (KEY_BYTES + short, 0, key.front, short),
         };
         let r = role as usize;
@@ -483,10 +481,7 @@ impl ChainIndex {
             } else {
                 (0, lookup - KEY_BYTES, front)
             };
-            if compared > n
-                || len > usize::from(u8::MAX)
-                || self.sketch[r][lookup] & 1 << (outer & 63) == 0
-            {
+            if compared > n || self.sketch[r][lookup] & 1 << (outer & 63) == 0 {
                 continue;
             }
             let (mut at, tag) = self.hash(lookup_key(lookup, len, outer & mask(compared)));
@@ -506,6 +501,10 @@ impl ChainIndex {
     }
 }
 
+/// A lookup, the length an exact key holds and the outer bytes compared,
+/// in one word. A length past 255 runs into the lookup's bits, where it
+/// can meet only a suffix or prefix key: a chain more, which its walk
+/// turns down.
 fn lookup_key(lookup: usize, len: usize, outer: u32) -> u64 {
     (lookup as u64) << 40 | (len as u64) << 32 | u64::from(outer)
 }

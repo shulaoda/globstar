@@ -68,8 +68,9 @@ is built. The literal set is filed under its paths' first segments. A
 key is its length and outer four bytes, a lookup one hash probe, and a
 64-bit sketch of the outer bytes skips the lookups that cannot hit; a
 path looks up its last segment, then its first, then the others, and
-runs each chain picked after its gates, as before. A chain no key
-files is tried on every call. The walk decides; the index only chooses
+walks each chain picked, without the gates: most were picked by the
+segment a gate reads, and the walk turns the others down about as
+fast. A chain no key files is tried on every call. The walk decides; the index only chooses
 which chains to ask, so a 600-member .gitignore costs a few lookups and
 one or two walks, not 60. Ten chains or fewer stay a scan: their gates
 cost less than the lookups. So does a union of 64 wildcard chains and

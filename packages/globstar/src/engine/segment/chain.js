@@ -55,7 +55,7 @@ const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 // two globstars (the NFA takes those).
 export function chains(graph, ci) {
   if (graph.linear) {
-    const chain = chainOf(graph, null, true);
+    const chain = chainOf(graph, null, true, ci);
     return chain === null ? [] : [chain];
   }
   // Depth-first, first branch first, along one path: a level per node
@@ -107,7 +107,7 @@ export function chains(graph, ci) {
   }
   const lone = paths.length === 1 && lits.length === 0;
   for (const nodes of paths) {
-    const chain = chainOf(graph, nodes, lone);
+    const chain = chainOf(graph, nodes, lone, ci);
     if (chain === null) return [];
     out.push(chain);
   }
@@ -117,7 +117,7 @@ export function chains(graph, ci) {
 // The chain of a path (`null`: the lone path of a linear pattern,
 // whose nodes are `0..elems.length`), or `null` when it has more than
 // two globstars, or two with nothing between (the graph's NFA serves).
-function chainOf(graph, nodes, lone) {
+function chainOf(graph, nodes, lone, ci) {
   const elems = graph.elems;
   const n = chainLen(elems, nodes);
   const elem = (i) => elemAt(elems, nodes, i);
@@ -136,7 +136,8 @@ function chainOf(graph, nodes, lone) {
   // from `openFrom` on takes some segment, from `anyFrom` on any
   // non-empty one. A union's chains carry what a path must start and
   // end with, read off their first and last elements: cheap rejects
-  // before a chain runs (`_anyChainMatches`).
+  // before a chain runs (`_anyChainMatches`). They are exact tests, so
+  // a case-insensitive chain carries none.
   if (lone) {
     // The first index from which every element passes `ok`.
     const from = (ok) => {
@@ -148,7 +149,7 @@ function chainOf(graph, nodes, lone) {
   }
   const first = elem(0);
   const last = elem(n - 1);
-  const quickHead = first.kind === EL_LIT ? first.litStr.charCodeAt(0) : -1;
+  const quickHead = !ci && first.kind === EL_LIT ? first.litStr.charCodeAt(0) : -1;
   let quickSuffixStr = "";
   let quickPrefixStr = "";
   // A 64-slot sketch (two int32s, by `code & 63`) of a set's last
@@ -156,8 +157,8 @@ function chainOf(graph, nodes, lone) {
   // All ones when a suffix is empty, as anything ends it.
   let quickLastLo = -1;
   let quickLastHi = -1;
-  if (last.kind === EL_LIT) quickSuffixStr = last.litStr;
-  else if (last.kind === EL_WILD) {
+  if (!ci && last.kind === EL_LIT) quickSuffixStr = last.litStr;
+  else if (!ci && last.kind === EL_WILD) {
     const w = last.wild;
     if (w.kind === WK_AFFIX) {
       if (w.suffixStr.length > 0) quickSuffixStr = w.suffixStr;

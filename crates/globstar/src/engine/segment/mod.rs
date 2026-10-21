@@ -105,7 +105,7 @@ pub(crate) struct SegmentMatcher {
     chains: Box<[Chain]>,
     /// What a lone line does without: the NFA over the graph, which
     /// serves `match_dir` (and `is_match` when the chains cannot), and
-    /// the chains' gates.
+    /// what picks the chains to try.
     union: Option<Box<Union>>,
     /// Prefilter: literal suffixes one of which every match ends
     /// with (empty: none known), sketched by last byte.
@@ -117,13 +117,20 @@ pub(crate) struct SegmentMatcher {
     dot: bool,
 }
 
-/// What a matcher keeps beyond a lone line: the NFA over the graph,
-/// one gate per chain, and, for many chains, their index.
+/// What a matcher keeps beyond a lone line: the NFA over the graph, and
+/// what picks the chains `is_match` tries.
 #[derive(Debug, Clone)]
 struct Union {
     nfa: AnyNfa,
-    gates: Box<[Gate]>,
-    index: Option<Box<ChainIndex>>,
+    pick: Pick,
+}
+
+/// A few chains are all tried, each after its gate; many, only those the
+/// chain index picks.
+#[derive(Debug, Clone)]
+enum Pick {
+    Gates(Box<[Gate]>),
+    Index(Box<ChainIndex>),
 }
 
 impl SegmentMatcher {
@@ -135,8 +142,10 @@ impl SegmentMatcher {
             [c] if matches!(c.shape, Shape::Line(_)) => None,
             _ => Some(Box::new(Union {
                 nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref()),
-                gates: chains.iter().map(|c| c.gate(&graph.elems, ci)).collect(),
-                index: ChainIndex::new(&chains, &graph.elems, &graph.keys, ci),
+                pick: match ChainIndex::new(&chains, &graph.elems, &graph.keys, ci) {
+                    Some(index) => Pick::Index(index),
+                    None => Pick::Gates(chains.iter().map(|c| c.gate(&graph.elems, ci)).collect()),
+                },
             })),
         };
         let suffixes = facts::suffixes(body);
@@ -166,9 +175,9 @@ impl SegmentMatcher {
             // A lone line.
             None => self.chain_matches(&self.chains[0], path),
             Some(u) if self.chains.is_empty() => u.nfa.is_match(self, path),
-            Some(u) => match &u.index {
-                Some(index) => self.indexed_chain_matches(index, &u.gates, path),
-                None => self.any_chain_matches(&u.gates, path),
+            Some(u) => match &u.pick {
+                Pick::Index(index) => self.indexed_chain_matches(index, path),
+                Pick::Gates(gates) => self.any_chain_matches(gates, path),
             },
         }
     }

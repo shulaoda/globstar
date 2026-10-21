@@ -121,9 +121,9 @@ export class SegmentMatcher {
   // Does one of the chains match the whole path? Each runs after quick
   // looks at the path's ends: its first character against a leading
   // literal's, its last against a literal suffix, an affix's prefix or a
-  // set's last characters (`chainOf`). Exact tests, so a
-  // case-insensitive matcher skips them. Its own method, so `_isMatch`
-  // stays small for the one-chain and NFA matchers.
+  // set's last characters (`chainOf`; none when case-insensitive). Its
+  // own method, so `_isMatch` stays small for the one-chain and NFA
+  // matchers.
   _anyChainMatches(chainList, str) {
     if (this.index !== null) return this._indexedChainMatches(str);
     // The literal paths' set, when there is one, comes first.
@@ -131,12 +131,6 @@ export class SegmentMatcher {
     if (chainList[0].globstar === SET_G) {
       if (hasLiteral(this, chainList[0].literals, str)) return true;
       from = 1;
-    }
-    if (this.ci) {
-      for (let k = from; k < chainList.length; k++) {
-        if (chainMatches(this, chainList[k], str)) return true;
-      }
-      return false;
     }
     const len = str.length;
     const first = len > 0 ? str.charCodeAt(0) : -1;
@@ -166,40 +160,41 @@ export class SegmentMatcher {
 
   // `_anyChainMatches` through the chain index: the chains the path's
   // last segment picks first, then those of its first, of its inner
-  // ones, then those without a key; each chain once.
+  // ones, then those without a key; each chain once, walked without the
+  // quick looks. Most were picked by the segment a quick look reads, and
+  // the walk turns the others down about as fast.
   _indexedChainMatches(str) {
     const ix = this.index;
     const ci = this.ci;
     const len = str.length;
     const lastStart = lastSepBefore(str, len) + 1;
-    const first = len > 0 ? str.charCodeAt(0) : -1;
     const picked = ix.picked;
     this.triedLo = 0;
     this.triedHi = 0;
     picked[0] = picked[1] = 0;
     probe(ix, R_LAST, str, lastStart, len, ci);
     if (ix.infix.length > 0) probeInfix(ix, str, lastStart, len, ci);
-    if (this._tryPicked(picked[0], picked[1], str, first, lastStart)) return true;
+    if (this._tryPicked(picked[0], picked[1], str)) return true;
     // Where the first segment ends; the last one starts after it.
     const firstEnd = lastStart === 0 ? len : nextSep(str, 0);
     if (ix.lookups[R_FIRST] !== 0) {
       picked[0] = picked[1] = 0;
       probe(ix, R_FIRST, str, 0, firstEnd, ci);
-      if (this._tryPicked(picked[0], picked[1], str, first, lastStart)) return true;
+      if (this._tryPicked(picked[0], picked[1], str)) return true;
     }
     if (ix.lookups[R_INNER] !== 0) {
       for (let s = 0, end = firstEnd; s < lastStart; s = end + 1, end = nextSep(str, s)) {
         picked[0] = picked[1] = 0;
         probe(ix, R_INNER, str, s, end, ci);
-        if (this._tryPicked(picked[0], picked[1], str, first, lastStart)) return true;
+        if (this._tryPicked(picked[0], picked[1], str)) return true;
       }
     }
-    return this._tryPicked(ix.restLo, ix.restHi, str, first, lastStart);
+    return this._tryPicked(ix.restLo, ix.restHi, str);
   }
 
-  // Try the chains of `lo`/`hi` (bits for chains 0–31, 32–63) not tried
+  // Walk the chains of `lo`/`hi` (bits for chains 0–31, 32–63) not tried
   // yet this call, in chain order.
-  _tryPicked(lo, hi, str, first, lastStart) {
+  _tryPicked(lo, hi, str) {
     lo &= ~this.triedLo;
     hi &= ~this.triedHi;
     this.triedLo |= lo;
@@ -207,36 +202,14 @@ export class SegmentMatcher {
     while (lo !== 0) {
       const c = 31 - Math.clz32(lo & -lo);
       lo &= lo - 1;
-      if (this._tryChain(this.chains[c], str, first, lastStart)) return true;
+      if (chainMatches(this, this.chains[c], str)) return true;
     }
     while (hi !== 0) {
       const c = 31 - Math.clz32(hi & -hi);
       hi &= hi - 1;
-      if (this._tryChain(this.chains[c + 32], str, first, lastStart)) return true;
+      if (chainMatches(this, this.chains[c + 32], str)) return true;
     }
     return false;
-  }
-
-  // One chain after the quick looks at the path's ends `_anyChainMatches`
-  // takes (exact tests: a case-insensitive matcher skips them).
-  _tryChain(chain, str, first, lastStart) {
-    if (chain.globstar === SET_G) return hasLiteral(this, chain.literals, str);
-    if (!this.ci) {
-      const len = str.length;
-      const suffix = chain.quickSuffixStr;
-      const last = len > 0 ? str.charCodeAt(len - 1) & 63 : 64;
-      if (suffix.length > 0) {
-        if (!str.endsWith(suffix)) return false;
-      } else if (last < 32) {
-        if (((chain.quickLastLo >>> last) & 1) === 0) return false;
-      } else if (last < 64) {
-        if (((chain.quickLastHi >>> (last - 32)) & 1) === 0) return false;
-      }
-      if (chain.quickHead >= 0 && chain.quickHead !== first) return false;
-      const prefix = chain.quickPrefixStr;
-      if (prefix.length > 0 && !str.startsWith(prefix, lastStart)) return false;
-    }
-    return chainMatches(this, chain, str);
   }
 
   _nfaMatch(str) {
