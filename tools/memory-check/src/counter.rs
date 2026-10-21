@@ -2,6 +2,7 @@
 //! were live at once, for what a build leaves behind and what it peaks
 //! at. The two memory binaries and the memory tests include this file.
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::hint::black_box;
 use std::mem::size_of_val;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
@@ -25,15 +26,22 @@ unsafe impl GlobalAlloc for Counter {
 #[global_allocator]
 static A: Counter = Counter;
 
-/// What a matcher keeps once it has matched every bench path: its own
+/// What a matcher keeps once it has matched each of `paths`: its own
 /// size and the heap it holds, as the median of `trials` builds (which
 /// dampens the allocator's noise around a boundary allocation).
-pub fn kept<T>(trials: usize, build: impl Fn() -> T, matches: impl Fn(&T)) -> usize {
+pub fn kept<T>(
+    trials: usize,
+    paths: &[&str],
+    build: impl Fn() -> T,
+    is_match: impl Fn(&T, &str) -> bool,
+) -> usize {
     let mut samples: Vec<usize> = (0..trials)
         .map(|_| {
             let before = LIVE.load(Relaxed);
             let m = build();
-            matches(&m);
+            for path in paths {
+                black_box(is_match(&m, path));
+            }
             size_of_val(&m) + LIVE.load(Relaxed).saturating_sub(before)
         })
         .collect();

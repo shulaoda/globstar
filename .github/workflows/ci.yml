@@ -47,12 +47,7 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - run: node packages/globstar/tests/compiler-stages.mjs
-      - run: node packages/globstar/tests/string-mode.mjs
-      - run: node packages/globstar/tests/dir-exhaustive.mjs
-      - run: node packages/globstar/tests/dir-match.mjs
-      - run: node packages/globstar/tests/large.mjs
-      - run: node packages/globstar-walk/tests/walk.mjs
+      - run: node --test --test-concurrency=1 'packages/*/tests/*.mjs'
       - run: node scripts/verify.mjs --skip-rust
 
   test:
@@ -69,10 +64,7 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: cargo test --workspace
-      - run: node packages/globstar/tests/compiler-stages.mjs
-      - run: node packages/globstar/tests/string-mode.mjs
-      - run: node packages/globstar/tests/dir-exhaustive.mjs
-      - run: node packages/globstar/tests/dir-match.mjs
-      - run: node packages/globstar/tests/large.mjs
-      - run: node packages/globstar-walk/tests/walk.mjs
+      # Every `packages/*/tests/*.mjs` is a suite, run as its own process,
+      # one at a time (some time themselves).
+      - run: node --test --test-concurrency=1 'packages/*/tests/*.mjs'
       - run: node scripts/verify.mjs

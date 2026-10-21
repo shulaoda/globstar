@@ -46,15 +46,11 @@ fix:
 # compiler-stages TSV fixture, the string-mode↔byte-mode differential
 # (fixed-seed, deterministic), the JS matchDir exhaustive twin, the
 # large-pattern checks, and the JS walker integration suite (temp-tree
-# fixtures, twin of walk.rs).
+# fixtures, twin of walk.rs). Every `packages/*/tests/*.mjs` is a suite,
+# run as its own process, one at a time (some time themselves).
 test:
     cargo test --workspace
-    node packages/globstar/tests/compiler-stages.mjs
-    node packages/globstar/tests/string-mode.mjs
-    node packages/globstar/tests/dir-exhaustive.mjs
-    node packages/globstar/tests/dir-match.mjs
-    node packages/globstar/tests/large.mjs
-    node packages/globstar-walk/tests/walk.mjs
+    node --test --test-concurrency=1 'packages/*/tests/*.mjs'
 
 # Regenerate fixtures/ecosystem/ from the other glob libraries' test suites
 # (fetched once into node_modules/.cache/ecosystem/).

@@ -68,6 +68,16 @@ async function expectBoth(root, patterns, options, expected, note) {
   assert.deepEqual(a, expected.slice().sort(), `${note} (async)`);
 }
 
+// Every sync failure is also asserted against the async path: `globSync`
+// throws what `glob` rejects with, as `check` (a class or a predicate)
+// accepts.
+async function throwsBoth(patterns, options, check, note) {
+  assert.throws(() => globSync(patterns, options), check, note);
+  await assert.rejects(glob(patterns, options), check, note);
+}
+
+const isIo = (e) => e instanceof WalkError && e.kind === "Io";
+
 // ── ignore applies to static-prefix seeds ───────────────────────────────
 await check("ignore applies to seeded prefixes", async () => {
   const root = tmpTree("ignoreseed", ["src/generated/api.ts", "src/index.ts"]);
@@ -124,14 +134,7 @@ await check("seed permission error throws", async () => {
       rootUser = false;
     }
     if (rootUser) return; // permission wall is void under root
-    assert.throws(
-      () => globSync(["locked/b.txt"], { cwd: root }),
-      (e) => e instanceof WalkError && e.kind === "Io",
-    );
-    await assert.rejects(
-      glob(["locked/b.txt"], { cwd: root }),
-      (e) => e instanceof WalkError && e.kind === "Io",
-    );
+    await throwsBoth(["locked/b.txt"], { cwd: root }, isIo);
   } finally {
     fs.chmodSync(locked, 0o755);
   }
@@ -180,27 +183,27 @@ await check("undefined option values keep defaults", async () => {
 await check("option misuse throws clear TypeErrors", async () => {
   const root = tmpTree("optmisuse", ["a.txt"]);
   await expectBoth(root, ["*.txt"], { ignore: "*.txt" }, [], "bare-string ignore accepted");
-  assert.throws(() => globSync(["a.txt"], { cwd: root, ignore: 42 }), TypeError);
-  assert.throws(() => globSync(["a.txt"], { cwd: root, ignore: ["ok", 5] }), TypeError);
-  assert.throws(() => globSync(["a.txt"], { cwd: 42 }), TypeError);
-  assert.throws(() => globSync(["a.txt"], { cwd: null }), TypeError);
-  assert.throws(() => globSync(["a.txt"], { cwd: root, ignore: null }), TypeError);
-  assert.throws(() => globSync([null], { cwd: root }), TypeError);
-  assert.throws(() => globSync(42, { cwd: root }), TypeError);
-  // Flags must be booleans (`"false"` would turn dotfiles on, `null`
-  // would drop symlinks); options must be a plain object (a string would
+  // A pattern, `cwd` or `ignore` of the wrong type throws. Flags must be
+  // booleans (`"false"` would turn dotfiles on, `null` would drop
+  // symlinks); options must be a plain object (a string would
   // walk `process.cwd()`); an unknown key (a typo, or another tool's name
   // for an option) throws instead of being ignored.
-  for (const bad of [
-    { cwd: root, dot: "false" },
-    { cwd: root, caseInsensitive: 1 },
-    { cwd: root, followSymlinks: null },
-    { cwd: root, caseSensitiveMatch: false },
-    "src",
-    [root],
+  for (const [patterns, bad] of [
+    [["a.txt"], { cwd: root, ignore: 42 }],
+    [["a.txt"], { cwd: root, ignore: ["ok", 5] }],
+    [["a.txt"], { cwd: 42 }],
+    [["a.txt"], { cwd: null }],
+    [["a.txt"], { cwd: root, ignore: null }],
+    [[null], { cwd: root }],
+    [42, { cwd: root }],
+    [["a.txt"], { cwd: root, dot: "false" }],
+    [["a.txt"], { cwd: root, caseInsensitive: 1 }],
+    [["a.txt"], { cwd: root, followSymlinks: null }],
+    [["a.txt"], { cwd: root, caseSensitiveMatch: false }],
+    [["a.txt"], "src"],
+    [["a.txt"], [root]],
   ]) {
-    assert.throws(() => globSync(["a.txt"], bad), TypeError, JSON.stringify(bad));
-    await assert.rejects(glob(["a.txt"], bad), TypeError, JSON.stringify(bad));
+    await throwsBoth(patterns, bad, TypeError, JSON.stringify([patterns, bad]));
   }
   // An explicit `undefined` keeps the default.
   await expectBoth(root, ["*.txt"], { dot: undefined, ignore: undefined }, ["a.txt"], "undefined");
@@ -233,29 +236,18 @@ await check("an ignore entry that starts with `!` is refused", async () => {
   // It would ignore everything else. Twin of
   // `walker_refuses_an_ignore_entry_that_starts_with_bang`.
   const root = tmpTree("bangignore", ["src/a.ts"]);
+  const refused = (e) =>
+    e instanceof WalkError && e.kind === "InvalidPattern" && e.pattern === "!src/**";
   for (const ignore of [["!src/**"], ["!src/**", "node_modules"]]) {
-    const refused = (e) =>
-      e instanceof WalkError && e.kind === "InvalidPattern" && e.pattern === "!src/**";
-    assert.throws(() => globSync(["**"], { cwd: root, ignore }), refused);
-    await assert.rejects(glob(["**"], { cwd: root, ignore }), refused);
+    await throwsBoth(["**"], { cwd: root, ignore }, refused);
   }
 });
 
 // ── bad cwd fails loudly even with an empty positive set ────────────────
 await check("bad cwd validated before empty-positives return", async () => {
   const missing = path.join(os.tmpdir(), "glob-walk-js-definitely-missing");
-  assert.throws(
-    () => globSync([], { cwd: missing }),
-    (e) => e instanceof WalkError && e.kind === "Io",
-  );
-  assert.throws(
-    () => globSync(["!x"], { cwd: missing }),
-    (e) => e instanceof WalkError && e.kind === "Io",
-  );
-  await assert.rejects(
-    glob([], { cwd: missing }),
-    (e) => e instanceof WalkError && e.kind === "Io",
-  );
+  await throwsBoth([], { cwd: missing }, isIo);
+  await throwsBoth(["!x"], { cwd: missing }, isIo);
 });
 
 // ── InvalidPattern names the member that fails ──────────────────────────
@@ -263,8 +255,9 @@ await check("invalid member of a pattern list is named", async () => {
   const root = tmpTree("list-bad", ["src/a.ts"]);
   // The bad member is named, not the whole list: a comma-joined list
   // could read as one valid pattern (`a/{b,c/**}`).
-  assert.throws(
-    () => globSync(["src/**/*.{ts,tsx}", "lib/[abc"], { cwd: root }),
+  await throwsBoth(
+    ["src/**/*.{ts,tsx}", "lib/[abc"],
+    { cwd: root },
     (e) =>
       e instanceof WalkError &&
       e.kind === "InvalidPattern" &&
@@ -272,16 +265,18 @@ await check("invalid member of a pattern list is named", async () => {
       e.reason.includes("unterminated character class at byte 4") &&
       e.cause?.kind === "UnterminatedClass",
   );
-  assert.throws(
-    () => globSync(["*.rs"], { cwd: root, ignore: ["a/{b", "c/**"] }),
+  await throwsBoth(
+    ["*.rs"],
+    { cwd: root, ignore: ["a/{b", "c/**"] },
     (e) => e instanceof WalkError && e.pattern === "a/{b",
   );
   // Every member compiles alone; together they pass the expansion budget
   // (GLOB_SPEC §6.2). The error names the member it ran out in.
   const member = "{,/}".repeat(10) + "**/f";
   const members = Array.from({ length: 10 }, (_, i) => `${member}${i}`);
-  assert.throws(
-    () => globSync(members, { cwd: root }),
+  await throwsBoth(
+    members,
+    { cwd: root },
     (e) =>
       e instanceof WalkError &&
       e.pattern === members[1] &&
@@ -299,8 +294,9 @@ await check("invalid member of a pattern list is named", async () => {
   assert.ok(performance.now() - start < 500, "5,000 members took too long to fail");
   // An error no one member explains (the union's compile work) names the
   // list, cut after three.
-  assert.throws(
-    () => globSync(["{a,/}{b,/}".repeat(300), "c{a,/}".repeat(300), "x", "y"], { cwd: root }),
+  await throwsBoth(
+    ["{a,/}{b,/}".repeat(300), "c{a,/}".repeat(300), "x", "y"],
+    { cwd: root },
     (e) =>
       e instanceof WalkError &&
       e.pattern.endsWith('"x"] and 1 more') &&
@@ -432,16 +428,18 @@ await check("an empty cwd is the current folder", async () => {
 });
 
 await check("an error names the pattern as written", async () => {
-  assert.throws(
-    () => globSync(["src/**", "!src/[z-a]"]),
+  await throwsBoth(
+    ["src/**", "!src/[z-a]"],
+    undefined,
     (e) =>
       e instanceof WalkError &&
       e.pattern === "!src/[z-a]" &&
       e.reason.includes("byte 5") &&
       e.reason.includes("'src/[z-a]'"),
   );
-  assert.throws(
-    () => globSync(["src/[z-a]"]),
+  await throwsBoth(
+    ["src/[z-a]"],
+    undefined,
     (e) => e instanceof WalkError && !e.reason.includes("as the walker reads it"),
   );
 });
@@ -533,14 +531,13 @@ if (process.platform !== "win32" && process.getuid?.() !== 0) {
     const locked = path.join(root, "node_modules");
     fs.chmodSync(locked, 0o000);
     try {
-      const opts = { cwd: root, dot: true, ignore: ["**/node_modules/**"] };
+      const opts = { dot: true, ignore: ["**/node_modules/**"] };
       for (const pattern of [
         "node_modules/**/*.js",
         "[n]ode_modules/**/*.js",
         "{node_modules,zz}/**/*.js",
       ]) {
-        assert.deepEqual(globSync(pattern, opts), [], pattern);
-        assert.deepEqual(await glob(pattern, opts), [], pattern);
+        await expectBoth(root, pattern, opts, [], pattern);
       }
     } finally {
       fs.chmodSync(locked, 0o755);
@@ -568,9 +565,7 @@ await check("a pattern that ends in / matches folders only", async () => {
     ["node_modules/p/*.js", ["node_modules/"], []],
     ["src/", [], []],
   ]) {
-    const opts = { cwd: root, ignore };
-    assert.deepEqual(rel(root, globSync(patterns, opts)), want, String(patterns));
-    assert.deepEqual(rel(root, await glob(patterns, opts)), want, String(patterns));
+    await expectBoth(root, patterns, { ignore }, want, String(patterns));
   }
 });
 
@@ -587,9 +582,8 @@ await check("an ignore that ends in /** prunes the folder under either dot", asy
   ]);
   const patterns = ["**/*.js", "**/.env", "node_modules/.cache/x"];
   for (const dot of [true, false]) {
-    const opts = { cwd: root, dot, ignore: ["**/node_modules/**"] };
-    assert.deepEqual(rel(root, globSync(patterns, opts)), ["src/.env", "src/a.js"], `dot ${dot}`);
-    assert.deepEqual(rel(root, await glob(patterns, opts)), ["src/.env", "src/a.js"], `dot ${dot}`);
+    const opts = { dot, ignore: ["**/node_modules/**"] };
+    await expectBoth(root, patterns, opts, ["src/.env", "src/a.js"], `dot ${dot}`);
   }
 });
 
@@ -612,8 +606,7 @@ if (process.platform !== "win32" && symlinksOk) {
         ["sock", []],
         ["to-fifo", []],
       ]) {
-        assert.deepEqual(rel(root, globSync(pattern, { cwd: root })), want, pattern);
-        assert.deepEqual(rel(root, await glob(pattern, { cwd: root })), want, pattern);
+        await expectBoth(root, pattern, {}, want, pattern);
       }
     } finally {
       server.close();
@@ -625,8 +618,9 @@ if (process.platform !== "win32" && symlinksOk) {
 await check("a lone bang is an empty pattern, named as written", async () => {
   const root = tmpTree("lone-bang", ["a.js"]);
   for (const lone of ["!", "!!"]) {
-    assert.throws(
-      () => globSync(["**", lone], { cwd: root }),
+    await throwsBoth(
+      ["**", lone],
+      { cwd: root },
       (e) =>
         e instanceof WalkError &&
         e.kind === "InvalidPattern" &&
@@ -648,14 +642,13 @@ await check("a seed finds a name only as listed", async () => {
     return; // a file system that does not keep the name as given (wine's)
   }
   if (!fs.readdirSync(root).includes(`${nfd}.txt`)) return;
-  for (const [pattern, count] of [
-    ["\u00e9.txt", 0],
-    ["\u00e9/*.ts", 0],
-    [`${nfd}.txt`, 1],
-    [`${nfd}/*.ts`, 1],
+  for (const [pattern, want] of [
+    ["\u00e9.txt", []],
+    ["\u00e9/*.ts", []],
+    [`${nfd}.txt`, [`${nfd}.txt`]],
+    [`${nfd}/*.ts`, [`${nfd}/a.ts`]],
   ]) {
-    assert.equal(globSync(pattern, { cwd: root }).length, count, pattern);
-    assert.equal((await glob(pattern, { cwd: root })).length, count, pattern);
+    await expectBoth(root, pattern, {}, want, pattern);
   }
 });
 

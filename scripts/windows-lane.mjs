@@ -14,6 +14,7 @@
 // cannot make (the walker suite skips those groups).
 
 import { spawnSync } from "node:child_process";
+import { globSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,14 +29,10 @@ for (const arg of args) {
 const want = (flag) => args.length === 0 || args.includes(flag);
 const container = process.env.WINE_CONTAINER ?? "globstar-wine";
 const NODE = "v24.15.0";
-const JS_SUITES = [
-  "packages/globstar/tests/compiler-stages.mjs",
-  "packages/globstar/tests/string-mode.mjs",
-  "packages/globstar/tests/dir-exhaustive.mjs",
-  "packages/globstar/tests/dir-match.mjs",
-  "packages/globstar/tests/large.mjs",
-  "packages/globstar-walk/tests/walk.mjs",
-];
+// The suites CI runs with `node --test`, one by one here: the runner
+// reads its children through pipes, which node.exe under wine cannot
+// write to.
+const JS_SUITES = globSync("packages/*/tests/*.mjs", { cwd: root }).sort();
 
 // Runs `script` in the container from the repo root; the exit status.
 function inContainer(script) {

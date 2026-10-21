@@ -4,7 +4,6 @@
 //! `matcher_multi.js`; a cell is what the matcher keeps once it has
 //! matched every bench path (`counter::kept`).
 
-use std::hint::black_box;
 use std::path::Path;
 
 use globset::GlobBuilder;
@@ -37,30 +36,21 @@ fn main() {
     for (label, patterns) in common::sets() {
         let globstar = kept(
             TRIALS,
+            &PATHS,
             || Glob::union(patterns.iter().copied()).unwrap(),
-            |g| {
-                for p in PATHS.iter() {
-                    black_box(g.is_match(p.as_bytes()));
-                }
-            },
+            |g, p| g.is_match(p.as_bytes()),
         );
         let globset = kept(
             TRIALS,
+            &PATHS,
             || build_globset(&patterns),
-            |g| {
-                for p in PATHS.iter() {
-                    black_box(g.is_match(Path::new(p)));
-                }
-            },
+            |g, p| g.is_match(Path::new(p)),
         );
         let wax = kept(
             TRIALS,
+            &PATHS,
             || wax::any(patterns.iter().copied()).unwrap(),
-            |g| {
-                for p in PATHS.iter() {
-                    black_box(g.is_match(*p));
-                }
-            },
+            |g, p| g.is_match(p),
         );
         let n = patterns.len();
         println!("{label:<18} {n:>3} {globstar:>12} {globset:>12} {wax:>12}");

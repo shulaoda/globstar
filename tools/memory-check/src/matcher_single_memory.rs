@@ -4,7 +4,6 @@
 //! is what one matcher keeps once it has matched every bench path
 //! (`counter::kept`).
 
-use std::hint::black_box;
 use std::path::Path;
 
 use globset::GlobBuilder;
@@ -42,31 +41,17 @@ fn main() {
     for &(label, pattern) in SINGLE.iter() {
         let globstar = kept(
             TRIALS,
+            &PATHS,
             || build_public(pattern),
-            |g| {
-                for p in PATHS.iter() {
-                    black_box(g.is_match(p.as_bytes()));
-                }
-            },
+            |g, p| g.is_match(p.as_bytes()),
         );
         let globset = kept(
             TRIALS,
+            &PATHS,
             || build_globset(pattern),
-            |g| {
-                for p in PATHS.iter() {
-                    black_box(g.is_match(Path::new(p)));
-                }
-            },
+            |g, p| g.is_match(Path::new(p)),
         );
-        let wax = kept(
-            TRIALS,
-            || build_wax(pattern),
-            |g| {
-                for p in PATHS.iter() {
-                    black_box(g.is_match(*p));
-                }
-            },
-        );
+        let wax = kept(TRIALS, &PATHS, || build_wax(pattern), |g, p| g.is_match(p));
         println!("{label:<20}   {globstar:>10}   {globset:>10}   {wax:>10}");
     }
 }

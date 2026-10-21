@@ -13,7 +13,8 @@ struct TmpTree {
 }
 
 impl TmpTree {
-    fn new(tag: &str) -> Self {
+    /// A fresh tree holding `files` (see [`touch`](Self::touch)).
+    fn new(tag: &str, files: &[&str]) -> Self {
         let mut root = std::env::temp_dir();
         let pid = std::process::id();
         let nanos = std::time::SystemTime::now()
@@ -22,24 +23,39 @@ impl TmpTree {
             .as_nanos();
         root.push(format!("glob-walker-test-{tag}-{pid}-{nanos}"));
         fs::create_dir_all(&root).expect("create tmp root");
-        Self { root }
+        let tree = Self { root };
+        for file in files {
+            tree.touch(file);
+        }
+        tree
     }
 
+    /// Create the file `rel` and its folders; a `rel` that ends in `/` is
+    /// a folder.
     fn touch(&self, rel: &str) {
         let p = self.root.join(rel);
+        if rel.ends_with('/') {
+            fs::create_dir_all(&p).expect("create dir");
+            return;
+        }
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent).expect("create parent");
         }
         fs::File::create(&p).expect("create file");
     }
 
-    fn mkdir(&self, rel: &str) {
-        let p = self.root.join(rel);
-        fs::create_dir_all(&p).expect("create dir");
-    }
-
     fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// What `patterns` yield under `opts`, relative to the root.
+    fn walk_with(&self, patterns: &[&str], opts: WalkOptions) -> BTreeSet<String> {
+        collect_rel(Walk::from_patterns(patterns, opts).unwrap(), &self.root)
+    }
+
+    /// What `patterns` yield from the root with the default options.
+    fn walk(&self, patterns: &[&str]) -> BTreeSet<String> {
+        self.walk_with(patterns, WalkOptions::new(&self.root))
     }
 }
 
@@ -47,6 +63,11 @@ impl Drop for TmpTree {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// `items` as the set [`collect_rel`] gives.
+fn set(items: &[&str]) -> BTreeSet<String> {
+    items.iter().map(|s| s.to_string()).collect()
 }
 
 fn collect_rel(walker: Walk, root: &Path) -> BTreeSet<String> {
@@ -61,62 +82,64 @@ fn collect_rel(walker: Walk, root: &Path) -> BTreeSet<String> {
         .collect()
 }
 
+/// The pattern, reason and compile error of an `InvalidPattern`.
+fn invalid(err: &WalkError) -> (&str, &str, Option<&globstar::GlobError>) {
+    match err {
+        WalkError::InvalidPattern {
+            pattern,
+            reason,
+            source,
+        } => (pattern, reason, source.as_ref()),
+        _ => panic!("expected InvalidPattern, got {err:?}"),
+    }
+}
+
 #[test]
 fn walker_literal_direct_hit() {
-    let t = TmpTree::new("literal");
-    t.touch("src/main.rs");
-    t.touch("src/lib.rs");
-    t.touch("README.md");
+    let t = TmpTree::new("literal", &["src/main.rs", "src/lib.rs", "README.md"]);
 
-    let got = collect_rel(Walk::new("src/main.rs", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["src/main.rs"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected);
+    assert_eq!(t.walk(&["src/main.rs"]), set(&["src/main.rs"]));
 }
 
 #[test]
 fn walker_star_extension_prunes_other_dirs() {
-    let t = TmpTree::new("starext");
-    t.touch("src/main.rs");
-    t.touch("src/lib.rs");
-    t.touch("src/notes.md");
-    t.touch("tests/smoke.rs");
+    let t = TmpTree::new(
+        "starext",
+        &[
+            "src/main.rs",
+            "src/lib.rs",
+            "src/notes.md",
+            "tests/smoke.rs",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("src/*.rs", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["src/lib.rs", "src/main.rs"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(t.walk(&["src/*.rs"]), set(&["src/lib.rs", "src/main.rs"]));
 }
 
 #[test]
 fn walker_globstar_recursive() {
-    let t = TmpTree::new("globstar");
-    t.touch("src/main.rs");
-    t.touch("src/cli/run.rs");
-    t.touch("src/cli/commands/build.rs");
-    t.touch("src/notes.md");
-    t.touch("tests/smoke.rs");
+    let t = TmpTree::new(
+        "globstar",
+        &[
+            "src/main.rs",
+            "src/cli/run.rs",
+            "src/cli/commands/build.rs",
+            "src/notes.md",
+            "tests/smoke.rs",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("src/**/*.rs", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["src/cli/commands/build.rs", "src/cli/run.rs", "src/main.rs"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["src/**/*.rs"]),
+        set(&["src/cli/commands/build.rs", "src/cli/run.rs", "src/main.rs"])
+    );
 }
 
 #[test]
 fn walker_brace_expansion() {
-    let t = TmpTree::new("brace");
-    t.touch("a.ts");
-    t.touch("b.tsx");
-    t.touch("c.js");
-    t.touch("d.rs");
+    let t = TmpTree::new("brace", &["a.ts", "b.tsx", "c.js", "d.rs"]);
 
-    let got = collect_rel(Walk::new("*.{ts,tsx}", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["a.ts", "b.tsx"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected);
+    assert_eq!(t.walk(&["*.{ts,tsx}"]), set(&["a.ts", "b.tsx"]));
 }
 
 #[test]
@@ -129,32 +152,24 @@ fn walker_extglob_negate() {
     // The walker auto-splits leading-`!` patterns into the ignore set,
     // so passing `["**/*.js", "!(*.min).js"]` is the same as
     // `["**/*.js"]` + `ignore: ["(*.min).js"]`.
-    let t = TmpTree::new("extneg");
-    t.touch("main.js");
-    t.touch("main.min.js");
-    t.touch("util.js");
-    t.touch("util.min.js");
-
-    let got = collect_rel(
-        Walk::from_patterns(["**/*.js", "!(*.min).js"], t.root()).unwrap(),
-        t.root(),
+    let t = TmpTree::new(
+        "extneg",
+        &["main.js", "main.min.js", "util.js", "util.min.js"],
     );
-    let expected: BTreeSet<String> = ["main.js", "main.min.js", "util.js", "util.min.js"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+
+    assert_eq!(
+        t.walk(&["**/*.js", "!(*.min).js"]),
+        set(&["main.js", "main.min.js", "util.js", "util.min.js"])
+    );
 }
 
 #[test]
 fn walker_lone_negation_yields_nothing() {
     // A lone `!`-prefixed pattern means "no positive patterns" after the
     // auto-split — so the walker yields nothing.
-    let t = TmpTree::new("lone_neg");
-    t.touch("a.js");
-    t.touch("b.js");
+    let t = TmpTree::new("lone_neg", &["a.js", "b.js"]);
 
-    let got = collect_rel(Walk::new("!a.js", t.root()).unwrap(), t.root());
+    let got = t.walk(&["!a.js"]);
     assert!(got.is_empty(), "expected empty, got {got:?}");
 }
 
@@ -163,331 +178,265 @@ fn walker_multi_bang_parity_routes_by_count() {
     // GLOB_SPEC §11.1: leading-`!` parity rule. Odd count → ignore set,
     // even count → match set; all leading `!`s are stripped from the
     // body. The JS walker uses the same rule (`packages/globstar-walk/src/walk.js`).
-    let t = TmpTree::new("multi_bang");
-    t.touch("a.js");
-    t.touch("b.js");
+    let t = TmpTree::new("multi_bang", &["a.js", "b.js"]);
 
     // `!!a.js` (2 bangs, even) → positive `a.js`. Yields a.js only.
-    let got = collect_rel(Walk::from_patterns(["!!a.js"], t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["a.js"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected, "!!a.js should resolve to positive a.js");
+    let got = t.walk(&["!!a.js"]);
+    assert_eq!(
+        got,
+        set(&["a.js"]),
+        "!!a.js should resolve to positive a.js"
+    );
 
     // `**/*.js` + `!!!a.js` (3 bangs, odd) → ignore `a.js`. Yields b.js only.
-    let got = collect_rel(
-        Walk::from_patterns(["**/*.js", "!!!a.js"], t.root()).unwrap(),
-        t.root(),
+    let got = t.walk(&["**/*.js", "!!!a.js"]);
+    assert_eq!(
+        got,
+        set(&["b.js"]),
+        "!!!a.js should route a.js into ignore set"
     );
-    let expected: BTreeSet<String> = ["b.js"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected, "!!!a.js should route a.js into ignore set");
 }
 
 #[test]
 fn walker_prunes_unrelated_subtrees() {
-    let t = TmpTree::new("prune");
-    t.touch("src/a.ts");
-    t.touch("src/b.ts");
-    t.touch("other/c.ts");
-    t.touch("other/deep/d.ts");
+    let t = TmpTree::new(
+        "prune",
+        &["src/a.ts", "src/b.ts", "other/c.ts", "other/deep/d.ts"],
+    );
 
-    let got = collect_rel(Walk::new("src/**/*.ts", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["src/a.ts", "src/b.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(t.walk(&["src/**/*.ts"]), set(&["src/a.ts", "src/b.ts"]));
 }
 
 #[test]
 fn walker_empty_dir() {
-    let t = TmpTree::new("empty");
-    let got = collect_rel(Walk::new("**/*.rs", t.root()).unwrap(), t.root());
+    let t = TmpTree::new("empty", &[]);
+    let got = t.walk(&["**/*.rs"]);
     assert!(got.is_empty());
 }
 
 #[test]
 fn walker_yields_dir_match() {
-    let t = TmpTree::new("dirmatch");
-    t.mkdir("src/components");
-    t.touch("src/components/button.ts");
-    t.touch("src/other.ts");
+    let t = TmpTree::new(
+        "dirmatch",
+        &[
+            "src/components/",
+            "src/components/button.ts",
+            "src/other.ts",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("src/components", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["src/components"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected);
+    assert_eq!(t.walk(&["src/components"]), set(&["src/components"]));
 }
 
 #[test]
 fn walker_dot_protection_default_hides_dotfiles() {
-    let t = TmpTree::new("dotprot");
-    t.touch(".env");
-    t.touch("main.rs");
+    let t = TmpTree::new("dotprot", &[".env", "main.rs"]);
 
-    let got = collect_rel(Walk::new("*", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["main.rs"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected);
+    assert_eq!(t.walk(&["*"]), set(&["main.rs"]));
 }
 
 #[test]
 fn walker_dot_true_includes_dotfiles() {
-    let t = TmpTree::new("dot_true");
-    t.touch(".env");
-    t.touch("main.rs");
+    let t = TmpTree::new("dot_true", &[".env", "main.rs"]);
 
-    let walker = Walk::new(
-        "*",
-        WalkOptions {
-            dot: true,
-            ..WalkOptions::new(t.root())
-        },
-    )
-    .unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = [".env", "main.rs"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected);
+    let opts = WalkOptions {
+        dot: true,
+        ..WalkOptions::new(t.root())
+    };
+    assert_eq!(t.walk_with(&["*"], opts), set(&[".env", "main.rs"]));
 }
 
 #[test]
 fn walker_case_sensitive_default_misses_other_case() {
-    let t = TmpTree::new("case_strict");
-    t.touch("Main.TS");
-    t.touch("other.rs");
+    let t = TmpTree::new("case_strict", &["Main.TS", "other.rs"]);
 
-    let got = collect_rel(Walk::new("*.ts", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = BTreeSet::new();
+    let got = t.walk(&["*.ts"]);
     assert_eq!(
-        got, expected,
+        got,
+        set(&[]),
         "case-sensitive default should not match Main.TS"
     );
 }
 
 #[test]
 fn walker_case_insensitive_matches_mixed_case() {
-    let t = TmpTree::new("case_insens");
-    t.touch("Main.TS");
-    t.touch("LIB.ts");
-    t.touch("other.rs");
+    let t = TmpTree::new("case_insens", &["Main.TS", "LIB.ts", "other.rs"]);
 
-    let walker = Walk::new(
-        "*.ts",
-        WalkOptions {
-            case_insensitive: true,
-            ..WalkOptions::new(t.root())
-        },
-    )
-    .unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["Main.TS", "LIB.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    let opts = WalkOptions {
+        case_insensitive: true,
+        ..WalkOptions::new(t.root())
+    };
+    assert_eq!(t.walk_with(&["*.ts"], opts), set(&["Main.TS", "LIB.ts"]));
 }
 
 #[test]
 fn walker_missing_prefix_yields_nothing_silently() {
-    let t = TmpTree::new("missing");
-    t.touch("unrelated.rs");
+    let t = TmpTree::new("missing", &["unrelated.rs"]);
 
-    let got = collect_rel(
-        Walk::new("nonexistent/**/*.rs", t.root()).unwrap(),
-        t.root(),
-    );
+    let got = t.walk(&["nonexistent/**/*.rs"]);
     assert!(got.is_empty());
 }
 
 #[test]
 fn walker_prefix_skips_sibling_dirs() {
-    let t = TmpTree::new("prefixskip");
-    t.touch("src/main.ts");
-    t.touch("src/sub/foo.ts");
-    t.touch("node_modules/a.ts");
-    t.touch("node_modules/deep/nested/b.ts");
+    let t = TmpTree::new(
+        "prefixskip",
+        &[
+            "src/main.ts",
+            "src/sub/foo.ts",
+            "node_modules/a.ts",
+            "node_modules/deep/nested/b.ts",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("src/**/*.ts", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["src/main.ts", "src/sub/foo.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["src/**/*.ts"]),
+        set(&["src/main.ts", "src/sub/foo.ts"])
+    );
 }
 
 #[test]
 fn walker_brace_prefix_walks_both_roots() {
-    let t = TmpTree::new("braceroots");
-    t.touch("src/main.rs");
-    t.touch("tests/smoke.rs");
-    t.touch("lib/vendored.rs");
+    let t = TmpTree::new(
+        "braceroots",
+        &["src/main.rs", "tests/smoke.rs", "lib/vendored.rs"],
+    );
 
-    let got = collect_rel(Walk::new("{src,tests}/*.rs", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["src/main.rs", "tests/smoke.rs"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["{src,tests}/*.rs"]),
+        set(&["src/main.rs", "tests/smoke.rs"])
+    );
 }
 
 #[test]
 fn walker_pure_literal_missing_file_yields_nothing() {
-    let t = TmpTree::new("pureliteralmiss");
-    t.touch("other.rs");
+    let t = TmpTree::new("pureliteralmiss", &["other.rs"]);
 
-    let got = collect_rel(Walk::new("src/main.rs", t.root()).unwrap(), t.root());
+    let got = t.walk(&["src/main.rs"]);
     assert!(got.is_empty());
 }
 
 #[test]
 fn walker_from_patterns_union() {
-    let t = TmpTree::new("multi_union");
-    t.touch("src/main.ts");
-    t.touch("src/lib.rs");
-    t.touch("README.md");
-    t.touch("tests/smoke.ts");
+    let t = TmpTree::new(
+        "multi_union",
+        &["src/main.ts", "src/lib.rs", "README.md", "tests/smoke.ts"],
+    );
 
-    let walker = Walk::from_patterns(["README.md", "src/*.rs", "**/*.ts"], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["README.md", "src/lib.rs", "src/main.ts", "tests/smoke.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["README.md", "src/*.rs", "**/*.ts"]),
+        set(&["README.md", "src/lib.rs", "src/main.ts", "tests/smoke.ts"])
+    );
 }
 
 #[test]
 fn walker_from_patterns_shared_prefix() {
-    let t = TmpTree::new("multi_shared_prefix");
-    t.touch("src/main.ts");
-    t.touch("src/lib.rs");
-    t.touch("src/notes.md");
-    t.touch("dist/bundle.js");
-    t.touch("node_modules/pkg/index.ts");
+    let t = TmpTree::new(
+        "multi_shared_prefix",
+        &[
+            "src/main.ts",
+            "src/lib.rs",
+            "src/notes.md",
+            "dist/bundle.js",
+            "node_modules/pkg/index.ts",
+        ],
+    );
 
-    let walker = Walk::from_patterns(["src/**/*.ts", "src/**/*.rs"], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["src/lib.rs", "src/main.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["src/**/*.ts", "src/**/*.rs"]),
+        set(&["src/lib.rs", "src/main.ts"])
+    );
 }
 
 #[test]
 fn walker_from_patterns_distinct_prefixes() {
-    let t = TmpTree::new("multi_disjoint");
-    t.touch("src/main.rs");
-    t.touch("tests/smoke.rs");
-    t.touch("lib/vendored.rs");
+    let t = TmpTree::new(
+        "multi_disjoint",
+        &["src/main.rs", "tests/smoke.rs", "lib/vendored.rs"],
+    );
 
-    let walker = Walk::from_patterns(["src/*.rs", "tests/*.rs"], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["src/main.rs", "tests/smoke.rs"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["src/*.rs", "tests/*.rs"]),
+        set(&["src/main.rs", "tests/smoke.rs"])
+    );
 }
 
 #[test]
 fn walker_from_patterns_pruning_requires_all_agree() {
-    let t = TmpTree::new("multi_coop_pruning");
-    t.touch("src/main.ts");
-    t.touch("node_modules/pkg/package.json");
+    let t = TmpTree::new(
+        "multi_coop_pruning",
+        &["src/main.ts", "node_modules/pkg/package.json"],
+    );
 
-    let walker =
-        Walk::from_patterns(["src/**/*.ts", "node_modules/**/package.json"], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["node_modules/pkg/package.json", "src/main.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["src/**/*.ts", "node_modules/**/package.json"]),
+        set(&["node_modules/pkg/package.json", "src/main.ts"])
+    );
 }
 
 #[test]
 fn walker_from_patterns_literal_file_in_union() {
-    let t = TmpTree::new("multi_literal_file");
-    t.touch("src/main.ts");
-    t.touch("package.json");
+    let t = TmpTree::new("multi_literal_file", &["src/main.ts", "package.json"]);
 
-    let walker = Walk::from_patterns(["package.json", "src/**/*.ts"], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["package.json", "src/main.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["package.json", "src/**/*.ts"]),
+        set(&["package.json", "src/main.ts"])
+    );
 }
 
 #[test]
 fn walker_from_patterns_empty_yields_nothing() {
-    let t = TmpTree::new("multi_empty");
-    t.touch("main.rs");
+    let t = TmpTree::new("multi_empty", &["main.rs"]);
 
-    let walker = Walk::from_patterns::<[&str; 0], &str>([], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    assert!(got.is_empty());
+    assert!(t.walk(&[]).is_empty());
 }
 
 #[test]
 fn walker_ignore_skips_files() {
-    let t = TmpTree::new("ignore_files");
-    t.touch("src/main.rs");
-    t.touch("src/gen.rs");
-    t.touch("src/lib.rs");
+    let t = TmpTree::new("ignore_files", &["src/main.rs", "src/gen.rs", "src/lib.rs"]);
 
-    let walker = Walk::new(
-        "src/*.rs",
-        WalkOptions {
-            ignore: vec!["**/gen.rs".into()],
-            ..WalkOptions::new(t.root())
-        },
-    )
-    .unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["src/lib.rs", "src/main.rs"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    let opts = WalkOptions {
+        ignore: vec!["**/gen.rs".into()],
+        ..WalkOptions::new(t.root())
+    };
+    assert_eq!(
+        t.walk_with(&["src/*.rs"], opts),
+        set(&["src/lib.rs", "src/main.rs"])
+    );
 }
 
 #[test]
 fn walker_ignore_prunes_dirs() {
-    let t = TmpTree::new("ignore_prune");
-    t.touch("src/a.ts");
-    t.touch("src/deep/b.ts");
-    t.touch("node_modules/pkg/index.ts");
-    t.touch("node_modules/pkg/nested/x.ts");
+    let t = TmpTree::new(
+        "ignore_prune",
+        &[
+            "src/a.ts",
+            "src/deep/b.ts",
+            "node_modules/pkg/index.ts",
+            "node_modules/pkg/nested/x.ts",
+        ],
+    );
 
-    let walker = Walk::new(
-        "**/*.ts",
-        WalkOptions {
-            ignore: vec!["**/node_modules/**".into()],
-            ..WalkOptions::new(t.root())
-        },
-    )
-    .unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["src/a.ts", "src/deep/b.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    let opts = WalkOptions {
+        ignore: vec!["**/node_modules/**".into()],
+        ..WalkOptions::new(t.root())
+    };
+    assert_eq!(
+        t.walk_with(&["**/*.ts"], opts),
+        set(&["src/a.ts", "src/deep/b.ts"])
+    );
 }
 
 #[test]
 fn walker_new_invalid_pattern_returns_err() {
-    let t = TmpTree::new("new_bad");
+    let t = TmpTree::new("new_bad", &[]);
     let err = Walk::new("[unclosed", t.root()).unwrap_err();
-    match err {
-        WalkError::InvalidPattern { pattern, .. } => assert_eq!(pattern, "[unclosed"),
-        _ => panic!("expected InvalidPattern, got {err:?}"),
-    }
+    assert_eq!(invalid(&err).0, "[unclosed");
 }
 
 #[test]
 fn walker_ignore_invalid_pattern_returns_err() {
-    let t = TmpTree::new("ignore_bad");
-    t.touch("a.rs");
+    let t = TmpTree::new("ignore_bad", &["a.rs"]);
     let err = Walk::new(
         "*.rs",
         WalkOptions {
@@ -496,30 +445,21 @@ fn walker_ignore_invalid_pattern_returns_err() {
         },
     )
     .unwrap_err();
-    match err {
-        WalkError::InvalidPattern { pattern, .. } => assert_eq!(pattern, "[bad"),
-        _ => panic!("expected InvalidPattern, got {err:?}"),
-    }
+    assert_eq!(invalid(&err).0, "[bad");
 }
 
 #[test]
 fn walker_invalid_member_of_a_list_is_named() {
-    let t = TmpTree::new("list_bad");
+    let t = TmpTree::new("list_bad", &[]);
     // The bad member is named, not the whole list: a comma-joined list
     // could read as one valid pattern (`a/{b,c/**}`).
     let err = Walk::from_patterns(["src/**/*.{ts,tsx}", "lib/[abc"], t.root()).unwrap_err();
-    match &err {
-        WalkError::InvalidPattern {
-            pattern, reason, ..
-        } => {
-            assert_eq!(pattern, "lib/[abc");
-            assert!(
-                reason.contains("unterminated character class at byte 4"),
-                "{reason}"
-            );
-        }
-        _ => panic!("expected InvalidPattern, got {err:?}"),
-    }
+    let (pattern, reason, _) = invalid(&err);
+    assert_eq!(pattern, "lib/[abc");
+    assert!(
+        reason.contains("unterminated character class at byte 4"),
+        "{reason}"
+    );
     let err = Walk::new(
         "*.rs",
         WalkOptions {
@@ -528,24 +468,15 @@ fn walker_invalid_member_of_a_list_is_named() {
         },
     )
     .unwrap_err();
-    match &err {
-        WalkError::InvalidPattern { pattern, .. } => assert_eq!(pattern, "a/{b"),
-        _ => panic!("expected InvalidPattern, got {err:?}"),
-    }
+    assert_eq!(invalid(&err).0, "a/{b");
     // Every member compiles alone; together they pass the expansion
     // budget (GLOB_SPEC §6.2). The error names the member it ran out in.
     let member = "{,/}".repeat(10) + "**/f";
     let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
     let err = Walk::from_patterns(&members, t.root()).unwrap_err();
-    match &err {
-        WalkError::InvalidPattern {
-            pattern, reason, ..
-        } => {
-            assert_eq!(pattern, &members[1]);
-            assert!(reason.contains("the patterns share this limit"), "{reason}");
-        }
-        _ => panic!("expected InvalidPattern, got {err:?}"),
-    }
+    let (pattern, reason, _) = invalid(&err);
+    assert_eq!(pattern, members[1]);
+    assert!(reason.contains("the patterns share this limit"), "{reason}");
     // Found from the core's member index, not by compiling each member
     // again, so 5,000 members fail fast with a short message.
     let members: Vec<String> = (0..5000)
@@ -564,172 +495,167 @@ fn walker_invalid_member_of_a_list_is_named() {
         "y".into(),
     ];
     let err = Walk::from_patterns(&members, t.root()).unwrap_err();
-    match &err {
-        WalkError::InvalidPattern {
-            pattern,
-            source: Some(source),
-            ..
-        } => {
-            assert!(pattern.ends_with("\"x\"] and 1 more"), "{pattern}");
-            assert!(
-                matches!(source, globstar::GlobError::TooComplex { .. }),
-                "{source:?}"
-            );
-        }
-        _ => panic!("expected InvalidPattern, got {err:?}"),
-    }
+    let (pattern, _, source) = invalid(&err);
+    assert!(pattern.ends_with("\"x\"] and 1 more"), "{pattern}");
+    assert!(
+        matches!(source, Some(globstar::GlobError::TooComplex { .. })),
+        "{source:?}"
+    );
 }
 
 #[test]
 fn walker_rust_workspace_finds_source_files() {
-    let t = TmpTree::new("rust_workspace");
-    t.touch("Cargo.toml");
-    t.touch("Cargo.lock");
-    t.touch("crates/core/Cargo.toml");
-    t.touch("crates/core/src/lib.rs");
-    t.touch("crates/core/src/parser.rs");
-    t.touch("crates/core/src/engine/mod.rs");
-    t.touch("crates/core/src/engine/backtrack.rs");
-    t.touch("crates/core/tests/integration.rs");
-    t.touch("crates/cli/Cargo.toml");
-    t.touch("crates/cli/src/main.rs");
-    t.touch("crates/cli/src/args.rs");
-    t.touch("target/debug/deps/core-abc.rlib");
-    t.touch("target/debug/build/core-abc/build-script-build");
-    t.touch("target/release/cli.exe");
-
-    let got = collect_rel(
-        Walk::new("crates/*/src/**/*.rs", t.root()).unwrap(),
-        t.root(),
+    let t = TmpTree::new(
+        "rust_workspace",
+        &[
+            "Cargo.toml",
+            "Cargo.lock",
+            "crates/core/Cargo.toml",
+            "crates/core/src/lib.rs",
+            "crates/core/src/parser.rs",
+            "crates/core/src/engine/mod.rs",
+            "crates/core/src/engine/backtrack.rs",
+            "crates/core/tests/integration.rs",
+            "crates/cli/Cargo.toml",
+            "crates/cli/src/main.rs",
+            "crates/cli/src/args.rs",
+            "target/debug/deps/core-abc.rlib",
+            "target/debug/build/core-abc/build-script-build",
+            "target/release/cli.exe",
+        ],
     );
-    let expected: BTreeSet<String> = [
-        "crates/cli/src/args.rs",
-        "crates/cli/src/main.rs",
-        "crates/core/src/engine/backtrack.rs",
-        "crates/core/src/engine/mod.rs",
-        "crates/core/src/lib.rs",
-        "crates/core/src/parser.rs",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(got, expected);
+
+    assert_eq!(
+        t.walk(&["crates/*/src/**/*.rs"]),
+        set(&[
+            "crates/cli/src/args.rs",
+            "crates/cli/src/main.rs",
+            "crates/core/src/engine/backtrack.rs",
+            "crates/core/src/engine/mod.rs",
+            "crates/core/src/lib.rs",
+            "crates/core/src/parser.rs",
+        ])
+    );
 }
 
 #[test]
 fn walker_rust_workspace_multi_source_and_tests() {
-    let t = TmpTree::new("rust_ws_set");
-    t.touch("crates/core/src/lib.rs");
-    t.touch("crates/core/tests/integration.rs");
-    t.touch("crates/cli/src/main.rs");
-    t.touch("crates/cli/tests/smoke.rs");
-    t.touch("target/debug/deps/core.rlib");
+    let t = TmpTree::new(
+        "rust_ws_set",
+        &[
+            "crates/core/src/lib.rs",
+            "crates/core/tests/integration.rs",
+            "crates/cli/src/main.rs",
+            "crates/cli/tests/smoke.rs",
+            "target/debug/deps/core.rlib",
+        ],
+    );
 
-    let walker =
-        Walk::from_patterns(["crates/*/src/**/*.rs", "crates/*/tests/**/*.rs"], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = [
-        "crates/cli/src/main.rs",
-        "crates/cli/tests/smoke.rs",
-        "crates/core/src/lib.rs",
-        "crates/core/tests/integration.rs",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["crates/*/src/**/*.rs", "crates/*/tests/**/*.rs"]),
+        set(&[
+            "crates/cli/src/main.rs",
+            "crates/cli/tests/smoke.rs",
+            "crates/core/src/lib.rs",
+            "crates/core/tests/integration.rs",
+        ])
+    );
 }
 
 #[test]
 fn walker_node_project_typescript_sources() {
-    let t = TmpTree::new("node_project");
-    t.touch("package.json");
-    t.touch("tsconfig.json");
-    t.touch("src/index.ts");
-    t.touch("src/components/Button.tsx");
-    t.touch("src/components/Modal.tsx");
-    t.touch("src/utils/math.ts");
-    t.touch("src/utils/strings.ts");
-    t.touch("tests/Button.test.tsx");
-    t.touch("dist/index.js");
-    t.touch("dist/index.d.ts");
-    t.touch("node_modules/react/index.js");
-    t.touch("node_modules/react/index.d.ts");
-    t.touch("node_modules/lodash/src/index.ts");
+    let t = TmpTree::new(
+        "node_project",
+        &[
+            "package.json",
+            "tsconfig.json",
+            "src/index.ts",
+            "src/components/Button.tsx",
+            "src/components/Modal.tsx",
+            "src/utils/math.ts",
+            "src/utils/strings.ts",
+            "tests/Button.test.tsx",
+            "dist/index.js",
+            "dist/index.d.ts",
+            "node_modules/react/index.js",
+            "node_modules/react/index.d.ts",
+            "node_modules/lodash/src/index.ts",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("src/**/*.{ts,tsx}", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = [
-        "src/components/Button.tsx",
-        "src/components/Modal.tsx",
-        "src/index.ts",
-        "src/utils/math.ts",
-        "src/utils/strings.ts",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["src/**/*.{ts,tsx}"]),
+        set(&[
+            "src/components/Button.tsx",
+            "src/components/Modal.tsx",
+            "src/index.ts",
+            "src/utils/math.ts",
+            "src/utils/strings.ts",
+        ])
+    );
 }
 
 #[test]
 fn walker_node_project_sources_and_tests() {
-    let t = TmpTree::new("node_src_and_tests");
-    t.touch("src/Button.tsx");
-    t.touch("src/Button.test.tsx");
-    t.touch("src/utils.ts");
-    t.touch("tests/integration/auth.test.ts");
-    t.touch("node_modules/react/index.js");
+    let t = TmpTree::new(
+        "node_src_and_tests",
+        &[
+            "src/Button.tsx",
+            "src/Button.test.tsx",
+            "src/utils.ts",
+            "tests/integration/auth.test.ts",
+            "node_modules/react/index.js",
+        ],
+    );
 
-    let walker =
-        Walk::from_patterns(["src/**/*.{ts,tsx}", "tests/**/*.test.{ts,tsx}"], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = [
-        "src/Button.test.tsx",
-        "src/Button.tsx",
-        "src/utils.ts",
-        "tests/integration/auth.test.ts",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["src/**/*.{ts,tsx}", "tests/**/*.test.{ts,tsx}"]),
+        set(&[
+            "src/Button.test.tsx",
+            "src/Button.tsx",
+            "src/utils.ts",
+            "tests/integration/auth.test.ts",
+        ])
+    );
 }
 
 #[test]
 fn walker_python_project_source_files() {
-    let t = TmpTree::new("python_project");
-    t.touch("setup.py");
-    t.touch("README.md");
-    t.touch("src/mypackage/__init__.py");
-    t.touch("src/mypackage/core.py");
-    t.touch("src/mypackage/utils/helpers.py");
-    t.touch("src/mypackage/__pycache__/__init__.cpython-311.pyc");
-    t.touch("src/mypackage/__pycache__/core.cpython-311.pyc");
-    t.touch(".venv/bin/python");
-    t.touch(".venv/lib/python3.11/site-packages/pip/__init__.py");
+    let t = TmpTree::new(
+        "python_project",
+        &[
+            "setup.py",
+            "README.md",
+            "src/mypackage/__init__.py",
+            "src/mypackage/core.py",
+            "src/mypackage/utils/helpers.py",
+            "src/mypackage/__pycache__/__init__.cpython-311.pyc",
+            "src/mypackage/__pycache__/core.cpython-311.pyc",
+            ".venv/bin/python",
+            ".venv/lib/python3.11/site-packages/pip/__init__.py",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("src/**/*.py", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = [
-        "src/mypackage/__init__.py",
-        "src/mypackage/core.py",
-        "src/mypackage/utils/helpers.py",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["src/**/*.py"]),
+        set(&[
+            "src/mypackage/__init__.py",
+            "src/mypackage/core.py",
+            "src/mypackage/utils/helpers.py",
+        ])
+    );
 }
 
 #[test]
 fn walker_wide_flat_directory() {
-    let t = TmpTree::new("wide_flat");
+    let t = TmpTree::new("wide_flat", &[]);
     for i in 0..100 {
         t.touch(&format!("files/item_{i}.txt"));
     }
     t.touch("files/README.md");
     t.touch("files/config.json");
 
-    let got = collect_rel(Walk::new("files/*.txt", t.root()).unwrap(), t.root());
+    let got = t.walk(&["files/*.txt"]);
     assert_eq!(got.len(), 100);
     assert!(got.contains("files/item_0.txt"));
     assert!(got.contains("files/item_50.txt"));
@@ -740,44 +666,48 @@ fn walker_wide_flat_directory() {
 
 #[test]
 fn walker_deep_nesting() {
-    let t = TmpTree::new("deep_nest");
-    t.touch("a/b/c/d/e/f/g/h/leaf.rs");
-    t.touch("a/b/c/d/shallow.rs");
-    t.touch("a/shallow.rs");
-    t.touch("unrelated.rs");
+    let t = TmpTree::new(
+        "deep_nest",
+        &[
+            "a/b/c/d/e/f/g/h/leaf.rs",
+            "a/b/c/d/shallow.rs",
+            "a/shallow.rs",
+            "unrelated.rs",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("a/**/*.rs", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = [
-        "a/b/c/d/e/f/g/h/leaf.rs",
-        "a/b/c/d/shallow.rs",
-        "a/shallow.rs",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["a/**/*.rs"]),
+        set(&[
+            "a/b/c/d/e/f/g/h/leaf.rs",
+            "a/b/c/d/shallow.rs",
+            "a/shallow.rs",
+        ])
+    );
 }
 
 #[test]
 fn walker_recursive_suffix_pattern() {
-    let t = TmpTree::new("recursive_suffix");
-    t.touch("dist/bundle.min.js");
-    t.touch("dist/bundle.js");
-    t.touch("vendor/jquery.min.js");
-    t.touch("vendor/jquery.js");
-    t.touch("src/main.ts");
-    t.touch("public/assets/analytics.min.js");
+    let t = TmpTree::new(
+        "recursive_suffix",
+        &[
+            "dist/bundle.min.js",
+            "dist/bundle.js",
+            "vendor/jquery.min.js",
+            "vendor/jquery.js",
+            "src/main.ts",
+            "public/assets/analytics.min.js",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("**/*.min.js", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = [
-        "dist/bundle.min.js",
-        "public/assets/analytics.min.js",
-        "vendor/jquery.min.js",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["**/*.min.js"]),
+        set(&[
+            "dist/bundle.min.js",
+            "public/assets/analytics.min.js",
+            "vendor/jquery.min.js",
+        ])
+    );
 }
 
 #[test]
@@ -785,53 +715,51 @@ fn walker_extglob_non_min_js() {
     // `src/!(*.min).js` → `src/` + literal `!(` + Star + literal
     // `.min).js`. `!` here isn't leading, so it's a literal byte; the
     // pattern matches basenames of the shape `!(<anything>.min).js`.
-    let t = TmpTree::new("non_min_js");
-    t.touch("src/main.js");
-    t.touch("src/utils.js");
-    t.touch("dist/bundle.min.js");
-    t.touch("dist/app.min.js");
-    t.touch("vendor/lib.js");
-    t.touch("README.md");
-    t.touch("src/!(bundle.min).js");
+    let t = TmpTree::new(
+        "non_min_js",
+        &[
+            "src/main.js",
+            "src/utils.js",
+            "dist/bundle.min.js",
+            "dist/app.min.js",
+            "vendor/lib.js",
+            "README.md",
+            "src/!(bundle.min).js",
+        ],
+    );
 
-    let got = collect_rel(Walk::new("src/!(*.min).js", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["src/!(bundle.min).js"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(t.walk(&["src/!(*.min).js"]), set(&["src/!(bundle.min).js"]));
 }
 
 #[test]
 fn walker_literal_directory_target() {
-    let t = TmpTree::new("literal_target");
-    t.touch("target/debug/main");
-    t.touch("target/release/main");
-    t.touch("src/main.rs");
+    let t = TmpTree::new(
+        "literal_target",
+        &["target/debug/main", "target/release/main", "src/main.rs"],
+    );
 
-    let got = collect_rel(Walk::new("target", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["target"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected);
+    assert_eq!(t.walk(&["target"]), set(&["target"]));
 }
 
 #[test]
 fn walker_mixed_tiers_via_from_patterns() {
-    let t = TmpTree::new("mixed_tiers");
-    t.touch("Cargo.toml");
-    t.touch("Cargo.lock");
-    t.touch("README.md");
-    t.touch("src/lib.rs");
-    t.touch("src/cli/main.rs");
-    t.touch("tests/smoke.rs");
-    t.touch("target/debug/deps/crate.rlib");
+    let t = TmpTree::new(
+        "mixed_tiers",
+        &[
+            "Cargo.toml",
+            "Cargo.lock",
+            "README.md",
+            "src/lib.rs",
+            "src/cli/main.rs",
+            "tests/smoke.rs",
+            "target/debug/deps/crate.rlib",
+        ],
+    );
 
-    let walker = Walk::from_patterns(["Cargo.toml", "*.md", "src/**/*.rs"], t.root()).unwrap();
-    let got = collect_rel(walker, t.root());
-    let expected: BTreeSet<String> = ["Cargo.toml", "README.md", "src/cli/main.rs", "src/lib.rs"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["Cargo.toml", "*.md", "src/**/*.rs"]),
+        set(&["Cargo.toml", "README.md", "src/cli/main.rs", "src/lib.rs"])
+    );
 }
 
 /// Serializes tests that mutate process-wide CWD so they don't race
@@ -842,10 +770,7 @@ static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[test]
 fn walker_default_options_walks_cwd() {
     let _guard = CWD_LOCK.lock().expect("cwd lock poisoned");
-    let t = TmpTree::new("default_cwd");
-    t.touch("a.rs");
-    t.touch("b.rs");
-    t.touch("c.md");
+    let t = TmpTree::new("default_cwd", &["a.rs", "b.rs", "c.md"]);
 
     let orig = std::env::current_dir().expect("save cwd");
     std::env::set_current_dir(t.root()).expect("chdir into tmp");
@@ -861,8 +786,7 @@ fn walker_default_options_walks_cwd() {
 
     std::env::set_current_dir(&orig).expect("restore cwd");
 
-    let expected: BTreeSet<String> = ["a.rs", "b.rs"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(files, expected);
+    assert_eq!(files, set(&["a.rs", "b.rs"]));
 }
 
 #[test]
@@ -870,10 +794,8 @@ fn walker_base_locked_to_construct_time_cwd() {
     // Proves `std::path::absolute`-based base locking: changing CWD after
     // construction does NOT redirect the walker to a different directory.
     let _guard = CWD_LOCK.lock().expect("cwd lock poisoned");
-    let t1 = TmpTree::new("locked_t1");
-    t1.touch("only_in_t1.rs");
-    let t2 = TmpTree::new("locked_t2");
-    t2.touch("only_in_t2.rs");
+    let t1 = TmpTree::new("locked_t1", &["only_in_t1.rs"]);
+    let t2 = TmpTree::new("locked_t2", &["only_in_t2.rs"]);
 
     let orig = std::env::current_dir().expect("save cwd");
     std::env::set_current_dir(t1.root()).expect("chdir into t1");
@@ -892,9 +814,9 @@ fn walker_base_locked_to_construct_time_cwd() {
 
     std::env::set_current_dir(&orig).expect("restore cwd");
 
-    let expected: BTreeSet<String> = ["only_in_t1.rs"].iter().map(|s| s.to_string()).collect();
     assert_eq!(
-        files, expected,
+        files,
+        set(&["only_in_t1.rs"]),
         "walker should be locked to t1 (its construct-time CWD), not t2"
     );
 }
@@ -904,8 +826,7 @@ fn walker_relative_base_yields_absolute_paths() {
     // A relative input base (here `.` via WalkOptions::default()) should be
     // absolutized at construction, so yielded paths come back absolute.
     let _guard = CWD_LOCK.lock().expect("cwd lock poisoned");
-    let t = TmpTree::new("rel_base_abs_out");
-    t.touch("foo.rs");
+    let t = TmpTree::new("rel_base_abs_out", &["foo.rs"]);
 
     let orig = std::env::current_dir().expect("save cwd");
     std::env::set_current_dir(t.root()).expect("chdir into tmp");
@@ -932,10 +853,8 @@ fn walker_leading_slash_stays_within_base() {
     // user input as patterns rely on `opts.base` being a real sandbox;
     // silently propagating `Path::join`'s "absolute replaces base" would
     // be a path-traversal class of bug.
-    let t_sandbox = TmpTree::new("leading_slash_sandbox");
-    t_sandbox.touch("x.ts");
-    let t_escape = TmpTree::new("leading_slash_escape_target");
-    t_escape.touch("escape_me.ts");
+    let t_sandbox = TmpTree::new("leading_slash_sandbox", &["x.ts"]);
+    let t_escape = TmpTree::new("leading_slash_escape_target", &["escape_me.ts"]);
 
     let pattern = format!("{}/*.ts", t_escape.root().display());
     let got = collect_rel(
@@ -952,10 +871,7 @@ fn walker_leading_slash_stays_within_base() {
 
 #[test]
 fn dir_entry_file_type_distinguishes_file_from_dir() {
-    let t = TmpTree::new("ft_file_vs_dir");
-    t.touch("readme.md");
-    t.mkdir("docs");
-    t.touch("docs/intro.md");
+    let t = TmpTree::new("ft_file_vs_dir", &["readme.md", "docs/intro.md"]);
 
     // Match both: files at any depth and the `docs` dir itself.
     let mut files = 0u32;
@@ -974,10 +890,7 @@ fn dir_entry_file_type_distinguishes_file_from_dir() {
 
 #[test]
 fn dir_entry_depth_tracks_descent() {
-    let t = TmpTree::new("depth");
-    t.touch("a.rs"); // depth 1
-    t.touch("b/c.rs"); // depth 2
-    t.touch("b/d/e.rs"); // depth 3
+    let t = TmpTree::new("depth", &["a.rs", "b/c.rs", "b/d/e.rs"]);
 
     let mut depths: Vec<usize> = Walk::new("**/*.rs", t.root())
         .unwrap()
@@ -989,8 +902,7 @@ fn dir_entry_depth_tracks_descent() {
 
 #[test]
 fn dir_entry_file_name_returns_leaf() {
-    let t = TmpTree::new("leaf_name");
-    t.touch("nested/deeply/target.txt");
+    let t = TmpTree::new("leaf_name", &["nested/deeply/target.txt"]);
 
     let entry = Walk::new("**/target.txt", t.root())
         .unwrap()
@@ -1006,7 +918,7 @@ fn dir_entry_metadata_succeeds_for_regular_file() {
     // Mostly a smoke test: the Windows code path caches metadata from
     // readdir, the Unix path does a fresh symlink_metadata — both should
     // succeed for a plain file, and the file size should be recorded.
-    let t = TmpTree::new("meta_smoke");
+    let t = TmpTree::new("meta_smoke", &[]);
     let path = t.root().join("hello.txt");
     fs::write(&path, b"hi there").expect("write file");
 
@@ -1029,25 +941,17 @@ fn walker_follow_links_off_drops_symlinks() {
     // emitted, not descended). Default is `true`, which is what the
     // rest of the test corpus exercises.
     use std::os::unix::fs::symlink;
-    let t = TmpTree::new("follow_off");
-    t.touch("real.txt");
+    let t = TmpTree::new("follow_off", &["real.txt"]);
     symlink(t.root().join("real.txt"), t.root().join("link.txt")).expect("create file symlink");
 
-    let got = collect_rel(
-        Walk::new(
-            "*.txt",
-            WalkOptions {
-                follow_links: false,
-                ..WalkOptions::new(t.root())
-            },
-        )
-        .unwrap(),
-        t.root(),
-    );
+    let opts = WalkOptions {
+        follow_links: false,
+        ..WalkOptions::new(t.root())
+    };
     // Only the real file — symlink dropped.
-    let want: BTreeSet<String> = std::iter::once("real.txt".to_string()).collect();
     assert_eq!(
-        got, want,
+        t.walk_with(&["*.txt"], opts),
+        set(&["real.txt"]),
         "follow_links:false should drop symlinks entirely"
     );
 }
@@ -1058,8 +962,7 @@ fn walker_is_dir_follows_the_link() {
     // `is_dir` says what the walk took the entry for: a link to a folder
     // is a folder (and is descended), while `file_type` keeps the link.
     use std::os::unix::fs::symlink;
-    let t = TmpTree::new("is_dir");
-    t.touch("real/a.txt");
+    let t = TmpTree::new("is_dir", &["real/a.txt"]);
     symlink(t.root().join("real"), t.root().join("link")).expect("create dir symlink");
 
     let mut dirs = BTreeSet::new();
@@ -1082,17 +985,8 @@ fn walker_is_dir_follows_the_link() {
             files.insert(rel);
         }
     }
-    assert_eq!(
-        dirs,
-        ["link", "real"].into_iter().map(String::from).collect()
-    );
-    assert_eq!(
-        files,
-        ["link/a.txt", "real/a.txt"]
-            .into_iter()
-            .map(String::from)
-            .collect()
-    );
+    assert_eq!(dirs, set(&["link", "real"]));
+    assert_eq!(files, set(&["link/a.txt", "real/a.txt"]));
 }
 
 #[cfg(target_os = "linux")]
@@ -1102,8 +996,7 @@ fn walker_skips_a_name_that_is_not_utf8() {
     // file, as the JS walker skips it (WALKER_SPEC §7.1).
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
-    let t = TmpTree::new("nonutf8");
-    t.touch("src/ok.txt");
+    let t = TmpTree::new("nonutf8", &["src/ok.txt"]);
     let bad = t.root().join(OsStr::from_bytes(b"caf\xe9"));
     if fs::create_dir(&bad).is_err() {
         return; // the file system refuses such names
@@ -1112,13 +1005,7 @@ fn walker_skips_a_name_that_is_not_utf8() {
     fs::File::create(t.root().join(OsStr::from_bytes(b"caf\xe9.txt"))).expect("create file");
 
     for patterns in [&["**/*.txt"][..], &["*/*.txt"], &["*.txt", "*/*.txt"]] {
-        let walker = Walk::from_patterns(patterns.iter().copied(), WalkOptions::new(t.root()));
-        let got = collect_rel(walker.expect("compile"), t.root());
-        assert_eq!(
-            got,
-            BTreeSet::from(["src/ok.txt".to_string()]),
-            "{patterns:?}"
-        );
+        assert_eq!(t.walk(patterns), set(&["src/ok.txt"]), "{patterns:?}");
     }
 }
 
@@ -1129,23 +1016,16 @@ fn walker_follow_links_on_breaks_cycles() {
     // cause infinite descent without cycle detection: a link back to
     // its ancestor is walked once more, then the cycle check stops it.
     use std::os::unix::fs::symlink;
-    let t = TmpTree::new("follow_cycle");
-    t.touch("a.txt");
+    let t = TmpTree::new("follow_cycle", &["a.txt"]);
     // `t/loop` → `t` (the parent directory). Walking `t` would
     // visit `t/loop`, which IS `t`, which contains `loop` again …
     symlink(t.root(), t.root().join("loop")).expect("create dir-cycle symlink");
 
-    let got = collect_rel(
-        Walk::new(
-            "**/*.txt",
-            WalkOptions {
-                follow_links: true,
-                ..WalkOptions::new(t.root())
-            },
-        )
-        .unwrap(),
-        t.root(),
-    );
+    let opts = WalkOptions {
+        follow_links: true,
+        ..WalkOptions::new(t.root())
+    };
+    let got = t.walk_with(&["**/*.txt"], opts);
     // Without cycle detection this would loop forever; with it the
     // descent into `loop` stops at the first re-entry, so the result is
     // finite and holds the real file.
@@ -1166,44 +1046,28 @@ fn walker_follow_links_on_breaks_cycles() {
 /// (`package`/`tsconfig`), which names no directory.
 #[test]
 fn walker_c1_multi_literal_shared_suffix() {
-    let t = TmpTree::new("c1-multi-lit");
-    t.touch("package.json");
-    t.touch("tsconfig.json");
-    t.touch("readme.md");
-    let got = collect_rel(
-        Walk::from_patterns(["package.json", "tsconfig.json"], t.root()).unwrap(),
-        t.root(),
+    let t = TmpTree::new(
+        "c1-multi-lit",
+        &["package.json", "tsconfig.json", "readme.md"],
     );
-    let expected: BTreeSet<String> = ["package.json", "tsconfig.json"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    assert_eq!(
+        t.walk(&["package.json", "tsconfig.json"]),
+        set(&["package.json", "tsconfig.json"])
+    );
 }
 
 /// The same, via a leading brace whose branches share a suffix.
 #[test]
 fn walker_c1_brace_shared_suffix() {
-    let t = TmpTree::new("c1-brace");
-    t.touch("index.ts");
-    t.touch("main.ts");
-    t.touch("other.ts");
-    let got = collect_rel(Walk::new("{index,main}.ts", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["index.ts", "main.ts"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(got, expected);
+    let t = TmpTree::new("c1-brace", &["index.ts", "main.ts", "other.ts"]);
+    assert_eq!(t.walk(&["{index,main}.ts"]), set(&["index.ts", "main.ts"]));
 }
 
 /// A `..` in a pattern must not let the walk escape `base`, even
 /// though the sibling directory exists on disk.
 #[test]
 fn walker_c2_dotdot_stays_in_base() {
-    let outer = TmpTree::new("c2-outer");
-    outer.mkdir("sandbox");
-    outer.touch("secret/passwd.txt");
-    outer.touch("sandbox/ok.txt");
+    let outer = TmpTree::new("c2-outer", &["secret/passwd.txt", "sandbox/ok.txt"]);
     let base = outer.root().join("sandbox");
 
     for pat in ["../secret/*.txt", "../**/*.txt", "a/../../secret/*.txt"] {
@@ -1215,7 +1079,7 @@ fn walker_c2_dotdot_stays_in_base() {
     }
     // A normal in-base pattern still works.
     let got = collect_rel(Walk::new("*.txt", base.clone()).unwrap(), &base);
-    assert_eq!(got, ["ok.txt"].iter().map(|s| s.to_string()).collect());
+    assert_eq!(got, set(&["ok.txt"]));
 }
 
 /// Seeding honors `follow_links = false`: a static prefix that lies on
@@ -1225,8 +1089,7 @@ fn walker_c2_dotdot_stays_in_base() {
 #[cfg(unix)]
 fn walker_seed_symlink_follow_false() {
     use std::os::unix::fs::symlink;
-    let t = TmpTree::new("seed-symlink");
-    t.touch("real/a.txt");
+    let t = TmpTree::new("seed-symlink", &["real/a.txt"]);
     symlink(t.root().join("real"), t.root().join("link")).unwrap();
     symlink(t.root().join("real/a.txt"), t.root().join("flink.txt")).unwrap();
 
@@ -1238,19 +1101,19 @@ fn walker_seed_symlink_follow_false() {
 
     // follow = false: seeding through the symlinked prefix is suppressed.
     for pat in ["link/*.txt", "flink.txt"] {
-        let got = collect_rel(Walk::new(pat, opts(false)).unwrap(), t.root());
+        let got = t.walk_with(&[pat], opts(false));
         assert!(
             got.is_empty(),
             "follow=false seeded through symlink {pat:?}: {got:?}"
         );
     }
     // A root walk (empty prefix) reaches only the real file, not the links.
-    let got = collect_rel(Walk::new("**/*.txt", opts(false)).unwrap(), t.root());
-    assert_eq!(got, ["real/a.txt"].iter().map(|s| s.to_string()).collect());
+    let got = t.walk_with(&["**/*.txt"], opts(false));
+    assert_eq!(got, set(&["real/a.txt"]));
 
     // follow = true: the seed is reached through the symlink.
-    let got = collect_rel(Walk::new("link/*.txt", opts(true)).unwrap(), t.root());
-    assert_eq!(got, ["link/a.txt"].iter().map(|s| s.to_string()).collect());
+    let got = t.walk_with(&["link/*.txt"], opts(true));
+    assert_eq!(got, set(&["link/a.txt"]));
 }
 
 #[test]
@@ -1258,9 +1121,7 @@ fn walker_ignore_applies_to_seeded_prefixes() {
     // Seeds pass the ignore rules as walked entries do: a literal file,
     // a seeded folder and a seed under an ignored ancestor are all
     // dropped.
-    let t = TmpTree::new("ignore_seed");
-    t.touch("src/generated/api.ts");
-    t.touch("src/index.ts");
+    let t = TmpTree::new("ignore_seed", &["src/generated/api.ts", "src/index.ts"]);
 
     let opts = |ignore: &[&str]| WalkOptions {
         ignore: ignore.iter().map(|s| s.to_string()).collect(),
@@ -1268,64 +1129,46 @@ fn walker_ignore_applies_to_seeded_prefixes() {
     };
 
     // Seeded literal FILE.
-    let got = collect_rel(
-        Walk::new("src/generated/api.ts", opts(&["**/generated/**"])).unwrap(),
-        t.root(),
-    );
+    let got = t.walk_with(&["src/generated/api.ts"], opts(&["**/generated/**"]));
     assert!(got.is_empty(), "seeded file escaped ignore: {got:?}");
 
     // §4.2 equivalence: the auto-split negative must behave identically.
-    let got = collect_rel(
-        Walk::from_patterns(["src/generated/api.ts", "!**/generated/**"], t.root()).unwrap(),
-        t.root(),
-    );
+    let got = t.walk(&["src/generated/api.ts", "!**/generated/**"]);
     assert!(
         got.is_empty(),
         "auto-split negative escaped seeding: {got:?}"
     );
 
     // Seeded DIR whose own relative path is ignored.
-    let got = collect_rel(
-        Walk::new("src/generated/*.ts", opts(&["**/generated"])).unwrap(),
-        t.root(),
-    );
+    let got = t.walk_with(&["src/generated/*.ts"], opts(&["**/generated"]));
     assert!(got.is_empty(), "seeded dir escaped ignore: {got:?}");
 
     // Seeded prefix under an ignored ANCESTOR directory.
-    let got = collect_rel(
-        Walk::new("src/generated/api.ts", opts(&["src"])).unwrap(),
-        t.root(),
-    );
+    let got = t.walk_with(&["src/generated/api.ts"], opts(&["src"]));
     assert!(
         got.is_empty(),
         "seed under ignored ancestor escaped: {got:?}"
     );
 
     // Control: the non-seeded glob form agrees.
-    let got = collect_rel(
-        Walk::new("src/**/*.ts", opts(&["**/generated/**"])).unwrap(),
-        t.root(),
-    );
-    let expected: BTreeSet<String> = ["src/index.ts"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected);
+    let got = t.walk_with(&["src/**/*.ts"], opts(&["**/generated/**"]));
+    assert_eq!(got, set(&["src/index.ts"]));
 }
 
 #[test]
 fn walker_slash_bang_routes_to_ignore() {
     // Normalization (§4.3) runs before the `!` split (§4.2): `/!x` ≡
     // `!x`, an ignore entry, never whole-pattern negation.
-    let t = TmpTree::new("slash_bang");
-    t.touch("a.txt");
-    t.touch("b.txt");
+    let t = TmpTree::new("slash_bang", &["a.txt", "b.txt"]);
 
-    let got = collect_rel(
-        Walk::from_patterns(["**/*.txt", "/!b.txt"], t.root()).unwrap(),
-        t.root(),
+    let got = t.walk(&["**/*.txt", "/!b.txt"]);
+    assert_eq!(
+        got,
+        set(&["a.txt"]),
+        "`/!b.txt` must act as ignore, not negation"
     );
-    let expected: BTreeSet<String> = ["a.txt"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(got, expected, "`/!b.txt` must act as ignore, not negation");
 
-    let got = collect_rel(Walk::new("/!b.txt", t.root()).unwrap(), t.root());
+    let got = t.walk(&["/!b.txt"]);
     assert!(
         got.is_empty(),
         "ignore-only input must yield nothing: {got:?}"
@@ -1337,14 +1180,13 @@ fn walker_slash_bang_routes_to_ignore() {
 fn walker_seed_emits_broken_symlink_like_walk() {
     // A literal seed yields a broken symlink as the walk does (§9.4,
     // §10): the seed is `lstat`-ed, so the link is an entry either way.
-    let t = TmpTree::new("broken_seed");
-    t.mkdir("links");
+    let t = TmpTree::new("broken_seed", &["links/"]);
     std::os::unix::fs::symlink("/nonexistent-target-xyz", t.root().join("links/broken.txt"))
         .unwrap();
 
-    let via_walk = collect_rel(Walk::new("links/*.txt", t.root()).unwrap(), t.root());
-    let via_seed = collect_rel(Walk::new("links/broken.txt", t.root()).unwrap(), t.root());
-    let expected: BTreeSet<String> = ["links/broken.txt"].iter().map(|s| s.to_string()).collect();
+    let via_walk = t.walk(&["links/*.txt"]);
+    let via_seed = t.walk(&["links/broken.txt"]);
+    let expected = set(&["links/broken.txt"]);
     assert_eq!(via_walk, expected);
     assert_eq!(via_seed, expected, "seed must surface the broken symlink");
 
@@ -1364,8 +1206,7 @@ fn walker_seed_surfaces_permission_error() {
     use std::os::unix::fs::PermissionsExt;
     // An EACCES on a seed's lstat is yielded as one Io error, as a root
     // walk yields it per entry.
-    let t = TmpTree::new("eacces_seed");
-    t.touch("locked/b.txt");
+    let t = TmpTree::new("eacces_seed", &["locked/b.txt"]);
     let locked = t.root().join("locked");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
 
@@ -1387,15 +1228,14 @@ fn walker_seed_surfaces_permission_error() {
 fn walker_normalizes_dot_and_doubleslash_patterns() {
     // `./`, `//` and `.` spellings normalize to the walked-path spelling
     // (§4.3): same path, same depth; a bare `.` matches nothing.
-    let t = TmpTree::new("normalize");
-    t.touch("a/b/x.txt");
+    let t = TmpTree::new("normalize", &["a/b/x.txt"]);
 
     for pat in ["./a/b/*.txt", "a//b/*.txt", "a/./b/*.txt", ".//a/b/*.txt"] {
-        let got = collect_rel(Walk::new(pat, t.root()).unwrap(), t.root());
-        let expected: BTreeSet<String> = ["a/b/x.txt"].iter().map(|s| s.to_string()).collect();
+        let got = t.walk(&[pat]);
         assert_eq!(
-            got, expected,
-            "pattern {pat:?} must emit the clean spelling"
+            got,
+            set(&["a/b/x.txt"]),
+            "{pat:?} must emit the clean spelling"
         );
     }
 
@@ -1406,7 +1246,7 @@ fn walker_normalizes_dot_and_doubleslash_patterns() {
         .expect("no error");
     assert_eq!(entry.depth(), 3, "normalized prefix must not inflate depth");
 
-    let got = collect_rel(Walk::new(".", t.root()).unwrap(), t.root());
+    let got = t.walk(&["."]);
     assert!(got.is_empty(), "`.` must not emit the base itself: {got:?}");
 }
 
@@ -1414,10 +1254,7 @@ fn walker_normalizes_dot_and_doubleslash_patterns() {
 fn walker_seed_order_is_forward() {
     // Seeds drain in sorted prefix order (WALKER_SPEC §7.2 step 1), as
     // in JS.
-    let t = TmpTree::new("seed_order");
-    t.touch("sa/1.txt");
-    t.touch("sb/2.txt");
-    t.touch("sc/3.txt");
+    let t = TmpTree::new("seed_order", &["sa/1.txt", "sb/2.txt", "sc/3.txt"]);
 
     let got: Vec<String> = Walk::new("{sc,sa,sb}/*.txt", t.root())
         .unwrap()
@@ -1441,13 +1278,12 @@ fn walker_seed_order_is_forward() {
 fn walker_seed_emits_looping_symlink_like_walk() {
     // A seed part is lstat-ed, so a self-loop symlink (ELOOP) is an
     // entry: seed and walk agree on emitting it.
-    let t = TmpTree::new("loop_seed");
-    t.mkdir("links");
+    let t = TmpTree::new("loop_seed", &["links/"]);
     std::os::unix::fs::symlink("loop.txt", t.root().join("links/loop.txt")).unwrap();
 
-    let expected: BTreeSet<String> = ["links/loop.txt"].iter().map(|s| s.to_string()).collect();
-    let via_walk = collect_rel(Walk::new("links/*.txt", t.root()).unwrap(), t.root());
-    let via_seed = collect_rel(Walk::new("links/loop.txt", t.root()).unwrap(), t.root());
+    let expected = set(&["links/loop.txt"]);
+    let via_walk = t.walk(&["links/*.txt"]);
+    let via_seed = t.walk(&["links/loop.txt"]);
     assert_eq!(via_walk, expected);
     assert_eq!(via_seed, expected);
 }
@@ -1465,8 +1301,7 @@ fn walker_missing_base_yields_error() {
 fn walker_bad_base_fails_for_every_pattern_shape() {
     // The base is checked whatever the pattern's shape: a missing or
     // non-folder base gives one Io error, never a silent empty walk.
-    let t = TmpTree::new("bad_base");
-    t.touch("file.txt");
+    let t = TmpTree::new("bad_base", &["file.txt"]);
     let file = t.root().join("file.txt");
     for base in [Path::new("/nonexistent-globstar-base"), file.as_path()] {
         for pattern in ["src/*.rs", "Cargo.toml", "**/*.rs"] {
@@ -1484,16 +1319,11 @@ fn walker_bad_base_fails_for_every_pattern_shape() {
 fn walker_seed_with_an_empty_segment_is_dropped() {
     // `{a,/b}` gives the prefix `/b`: no walked path holds an empty
     // segment, so a root walk never reaches it.
-    let t = TmpTree::new("empty_seg");
-    t.touch("a/x");
-    t.touch("a/b/x");
-    t.touch("b/x");
-    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
-    let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
-    assert_eq!(walk("{a,/b}/x"), set(&["a/x"]));
-    assert_eq!(walk("{/a,/b}/x"), set(&[]));
+    let t = TmpTree::new("empty_seg", &["a/x", "a/b/x", "b/x"]);
+    assert_eq!(t.walk(&["{a,/b}/x"]), set(&["a/x"]));
+    assert_eq!(t.walk(&["{/a,/b}/x"]), set(&[]));
     // A written `//` is collapsed first (WALKER_SPEC §4.3).
-    assert_eq!(walk("{a//b,b}/x"), set(&["a/b/x", "b/x"]));
+    assert_eq!(t.walk(&["{a//b,b}/x"]), set(&["a/b/x", "b/x"]));
 }
 
 #[cfg(unix)]
@@ -1502,14 +1332,11 @@ fn walker_seed_errors_follow_the_root_walk() {
     // Nothing can be below a looping link, past a name too long for
     // the filesystem, or at a name with a NUL: a root walk lists none of
     // them, so a seed there is silent too.
-    let t = TmpTree::new("seed_errors");
-    t.touch("ok.txt");
+    let t = TmpTree::new("seed_errors", &["ok.txt"]);
     std::os::unix::fs::symlink("loop", t.root().join("loop")).unwrap();
-    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
-    let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
-    assert_eq!(walk("{ok.txt,loop/x.txt}"), set(&["ok.txt"]));
-    assert_eq!(walk(&("a".repeat(300) + "/*.txt")), set(&[]));
-    assert_eq!(walk("{ok.txt,a\0b/x.txt}"), set(&["ok.txt"]));
+    assert_eq!(t.walk(&["{ok.txt,loop/x.txt}"]), set(&["ok.txt"]));
+    assert_eq!(t.walk(&[&("a".repeat(300) + "/*.txt")]), set(&[]));
+    assert_eq!(t.walk(&["{ok.txt,a\0b/x.txt}"]), set(&["ok.txt"]));
 }
 
 #[cfg(unix)]
@@ -1517,10 +1344,9 @@ fn walker_seed_errors_follow_the_root_walk() {
 fn walker_seed_through_a_symlink_knows_its_cycle() {
     // A root walk reaches `a/link` holding the link's target, so it does
     // not go round `a/link/link`; a seed must start the same way.
-    let t = TmpTree::new("seed_cycle");
-    t.touch("a/x.txt");
+    let t = TmpTree::new("seed_cycle", &["a/x.txt"]);
     std::os::unix::fs::symlink(".", t.root().join("a/link")).unwrap();
-    let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
+    let walk = |p: &str| t.walk(&[p]);
     for (seeded, root) in [
         ("a/link/**/*.txt", "*/link/**/*.txt"),
         ("a/link/link/**/*.txt", "*/link/link/**/*.txt"),
@@ -1528,10 +1354,7 @@ fn walker_seed_through_a_symlink_knows_its_cycle() {
     ] {
         assert_eq!(walk(seeded), walk(root), "{seeded}");
     }
-    assert_eq!(
-        walk("a/link/**/*.txt"),
-        ["a/link/x.txt"].iter().map(|s| s.to_string()).collect()
-    );
+    assert_eq!(walk("a/link/**/*.txt"), set(&["a/link/x.txt"]));
 }
 
 #[test]
@@ -1539,21 +1362,15 @@ fn walker_trailing_dot_names_the_folder() {
     // `d/.` is the folder `d` (`d/`, WALKER_SPEC §4.3), so `*/.` names
     // folders only. As a pattern it yields the folders it names;
     // as an ignore entry it prunes them (§3.2).
-    let t = TmpTree::new("trailing_dot");
-    t.touch("x.txt");
-    t.touch("d/y.txt");
-    t.touch("d/e/z.txt");
-    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
-    let walk = |p: &str| collect_rel(Walk::new(p, t.root()).unwrap(), t.root());
-    assert_eq!(walk("*/."), set(&["d"]));
-    assert_eq!(walk("**/."), set(&["d", "d/e"]));
+    let t = TmpTree::new("trailing_dot", &["x.txt", "d/y.txt", "d/e/z.txt"]);
+    assert_eq!(t.walk(&["*/."]), set(&["d"]));
+    assert_eq!(t.walk(&["**/."]), set(&["d", "d/e"]));
     let ignoring = |entry: &str| {
         let opts = WalkOptions {
-            base: t.root().to_path_buf(),
             ignore: vec![entry.to_string()],
-            ..WalkOptions::default()
+            ..WalkOptions::new(t.root())
         };
-        collect_rel(Walk::new("**", opts).unwrap(), t.root())
+        t.walk_with(&["**"], opts)
     };
     assert_eq!(ignoring("*/."), set(&["x.txt"]));
     assert_eq!(ignoring("d/e/."), set(&["x.txt", "d", "d/y.txt"]));
@@ -1565,10 +1382,10 @@ fn walker_base_resolves_dot_dot_as_text() {
     // As Node's `path.resolve`: `jump/..` is the folder holding `jump`,
     // not the parent of the link's target, and `..` never reaches the
     // output.
-    let t = TmpTree::new("base_dotdot");
-    t.touch("top.txt");
-    t.touch("real/inner/in.txt");
-    t.touch("real/r.txt");
+    let t = TmpTree::new(
+        "base_dotdot",
+        &["top.txt", "real/inner/in.txt", "real/r.txt"],
+    );
     std::os::unix::fs::symlink("real/inner", t.root().join("jump")).unwrap();
     let base = t.root().join("jump/..");
     let got: Vec<PathBuf> = Walk::new("*.txt", base.as_path())
@@ -1581,15 +1398,14 @@ fn walker_base_resolves_dot_dot_as_text() {
         Walk::new("*.txt", roundabout.as_path()).unwrap(),
         &t.root().join("real"),
     );
-    assert_eq!(got, ["r.txt"].iter().map(|s| s.to_string()).collect());
+    assert_eq!(got, set(&["r.txt"]));
 }
 
 #[test]
 fn walker_empty_base_is_the_current_folder() {
     // As `path.resolve("")` in JS.
     let _guard = CWD_LOCK.lock().expect("cwd lock poisoned");
-    let t = TmpTree::new("empty_base");
-    t.touch("here.txt");
+    let t = TmpTree::new("empty_base", &["here.txt"]);
     let orig = std::env::current_dir().expect("save cwd");
     std::env::set_current_dir(t.root()).expect("chdir into tmp");
     let here = std::env::current_dir().expect("cwd");
@@ -1603,12 +1419,7 @@ fn walker_empty_base_is_the_current_folder() {
 #[test]
 fn walker_error_names_the_pattern_as_written() {
     let err = Walk::from_patterns(["src/**", "!src/[z-a]"], ".").unwrap_err();
-    let WalkError::InvalidPattern {
-        pattern, reason, ..
-    } = &err
-    else {
-        panic!("{err:?}");
-    };
+    let (pattern, reason, _) = invalid(&err);
     assert_eq!(pattern, "!src/[z-a]");
     assert!(
         reason.contains("byte 5") && reason.contains("'src/[z-a]'"),
@@ -1623,13 +1434,12 @@ fn walker_error_names_the_pattern_as_written() {
 fn walker_seeds_see_the_tree_when_iterated() {
     // Seeds are laid out on the first `next()`, as folders are read:
     // a file gone by then is gone for both.
-    let t = TmpTree::new("lazy_seed");
-    t.touch("a.txt");
+    let t = TmpTree::new("lazy_seed", &["a.txt"]);
     let literal = Walk::new("a.txt", t.root()).unwrap();
     let glob = Walk::new("*.txt", t.root()).unwrap();
     fs::remove_file(t.root().join("a.txt")).unwrap();
-    assert_eq!(collect_rel(literal, t.root()), BTreeSet::new());
-    assert_eq!(collect_rel(glob, t.root()), BTreeSet::new());
+    assert_eq!(collect_rel(literal, t.root()), set(&[]));
+    assert_eq!(collect_rel(glob, t.root()), set(&[]));
 }
 
 #[cfg(unix)]
@@ -1640,9 +1450,7 @@ fn walker_skips_a_subtree_the_ignore_covers() {
     // no error. (The entry does not match `node_modules/` itself, so
     // only the all-below check can prune it.)
     use std::os::unix::fs::PermissionsExt;
-    let t = TmpTree::new("ignore_prune");
-    t.touch("src/a.js");
-    t.touch("node_modules/p/f.js");
+    let t = TmpTree::new("ignore_prune", &["src/a.js", "node_modules/p/f.js"]);
     let locked = t.root().join("node_modules");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
     let readable = fs::read_dir(&locked).is_ok(); // root reads anything
@@ -1667,15 +1475,10 @@ fn walker_skips_a_subtree_the_ignore_covers() {
 #[test]
 fn walker_bangs_exposed_by_normalization_count_too() {
     // `!/!x` ≡ `!!x` ≡ `x`: a `/` between two `!` runs hides neither.
-    let t = TmpTree::new("bang_fold");
-    t.touch("x");
-    t.touch("y");
-    t.touch("d/z");
-    let set = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
-    let walk = |ps: &[&str]| collect_rel(Walk::from_patterns(ps, t.root()).unwrap(), t.root());
-    assert_eq!(walk(&["!/!x"]), set(&["x"]));
-    assert_eq!(walk(&["**", "!!/!x"]), set(&["y", "d", "d/z"]));
-    assert_eq!(walk(&["**", "!/!/!x"]), set(&["y", "d", "d/z"]));
+    let t = TmpTree::new("bang_fold", &["x", "y", "d/z"]);
+    assert_eq!(t.walk(&["!/!x"]), set(&["x"]));
+    assert_eq!(t.walk(&["**", "!!/!x"]), set(&["y", "d", "d/z"]));
+    assert_eq!(t.walk(&["**", "!/!/!x"]), set(&["y", "d", "d/z"]));
 }
 
 #[test]
@@ -1688,12 +1491,7 @@ fn walker_refuses_an_ignore_entry_that_starts_with_bang() {
             ..WalkOptions::default()
         };
         let err = Walk::new("**", opts).unwrap_err();
-        let WalkError::InvalidPattern {
-            pattern, source, ..
-        } = &err
-        else {
-            panic!("{err:?}");
-        };
+        let (pattern, _, source) = invalid(&err);
         assert_eq!(pattern, "!src/**");
         assert!(source.is_none());
         assert!(err.to_string().contains("cannot start with `!`"), "{err}");
@@ -1703,8 +1501,7 @@ fn walker_refuses_an_ignore_entry_that_starts_with_bang() {
 #[test]
 fn walker_takes_any_path_like_base() {
     // `&String`, `&OsStr` and `OsString` convert like `&str` and paths.
-    let t = TmpTree::new("path_like");
-    t.touch("a.txt");
+    let t = TmpTree::new("path_like", &["a.txt"]);
     let s = t.root().to_string_lossy().into_owned();
     let os = t.root().as_os_str();
     for walk in [
@@ -1731,13 +1528,8 @@ fn walker_pattern_error_keeps_its_glob_error() {
 fn walker_slash_only_pattern_is_dropped() {
     // A pattern that normalizes to nothing selects nothing — it must not
     // poison the sibling patterns.
-    let t = TmpTree::new("slash_only");
-    t.touch("a.txt");
-    let got = collect_rel(
-        Walk::from_patterns(["*.txt", "//"], t.root()).unwrap(),
-        t.root(),
-    );
-    assert_eq!(got, ["a.txt"].iter().map(|s| s.to_string()).collect());
+    let t = TmpTree::new("slash_only", &["a.txt"]);
+    assert_eq!(t.walk(&["*.txt", "//"]), set(&["a.txt"]));
 }
 
 // Windows: a seed reaches only what a root walk lists, under the spelling
@@ -1745,10 +1537,7 @@ fn walker_slash_only_pattern_is_dropped() {
 #[cfg(windows)]
 #[test]
 fn windows_seeds_reach_what_a_root_walk_lists() {
-    let t = TmpTree::new("win-seeds");
-    t.touch("src/a.ts");
-    t.touch("src/sub/b.ts");
-    t.touch("secret/key.pem");
+    let t = TmpTree::new("win-seeds", &["src/a.ts", "src/sub/b.ts", "secret/key.pem"]);
     let base = t.root();
     let walk = |patterns: &[&str], ignore: &[&str]| -> Vec<String> {
         let mut opts = WalkOptions::new(base);
@@ -1807,7 +1596,7 @@ fn windows_seeds_reach_what_a_root_walk_lists() {
 // names as listed, never matches. Twin of the check in walk.mjs.
 #[test]
 fn a_seed_finds_a_name_only_as_listed() {
-    let t = TmpTree::new("nfd");
+    let t = TmpTree::new("nfd", &[]);
     let nfd = "e\u{301}";
     // A file system that does not keep the name as given (wine's) has
     // nothing to test.
@@ -1823,32 +1612,25 @@ fn a_seed_finds_a_name_only_as_listed() {
     if !kept {
         return;
     }
-    let walk = |pattern: &str| collect_rel(Walk::new(pattern, t.root()).unwrap(), t.root());
-    assert!(walk("\u{e9}.txt").is_empty());
-    assert!(walk("\u{e9}/*.ts").is_empty());
-    assert_eq!(walk(&format!("{nfd}.txt")).len(), 1);
-    assert_eq!(walk(&format!("{nfd}/*.ts")).len(), 1);
+    assert!(t.walk(&["\u{e9}.txt"]).is_empty());
+    assert!(t.walk(&["\u{e9}/*.ts"]).is_empty());
+    assert_eq!(t.walk(&[&format!("{nfd}.txt")]).len(), 1);
+    assert_eq!(t.walk(&[&format!("{nfd}/*.ts")]).len(), 1);
 }
 
 // `!` and `!!` negate nothing: an empty pattern (GLOB_SPEC §6.1), named as
 // written. Twin of the check in walk.mjs.
 #[test]
 fn a_lone_bang_is_an_empty_pattern() {
-    let t = TmpTree::new("lone-bang");
-    t.touch("a.js");
+    let t = TmpTree::new("lone-bang", &["a.js"]);
     for lone in ["!", "!!"] {
         let err = Walk::from_patterns(["**", lone], t.root()).unwrap_err();
-        match &err {
-            WalkError::InvalidPattern {
-                pattern,
-                source: Some(source),
-                ..
-            } => {
-                assert_eq!(pattern, lone);
-                assert!(matches!(source, globstar::GlobError::Empty), "{source:?}");
-            }
-            _ => panic!("expected InvalidPattern, got {err:?}"),
-        }
+        let (pattern, _, source) = invalid(&err);
+        assert_eq!(pattern, lone);
+        assert!(
+            matches!(source, Some(globstar::GlobError::Empty)),
+            "{source:?}"
+        );
     }
 }
 
@@ -1859,8 +1641,7 @@ fn a_lone_bang_is_an_empty_pattern() {
 #[test]
 fn fifos_and_sockets_are_no_files() {
     use std::os::unix::fs::symlink;
-    let t = TmpTree::new("sp");
-    t.touch("a.txt");
+    let t = TmpTree::new("sp", &["a.txt"]);
     let root = t.root();
     let made = std::process::Command::new("mkfifo")
         .arg(root.join("fifo"))
@@ -1871,11 +1652,9 @@ fn fifos_and_sockets_are_no_files() {
     symlink("fifo", root.join("to-fifo")).unwrap();
     symlink("a.txt", root.join("to-a")).unwrap();
     symlink("missing", root.join("dangling")).unwrap();
-    let walk = |pattern: &str| collect_rel(Walk::new(pattern, root).unwrap(), root);
-    let want: BTreeSet<String> = ["a.txt", "dangling", "to-a"].map(String::from).into();
-    assert_eq!(walk("*"), want);
+    assert_eq!(t.walk(&["*"]), set(&["a.txt", "dangling", "to-a"]));
     for seeded in ["fifo", "sock", "to-fifo"] {
-        assert!(walk(seeded).is_empty(), "{seeded}");
+        assert!(t.walk(&[seeded]).is_empty(), "{seeded}");
     }
 }
 
@@ -1884,23 +1663,20 @@ fn fifos_and_sockets_are_no_files() {
 // `src/` yields the folder. Twin of the check in walk.mjs.
 #[test]
 fn a_pattern_that_ends_in_a_slash_matches_folders_only() {
-    let t = TmpTree::new("folders");
-    for f in [
-        "node_modules/p/i.js",
-        "src/a.js",
-        "src/node_modules/q.js",
-        "build",
-        "dist/x.js",
-    ] {
-        t.touch(f);
-    }
-    let root = t.root();
-    let walk = |patterns: &[&str], ignore: &[&str]| -> Vec<String> {
-        let mut opts = WalkOptions::new(root);
+    let t = TmpTree::new(
+        "folders",
+        &[
+            "node_modules/p/i.js",
+            "src/a.js",
+            "src/node_modules/q.js",
+            "build",
+            "dist/x.js",
+        ],
+    );
+    let walk = |patterns: &[&str], ignore: &[&str]| {
+        let mut opts = WalkOptions::new(t.root());
         opts.ignore = ignore.iter().map(|s| s.to_string()).collect();
-        collect_rel(Walk::from_patterns(patterns, opts).unwrap(), root)
-            .into_iter()
-            .collect()
+        t.walk_with(patterns, opts)
     };
     let cases: [(&[&str], &[&str], &[&str]); 9] = [
         (
@@ -1932,7 +1708,7 @@ fn a_pattern_that_ends_in_a_slash_matches_folders_only() {
     for (patterns, ignore, want) in cases {
         assert_eq!(
             walk(patterns, ignore),
-            want,
+            set(want),
             "{patterns:?} ignore {ignore:?}"
         );
     }
@@ -1944,24 +1720,22 @@ fn a_pattern_that_ends_in_a_slash_matches_folders_only() {
 // and tinyglobby do not find it. Twin of the check in walk.mjs.
 #[test]
 fn an_ignore_that_ends_in_a_globstar_prunes_the_folder() {
-    let t = TmpTree::new("prunestar");
-    for f in [
-        "node_modules/p/i.js",
-        "node_modules/.cache/x",
-        "src/a.js",
-        "src/.env",
-    ] {
-        t.touch(f);
-    }
+    let t = TmpTree::new(
+        "prunestar",
+        &[
+            "node_modules/p/i.js",
+            "node_modules/.cache/x",
+            "src/a.js",
+            "src/.env",
+        ],
+    );
     for dot in [true, false] {
         let mut opts = WalkOptions::new(t.root());
         opts.dot = dot;
         opts.ignore = vec!["**/node_modules/**".to_string()];
         let patterns = ["**/*.js", "**/.env", "node_modules/.cache/x"];
-        let got: Vec<String> = collect_rel(Walk::from_patterns(patterns, opts).unwrap(), t.root())
-            .into_iter()
-            .collect();
-        assert_eq!(got, ["src/.env", "src/a.js"], "dot={dot}");
+        let got = t.walk_with(&patterns, opts);
+        assert_eq!(got, set(&["src/.env", "src/a.js"]), "dot={dot}");
     }
 }
 
@@ -1972,9 +1746,7 @@ fn an_ignore_that_ends_in_a_globstar_prunes_the_folder() {
 #[test]
 fn a_seed_under_a_folder_the_ignore_set_covers_is_not_read() {
     use std::os::unix::fs::PermissionsExt;
-    let t = TmpTree::new("covered-seed");
-    t.touch("node_modules/p/i.js");
-    t.touch("a.js");
+    let t = TmpTree::new("covered-seed", &["node_modules/p/i.js", "a.js"]);
     let locked = t.root().join("node_modules");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
     let walk = |pattern: &str| {
