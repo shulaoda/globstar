@@ -18,6 +18,8 @@ use super::graph::{ACCEPT, Graph};
 use super::wild::{ByteSketch, WildKind, fold};
 use super::{Elem, SegmentMatcher, seg_end, seg_start};
 
+// ── the chains ──────────────────────────────────────────────────────────
+
 /// Paths with a wildcard `is_match` tries one by one; past that the
 /// NFA over the whole graph runs.
 const MAX_CHAINS: usize = 64;
@@ -28,6 +30,45 @@ const MAX_CHAINS: usize = 64;
 /// either the NFA over the whole graph runs.
 const MAX_LITERALS: usize = 4096;
 const MAX_LITERAL_BYTES: usize = 64 * 1024;
+
+/// The element compares `chain_dir` spends on tail tokens; past them it
+/// answers what is safe ("may match below", "not all below"). Tails of
+/// up to 90 elements stay exact.
+const MAX_TAIL_CHECKS: usize = 4096;
+
+/// One path through the graph.
+#[derive(Debug, Clone)]
+pub(super) struct Chain {
+    /// Its nodes in order; empty for the lone path of a pattern
+    /// without a separator-crossing brace, whose nodes are
+    /// `0..elems.len()`, and for the set of literal paths.
+    pub(super) nodes: Box<[u32]>,
+    pub(super) shape: Shape,
+}
+
+/// Where a chain's globstars are, which decides how it is matched.
+#[derive(Debug, Clone)]
+pub(super) enum Shape {
+    /// At most one globstar: the head and the tail are anchored around
+    /// it.
+    Line(Line),
+    /// Two globstars around a block of elements (`**/x/**`): the head
+    /// and the tail are anchored, the block floats between them.
+    Block { g1: u32, g2: u32 },
+    /// The literal paths, all of them: one search answers them.
+    Set(Box<Literals>),
+}
+
+/// A chain with at most one globstar, at `g` (past the end for none).
+/// Every element from `open_from` on takes some segment, from
+/// `any_from` on any non-empty one: what `match_dir` reads off a lone
+/// chain (both 0 on a union member's, which `match_dir` never reads).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Line {
+    g: u32,
+    open_from: u32,
+    any_from: u32,
+}
 
 /// The literal paths through the graph: the bytes each matches, sorted
 /// as `cmp_lit_path` orders them against a path, laid end to end. A
@@ -69,6 +110,7 @@ impl Literals {
         let (mut lo, mut hi) = (0usize, self.len());
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
+            // One bounds check for the pair: 2% of a set row's call.
             let [start, end] = self.bounds[mid..mid + 2] else {
                 unreachable!("mid < len");
             };
@@ -99,27 +141,12 @@ fn cmp_lit_path(lit: &[u8], path: &[u8], ci: bool) -> Ordering {
     }))
 }
 
-/// The element compares `chain_dir` spends on tail tokens; past them it
-/// answers what is safe ("may match below", "not all below"). Tails of
-/// up to 90 elements stay exact.
-const MAX_TAIL_CHECKS: usize = 4096;
-
-/// One path through the graph.
-#[derive(Debug, Clone)]
-pub(super) struct Chain {
-    /// Its nodes in order; empty for the lone path of a pattern
-    /// without a separator-crossing brace, whose nodes are
-    /// `0..elems.len()`, and for the set of literal paths.
-    pub(super) nodes: Box<[u32]>,
-    pub(super) shape: Shape,
-}
-
 /// A union's cheap look at a path before a chain runs, read off the
-/// chain's ends: the bytes a matching path may end with (all when the
-/// last element ends with anything), and the byte it must start with
-/// when the first element is a literal, folded when case-insensitive
-/// (`NO_HEAD` otherwise, or for a literal starting with that byte,
-/// which the walk then checks).
+/// chain's ends: the bytes a matching path may end with (`ALL` when
+/// the last element ends with anything), and the byte it must start
+/// with when the first element is a literal, folded when
+/// case-insensitive. `NO_HEAD` says nothing about the start; a literal
+/// starting with that byte reads the same, and the walk checks it.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Gate {
     last: ByteSketch,
@@ -129,59 +156,7 @@ pub(super) struct Gate {
 /// `Gate::head` when the path's first byte says nothing.
 const NO_HEAD: u8 = 0;
 
-impl Chain {
-    pub(super) fn gate(&self, elems: &[Elem], ci: bool) -> Gate {
-        // The set of literal paths is searched before any gate.
-        if matches!(self.shape, Shape::Set(_)) {
-            return Gate {
-                last: ByteSketch::ALL,
-                head: NO_HEAD,
-            };
-        }
-        let first = self.nodes.first().map_or(0, |&n| n as usize);
-        let last = self.nodes.last().map_or(elems.len() - 1, |&n| n as usize);
-        let last = match &elems[last] {
-            Elem::Lit(lit) => ByteSketch::of_last_bytes(std::iter::once(&lit[..]), ci),
-            Elem::Wild(w) => match &w.kind {
-                WildKind::Affix(affix) => {
-                    ByteSketch::of_last_bytes(std::iter::once(affix.parts().1), ci)
-                }
-                WildKind::Suffixes(set) => set.last,
-                WildKind::Generic(_) => ByteSketch::ALL,
-            },
-            _ => ByteSketch::ALL,
-        };
-        let head = match &elems[first] {
-            Elem::Lit(lit) => lit.first().map_or(NO_HEAD, |&b| fold(b, ci)),
-            _ => NO_HEAD,
-        };
-        Gate { last, head }
-    }
-}
-
-/// Where a chain's globstars are, which decides how it is matched.
-#[derive(Debug, Clone)]
-pub(super) enum Shape {
-    /// At most one globstar: the head and the tail are anchored around
-    /// it.
-    Line(Line),
-    /// Two globstars around a block of elements (`**/x/**`): the head
-    /// and the tail are anchored, the block floats between them.
-    Block { g1: u32, g2: u32 },
-    /// The literal paths, all of them: one search answers them.
-    Set(Box<Literals>),
-}
-
-/// A chain with at most one globstar, at `g` (past the end for none).
-/// Every element from `open_from` on takes some segment, from
-/// `any_from` on any non-empty one: what `match_dir` reads off a lone
-/// chain (both 0 on a union member's, which `match_dir` never reads).
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Line {
-    g: u32,
-    open_from: u32,
-    any_from: u32,
-}
+// ── building ────────────────────────────────────────────────────────────
 
 impl Graph {
     /// Every path through the graph as a `Chain`, in pattern order, the
@@ -286,6 +261,38 @@ impl Graph {
         })
     }
 }
+
+impl Chain {
+    pub(super) fn gate(&self, elems: &[Elem], ci: bool) -> Gate {
+        // The set of literal paths is searched before any gate.
+        if matches!(self.shape, Shape::Set(_)) {
+            return Gate {
+                last: ByteSketch::ALL,
+                head: NO_HEAD,
+            };
+        }
+        let first = self.nodes.first().map_or(0, |&n| n as usize);
+        let last = self.nodes.last().map_or(elems.len() - 1, |&n| n as usize);
+        let last = match &elems[last] {
+            Elem::Lit(lit) => ByteSketch::of_last_bytes(std::iter::once(&lit[..]), ci),
+            Elem::Wild(w) => match &w.kind {
+                WildKind::Affix(affix) => {
+                    ByteSketch::of_last_bytes(std::iter::once(affix.parts().1), ci)
+                }
+                WildKind::Suffixes(set) => set.last,
+                WildKind::Generic(_) => ByteSketch::ALL,
+            },
+            _ => ByteSketch::ALL,
+        };
+        let head = match &elems[first] {
+            Elem::Lit(lit) => lit.first().map_or(NO_HEAD, |&b| fold(b, ci)),
+            _ => NO_HEAD,
+        };
+        Gate { last, head }
+    }
+}
+
+// ── matching ────────────────────────────────────────────────────────────
 
 /// A chain's elements in order: the matcher's slice for the lone path
 /// of a linear pattern, a node list over it otherwise.
@@ -647,6 +654,19 @@ impl SegmentMatcher {
             .map_or(usize::MAX, |i| i + 1)
     }
 
+    #[inline(always)]
+    fn elem_consumes(&self, e: &Elem, seg: &[u8]) -> bool {
+        match e {
+            Elem::Lit(lit) => self.lit_eq(lit, seg),
+            Elem::Wild(w) => self.wild_consumes(w, seg),
+            _ => false,
+        }
+    }
+}
+
+// ── match_dir ───────────────────────────────────────────────────────────
+
+impl SegmentMatcher {
     /// `match_dir` through the lone chain of a matcher that keeps no
     /// NFA.
     pub(super) fn chain_dir(&self, dir: &[u8]) -> DirMatch {
@@ -764,14 +784,5 @@ impl SegmentMatcher {
             end = start - 1;
         }
         (prefix, all)
-    }
-
-    #[inline(always)]
-    fn elem_consumes(&self, e: &Elem, seg: &[u8]) -> bool {
-        match e {
-            Elem::Lit(lit) => self.lit_eq(lit, seg),
-            Elem::Wild(w) => self.wild_consumes(w, seg),
-            _ => false,
-        }
     }
 }

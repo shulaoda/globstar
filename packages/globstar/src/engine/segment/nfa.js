@@ -169,7 +169,8 @@ function sparseNfa(graph, ci) {
 // ── running, int32 active set ───────────────────────────────────────
 
 // The active set after every segment of `str`.
-export function nfaRun(m, g, str) {
+export function nfaRun(m, str) {
+  const g = m.nfa;
   let active = g.init;
   let pos = 0;
   for (;;) {

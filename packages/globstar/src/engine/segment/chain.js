@@ -3,12 +3,23 @@
 // literal-only paths as one sorted set, and `matchDir` read off a lone
 // chain. JS twin of `crates/globstar/src/engine/segment/chain.rs`.
 
-import { EL_LIT, EL_WILD, EL_G0, WK_AFFIX, WK_SUFFIXES, isGlobstar } from "./elem.js";
+import {
+  EL_LIT,
+  EL_WILD,
+  EL_G0,
+  WK_AFFIX,
+  WK_SUFFIXES,
+  elemAnySeg,
+  elemSatisfiable,
+  isGlobstar,
+} from "./elem.js";
 import { IS_WINDOWS_SEP, asciiLower, isPathSep, nextSep, lastSepBefore } from "../../bytes.js";
 import { flat } from "../../utf8.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { ACCEPT } from "./graph.js";
 import { affixEq, litEq, wildConsumes } from "./wild.js";
+
+// ── the chains ──────────────────────────────────────────────────────────
 
 // Paths with a wildcard `isMatch` tries one by one; past that the NFA
 // over the whole graph runs.
@@ -26,17 +37,17 @@ const MAX_LITERAL_BYTES = 64 * 1024;
 const NO_G = -1;
 export const SET_G = -2;
 
+// The element compares `chainDir` spends on tail tokens; past them it
+// answers what is safe ("may match below", "not all below"). Tails of
+// up to 90 elements stay exact.
+const MAX_TAIL_CHECKS = 4096;
+
 // A chain's element: `ids === null` is the identity (the lone path of
 // a linear pattern).
 const elemAt = (elems, ids, i) => (ids === null ? elems[i] : elems[ids[i]]);
 const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 
-// The first index from which every element of the chain passes `ok`.
-export function whereFrom(elems, ids, ok) {
-  let i = chainLen(elems, ids);
-  while (i > 0 && ok(elemAt(elems, ids, i - 1))) i--;
-  return i;
-}
+// ── building ────────────────────────────────────────────────────────────
 
 // Every path through the graph as a chain, in pattern order, the literal
 // ones together as one `SET_G` chain first; none when the others pass
@@ -103,38 +114,6 @@ export function chains(graph, ci) {
   return out;
 }
 
-// Is the path one of the literal paths? Compared as the keys were
-// folded: ASCII letters lowercased when case-insensitive, separators as
-// `/`; as they are otherwise, where the engine's own order serves.
-export function hasLiteral(m, literals, str) {
-  const plain = !m.ci && !IS_WINDOWS_SEP;
-  let lo = 0;
-  let hi = literals.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    const lit = literals[mid];
-    const d = plain ? (lit === str ? 0 : lit < str ? -1 : 1) : cmpLitPath(lit, str, m.ci);
-    if (d === 0) return true;
-    if (d < 0) lo = mid + 1;
-    else hi = mid;
-  }
-  return false;
-}
-
-// A folded literal path against a path, folding the path's characters
-// as it goes, without building a key.
-function cmpLitPath(lit, str, ci) {
-  const n = Math.min(lit.length, str.length);
-  for (let i = 0; i < n; i++) {
-    let c = str.charCodeAt(i);
-    if (ci && c >= 0x41 && c <= 0x5a) c += 32;
-    else if (IS_WINDOWS_SEP && c === 0x5c) c = 0x2f;
-    const d = lit.charCodeAt(i) - c;
-    if (d !== 0) return d;
-  }
-  return lit.length - str.length;
-}
-
 // The chain of a path (`null`: the lone path of a linear pattern,
 // whose nodes are `0..elems.length`), or `null` when it has more than
 // two globstars, or two with nothing between (the graph's NFA serves).
@@ -153,10 +132,20 @@ function chainOf(graph, nodes, lone) {
     else if (g2 < 0 && i > globstar + 1) g2 = i;
     else return null;
   }
-  // A lone chain runs as it is; a union's chains also carry what a path
-  // must start and end with, read off their first and last elements:
-  // cheap rejects before a chain runs (`_anyChainMatches`).
-  if (lone) return { nodes, globstar, g2 };
+  // A lone chain carries what `chainDir` reads off it: every element
+  // from `openFrom` on takes some segment, from `anyFrom` on any
+  // non-empty one. A union's chains carry what a path must start and
+  // end with, read off their first and last elements: cheap rejects
+  // before a chain runs (`_anyChainMatches`).
+  if (lone) {
+    // The first index from which every element passes `ok`.
+    const from = (ok) => {
+      let i = n;
+      while (i > 0 && ok(elem(i - 1))) i--;
+      return i;
+    };
+    return { nodes, globstar, g2, openFrom: from(elemSatisfiable), anyFrom: from(elemAnySeg) };
+  }
   const first = elem(0);
   const last = elem(n - 1);
   const quickHead = first.kind === EL_LIT ? first.litStr.charCodeAt(0) : -1;
@@ -195,10 +184,7 @@ function chainOf(graph, nodes, lone) {
   };
 }
 
-// The element compares `chainDir` spends on tail tokens; past them it
-// answers what is safe ("may match below", "not all below"). Tails of
-// up to 90 elements stay exact.
-const MAX_TAIL_CHECKS = 4096;
+// ── matching ────────────────────────────────────────────────────────────
 
 // Does the chain match the whole path?
 export function chainMatches(m, chain, str) {
@@ -219,6 +205,38 @@ export function chainMatches(m, chain, str) {
   }
 }
 
+// Is the path one of the literal paths? Compared as the keys were
+// folded: ASCII letters lowercased when case-insensitive, separators as
+// `/`; as they are otherwise, where the engine's own order serves.
+export function hasLiteral(m, literals, str) {
+  const plain = !m.ci && !IS_WINDOWS_SEP;
+  let lo = 0;
+  let hi = literals.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const lit = literals[mid];
+    const d = plain ? (lit === str ? 0 : lit < str ? -1 : 1) : cmpLitPath(lit, str, m.ci);
+    if (d === 0) return true;
+    if (d < 0) lo = mid + 1;
+    else hi = mid;
+  }
+  return false;
+}
+
+// A folded literal path against a path, folding the path's characters
+// as it goes, without building a key.
+function cmpLitPath(lit, str, ci) {
+  const n = Math.min(lit.length, str.length);
+  for (let i = 0; i < n; i++) {
+    let c = str.charCodeAt(i);
+    if (ci && c >= 0x41 && c <= 0x5a) c += 32;
+    else if (IS_WINDOWS_SEP && c === 0x5c) c = 0x2f;
+    const d = lit.charCodeAt(i) - c;
+    if (d !== 0) return d;
+  }
+  return lit.length - str.length;
+}
+
 // Element `e` on the segment at `pos`, the path's last one iff `last`:
 // the index just past it, or -1. The segment is bounded first, so a path of
 // the wrong depth is rejected before any wildcard runs; a literal is
@@ -234,6 +252,12 @@ function consumeAt(m, e, str, pos, last) {
   if (end === -1) end = str.length;
   if ((end === str.length) !== last) return -1;
   return wildConsumes(m, e.wild, str, pos, end) ? end : -1;
+}
+
+function elemConsumes(m, e, str, s, t) {
+  if (e.kind === EL_LIT) return litEq(e.litStr, str, s, t, m.ci);
+  if (e.kind === EL_WILD) return wildConsumes(m, e.wild, str, s, t);
+  return false;
 }
 
 // Do the elements `from..to` take the segments from `pos` to the end,
@@ -298,8 +322,8 @@ function tailSplit(m, ids, g, str, midStart) {
 function blockBetween(m, ids, g1, g2, str, midStart, split) {
   if (split === midStart) return false;
   // The middle's segments end before the tail's separator, or at the
-  // end of the path.
-  const midEnd = split > str.length ? str.length : split - 1;
+  // end of the path (`split` is then one past it).
+  const midEnd = split - 1;
   const elems = m.elems;
   let pos = midStart;
   for (;;) {
@@ -307,12 +331,10 @@ function blockBetween(m, ids, g1, g2, str, midStart, split) {
     if (end === -1) end = str.length;
     const taken = blockFrom(m, ids, g1 + 1, g2, str, pos, end, midEnd);
     if (taken >= 0) {
+      // Nothing before the block holds a dot segment (the loop stops at
+      // the first); the second globstar checks after.
       const left = pos > midStart || elemAt(elems, ids, g1).kind === EL_G0;
-      const right =
-        taken === midEnd
-          ? elemAt(elems, ids, g2).kind === EL_G0
-          : firstDot(m, str, taken + 1, midEnd) === Infinity;
-      if (left && right) return true;
+      if (left && absorbs(m, elemAt(elems, ids, g2).kind, str, taken + 1, split)) return true;
     }
     // Past the middle, or at a dot segment the first globstar could not
     // take.
@@ -364,6 +386,8 @@ function firstDot(m, str, from, to) {
   }
 }
 
+// ── matchDir ────────────────────────────────────────────────────────────
+
 // `matchDir` through the lone chain of a matcher that keeps no NFA: the
 // tokens the NFA would hold after `str`, read off the chain. A head
 // position when the directory ends inside the head, the globstar when it
@@ -378,8 +402,8 @@ export function chainDir(m, str) {
   const tl = g < n ? n - g - 1 : 0;
   // Every element from `openFrom` on takes some segment: a token there
   // still reaches accept; from `anyFrom` on, any non-empty one.
-  const openFrom = m.openFrom;
-  const tailAny = n - tl >= m.anyFrom;
+  const openFrom = chain.openFrom;
+  const tailAny = n - tl >= chain.anyFrom;
   if (str.length === 0) {
     // The walk root: nothing consumed yet. All below iff a leading
     // globstar is followed by at most one any-segment.
@@ -441,10 +465,4 @@ export function chainDir(m, str) {
     }
   }
   return DirMatch.from(matched, prefix, all);
-}
-
-function elemConsumes(m, e, str, s, t) {
-  if (e.kind === EL_LIT) return litEq(e.litStr, str, s, t, m.ci);
-  if (e.kind === EL_WILD) return wildConsumes(m, e.wild, str, s, t);
-  return false;
 }

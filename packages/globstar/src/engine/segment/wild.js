@@ -8,7 +8,7 @@ import { flat, isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
 import { WK_AFFIX, WK_SUFFIXES, WK_GENERIC, exact } from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
 
-const EMPTY = "";
+// ── compiling ───────────────────────────────────────────────────────
 
 // The bytes of the literal nodes `nodes[..to]`.
 export function concatLits(nodes, to) {
@@ -16,8 +16,6 @@ export function concatLits(nodes, to) {
   for (let i = 0; i < to; i++) s += nodes[i].str;
   return s;
 }
-
-// ── compiling ───────────────────────────────────────────────────────
 
 export function makeWild(kind, fields) {
   return {
@@ -141,7 +139,7 @@ function suffixProduct(nodes, from) {
       let branchBytes = 0;
       for (const branch of node.branches) {
         const b = seq(branch);
-        if (b.length === 0) lits.push(EMPTY);
+        if (b.length === 0) lits.push("");
         else if (b.length === 1 && b[0].tag === N_LITERAL) lits.push(b[0].str);
         else return null;
         branchBytes += lits[lits.length - 1].length + 1;

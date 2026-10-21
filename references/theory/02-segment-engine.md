@@ -128,9 +128,9 @@ states and closures) by their bytes — and fails with `TooComplex` past
 max(2^20, 64 × the pattern's weight). Ordinary patterns and big unions need one to three units
 per weight, and a walk without a crossing brace has no budget at
 all. The other limits are the parser's — 64 KiB of pattern, 32 levels
-of brace nesting, the brace-expansion budget — and the 64-chain,
-8-suffix, suffix-product, closure and dense-row thresholds pick a
-representation, never reject one.
+of brace nesting, the brace-expansion budget — and the chain,
+literal-set, suffix-group, suffix-product, closure and dense-row
+thresholds pick a representation, never reject one.
 
 ## Complexity and safety
 

@@ -7,6 +7,8 @@ use crate::parse::ast::Node;
 use super::seg_nfa::SegNfa;
 use super::{Bytes, SegmentMatcher};
 
+// ── the wildcard matchers ─────────────────────────────────────────────────
+
 /// A 64-slot sketch of a set of bytes (`b % 64`): a byte not in the
 /// sketch is not in the set, so a set scan can be skipped.
 #[derive(Debug, Clone, Copy)]
@@ -138,6 +140,13 @@ pub(super) struct SuffixSet {
     empty: bool,
 }
 
+/// A suffix set up to this size is scanned in turn after its sketch;
+/// a larger one by the group of the segment's last byte: its low five
+/// bits, which keep ASCII letters apart.
+const LINEAR_SUFFIXES: usize = 4;
+const GROUPS: usize = 32;
+const GROUP_MASK: u8 = GROUPS as u8 - 1;
+
 impl SuffixSet {
     fn new(prefix: Bytes, suffixes: Vec<Vec<u8>>, ci: bool) -> Self {
         let last = ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci);
@@ -215,23 +224,7 @@ impl SuffixSet {
     }
 }
 
-/// Byte-wise, so short affixes stay inline rather than calling `bcmp`.
-#[inline(always)]
-pub(super) fn affix_eq(part: &[u8], seg_part: &[u8], ci: bool) -> bool {
-    debug_assert_eq!(part.len(), seg_part.len());
-    if ci {
-        part.iter()
-            .zip(seg_part)
-            .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
-    } else {
-        part.iter().zip(seg_part).all(|(a, b)| a == b)
-    }
-}
-
-#[inline(always)]
-pub(super) fn fold(b: u8, ci: bool) -> u8 {
-    if ci { b.to_ascii_lowercase() } else { b }
-}
+// ── compiling ─────────────────────────────────────────────────────────────
 
 /// The bytes of a run of literal nodes, allocated once.
 pub(super) fn concat_lits(nodes: &[&Node]) -> Bytes {
@@ -304,13 +297,6 @@ pub(super) fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
 /// whatever its length.
 const MAX_SUFFIX_PRODUCT: usize = 1024;
 
-/// A suffix set up to this size is scanned in turn after its sketch;
-/// a larger one by the group of the segment's last byte: its low five
-/// bits, which keep ASCII letters apart.
-const LINEAR_SUFFIXES: usize = 4;
-const GROUPS: usize = 32;
-const GROUP_MASK: u8 = GROUPS as u8 - 1;
-
 /// The enumerated suffixes, one byte more each, may not take more than
 /// this or four times their nodes: a long literal next to a product
 /// would be copied into every suffix.
@@ -373,6 +359,8 @@ fn suffix_product(nodes: &[&Node]) -> Option<Vec<Vec<u8>>> {
     Some(parts)
 }
 
+// ── matching ──────────────────────────────────────────────────────────────
+
 impl SegmentMatcher {
     #[inline(always)]
     pub(super) fn wild_consumes(&self, w: &Wild, seg: &[u8]) -> bool {
@@ -405,4 +393,22 @@ impl SegmentMatcher {
             WildKind::Generic(nfa) => nfa.matches(seg),
         }
     }
+}
+
+/// Byte-wise, so short affixes stay inline rather than calling `bcmp`.
+#[inline(always)]
+pub(super) fn affix_eq(part: &[u8], seg_part: &[u8], ci: bool) -> bool {
+    debug_assert_eq!(part.len(), seg_part.len());
+    if ci {
+        part.iter()
+            .zip(seg_part)
+            .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
+    } else {
+        part.iter().zip(seg_part).all(|(a, b)| a == b)
+    }
+}
+
+#[inline(always)]
+pub(super) fn fold(b: u8, ci: bool) -> u8 {
+    if ci { b.to_ascii_lowercase() } else { b }
 }

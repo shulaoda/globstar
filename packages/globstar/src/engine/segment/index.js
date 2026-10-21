@@ -9,7 +9,7 @@ import { IS_WINDOWS_SEP, lastSepBefore } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph } from "./graph.js";
-import { SET_G, chains, chainMatches, chainDir, hasLiteral, whereFrom } from "./chain.js";
+import { SET_G, chains, chainMatches, chainDir, hasLiteral } from "./chain.js";
 import {
   anyNfa,
   nfaRun,
@@ -29,8 +29,6 @@ import {
   EL_G0,
   WK_AFFIX,
   WK_SUFFIXES,
-  elemAnySeg,
-  elemSatisfiable,
   exact,
 } from "./elem.js";
 
@@ -50,16 +48,6 @@ export class SegmentMatcher {
     this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
     const suf = suffixes(body);
     this.suffixes = suf.length > 0 ? suf.map(flat) : null;
-    // What `chainDir` reads off a lone chain: every element from
-    // `openFrom` on takes some segment, from `anyFrom` on any non-empty
-    // one.
-    this.openFrom = 0;
-    this.anyFrom = 0;
-    if (this.nfa === null) {
-      const ids = this.chains[0].nodes;
-      this.openFrom = whereFrom(this.elems, ids, elemSatisfiable);
-      this.anyFrom = whereFrom(this.elems, ids, elemAnySeg);
-    }
   }
 
   // How compilation laid the pattern out (a test hook, twin of Rust's
@@ -87,13 +75,10 @@ export class SegmentMatcher {
     const g = this.nfa;
     const nfa = g === null ? "none" : g.kind === NFA_SMALL ? "small" : "sparse";
     // The literal paths' set is counted apart from the chains.
-    let chainCount = 0;
-    let literals = "";
-    for (const c of this.chains) {
-      if (c.globstar === SET_G) literals = ` | literals ${c.literals.length}`;
-      else chainCount++;
-    }
-    return `${runs.join(" ")} | chains ${chainCount}${literals} | nfa ${nfa}`;
+    const first = this.chains[0];
+    const set = first !== undefined && first.globstar === SET_G;
+    const literals = set ? ` | literals ${first.literals.length}` : "";
+    return `${runs.join(" ")} | chains ${this.chains.length - (set ? 1 : 0)}${literals} | nfa ${nfa}`;
   }
 
   // `opts.forceNfa` bypasses the chains (a test hook); `opts.byteOnly`
@@ -175,7 +160,7 @@ export class SegmentMatcher {
   _nfaMatch(str) {
     const g = this.nfa;
     if (g.kind === NFA_SPARSE) return sparseHas(nfaRunSparse(this, str), g.accept);
-    return (nfaRun(this, g, str) & (1 << g.accept)) !== 0;
+    return (nfaRun(this, str) & (1 << g.accept)) !== 0;
   }
 
   _prefilter(str) {
@@ -209,7 +194,7 @@ export class SegmentMatcher {
       prefix = sparseReach1(g, active);
       all = this.dot && prefix && coversBelowSparse(this, active);
     } else {
-      const active = nfaRun(this, g, str);
+      const active = nfaRun(this, str);
       exact = (active & (1 << g.accept)) !== 0;
       prefix = (active & g.reach1) !== 0;
       // `dot=false` never covers a subtree: no wildcard matches the
