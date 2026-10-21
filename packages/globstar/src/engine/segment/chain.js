@@ -1,29 +1,30 @@
 // The chains: every path through the graph, matched by anchored
-// compares when it has at most one globstar, and `matchDir` read off a
-// lone chain. JS twin of `crates/globstar/src/engine/segment/chain.rs`.
+// compares when it has at most one globstar or two around a block, the
+// literal-only paths as one sorted set, and `matchDir` read off a lone
+// chain. JS twin of `crates/globstar/src/engine/segment/chain.rs`.
 
-import {
-  EL_LIT,
-  EL_WILD,
-  EL_G0,
-  WK_AFFIX,
-  WK_AFFIX_SET,
-  WK_AFFIX_INDEX,
-  isGlobstar,
-} from "./elem.js";
-import { isPathSep, nextSep, lastSepBefore } from "../../bytes.js";
+import { EL_LIT, EL_WILD, EL_G0, WK_AFFIX, WK_SUFFIXES, isGlobstar } from "./elem.js";
+import { IS_WINDOWS_SEP, asciiLower, isPathSep, nextSep, lastSepBefore } from "../../bytes.js";
+import { flat } from "../../utf8.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { ACCEPT } from "./graph.js";
-import { denseNfa, nfaRun } from "./nfa.js";
 import { affixEq, litEq, wildConsumes } from "./wild.js";
 
-// Paths through the graph `isMatch` tries one by one; past that the
-// NFA over the whole graph runs.
-export const MAX_CHAINS = 64;
+// Paths with a wildcard `isMatch` tries one by one; past that the NFA
+// over the whole graph runs.
+const MAX_CHAINS = 64;
 
-// `chain.globstar` when the chain has none / several.
-export const NO_G = -1;
-export const MANY_G = -2;
+// The literal-only paths kept as one set (a union of file names), and
+// the characters it may take, or four times the pattern's weight (a
+// long literal behind crossing braces is copied once per path); past
+// either the NFA over the whole graph runs.
+const MAX_LITERALS = 4096;
+const MAX_LITERAL_BYTES = 64 * 1024;
+
+// `chain.globstar` when the chain has none, or is the literal paths'
+// set.
+const NO_G = -1;
+export const SET_G = -2;
 
 // A chain's element: `ids === null` is the identity (the lone path of
 // a linear pattern).
@@ -37,10 +38,11 @@ export function whereFrom(elems, ids, ok) {
   return i;
 }
 
-// Every path through the graph as a chain, in pattern order, or none
-// when there are more than MAX_CHAINS, or a path with several globstars
-// is the only path or has more than 32 states (the NFA takes those).
-export function chains(graph) {
+// Every path through the graph as a chain, in pattern order, the literal
+// ones together as one `SET_G` chain first; none when the others pass
+// MAX_CHAINS or the literal ones MAX_LITERALS, or a path has more than
+// two globstars (the NFA takes those).
+export function chains(graph, ci) {
   if (graph.linear) {
     const chain = chainOf(graph, null, true);
     return chain === null ? [] : [chain];
@@ -49,6 +51,10 @@ export function chains(graph) {
   // on it (the start's below them) and the successor it tries next. A
   // path is copied only when it reaches the end.
   const paths = [];
+  // The literal paths, as the characters each matches, keyed as a path
+  // is searched (`hasLiteral`).
+  const lits = [];
+  let litChars = 0;
   const path = [];
   const succs = [graph.start];
   const next = [0];
@@ -62,8 +68,20 @@ export function chains(graph) {
     }
     const id = succs[top][next[top]++];
     if (id === ACCEPT) {
-      paths.push(path.slice());
-      if (paths.length > MAX_CHAINS) return [];
+      // A path of literal nodes joins the set as the characters it
+      // matches; any other is a chain.
+      if (path.every((i) => graph.elems[i].kind === EL_LIT)) {
+        const joined = path.map((i) => graph.elems[i].litStr).join("/");
+        lits.push(ci ? asciiLower(joined) : joined);
+        litChars += joined.length;
+      } else paths.push(path.slice());
+      if (
+        paths.length > MAX_CHAINS ||
+        lits.length > MAX_LITERALS ||
+        litChars > Math.max(MAX_LITERAL_BYTES, 4 * graph.weight)
+      ) {
+        return [];
+      }
       continue;
     }
     path.push(id);
@@ -71,44 +89,74 @@ export function chains(graph) {
     next.push(0);
   }
   const out = [];
+  if (lits.length > 0) {
+    lits.sort();
+    const set = lits.filter((s, i) => i === 0 || s !== lits[i - 1]);
+    out.push({ nodes: null, globstar: SET_G, literals: set.map(flat) });
+  }
+  const lone = paths.length === 1 && lits.length === 0;
   for (const nodes of paths) {
-    const chain = chainOf(graph, nodes, paths.length === 1);
+    const chain = chainOf(graph, nodes, lone);
     if (chain === null) return [];
     out.push(chain);
   }
   return out;
 }
 
+// Is the path one of the literal paths? Compared as the keys were
+// folded: ASCII letters lowercased when case-insensitive, separators as
+// `/`; as they are otherwise, where the engine's own order serves.
+export function hasLiteral(m, literals, str) {
+  const plain = !m.ci && !IS_WINDOWS_SEP;
+  let lo = 0;
+  let hi = literals.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const lit = literals[mid];
+    const d = plain ? (lit === str ? 0 : lit < str ? -1 : 1) : cmpLitPath(lit, str, m.ci);
+    if (d === 0) return true;
+    if (d < 0) lo = mid + 1;
+    else hi = mid;
+  }
+  return false;
+}
+
+// A folded literal path against a path, folding the path's characters
+// as it goes, without building a key.
+function cmpLitPath(lit, str, ci) {
+  const n = Math.min(lit.length, str.length);
+  for (let i = 0; i < n; i++) {
+    let c = str.charCodeAt(i);
+    if (ci && c >= 0x41 && c <= 0x5a) c += 32;
+    else if (IS_WINDOWS_SEP && c === 0x5c) c = 0x2f;
+    const d = lit.charCodeAt(i) - c;
+    if (d !== 0) return d;
+  }
+  return lit.length - str.length;
+}
+
 // The chain of a path (`null`: the lone path of a linear pattern,
-// whose nodes are `0..elems.length`), or `null` when it has several
-// globstars and is the graph's `lone` path (the graph's NFA serves) or
-// its NFA would not fit an int32.
+// whose nodes are `0..elems.length`), or `null` when it has more than
+// two globstars, or two with nothing between (the graph's NFA serves).
 function chainOf(graph, nodes, lone) {
   const elems = graph.elems;
   const n = chainLen(elems, nodes);
   const elem = (i) => elemAt(elems, nodes, i);
+  // The globstars: none, one (`globstar`), or two around a block of
+  // elements (`globstar` and `g2`: `**/x/**`); more, or two with nothing
+  // between, is no chain.
   let globstar = NO_G;
+  let g2 = -1;
   for (let i = 0; i < n; i++) {
     if (!isGlobstar(elem(i))) continue;
-    if (globstar !== NO_G) {
-      globstar = MANY_G;
-      break;
-    }
-    globstar = i;
+    if (globstar === NO_G) globstar = i;
+    else if (g2 < 0 && i > globstar + 1) g2 = i;
+    else return null;
   }
-
-  // Several globstars: the NFA over this path alone.
-  let nfa = null;
-  if (globstar === MANY_G) {
-    if (lone || n + 1 > 32) return null;
-    nfa = denseNfa(graph, nodes);
-  }
-  // A chain's own NFA keeps the chain's elements: no node list then.
-  const chainNodes = nfa === null ? nodes : null;
   // A lone chain runs as it is; a union's chains also carry what a path
   // must start and end with, read off their first and last elements:
   // cheap rejects before a chain runs (`_anyChainMatches`).
-  if (lone) return { nodes: chainNodes, globstar, nfa };
+  if (lone) return { nodes, globstar, g2 };
   const first = elem(0);
   const last = elem(n - 1);
   const quickHead = first.kind === EL_LIT ? first.litStr.charCodeAt(0) : -1;
@@ -125,25 +173,20 @@ function chainOf(graph, nodes, lone) {
     if (w.kind === WK_AFFIX) {
       if (w.suffixStr.length > 0) quickSuffixStr = w.suffixStr;
       else quickPrefixStr = w.prefixStr;
-    } else if (w.kind === WK_AFFIX_SET || w.kind === WK_AFFIX_INDEX) {
-      const set = w.suffixSetStr;
+    } else if (w.kind === WK_SUFFIXES && !w.suffixEmpty) {
       quickLastLo = 0;
       quickLastHi = 0;
-      for (let i = 0; i < set.length && quickLastLo !== -1; i++) {
-        const s = set[i];
-        if (s.length === 0) quickLastLo = quickLastHi = -1;
-        else {
-          const c = s.charCodeAt(s.length - 1) & 63;
-          if (c < 32) quickLastLo |= 1 << c;
-          else quickLastHi |= 1 << (c - 32);
-        }
+      for (const s of w.suffixSetStr) {
+        const c = s.charCodeAt(s.length - 1) & 63;
+        if (c < 32) quickLastLo |= 1 << c;
+        else quickLastHi |= 1 << (c - 32);
       }
     }
   }
   return {
-    nodes: chainNodes,
+    nodes,
     globstar,
-    nfa,
+    g2,
     quickHead,
     quickSuffixStr,
     quickPrefixStr,
@@ -163,14 +206,15 @@ export function chainMatches(m, chain, str) {
   switch (chain.globstar) {
     case NO_G:
       return fixedRun(m, ids, 0, chainLen(m.elems, ids), str, 0);
-    case MANY_G: {
-      // The NFA over this chain alone.
-      const g = chain.nfa;
-      return (nfaRun(m, g, str) & (1 << g.accept)) !== 0;
-    }
+    case SET_G:
+      return hasLiteral(m, chain.literals, str);
     default: {
-      const midStart = head(m, ids, chain.globstar, str);
-      return midStart >= 0 && tailAndGlobstar(m, ids, chain.globstar, str, midStart);
+      const g = chain.globstar;
+      const midStart = head(m, ids, g, str);
+      if (midStart < 0) return false;
+      if (chain.g2 < 0) return tailAndGlobstar(m, ids, g, str, midStart);
+      const split = tailSplit(m, ids, chain.g2, str, midStart);
+      return split >= 0 && blockBetween(m, ids, g, chain.g2, str, midStart, split);
     }
   }
 }
@@ -222,21 +266,79 @@ function head(m, ids, g, str) {
 // With the head consumed up to `midStart`: the tail on the last
 // segments, found backward, and the globstar on what lies between.
 function tailAndGlobstar(m, ids, g, str, midStart) {
+  const split = tailSplit(m, ids, g, str, midStart);
+  return split >= 0 && absorbs(m, elemAt(m.elems, ids, g).kind, str, midStart, split);
+}
+
+// The tail after element `g` on the last segments, found backward:
+// where it starts, past the end when there is none; -1 when it does not
+// fit after `midStart`.
+function tailSplit(m, ids, g, str, midStart) {
   const elems = m.elems;
   const n = chainLen(elems, ids);
-  // Where the tail starts; past the end when there is none.
   let split = str.length + 1;
   let end = str.length;
   for (let j = n - 1; j > g; j--) {
     const s = lastSepBefore(str, end) + 1;
-    if (s < midStart || !elemConsumes(m, elemAt(elems, ids, j), str, s, end)) return false;
+    if (s < midStart || !elemConsumes(m, elemAt(elems, ids, j), str, s, end)) return -1;
     split = s;
     if (j > g + 1) {
-      if (s === 0) return false;
+      if (s === 0) return -1;
       end = s - 1;
     }
   }
-  return absorbs(m, elemAt(elems, ids, g).kind, str, midStart, split);
+  return split;
+}
+
+// With the head consumed up to `midStart` and the tail found at `split`:
+// the block of elements between the globstars `g1` and `g2` on some run
+// of the segments between, each globstar on what is left on its side.
+// Under `dot=false` a globstar takes no dot segment, so the block must
+// start at or before the first one and none may follow it.
+function blockBetween(m, ids, g1, g2, str, midStart, split) {
+  if (split === midStart) return false;
+  // The middle's segments end before the tail's separator, or at the
+  // end of the path.
+  const midEnd = split > str.length ? str.length : split - 1;
+  const elems = m.elems;
+  let pos = midStart;
+  for (;;) {
+    let end = nextSep(str, pos);
+    if (end === -1) end = str.length;
+    const taken = blockFrom(m, ids, g1 + 1, g2, str, pos, end, midEnd);
+    if (taken >= 0) {
+      const left = pos > midStart || elemAt(elems, ids, g1).kind === EL_G0;
+      const right =
+        taken === midEnd
+          ? elemAt(elems, ids, g2).kind === EL_G0
+          : firstDot(m, str, taken + 1, midEnd) === Infinity;
+      if (left && right) return true;
+    }
+    // Past the middle, or at a dot segment the first globstar could not
+    // take.
+    if (end >= midEnd || (!m.dot && pos < end && str.charCodeAt(pos) === 0x2e)) return false;
+    pos = end + 1;
+  }
+}
+
+// The elements `from..to` on the segments from `pos`, the first of which
+// ends at `end`, one each, the last ending at a separator or at
+// `midEnd`: the index just past it, or -1.
+function blockFrom(m, ids, from, to, str, pos, end, midEnd) {
+  const elems = m.elems;
+  if (!elemConsumes(m, elemAt(elems, ids, from), str, pos, end)) return -1;
+  if (to - from === 1) return end;
+  if (end >= midEnd) return -1;
+  let p = end + 1;
+  for (let i = from + 1; i < to - 1; i++) {
+    p = consumeAt(m, elemAt(elems, ids, i), str, p, false);
+    if (p < 0) return -1;
+    p += 1;
+  }
+  const last = elemAt(elems, ids, to - 1);
+  const taken = consumeAt(m, last, str, p, false);
+  if (taken >= 0) return taken <= midEnd ? taken : -1;
+  return midEnd === str.length ? consumeAt(m, last, str, p, true) : -1;
 }
 
 // Can the globstar `kind` take the segments between the head (ending
@@ -303,7 +405,7 @@ export function chainDir(m, str) {
   // A fixed chain, and the directory is deeper.
   if (g === n) return PRUNED;
   const kind = elemAt(elems, ids, g).kind;
-  const exact = tailAndGlobstar(m, ids, g, str, midStart);
+  const matched = tailAndGlobstar(m, ids, g, str, midStart);
   // The globstar took everything after the head.
   const gAlive = absorbs(m, kind, str, midStart, str.length + 1);
   let prefix = gAlive && g + 1 >= openFrom;
@@ -338,7 +440,7 @@ export function chainDir(m, str) {
       end = start - 1;
     }
   }
-  return DirMatch.from(exact, prefix, all);
+  return DirMatch.from(matched, prefix, all);
 }
 
 function elemConsumes(m, e, str, s, t) {

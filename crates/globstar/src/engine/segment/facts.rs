@@ -4,11 +4,10 @@
 use crate::parse::ast::Node;
 
 use super::graph::node_weight;
-use super::wild::len_then_bytes;
 use super::{Bytes, has_sep};
 
 /// Largest suffix set worth scanning before the engine runs; a
-/// bigger alternation gets no prefilter (the engine indexes it).
+/// bigger alternation gets no prefilter (the engine groups it).
 const MAX_SUFFIX_SET: usize = 16;
 
 /// Literal suffixes one of which every match ends with: the trailing
@@ -213,7 +212,7 @@ impl Heads {
 /// Drop prefixes a shorter one already covers; an empty one covers all.
 /// Shortest first, so a prefix is only ever covered by one kept before.
 fn dedupe(mut prefixes: Vec<Bytes>) -> Vec<Bytes> {
-    prefixes.sort_unstable_by(len_then_bytes);
+    prefixes.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
     prefixes.dedup();
     let mut kept: Vec<Bytes> = Vec::new();
     for p in prefixes {

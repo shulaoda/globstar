@@ -105,9 +105,9 @@ export function buildGraph(body, dot, ci) {
   const linear = !nodes.some((n) => n.tag === N_BRACE && crosses(n));
   // A linear walk keeps one group and takes a few units per weight, so
   // only a separator-crossing brace can reach the budget.
+  let weight = 0;
   let budget = Infinity;
   if (!linear) {
-    let weight = 0;
     for (const n of nodes) weight += nodeWeight(n);
     budget = Math.max(MIN_BUDGET, weight * BUDGET_PER_WEIGHT);
   }
@@ -124,7 +124,9 @@ export function buildGraph(body, dot, ci) {
     }
   }
   if (b.cost > b.budget) tooComplex(b.budget);
-  return { elems: exact(b.elems), succs: b.succs, start: b.start, linear };
+  // `weight`: the pattern's `nodeWeight`, read when the literal paths
+  // are kept (a linear pattern keeps none, and reads 0).
+  return { elems: exact(b.elems), succs: b.succs, start: b.start, linear, weight };
 }
 
 // The work the graph walk may take: 64 units per unit of pattern weight
@@ -138,14 +140,14 @@ const BUDGET_PER_WEIGHT = 64;
 const MIN_BUDGET = 1 << 20;
 
 // What the wild's tables take, in the bytes the Rust tables take, so
-// both runtimes refuse the same patterns: a set's suffixes (one byte
-// more each), an NFA's states and kept closures. The walk charges it,
-// so a brace pattern whose segments multiply cannot keep big tables in
-// each of them (TooComplex).
+// both runtimes refuse the same patterns: a set's suffixes and their
+// bounds (one more than the suffixes), an NFA's states and kept
+// closures. The walk charges it, so a brace pattern whose segments
+// multiply cannot keep big tables in each of them (TooComplex).
 function tableBytes(w) {
   if (w.kind === WK_AFFIX) return 0;
   if (w.kind === WK_GENERIC) return nfaTableBytes(w.nfa.kinds.length);
-  let bytes = 0;
+  let bytes = 1;
   for (const s of w.suffixSetStr) bytes += s.length + 1;
   return bytes;
 }

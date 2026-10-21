@@ -42,7 +42,7 @@ function trailing(nodes, end) {
 }
 
 // Largest suffix set worth scanning before the engine runs; a bigger
-// alternation gets no prefilter (the engine indexes it).
+// alternation gets no prefilter (the engine groups it).
 const MAX_SUFFIX_SET = 16;
 
 // When the pattern ends in a brace: one guaranteed suffix per branch, or

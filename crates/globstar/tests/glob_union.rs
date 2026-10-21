@@ -5,7 +5,7 @@
 //!   - brace-meta safety: patterns containing `,` `{` `}` literal bytes
 //!   - corpus-driven differential
 
-use globstar::{Glob, GlobError};
+use globstar::{CompileOptions, DirMatch, Glob, GlobError};
 use std::collections::BTreeSet;
 use std::fs;
 
@@ -40,6 +40,50 @@ fn members_share_one_expansion_budget() {
         err.root(),
         GlobError::BraceExpansionTooLarge { .. }
     ));
+}
+
+#[test]
+fn literal_paths_are_one_set() {
+    // Members that are plain paths are kept as one sorted set, searched
+    // once; a repeat folds; the others stay chains.
+    let members = ["src/a.ts", "lib/b.ts", "src/a.ts", "a/b/c", "src/**/*.md"];
+    let union = Glob::union(members).unwrap();
+    assert_eq!(
+        union.shape(),
+        "L(4) G0 L(3) W:affix | chains 1 | literals 3 | nfa small"
+    );
+    for (path, want) in [
+        ("src/a.ts", true),
+        ("lib/b.ts", true),
+        ("a/b/c", true),
+        ("src/a.md", true),
+        ("src/x/y.md", true),
+        ("src/a.tsx", false),
+        ("a/b", false),
+        ("a/b/c/d", false),
+        ("", false),
+    ] {
+        assert_eq!(union.is_match(path.as_bytes()), want, "{path}");
+        assert_eq!(union.is_match_nfa(path.as_bytes()), want, "{path} (nfa)");
+    }
+    assert_eq!(union.match_dir(b"a/b"), DirMatch::Descend);
+    assert_eq!(union.match_dir(b"a/b/c"), DirMatch::Match);
+    assert_eq!(union.match_dir(b"lib"), DirMatch::Descend);
+    assert_eq!(union.match_dir(b"x"), DirMatch::Pruned);
+    // Case-insensitive: the set folds ASCII case on both sides.
+    let folded = Glob::union_with(
+        ["Src/A.ts", "src/a.ts", "LIB/b.ts", "x/*.md"],
+        CompileOptions::default().case_insensitive(true),
+    )
+    .unwrap();
+    assert!(folded.shape().contains("literals 2"));
+    for (path, want) in [("SRC/a.TS", true), ("lib/B.TS", true), ("src/b.ts", false)] {
+        assert_eq!(folded.is_match(path.as_bytes()), want, "{path}");
+    }
+    assert_eq!(
+        or_oracle(&members, b"src/a.ts"),
+        union.is_match(b"src/a.ts")
+    );
 }
 
 #[test]

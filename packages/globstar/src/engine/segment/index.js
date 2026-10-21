@@ -1,14 +1,15 @@
 // The segment engine. JS twin of `crates/globstar/src/engine/segment/
 // mod.rs`: a pattern becomes a graph of per-segment elements and a path
 // is matched segment by segment — anchored compares for a path through
-// the graph with at most one globstar, an NFA over the graph for
+// the graph with at most one globstar or two around a block, one search
+// of a sorted set for the literal-only paths, an NFA over the graph for
 // everything else.
 
 import { IS_WINDOWS_SEP, lastSepBefore } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph } from "./graph.js";
-import { chains, chainMatches, chainDir, whereFrom } from "./chain.js";
+import { SET_G, chains, chainMatches, chainDir, hasLiteral, whereFrom } from "./chain.js";
 import {
   anyNfa,
   nfaRun,
@@ -27,8 +28,7 @@ import {
   EL_WILD,
   EL_G0,
   WK_AFFIX,
-  WK_AFFIX_SET,
-  WK_AFFIX_INDEX,
+  WK_SUFFIXES,
   elemAnySeg,
   elemSatisfiable,
   exact,
@@ -37,11 +37,11 @@ import {
 export class SegmentMatcher {
   constructor(compiled, body, ci, byteOnly, dot) {
     this.elems = compiled.elems;
-    // The paths through the graph, tried in order; none past MAX_CHAINS.
+    // The paths through the graph, tried in order (the literal ones as
+    // one set, first); none past the chain module's caps.
     this.chains = compiled.chains;
-    // The NFA over the graph, kept only when the chains cannot serve:
-    // none, several (`matchDir` runs them as one), or one with several
-    // globstars.
+    // What a lone line does without: the NFA over the graph, which
+    // serves `matchDir` (and `isMatch` when the chains cannot).
     this.nfa = compiled.nfa;
     this.ci = ci;
     this.dot = dot;
@@ -72,8 +72,7 @@ export class SegmentMatcher {
       if (e.kind === EL_WILD) {
         const k = e.wild.kind;
         if (k === WK_AFFIX) return "W:affix";
-        if (k === WK_AFFIX_SET) return "W:set";
-        return k === WK_AFFIX_INDEX ? "W:index" : "W:nfa";
+        return k === WK_SUFFIXES ? "W:set" : "W:nfa";
       }
       return e.kind === EL_G0 ? "G0" : "G1";
     });
@@ -87,7 +86,14 @@ export class SegmentMatcher {
     }
     const g = this.nfa;
     const nfa = g === null ? "none" : g.kind === NFA_SMALL ? "small" : "sparse";
-    return `${runs.join(" ")} | chains ${this.chains.length} | nfa ${nfa}`;
+    // The literal paths' set is counted apart from the chains.
+    let chainCount = 0;
+    let literals = "";
+    for (const c of this.chains) {
+      if (c.globstar === SET_G) literals = ` | literals ${c.literals.length}`;
+      else chainCount++;
+    }
+    return `${runs.join(" ")} | chains ${chainCount}${literals} | nfa ${nfa}`;
   }
 
   // `opts.forceNfa` bypasses the chains (a test hook); `opts.byteOnly`
@@ -128,14 +134,25 @@ export class SegmentMatcher {
   // case-insensitive matcher skips them. Its own method, so `_isMatch`
   // stays small for the one-chain and NFA matchers.
   _anyChainMatches(chainList, str) {
+    // The literal paths' set, when there is one, comes first.
+    let from = 0;
+    if (chainList[0].globstar === SET_G) {
+      if (hasLiteral(this, chainList[0].literals, str)) return true;
+      from = 1;
+    }
     if (this.ci) {
-      for (const chain of chainList) if (chainMatches(this, chain, str)) return true;
+      for (let k = from; k < chainList.length; k++) {
+        if (chainMatches(this, chainList[k], str)) return true;
+      }
       return false;
     }
     const len = str.length;
     const first = len > 0 ? str.charCodeAt(0) : -1;
     const last = len > 0 ? str.charCodeAt(len - 1) & 63 : 64;
-    for (const chain of chainList) {
+    // Where the last segment starts, found once some chain asks.
+    let lastStart = -1;
+    for (let k = from; k < chainList.length; k++) {
+      const chain = chainList[k];
       const suffix = chain.quickSuffixStr;
       if (suffix.length > 0) {
         if (!str.endsWith(suffix)) continue;
@@ -146,7 +163,10 @@ export class SegmentMatcher {
       }
       if (chain.quickHead >= 0 && chain.quickHead !== first) continue;
       const prefix = chain.quickPrefixStr;
-      if (prefix.length > 0 && !str.startsWith(prefix, lastSepBefore(str, len) + 1)) continue;
+      if (prefix.length > 0) {
+        if (lastStart < 0) lastStart = lastSepBefore(str, len) + 1;
+        if (!str.startsWith(prefix, lastStart)) continue;
+      }
       if (chainMatches(this, chain, str)) return true;
     }
     return false;
@@ -202,9 +222,11 @@ export class SegmentMatcher {
 
 function compileSegment(body, dot, ci, forceNfa) {
   const graph = buildGraph(body, dot, ci);
-  // The test hook keeps no chain; a lone chain serves `matchDir` too;
-  // anything else needs the NFA.
-  const chainList = forceNfa ? [] : chains(graph);
-  const nfa = chainList.length === 1 ? null : anyNfa(graph, ci);
+  // The test hook keeps no chain.
+  const chainList = forceNfa ? [] : chains(graph, ci);
+  // A lone line (one chain through at most one globstar) serves
+  // `matchDir` too; anything else needs the NFA.
+  const line = chainList.length === 1 && chainList[0].globstar !== SET_G && chainList[0].g2 < 0;
+  const nfa = line ? null : anyNfa(graph, ci);
   return { elems: graph.elems, chains: exact(chainList), nfa };
 }

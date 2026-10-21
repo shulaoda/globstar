@@ -416,9 +416,9 @@ sections.push(`## Test corpus
 | \`mixed-roots\` | \`["src/**/*.ts", "tests/**/*.ts", "lib/**/*.js"]\` (different roots) |
 | \`huge-set-pos\` | 10 positives spanning roots / extensions |
 | \`ignore-list-40\` | 40 ignore entries of unlike shapes (\`fixtures/bench-ignore-list.txt\`): chains for the match, a 38-state graph NFA for \`match_dir\` (a u64 in Rust, sparse in JS) |
-| \`file-list-100\` | 100 literal files over 10 folders (\`src/<area>/mod_<i>.ts\`): past 64 chains, the graph NFA alone (dense rows in Rust, sparse in JS) |
+| \`file-list-100\` | 100 literal files over 10 folders (\`src/<area>/mod_<i>.ts\`): literal paths, kept as one sorted set and answered by one search |
 | \`gitignore-89\` | a project's .gitignore as globs (\`fixtures/bench-gitignore-list.txt\`): 89 directories, extensions and file names anywhere plus a few rooted entries; the like shapes merge into one chain each |
-| \`all-cases\` | every pattern of this bench in one union, each once: past 64 chains, the graph NFA with every element kind at once — the widest, most mixed set, and the shape where a per-member matcher loses to a DFA |
+| \`all-cases\` | every pattern of this bench in one union, each once: its 100 literal paths as one set, 25 chains for the rest — the widest, most mixed set, and the shape where a per-member matcher loses to a DFA |
 
 Each library matches a set the way it offers to: globstar through
 \`Glob::union\` / \`globstar(list)\`, globset through one \`GlobSet\`, wax

@@ -1,10 +1,11 @@
 //! The segment engine: a pattern becomes a graph of per-segment
 //! elements (literals, in-segment wildcard matchers, globstars) and a
 //! path is matched segment by segment. A path through the graph with
-//! at most one globstar is matched by anchored compares; everything
-//! else runs an NFA whose active set grows with the pattern, so no
-//! pattern is too big for it. Only braces whose segments multiply are
-//! refused, by the compile walk (`GlobError::TooComplex`).
+//! at most one globstar, or two around a block, is matched by anchored
+//! compares, the literal-only paths by one search of a sorted set;
+//! everything else runs an NFA whose active set grows with the
+//! pattern, so no pattern is too big for it. Only braces whose segments
+//! multiply are refused, by the compile walk (`GlobError::TooComplex`).
 //!
 //! `graph` builds the graph, `chain` and `nfa` match over it, `wild`
 //! (with `seg_nfa`) matches inside a segment, `facts` reads the literal
@@ -23,7 +24,7 @@ use crate::error::GlobError;
 use crate::parse::ast::Node;
 
 use super::pat_byte_eq;
-use chain::Chain;
+use chain::{Chain, Gate, Shape};
 use graph::Graph;
 use nfa::{AnyNfa, any_nfa, chain_nfa};
 use wild::{ByteSketch, Wild, WildKind};
@@ -97,13 +98,13 @@ impl Elem {
 pub(crate) struct SegmentMatcher {
     /// The graph's nodes, in emission order.
     elems: Box<[Elem]>,
-    /// The paths through the graph, tried in order; none past
-    /// `MAX_CHAINS`.
+    /// The paths through the graph, tried in order (the literal ones as
+    /// one set, first); none past the chain module's caps.
     chains: Box<[Chain]>,
-    /// The NFA over the graph, kept only when the chains cannot serve:
-    /// none, several (`match_dir` runs them as one), or one with
-    /// several globstars.
-    nfa: Option<Box<AnyNfa>>,
+    /// What a lone line does without: the NFA over the graph, which
+    /// serves `match_dir` (and `is_match` when the chains cannot), and
+    /// the chains' gates.
+    union: Option<Box<Union>>,
     /// Prefilter: literal suffixes one of which every match ends
     /// with (empty: none known), sketched by last byte.
     suffixes: Box<[Bytes]>,
@@ -114,21 +115,32 @@ pub(crate) struct SegmentMatcher {
     dot: bool,
 }
 
+/// What a matcher keeps beyond a lone line: the NFA over the graph and
+/// one gate per chain.
+#[derive(Debug, Clone)]
+struct Union {
+    nfa: AnyNfa,
+    gates: Box<[Gate]>,
+}
+
 impl SegmentMatcher {
     pub(crate) fn build(body: &Node, dot: bool, ci: bool) -> Result<Box<Self>, GlobError> {
         let graph = Graph::build(body, dot, ci)?;
-        let chains = graph.chains();
-        // A lone chain serves `match_dir` too; anything else needs the NFA.
-        let nfa = match &chains[..] {
-            [_] => None,
-            _ => Some(Box::new(any_nfa(&graph.elems, ci, graph.edges.as_ref()))),
+        let chains = graph.chains(ci);
+        // A lone line serves `match_dir` too; anything else needs the NFA.
+        let union = match &chains[..] {
+            [c] if matches!(c.shape, Shape::Line(_)) => None,
+            _ => Some(Box::new(Union {
+                nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref()),
+                gates: chains.iter().map(|c| c.gate(&graph.elems, ci)).collect(),
+            })),
         };
         let suffixes = facts::suffixes(body);
         Ok(Box::new(SegmentMatcher {
             suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
             suffixes,
             chains,
-            nfa,
+            union,
             elems: graph.elems.into_boxed_slice(),
             prefixes: facts::static_prefixes(body, graph.weight),
             case_insensitive: ci,
@@ -146,10 +158,11 @@ impl SegmentMatcher {
         if !self.prefilter(path) {
             return false;
         }
-        match (&self.chains[..], &self.nfa) {
-            ([], Some(nfa)) => nfa.is_match(self, path),
-            ([_], _) => self.chain_matches(0, path),
-            _ => self.any_chain_matches(path),
+        match &self.union {
+            // A lone line.
+            None => self.chain_matches(&self.chains[0], path),
+            Some(u) if self.chains.is_empty() => u.nfa.is_match(self, path),
+            Some(u) => self.any_chain_matches(&u.gates, path),
         }
     }
 
@@ -162,8 +175,7 @@ impl SegmentMatcher {
                 Elem::Lit(_) => "L",
                 Elem::Wild(w) => match w.kind {
                     WildKind::Affix(_) => "W:affix",
-                    WildKind::AffixSet(_) => "W:set",
-                    WildKind::AffixIndex(_) => "W:index",
+                    WildKind::Suffixes(_) => "W:set",
                     WildKind::Generic(_) => "W:nfa",
                 },
                 Elem::G0 => "G0",
@@ -182,17 +194,18 @@ impl SegmentMatcher {
             });
             i += n;
         }
-        let nfa = match self.nfa.as_deref() {
+        let nfa = match self.union.as_deref().map(|u| &u.nfa) {
             None => "none",
             Some(AnyNfa::Small(_)) => "small",
             Some(AnyNfa::Wide(_)) => "wide",
             Some(AnyNfa::Sparse(_)) => "sparse",
         };
-        format!(
-            "{} | chains {} | nfa {nfa}",
-            runs.join(" "),
-            self.chains.len()
-        )
+        // The literal paths' set is counted apart from the chains.
+        let (chains, literals) = match self.chains.first().map(|c| &c.shape) {
+            Some(Shape::Set(set)) => (self.chains.len() - 1, format!(" | literals {}", set.len())),
+            _ => (self.chains.len(), String::new()),
+        };
+        format!("{} | chains {chains}{literals} | nfa {nfa}", runs.join(" "))
     }
 
     /// `is_match` through an NFA only (test hook): the matcher's own,
@@ -201,8 +214,8 @@ impl SegmentMatcher {
         if !self.prefilter(path) {
             return false;
         }
-        match &self.nfa {
-            Some(nfa) => nfa.is_match(self, path),
+        match &self.union {
+            Some(u) => u.nfa.is_match(self, path),
             None => {
                 let (m, nfa) = chain_nfa(self);
                 nfa.is_match(&m, path)
@@ -211,8 +224,8 @@ impl SegmentMatcher {
     }
 
     pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        match &self.nfa {
-            Some(nfa) => nfa.match_dir(self, dir_path),
+        match &self.union {
+            Some(u) => u.nfa.match_dir(self, dir_path),
             None => self.chain_dir(dir_path),
         }
     }
@@ -245,18 +258,9 @@ impl SegmentMatcher {
         lit.len() == seg.len() && self.affix_eq(lit, seg)
     }
 
-    /// Byte-wise, so short affixes stay inline rather than calling
-    /// `bcmp`.
     #[inline(always)]
     fn affix_eq(&self, part: &[u8], seg_part: &[u8]) -> bool {
-        debug_assert_eq!(part.len(), seg_part.len());
-        if self.case_insensitive {
-            part.iter()
-                .zip(seg_part)
-                .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
-        } else {
-            part.iter().zip(seg_part).all(|(a, b)| a == b)
-        }
+        wild::affix_eq(part, seg_part, self.case_insensitive)
     }
 }
 

@@ -25,34 +25,29 @@ const MAX_COVER_SEGMENTS = 64;
 
 // ── building ────────────────────────────────────────────────────────
 
-// The NFA over the positions of a path (`nodes === null`: the graph
-// itself). Positions of a path follow one another; only the graph of
-// a crossing brace has stored edges. States are numbered by position;
-// the accept state comes last.
-function layout(graph, nodes) {
+// The NFA over the graph's positions. A linear pattern's positions
+// follow one another; only the graph of a crossing brace has stored
+// edges. States are numbered by position; the accept state comes last.
+function layout(graph) {
   const elems = graph.elems;
-  const n = nodes === null ? elems.length : nodes.length;
-  const chained = nodes !== null || graph.linear;
   return {
     elems,
-    n,
-    nodeAt: (i) => (nodes === null ? i : nodes[i]),
-    succs: chained ? null : graph.succs,
-    start: chained ? [0] : graph.start,
+    n: elems.length,
+    succs: graph.linear ? null : graph.succs,
+    start: graph.linear ? [0] : graph.start,
   };
 }
 
 // One int32 of states up to 32, sparse beyond.
 export function anyNfa(graph, ci) {
-  return graph.elems.length + 1 <= 32 ? denseNfa(graph, null) : sparseNfa(graph, ci);
+  return graph.elems.length + 1 <= 32 ? denseNfa(graph) : sparseNfa(graph, ci);
 }
 
 // Int32 active set: at most 32 states. `after` holds per state the
 // closure entered after consuming a segment there (a globstar's
-// includes itself); state `i` takes what `elems[i]` takes: the graph's
-// elements, or a chain's in path order.
-export function denseNfa(graph, nodes) {
-  const { elems, n, nodeAt, succs, start } = layout(graph, nodes);
+// includes itself); state `i` takes what `elems[i]` takes.
+function denseNfa(graph) {
+  const { elems, n, succs, start } = layout(graph);
   const accept = n;
   const after = [];
   for (let s = 0; s <= n; s++) after.push(0);
@@ -62,11 +57,11 @@ export function denseNfa(graph, nodes) {
   // successor contributes its own successors.
   const addTarget = (c, t) => {
     if (t === ACCEPT) return c | (1 << accept);
-    if (nullable(elems[nodeAt(t)])) c |= after[t];
+    if (nullable(elems[t])) c |= after[t];
     return c | (1 << t);
   };
   for (let i = n - 1; i >= 0; i--) {
-    const el = elems[nodeAt(i)];
+    const el = elems[i];
     let c = 0;
     if (succs === null) c = addTarget(c, i + 1 < n ? i + 1 : ACCEPT);
     else for (const t of succs[i]) c = addTarget(c, t);
@@ -78,8 +73,7 @@ export function denseNfa(graph, nodes) {
   }
   let init = 0;
   for (const t of start) init = addTarget(init, t);
-  const own = nodes === null ? elems : nodes.map((i) => elems[i]);
-  return { kind: NFA_SMALL, elems: own, after: exact(after), init, accept, reach1 };
+  return { kind: NFA_SMALL, after: exact(after), init, accept, reach1 };
 }
 
 // Past 32 states the graph NFA is stepped sparsely. A position keeps
@@ -90,7 +84,7 @@ export function denseNfa(graph, nodes) {
 // up to `nullEnd[p]`. The active set holds states and whole positions;
 // see `nfaRunSparse`.
 function sparseNfa(graph, ci) {
-  const { elems, n, succs, start } = layout(graph, null);
+  const { elems, n, succs, start } = layout(graph);
   const succOf = (p) => (p === n ? start : succs === null ? null : succs[p]);
   // Linear graphs store no edges: position `p` is followed by `p + 1`.
   const eachSucc = (p, f) => {
@@ -190,7 +184,7 @@ export function nfaRun(m, g, str) {
 }
 
 function nfaStep(m, g, active, str, s0, e0) {
-  const elems = g.elems;
+  const elems = m.elems;
   const after = g.after;
   const ci = m.ci;
   let next = 0;
@@ -221,7 +215,7 @@ function nfaStep(m, g, active, str, s0, e0) {
 // literal and class rejects it (`dot=true` only).
 function nfaStepWild(m, active) {
   const g = m.nfa;
-  const elems = g.elems;
+  const elems = m.elems;
   const after = g.after;
   let next = 0;
   let bits = active & ~(1 << g.accept);

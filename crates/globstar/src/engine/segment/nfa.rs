@@ -20,21 +20,14 @@ const MAX_COVER_SEGMENTS: usize = 64;
 /// accept state, which is the last.
 #[derive(Debug, Clone)]
 pub(super) struct Nfa<B: Bits> {
-    states: Box<[State<B>]>,
+    /// Per state, the closure entered after consuming a segment there
+    /// (a globstar's includes itself); the accept slot is never read.
+    after: Box<[B]>,
     /// ε-closure of the start.
     init: B,
     /// States that can still consume ≥ 1 segment on a path to
     /// accept; drives `match_dir`'s prefix bit.
     reach1: B,
-}
-
-#[derive(Debug, Clone)]
-struct State<B: Bits> {
-    /// The closure entered after consuming a segment here (a
-    /// globstar's includes itself).
-    after: B,
-    /// The state's node (the accept slot is unused).
-    node: u32,
 }
 
 /// The same automaton past `MAX_ROW_BYTES` of rows, or with a literal
@@ -94,11 +87,11 @@ impl AnyNfa {
 pub(super) fn any_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> AnyNfa {
     let states = elems.len() + 1;
     if states <= 64 {
-        AnyNfa::Small(dense_nfa(elems, edges, None))
+        AnyNfa::Small(dense_nfa(elems, edges))
     } else if states * Wide::words(states) * 8 <= MAX_ROW_BYTES
         && edges.is_none_or(|e| lit_fanout(elems, e) <= MAX_DENSE_LITS)
     {
-        AnyNfa::Wide(Box::new(dense_nfa(elems, edges, None)))
+        AnyNfa::Wide(Box::new(dense_nfa(elems, edges)))
     } else {
         AnyNfa::Sparse(Box::new(sparse_nfa(elems, ci, edges)))
     }
@@ -135,32 +128,21 @@ fn succ_of(edges: Option<&Edges>, n: usize, p: usize) -> impl Iterator<Item = u3
     next.into_iter().chain(stored.iter().copied())
 }
 
-/// The NFA over the positions of a path, which follow one another
-/// (`None`: the graph itself, whose `edges` a crossing brace stores).
-/// State `i` is position `i`, the accept state last.
-pub(super) fn dense_nfa<B: Bits>(
-    elems: &[Elem],
-    edges: Option<&Edges>,
-    path: Option<&[u32]>,
-) -> Nfa<B> {
-    let n = path.map_or(elems.len(), <[u32]>::len);
-    let node_at = |i: usize| path.map_or(i as u32, |p| p[i]);
-    let elem = |i: usize| &elems[node_at(i) as usize];
+/// The NFA over the graph (whose `edges` a crossing brace stores; a
+/// linear pattern's positions follow one another). State `i` is
+/// position `i`, the accept state last.
+fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
+    let n = elems.len();
     let accept = n;
     let words = B::words(n + 1);
-    // The rows are filled below; the accept state's is never read.
-    let mut states: Vec<State<B>> = (0..=n)
-        .map(|_| State {
-            after: B::zero(0),
-            node: 0,
-        })
-        .collect();
+    // The rows are filled below.
+    let mut after: Vec<B> = (0..=n).map(|_| B::zero(0)).collect();
     let mut reach1 = B::zero(words);
 
     // The closure some targets give, from the last position back:
     // successors always lie ahead, so each is complete when needed,
     // and a nullable successor contributes its own successors.
-    let closure_of = |targets: &mut dyn Iterator<Item = u32>, states: &[State<B>]| {
+    let closure_of = |targets: &mut dyn Iterator<Item = u32>, after: &[B]| {
         let mut c = B::zero(words);
         for t in targets {
             if t == ACCEPT {
@@ -168,17 +150,16 @@ pub(super) fn dense_nfa<B: Bits>(
                 continue;
             }
             let t = t as usize;
-            if elem(t).nullable() {
-                c.or_with(&states[t].after);
+            if elems[t].nullable() {
+                c.or_with(&after[t]);
             }
             c.set(t);
         }
         c
     };
     for i in (0..n).rev() {
-        let el = elem(i);
-        states[i].node = node_at(i);
-        let mut c = closure_of(&mut succ_of(edges, n, i), &states);
+        let el = &elems[i];
+        let mut c = closure_of(&mut succ_of(edges, n, i), &after);
         // A state reaches accept through ≥ 1 segment iff its element
         // can consume one and what follows reaches accept.
         if el.satisfiable() && (c.test(accept) || c.intersects(&reach1)) {
@@ -188,11 +169,11 @@ pub(super) fn dense_nfa<B: Bits>(
         if el.is_globstar() {
             c.set(i);
         }
-        states[i].after = c;
+        after[i] = c;
     }
-    let init = closure_of(&mut succ_of(edges, n, n), &states);
+    let init = closure_of(&mut succ_of(edges, n, n), &after);
     Nfa {
-        states: states.into_boxed_slice(),
+        after: after.into_boxed_slice(),
         init,
         reach1,
     }
@@ -290,7 +271,7 @@ pub(super) fn chain_nfa(m: &SegmentMatcher) -> (Cow<'_, SegmentMatcher>, AnyNfa)
 impl<B: Bits> Nfa<B> {
     #[inline]
     fn accept(&self) -> usize {
-        self.states.len() - 1
+        self.after.len() - 1
     }
 
     pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
@@ -317,7 +298,7 @@ impl<B: Bits> Nfa<B> {
     /// The active set after every segment of `path`.
     fn run(&self, m: &SegmentMatcher, path: &[u8]) -> B {
         let mut active = self.init.clone();
-        let mut next = B::zero(B::words(self.states.len()));
+        let mut next = B::zero(B::words(self.after.len()));
         let mut pos = 0;
         while !active.is_zero() {
             let end = seg_end(path, pos);
@@ -339,15 +320,13 @@ impl<B: Bits> Nfa<B> {
             if s == accept {
                 return;
             }
-            let state = &self.states[s];
-            let node = state.node as usize;
-            let consumes = match &m.elems[node] {
+            let consumes = match &m.elems[s] {
                 Elem::Lit(lit) => m.lit_eq(lit, seg),
                 Elem::Wild(w) => m.wild_consumes(w, seg),
                 Elem::G0 | Elem::G1 => absorb_ok,
             };
             if consumes {
-                next.or_with(&state.after);
+                next.or_with(&self.after[s]);
             }
         });
     }
@@ -358,12 +337,8 @@ impl<B: Bits> Nfa<B> {
         next.clear();
         let accept = self.accept();
         active.for_each(|s| {
-            if s == accept {
-                return;
-            }
-            let state = &self.states[s];
-            if m.elems[state.node as usize].any_seg() {
-                next.or_with(&state.after);
+            if s != accept && m.elems[s].any_seg() {
+                next.or_with(&self.after[s]);
             }
         });
     }
@@ -376,10 +351,10 @@ impl<B: Bits> Nfa<B> {
     /// transition a wildcard-only one does, so `true` holds for all
     /// real paths; `false` may only mean "not provable".
     fn covers_below(&self, m: &SegmentMatcher, active: &mut B) -> bool {
-        let mut next = B::zero(B::words(self.states.len()));
+        let mut next = B::zero(B::words(self.after.len()));
         // Tokens only move forward or sit on a globstar, so the set
         // settles within the number of states.
-        for _ in 0..=self.states.len().min(MAX_COVER_SEGMENTS) {
+        for _ in 0..=self.after.len().min(MAX_COVER_SEGMENTS) {
             self.step_wild(m, active, &mut next);
             if !next.test(self.accept()) {
                 return false;

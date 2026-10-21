@@ -67,7 +67,7 @@ suffix_set(P) := { s_i : s_i is the suffix contributed by branch i }
 prefilter_P(w) := ∃ s ∈ suffix_set(P). w ends with s
 ```
 
-This handles common idioms like `**/*.{ts,tsx,js}` whose single longest common suffix is empty (`.ts` and `.tsx` end differently) but whose suffix-set is `{".ts", ".tsx", ".js"}`, providing a stronger filter. A brace with more than 16 branches gets no prefilter. When its branches are literals, the engine indexes them itself (`AffixIndex`, §02, at any count); a brace with a wildcard branch, or braces whose product passes 1,024 names, is matched by the segment's NFA instead.
+This handles common idioms like `**/*.{ts,tsx,js}` whose single longest common suffix is empty (`.ts` and `.tsx` end differently) but whose suffix-set is `{".ts", ".tsx", ".js"}`, providing a stronger filter. A brace with more than 16 branches gets no prefilter. When its branches are literals, the engine groups them itself (`Suffixes`, §02, at any count); a brace with a wildcard branch, or braces whose product passes 1,024 names, is matched by the segment's NFA instead.
 
 ## 3. Why suffix and not prefix
 

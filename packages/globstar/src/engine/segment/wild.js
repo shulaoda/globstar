@@ -3,9 +3,9 @@
 // JS twin of `crates/globstar/src/engine/segment/wild.rs`.
 
 import { N_ANYCHAR, N_BRACE, N_LITERAL, N_STAR, seq } from "../../parse/ast.js";
-import { asciiLower, eqByteCi } from "../../bytes.js";
+import { eqByteCi } from "../../bytes.js";
 import { flat, isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
-import { WK_AFFIX, WK_AFFIX_SET, WK_AFFIX_INDEX, WK_GENERIC, exact } from "./elem.js";
+import { WK_AFFIX, WK_SUFFIXES, WK_GENERIC, exact } from "./elem.js";
 import { compileSegNfa } from "./seg-nfa.js";
 
 const EMPTY = "";
@@ -24,8 +24,15 @@ export function makeWild(kind, fields) {
     kind,
     prefixStr: flat(fields.prefixStr ?? ""),
     suffixStr: flat(fields.suffixStr ?? ""),
+    // A set's non-empty suffixes grouped by last character (`lastGroup`,
+    // one key per suffix in `suffixKeys`, ascending), each group in
+    // pattern order. The Rust twin scans a few in turn and indexes more
+    // by a table of group starts; a typed array costs V8 ~200 ns to
+    // allocate, so here a group is found by a binary search of the keys.
     suffixSetStr: fields.suffixSetStr?.map(flat) ?? null,
-    runs: fields.runs ?? null,
+    suffixKeys: fields.suffixKeys ?? null,
+    // One suffix is empty: it ends anything.
+    suffixEmpty: fields.suffixEmpty ?? false,
     minLen: fields.minLen ?? 0,
     variable: fields.variable ?? true,
     dotProtect: fields.dotProtect ?? false,
@@ -70,15 +77,37 @@ export function compileWild(nodes, dot, ci) {
     fields.minLen += suffixes[0].length;
     return makeWild(WK_AFFIX, fields);
   }
-  if (suffixes.length <= LINEAR_SUFFIXES) {
-    fields.suffixSetStr = suffixes;
-    return makeWild(WK_AFFIX_SET, fields);
+  // A counting sort by group keeps the pattern's order within one.
+  const starts = GROUP_SCRATCH.fill(0);
+  let empty = false;
+  for (const s of suffixes) {
+    if (s.length === 0) empty = true;
+    else starts[lastGroup(s.charCodeAt(s.length - 1), ci) + 1]++;
   }
-  const { set, runs } = indexSuffixes(suffixes, ci);
+  for (let g = 1; g < 65; g++) starts[g] += starts[g - 1];
+  const set = [];
+  const keys = [];
+  for (const s of suffixes) {
+    if (s.length === 0) continue;
+    const g = lastGroup(s.charCodeAt(s.length - 1), ci);
+    const k = starts[g]++;
+    set[k] = s;
+    keys[k] = g;
+  }
+  fields.suffixEmpty = empty;
   fields.suffixSetStr = set;
-  fields.runs = runs;
-  return makeWild(WK_AFFIX_INDEX, fields);
+  fields.suffixKeys = exact(keys);
+  return makeWild(WK_SUFFIXES, fields);
 }
+
+// The group of the suffixes ending in character `c`.
+function lastGroup(c, ci) {
+  if (ci && c >= 0x41 && c <= 0x5a) c += 32;
+  return c & 63;
+}
+
+// Where each group starts while a set is built; one for all builds.
+const GROUP_SCRATCH = new Int32Array(65);
 
 // Literal suffix alternatives one segment enumerates (`*.{a,b,…}`, a
 // factored union of names). A product of alternatives (`{a,b}{c,d}…`)
@@ -86,9 +115,6 @@ export function compileWild(nodes, dot, ci) {
 // multiplying it out; a single list is no product and is enumerated
 // whatever its length.
 const MAX_SUFFIX_PRODUCT = 1024;
-// An affix set up to this size is scanned in pattern order; a larger
-// one is sorted and binary-searched per suffix length.
-const LINEAR_SUFFIXES = 8;
 // The enumerated suffixes, one byte more each, may not take more than
 // this or four times their nodes: a long literal next to a product
 // would be copied into every suffix.
@@ -135,24 +161,6 @@ function suffixProduct(nodes, from) {
   return parts;
 }
 
-// Past LINEAR_SUFFIXES the set is sorted by (length, bytes), ASCII-
-// lowercased when case-insensitive, and indexed per length so
-// wildConsumes can binary-search it. Latin-1 strings order by byte.
-function indexSuffixes(suffixes, ci) {
-  let set = suffixes;
-  if (ci) set = set.map(asciiLower);
-  set.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
-  set = set.filter((s, i) => i === 0 || s !== set[i - 1]);
-  const runs = [];
-  for (let i = 0; i < set.length; i++) {
-    const len = set[i].length;
-    const last = runs.length > 0 ? runs[runs.length - 1] : null;
-    if (last !== null && last.len === len) last.end = i + 1;
-    else runs.push({ len, start: i, end: i + 1 });
-  }
-  return { set, runs: exact(runs) };
-}
-
 // ── matching ────────────────────────────────────────────────────────
 
 export function litEq(lit, str, s, t, ci) {
@@ -170,29 +178,6 @@ export function affixEq(part, str, at, ci) {
     if (!eqByteCi(part.charCodeAt(i), str.charCodeAt(at + i))) return false;
   }
   return true;
-}
-
-// Binary search of `set[lo, hi)` (sorted, one length) for the segment
-// tail `str[at, at + len)`, folding the tail's ASCII case when `ci`.
-function runHas(set, lo, hi, str, at, len, ci) {
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    const c = cmpTail(set[mid], str, at, len, ci);
-    if (c === 0) return true;
-    if (c < 0) lo = mid + 1;
-    else hi = mid;
-  }
-  return false;
-}
-
-function cmpTail(suf, str, at, len, ci) {
-  for (let i = 0; i < len; i++) {
-    const a = suf.charCodeAt(i);
-    let b = str.charCodeAt(at + i);
-    if (ci && b >= 0x41 && b <= 0x5a) b += 32;
-    if (a !== b) return a < b ? -1 : 1;
-  }
-  return 0;
 }
 
 // On a path string (not `m.byteOnly`: the pattern is ASCII) the
@@ -214,30 +199,29 @@ export function wildConsumes(m, w, str, s, t) {
       }
       return true;
     }
-    case WK_AFFIX_SET: {
+    case WK_SUFFIXES: {
       const p = w.prefixStr;
-      if (len < p.length || (p.length > 0 && !affixEq(p, str, s, ci))) return false;
-      const set = w.suffixSetStr;
-      for (let i = 0; i < set.length; i++) {
-        const suf = set[i];
-        const need = w.minLen + suf.length;
-        if (len < need || (!w.variable && len !== need)) continue;
-        if (suf.length === 0 || affixEq(suf, str, t - suf.length, ci)) return true;
-      }
-      return false;
-    }
-    case WK_AFFIX_INDEX: {
-      const p = w.prefixStr;
-      // `minLen` holds the prefix, so `room` bounds it too.
+      // `minLen` holds the prefix and the `?`s, so `room` is what is
+      // left for a suffix.
       const room = len - w.minLen;
       if (room < 0 || (p.length > 0 && !affixEq(p, str, s, ci))) return false;
+      if (w.suffixEmpty && (w.variable || room === 0)) return true;
+      if (room === 0) return false;
+      const g = lastGroup(str.charCodeAt(t - 1), ci);
+      const keys = w.suffixKeys;
+      // The group's first suffix, by binary search of the keys.
+      let lo = 0;
+      let hi = keys.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (keys[mid] < g) lo = mid + 1;
+        else hi = mid;
+      }
       const set = w.suffixSetStr;
-      const runs = w.runs;
-      for (let r = 0; r < runs.length; r++) {
-        const run = runs[r];
-        if (run.len > room) break;
-        if (!w.variable && run.len !== room) continue;
-        if (runHas(set, run.start, run.end, str, t - run.len, run.len, ci)) return true;
+      for (let k = lo; k < keys.length && keys[k] === g; k++) {
+        const suf = set[k];
+        if (suf.length > room || (!w.variable && suf.length !== room)) continue;
+        if (affixEq(suf, str, t - suf.length, ci)) return true;
       }
       return false;
     }

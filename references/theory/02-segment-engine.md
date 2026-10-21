@@ -49,13 +49,18 @@ ending one segment (`**/node_modules/**` and `**/.git/**`, `**/*.log`
 and `**/*.tmp`, `src/**/*.ts` and `tests/**/*.ts`) become one path with
 a set in that segment (one chain, or the graph itself when it is the
 only path): N chains each comparing a name become one comparing a set.
-Past 64 paths, or when a member with several globstars would need more
-than 64 states (32 in JS), the NFA over the whole graph runs instead. `match_dir`
-goes the same way: one chain with at most one globstar — the common
-case — answers it by the same anchored compares, reading the tokens
-the NFA would hold after the directory off the chain, and such a
-matcher keeps no NFA at all. Only a matcher whose chains cannot serve
-(none, several, or one with several globstars) builds the NFA.
+The paths of literals only — a union of file names — are kept apart as
+one sorted set, searched once, up to 4096 of them. A path with two
+globstars around a block of elements (`**/x/**`, `src/**/{a,b}/**`) is
+walked directly too: head from the front, tail from the back, the block
+found among the segments between with the dot rule. Past 64 wildcard
+paths or 4096 literal ones, or when a member has more than two
+globstars, the NFA over the whole graph runs instead. `match_dir` goes the same way: one chain with at most one
+globstar — the common case — answers it by the same anchored compares,
+reading the tokens the NFA would hold after the directory off the
+chain, and such a matcher keeps no NFA at all. Only a matcher whose
+chains cannot serve (none, several, or one with more than one
+globstar) builds the NFA.
 
 - **Zero G**: positional — n must equal m, element i consumes segment
   i. O(n).
@@ -81,20 +86,20 @@ matcher keeps no NFA at all. Only a matcher whose chains cannot serve
   in the graph. `match_dir`'s prefix bit is `active ∩ reach1`, where
   `reach1[s]` ⇔ some ≥ 1-segment continuation from s reaches accept
   (suffix satisfiability, precomputed). O(n · active), active ≤ 3 in
-  practice for one pattern. A union member with several globstars
-  carries its own small NFA (its nodes alone), so `**/node_modules/**`
-  in a union costs what it would alone.
+  practice for one pattern. A union member with two globstars around a
+  block (`**/node_modules/**`) is walked directly like a line, so it
+  costs what it would alone; only a member with more sends the union
+  to this NFA.
   `match_dir`'s all-below bit steps the graph NFA over wildcard-only
   segments until the set settles (§04 §2.5).
 
 In-segment `Wild` matchers are classified at compile time:
 `Affix` (prefix/suffix literals + `*`/`?` runs → length bounds + two
-anchored compares), `AffixSet` (trailing all-literal alternation →
-suffix product of at most 8, scanned in pattern order), `AffixIndex`
-(the same past 8 — a list of any length, such as a factored union of
-names, or a product of up to 1024 suffixes, within 64 KiB or four
-times its nodes — sorted by (length, bytes) and binary-searched per
-length), and `Generic` — a Thompson-lite NFA over the in-segment nodes
+anchored compares), `Suffixes` (trailing all-literal alternation — a
+list of any length, such as a factored union of names, or a product
+of up to 1024 suffixes, within 64 KiB or four times its nodes — the
+suffixes grouped by their last byte, so a segment is compared with the
+few that end as it does, in pattern order), and `Generic` — a Thompson-lite NFA over the in-segment nodes
 (u64/int32 active set up to 64/32 states, a word slice beyond), one
 state per node: a `*` takes any byte and stays, with an ε-edge out.
 Under dot=false a protected leading `.` is taken only by a literal `.`

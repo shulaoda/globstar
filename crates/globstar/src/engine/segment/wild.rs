@@ -1,9 +1,6 @@
 //! In-segment wildcard matchers: what a segment with a wildcard compiles
 //! to (`compile_wild`) and how it takes a path segment
-//! (`wild_consumes`). `wild_consumes` and `set_head` are forced inline
-//! (see `chain.rs`).
-
-use std::cmp::Ordering;
+//! (`wild_consumes`). `wild_consumes` is forced inline (see `chain.rs`).
 
 use crate::parse::ast::Node;
 
@@ -16,12 +13,15 @@ use super::{Bytes, SegmentMatcher};
 pub(super) struct ByteSketch(u64);
 
 impl ByteSketch {
+    /// Every byte: a string that ends with anything.
+    pub(super) const ALL: ByteSketch = ByteSketch(u64::MAX);
+
     pub(super) fn of_last_bytes<'a>(strings: impl Iterator<Item = &'a [u8]>, ci: bool) -> Self {
         let mut bits = 0u64;
         for s in strings {
             match s.last() {
                 // The empty string ends with anything.
-                None => return ByteSketch(u64::MAX),
+                None => return ByteSketch::ALL,
                 Some(&b) => {
                     bits |= 1 << (b & 63);
                     if ci {
@@ -41,7 +41,7 @@ impl ByteSketch {
     #[inline]
     pub(super) fn may_end(self, s: &[u8]) -> bool {
         match s.last() {
-            None => self.0 == u64::MAX,
+            None => self.0 == ByteSketch::ALL.0,
             Some(&b) => self.0 & (1 << (b & 63)) != 0,
         }
     }
@@ -65,17 +65,14 @@ pub(super) struct Wild {
 }
 
 impl Wild {
-    /// What the kind's tables take: a set's suffixes (one byte more
-    /// each), an NFA's states and kept closures. The compile walk
-    /// charges it (`GlobError::TooComplex`), so a brace pattern whose
-    /// segments multiply cannot keep big tables in each of them.
+    /// What the kind's tables take: a suffix set's bytes and bounds, an
+    /// NFA's states and kept closures. The compile walk charges it
+    /// (`GlobError::TooComplex`), so a brace pattern whose segments
+    /// multiply cannot keep big tables in each of them.
     pub(super) fn table_bytes(&self) -> usize {
         match &self.kind {
             WildKind::Affix(_) => 0,
-            WildKind::AffixSet(set) => set.parts[1..].iter().map(|s| s.len() + 1).sum(),
-            WildKind::AffixIndex(index) => {
-                index.suffixes.len() + index.runs.iter().map(|r| r.count as usize).sum::<usize>()
-            }
+            WildKind::Suffixes(set) => set.suffixes.len() + set.bounds.len(),
             WildKind::Generic(nfa) => nfa.table_bytes(),
         }
     }
@@ -87,12 +84,9 @@ pub(super) enum WildKind {
     /// `lit (*|?)+ lit` and degenerate forms (`*`, `*lit`, `lit*`,
     /// `a?b`): compare the affixes, the length rules do the rest.
     Affix(Affix),
-    /// `lit (*|?)+ {lit,…}` (`*.{ts,tsx}`): the prefix plus one
-    /// suffix out of a set of at most `LINEAR_SUFFIXES`, scanned in
-    /// pattern order.
-    AffixSet(AffixSet),
-    /// `AffixSet` past `LINEAR_SUFFIXES` (a factored union of names).
-    AffixIndex(Box<AffixIndex>),
+    /// `lit (*|?)+ {lit,…}` (`*.{ts,tsx}`, a factored union of names):
+    /// the prefix, then one suffix out of a set.
+    Suffixes(Box<SuffixSet>),
     /// Everything else: a mini Thompson NFA over the in-segment nodes.
     Generic(Box<SegNfa>),
 }
@@ -121,31 +115,122 @@ impl Affix {
     }
 }
 
+/// A prefix and a set of suffixes, the suffixes grouped by their last
+/// byte: a segment is compared with the few that end as it does,
+/// whatever the set's size.
 #[derive(Debug, Clone)]
-pub(super) struct AffixSet {
-    /// The prefix, then the suffixes.
-    pub(super) parts: Box<[Bytes]>,
+pub(super) struct SuffixSet {
+    prefix: Bytes,
+    /// The last bytes of the suffixes: a chain's gate, and the short
+    /// scan's.
     pub(super) last: ByteSketch,
+    /// The non-empty suffixes laid end to end, grouped by last byte,
+    /// each group in pattern order; suffix `k` is
+    /// `suffixes[bounds[k]..bounds[k + 1]]`.
+    suffixes: Bytes,
+    bounds: Box<[u32]>,
+    /// Past `LINEAR_SUFFIXES`: the group of last byte `b`
+    /// (ASCII-lowercased when case-insensitive) is the suffixes
+    /// `groups[b & GROUP_MASK]..groups[(b & GROUP_MASK) + 1]`; empty for
+    /// fewer, which are scanned in turn.
+    groups: Box<[u32]>,
+    /// One suffix is empty: it ends anything.
+    empty: bool,
 }
 
-/// A large suffix set: sorted by (length, bytes), ASCII-lowercased
-/// when case-insensitive, laid end to end in one allocation, with one
-/// `SuffixRun` per length for a binary search by index arithmetic.
-#[derive(Debug, Clone)]
-pub(super) struct AffixIndex {
-    pub(super) prefix: Bytes,
-    pub(super) suffixes: Bytes,
-    pub(super) last: ByteSketch,
-    /// One run per distinct suffix length, ascending.
-    pub(super) runs: Box<[SuffixRun]>,
+impl SuffixSet {
+    fn new(prefix: Bytes, suffixes: Vec<Vec<u8>>, ci: bool) -> Self {
+        let last = ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci);
+        let empty = suffixes.iter().any(Vec::is_empty);
+        let group = |s: &[u8]| (fold(s[s.len() - 1], ci) & GROUP_MASK) as usize;
+        let nonempty = || suffixes.iter().filter(|s| !s.is_empty());
+        // Placed by a counting sort on the group, which keeps the
+        // pattern's order within one: a pass counts each group's
+        // suffixes and bytes, a second copies each suffix to its place.
+        let mut groups = [0u32; GROUPS + 1];
+        let mut at = [0u32; GROUPS + 1];
+        for s in nonempty() {
+            let g = group(s) + 1;
+            groups[g] += 1;
+            at[g] += s.len() as u32;
+        }
+        for g in 1..=GROUPS {
+            groups[g] += groups[g - 1];
+            at[g] += at[g - 1];
+        }
+        let mut bytes = vec![0u8; at[GROUPS] as usize];
+        let mut bounds = vec![0u32; groups[GROUPS] as usize + 1];
+        let mut next = groups;
+        for s in nonempty() {
+            let g = group(s);
+            let (k, start) = (next[g] as usize, at[g] as usize);
+            bytes[start..start + s.len()].copy_from_slice(s);
+            bounds[k + 1] = (start + s.len()) as u32;
+            next[g] += 1;
+            at[g] += s.len() as u32;
+        }
+        let groups = if groups[GROUPS] as usize <= LINEAR_SUFFIXES {
+            Box::default()
+        } else {
+            Box::from(&groups[..])
+        };
+        SuffixSet {
+            prefix,
+            last,
+            suffixes: bytes.into_boxed_slice(),
+            bounds: bounds.into_boxed_slice(),
+            groups,
+            empty,
+        }
+    }
+
+    /// Does a suffix of at most `room` bytes end `seg` (`variable`), or
+    /// one of exactly `room` bytes? A few suffixes are compared in turn
+    /// after the sketch; of many, only those that end as `seg` does.
+    /// Out of line: inlined, it weighed on every other wildcard kind.
+    #[inline(never)]
+    fn ends(&self, seg: &[u8], room: usize, variable: bool, ci: bool) -> bool {
+        let Some(&last) = seg.last() else {
+            return false;
+        };
+        let bounds = if self.groups.is_empty() {
+            if !self.last.may_end(seg) {
+                return false;
+            }
+            &self.bounds[..]
+        } else {
+            let g = (fold(last, ci) & GROUP_MASK) as usize;
+            &self.bounds[self.groups[g] as usize..=self.groups[g + 1] as usize]
+        };
+        for k in 1..bounds.len() {
+            let suffix = &self.suffixes[bounds[k - 1] as usize..bounds[k] as usize];
+            if suffix.len() <= room
+                && (variable || suffix.len() == room)
+                && affix_eq(suffix, &seg[seg.len() - suffix.len()..], ci)
+            {
+                return true;
+            }
+        }
+        false
+    }
 }
 
-/// `count` suffixes of `len` bytes each, from byte `start` on.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct SuffixRun {
-    pub(super) len: u32,
-    pub(super) start: u32,
-    pub(super) count: u32,
+/// Byte-wise, so short affixes stay inline rather than calling `bcmp`.
+#[inline(always)]
+pub(super) fn affix_eq(part: &[u8], seg_part: &[u8], ci: bool) -> bool {
+    debug_assert_eq!(part.len(), seg_part.len());
+    if ci {
+        part.iter()
+            .zip(seg_part)
+            .all(|(&a, &b)| a.eq_ignore_ascii_case(&b))
+    } else {
+        part.iter().zip(seg_part).all(|(a, b)| a == b)
+    }
+}
+
+#[inline(always)]
+pub(super) fn fold(b: u8, ci: bool) -> u8 {
+    if ci { b.to_ascii_lowercase() } else { b }
 }
 
 /// The bytes of a run of literal nodes, allocated once.
@@ -201,7 +286,7 @@ pub(super) fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
         min_len += suffix.len() as u32;
         WildKind::Affix(Affix::new(prefix, suffix.into_boxed_slice()))
     } else {
-        affix_set(prefix, suffixes, ci)
+        WildKind::Suffixes(Box::new(SuffixSet::new(prefix, suffixes, ci)))
     };
     Wild {
         min_len,
@@ -219,9 +304,12 @@ pub(super) fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
 /// whatever its length.
 const MAX_SUFFIX_PRODUCT: usize = 1024;
 
-/// An `AffixSet` up to this size is scanned in pattern order; a
-/// larger one is sorted and binary-searched per suffix length.
-const LINEAR_SUFFIXES: usize = 8;
+/// A suffix set up to this size is scanned in turn after its sketch;
+/// a larger one by the group of the segment's last byte: its low five
+/// bits, which keep ASCII letters apart.
+const LINEAR_SUFFIXES: usize = 4;
+const GROUPS: usize = 32;
+const GROUP_MASK: u8 = GROUPS as u8 - 1;
 
 /// The enumerated suffixes, one byte more each, may not take more than
 /// this or four times their nodes: a long literal next to a product
@@ -285,63 +373,7 @@ fn suffix_product(nodes: &[&Node]) -> Option<Vec<Vec<u8>>> {
     Some(parts)
 }
 
-/// Up to `LINEAR_SUFFIXES` the set is scanned in pattern order; past
-/// it the suffixes are sorted by (length, bytes) and indexed per
-/// length so `wild_consumes` can binary-search them.
-fn affix_set(prefix: Bytes, suffixes: Vec<Vec<u8>>, ci: bool) -> WildKind {
-    // The product's buffers are exact, so this keeps them as they are.
-    let mut suffixes: Vec<Bytes> = suffixes.into_iter().map(Vec::into_boxed_slice).collect();
-    let last = ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci);
-    if suffixes.len() <= LINEAR_SUFFIXES {
-        return WildKind::AffixSet(AffixSet {
-            parts: std::iter::once(prefix).chain(suffixes).collect(),
-            last,
-        });
-    }
-    if ci {
-        for s in &mut suffixes {
-            s.make_ascii_lowercase();
-        }
-    }
-    suffixes.sort_unstable_by(len_then_bytes);
-    suffixes.dedup();
-    let mut bytes = Vec::with_capacity(suffixes.iter().map(|s| s.len()).sum());
-    let mut runs: Vec<SuffixRun> = Vec::new();
-    for s in &suffixes {
-        match runs.last_mut() {
-            Some(run) if run.len as usize == s.len() => run.count += 1,
-            _ => runs.push(SuffixRun {
-                len: s.len() as u32,
-                start: bytes.len() as u32,
-                count: 1,
-            }),
-        }
-        bytes.extend_from_slice(s);
-    }
-    WildKind::AffixIndex(Box::new(AffixIndex {
-        prefix,
-        suffixes: bytes.into_boxed_slice(),
-        last,
-        runs: runs.into_boxed_slice(),
-    }))
-}
-
-/// (length, bytes) order. One comparator, so its sort is compiled once.
-pub(super) fn len_then_bytes<T: AsRef<[u8]>>(a: &T, b: &T) -> std::cmp::Ordering {
-    let (a, b) = (a.as_ref(), b.as_ref());
-    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
-}
-
 impl SegmentMatcher {
-    /// The common part of a suffix set: the last-byte sketch, then
-    /// the prefix.
-    #[inline(always)]
-    fn set_head(&self, prefix: &[u8], last: ByteSketch, seg: &[u8]) -> bool {
-        last.may_end(seg)
-            && seg.len() >= prefix.len()
-            && self.affix_eq(prefix, &seg[..prefix.len()])
-    }
-
     #[inline(always)]
     pub(super) fn wild_consumes(&self, w: &Wild, seg: &[u8]) -> bool {
         if w.dot_protect && seg.first() == Some(&b'.') {
@@ -358,68 +390,19 @@ impl SegmentMatcher {
                 self.affix_eq(prefix, &seg[..prefix.len()])
                     && self.affix_eq(suffix, &seg[len - suffix.len()..])
             }
-            WildKind::AffixSet(set) => {
-                let [prefix, suffixes @ ..] = &set.parts[..] else {
-                    unreachable!("an affix set has a prefix")
-                };
-                self.set_head(prefix, set.last, seg)
-                    && suffixes.iter().any(|suf| {
-                        let need = w.min_len as usize + suf.len();
-                        len >= need
-                            && (w.variable || len == need)
-                            && self.affix_eq(suf, &seg[len - suf.len()..])
-                    })
-            }
-            WildKind::AffixIndex(index) => {
-                if !self.set_head(&index.prefix, index.last, seg) {
-                    return false;
-                }
+            WildKind::Suffixes(set) => {
+                // The prefix, then the suffixes that end as the segment
+                // does, over what the prefix and the `?`s leave.
                 let Some(room) = len.checked_sub(w.min_len as usize) else {
                     return false;
                 };
-                index
-                    .runs
-                    .iter()
-                    .take_while(|run| run.len as usize <= room)
-                    .filter(|run| w.variable || run.len as usize == room)
-                    .any(|run| self.run_has(index, run, &seg[len - run.len as usize..]))
+                if !self.affix_eq(&set.prefix, &seg[..set.prefix.len()]) {
+                    return false;
+                }
+                (set.empty && (w.variable || room == 0))
+                    || set.ends(seg, room, w.variable, self.case_insensitive)
             }
             WildKind::Generic(nfa) => nfa.matches(seg),
         }
     }
-
-    /// Binary search of a run's suffixes for `tail`, in the branch-free
-    /// shape `slice::binary_search_by` uses.
-    fn run_has(&self, index: &AffixIndex, run: &SuffixRun, tail: &[u8]) -> bool {
-        let len = run.len as usize;
-        let order = |k: usize| {
-            let s = &index.suffixes[run.start as usize + k * len..][..len];
-            if self.case_insensitive {
-                cmp_tail(s, tail)
-            } else {
-                s.cmp(tail)
-            }
-        };
-        let (mut base, mut size) = (0usize, run.count as usize);
-        while size > 1 {
-            let half = size / 2;
-            let mid = base + half;
-            if order(mid) != Ordering::Greater {
-                base = mid;
-            }
-            size -= half;
-        }
-        order(base) == Ordering::Equal
-    }
-}
-
-/// Order of a lowercased suffix against a segment tail of the same
-/// length, folding the tail's ASCII case.
-fn cmp_tail(suffix: &[u8], tail: &[u8]) -> Ordering {
-    suffix
-        .iter()
-        .zip(tail)
-        .map(|(&a, &b)| a.cmp(&b.to_ascii_lowercase()))
-        .find(|o| o.is_ne())
-        .unwrap_or(Ordering::Equal)
 }
