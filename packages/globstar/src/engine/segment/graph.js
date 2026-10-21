@@ -23,6 +23,7 @@ import { flat } from "../../utf8.js";
 import { EL_LIT, EL_WILD, EL_G0, EL_G1, WK_AFFIX, WK_GENERIC, NEVER_LEN, exact } from "./elem.js";
 import { nfaTableBytes } from "./seg-nfa.js";
 import { compileWild, concatLits, makeWild } from "./wild.js";
+import { LINEAR_CHAINS, segmentKeys } from "./chain-index.js";
 import { GlobError } from "../../error.js";
 
 // Successor marker for "the pattern ends here".
@@ -112,6 +113,8 @@ export function buildGraph(body, dot, ci) {
     budget = Math.max(MIN_BUDGET, weight * BUDGET_PER_WEIGHT);
   }
   const b = new Builder(dot, ci, linear, budget);
+  // Only a union of more paths than LINEAR_CHAINS indexes them.
+  if (!linear && pathBound(nodes) > LINEAR_CHAINS) b.keys = [];
   // Only a separator-crossing brace can need regrouping.
   const groups = b.walk(linear ? nodes : choices(nodes), false, [firstGroup()]);
   for (const g of groups) {
@@ -119,14 +122,27 @@ export function buildGraph(body, dot, ci) {
     if (g.state === B_OPEN) {
       for (const t of g.tails) b.link(t, ACCEPT);
     } else {
-      b.cost += g.weight;
-      b.link(b.emit(b.close(g.buf), g.tails), ACCEPT);
+      b.link(b.segment(g, g.buf), ACCEPT);
     }
   }
   if (b.cost > b.budget) tooComplex(b.budget);
   // `weight`: the pattern's `nodeWeight`, read when the literal paths
-  // are kept (a linear pattern keeps none, and reads 0).
-  return { elems: exact(b.elems), succs: b.succs, start: b.start, linear, weight };
+  // are kept (a linear pattern keeps none, and reads 0); `keys`: what
+  // the chain index files a union's chains by, null when it has none.
+  return { elems: exact(b.elems), succs: b.succs, start: b.start, linear, weight, keys: b.keys };
+}
+
+// At least as many as the paths through the graph: a crossing brace
+// adds its branches', a sequence multiplies its nodes'.
+function pathBound(nodes) {
+  let paths = 1;
+  for (const n of nodes) {
+    if (n.tag !== N_BRACE || !crosses(n)) continue;
+    let sum = 0;
+    for (const b of n.branches) sum += pathBound(seq(b));
+    paths = Math.min(paths * sum, Number.MAX_SAFE_INTEGER);
+  }
+  return paths;
 }
 
 // The work the graph walk may take: 64 units per unit of pattern weight
@@ -307,6 +323,9 @@ class Builder {
     this.budget = budget;
     this.dot = dot;
     this.ci = ci;
+    // The wildcard segments' keys by node, for a union the chain index
+    // may file; null for any other pattern.
+    this.keys = null;
   }
 
   emit(elem, tails) {
@@ -434,11 +453,11 @@ class Builder {
   closeAll(groups) {
     this.joinAll(groups, B_SEP, (g) => {
       this.settle(g);
-      this.cost += g.weight;
       const buf = g.buf;
+      const id = this.segment(g, buf);
       g.buf = [];
       g.weight = 0;
-      return this.emit(this.close(buf), g.tails);
+      return id;
     });
   }
 
@@ -473,6 +492,20 @@ class Builder {
     if (joined !== null) groups.push(joined);
     for (const g of taken) groups.push(g);
     for (const g of groups) dedupeTails(g);
+  }
+
+  // The node of a group's closed segment `buf` after its tails. A
+  // union's wildcard segments keep their keys (its chains are filed by
+  // them); a wildcard node is never shared, so its id is new.
+  segment(g, buf) {
+    this.cost += g.weight;
+    const elem = this.close(buf);
+    const id = this.emit(elem, g.tails);
+    if (this.keys !== null && elem.kind === EL_WILD) {
+      const keys = segmentKeys(buf, this.ci);
+      if (keys !== null) this.keys[id] = keys;
+    }
+    return id;
   }
 
   // The element of a closed segment. A wildcard's tables are charged to

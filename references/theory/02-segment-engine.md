@@ -55,7 +55,24 @@ globstars around a block of elements (`**/x/**`, `src/**/{a,b}/**`) is
 walked directly too: head from the front, tail from the back, the block
 found among the segments between with the dot rule. Past 64 wildcard
 paths or 4096 literal ones, or when a member has more than two
-globstars, the NFA over the whole graph runs instead. `match_dir` goes the same way: one chain with at most one
+globstars, the NFA over the whole graph runs instead.
+
+A union of more than 10 chains does not try them all: a _chain index_
+files each chain under the literal strings one of its anchored
+segments must have — its last element's segment (a name, `.DS_Store`;
+the end of an extension, `*.log`; the start of a prefix, `._*`; a
+literal it holds, `*.so.*`), else its first's, else the first of its
+block, any segment but the last — read off that segment's nodes, small
+classes and braces expanded (`[Dd]ebug`, `*.py[cod]`), while the graph
+is built. The literal set is filed under its paths' first segments. A
+key is its length and outer four bytes, a lookup one hash probe, and a
+64-bit sketch of the outer bytes skips the lookups that cannot hit; a
+path looks up its last segment, then its first, then the others, and
+runs each chain picked after its gates, as before. A chain no key
+files is tried on every call. The walk decides; the index only chooses
+which chains to ask, so a 600-member .gitignore costs a few lookups and
+one or two walks, not 60. Ten chains or fewer stay a scan: their gates
+cost less than the lookups. `match_dir` goes the same way: one chain with at most one
 globstar — the common case — answers it by the same anchored compares,
 reading the tokens the NFA would hold after the directory off the
 chain, and such a matcher keeps no NFA at all. Only a matcher whose

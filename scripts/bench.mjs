@@ -418,7 +418,10 @@ sections.push(`## Test corpus
 | \`ignore-list-40\` | 40 ignore entries of unlike shapes (\`fixtures/bench-ignore-list.txt\`): chains for the match, a 38-state graph NFA for \`match_dir\` (a u64 in Rust, sparse in JS) |
 | \`file-list-100\` | 100 literal files over 10 folders (\`src/<area>/mod_<i>.ts\`): literal paths, kept as one sorted set and answered by one search |
 | \`gitignore-89\` | a project's .gitignore as globs (\`fixtures/bench-gitignore-list.txt\`): 89 directories, extensions and file names anywhere plus a few rooted entries; the like shapes merge into one chain each |
-| \`all-cases\` | every pattern of this bench in one union, each once: its 100 literal paths as one set, 25 chains for the rest — the widest, most mixed set, and the shape where a per-member matcher loses to a DFA |
+| \`global-586\` | a global .gitignore as globs (\`fixtures/bench-gitignore-global.txt\`, from alafourcadev/ultimate-gitignore): 533 file names, extensions and directories anywhere and 53 rooted entries, run as 62 chains and 14 literal paths |
+| \`openssl-500\` | openssl's .gitignore as globs (\`fixtures/bench-gitignore-openssl.txt\`): 456 rooted entries, 436 of them literal paths, and 44 anywhere; 415 literal paths in one sorted set, 21 chains for the rest |
+| \`joomla-705\` | the Joomla template of github/gitignore as globs (\`fixtures/bench-gitignore-joomla.txt\`): 705 rooted entries, 446 literal paths and 258 folders' children (\`dir/*\`); 437 literal paths in one sorted set, 33 chains for the rest |
+| \`all-cases\` | every pattern of this bench but the three real .gitignore sets in one union, each once: its 100 literal paths as one set, 25 chains for the rest — the widest, most mixed set, and the shape where a per-member matcher loses to a DFA |
 
 Each library matches a set the way it offers to: globstar through
 \`Glob::union\` / \`globstar(list)\`, globset through one \`GlobSet\`, wax

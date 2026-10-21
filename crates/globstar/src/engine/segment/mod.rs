@@ -13,6 +13,7 @@
 
 mod bits;
 mod chain;
+mod chain_index;
 mod facts;
 mod graph;
 mod nfa;
@@ -25,6 +26,7 @@ use crate::parse::ast::Node;
 
 use super::pat_byte_eq;
 use chain::{Chain, Gate, Shape};
+use chain_index::ChainIndex;
 use graph::Graph;
 use nfa::{AnyNfa, any_nfa, chain_nfa};
 use wild::{ByteSketch, Wild, WildKind};
@@ -115,12 +117,13 @@ pub(crate) struct SegmentMatcher {
     dot: bool,
 }
 
-/// What a matcher keeps beyond a lone line: the NFA over the graph and
-/// one gate per chain.
+/// What a matcher keeps beyond a lone line: the NFA over the graph,
+/// one gate per chain, and, for many chains, their index.
 #[derive(Debug, Clone)]
 struct Union {
     nfa: AnyNfa,
     gates: Box<[Gate]>,
+    index: Option<Box<ChainIndex>>,
 }
 
 impl SegmentMatcher {
@@ -133,6 +136,7 @@ impl SegmentMatcher {
             _ => Some(Box::new(Union {
                 nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref()),
                 gates: chains.iter().map(|c| c.gate(&graph.elems, ci)).collect(),
+                index: ChainIndex::new(&chains, &graph.elems, &graph.keys, ci),
             })),
         };
         let suffixes = facts::suffixes(body);
@@ -162,7 +166,10 @@ impl SegmentMatcher {
             // A lone line.
             None => self.chain_matches(&self.chains[0], path),
             Some(u) if self.chains.is_empty() => u.nfa.is_match(self, path),
-            Some(u) => self.any_chain_matches(&u.gates, path),
+            Some(u) => match &u.index {
+                Some(index) => self.indexed_chain_matches(index, &u.gates, path),
+                None => self.any_chain_matches(&u.gates, path),
+            },
         }
     }
 

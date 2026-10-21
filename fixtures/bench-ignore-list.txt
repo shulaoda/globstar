@@ -4,8 +4,8 @@
 # sparse in JS, which keeps 32 in an int32). The uniform lists factor
 # into one chain. Read through crates/globstar/benches/common/mod.rs
 # (the matcher_multi bench and tools/memory-check) and
-# packages/bench/benches/shared.js. No member matches a bench
-# path's miss, `target/debug/build/foo`.
+# packages/bench/benches/shared.js. No member matches the bench's
+# miss, `crates/core/src/foo`.
 **/node_modules/**
 **/.git/**
 **/dist/**

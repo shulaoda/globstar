@@ -5,7 +5,7 @@
 # merge into one chain each (a set of names, a set of suffixes). Read
 # through crates/globstar/benches/common/mod.rs (the matcher_multi bench
 # and tools/memory-check) and packages/bench/benches/shared.js. No
-# member matches a bench path's miss, `target/debug/build/foo`.
+# member matches the bench's miss, `crates/core/src/foo`.
 **/node_modules/**
 **/.git/**
 **/dist/**

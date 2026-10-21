@@ -29,11 +29,17 @@ export const PATTERN_SETS = [
   ["file-list-100", fixture("bench-file-list.txt")],
   ["gitignore-89", fixture("bench-gitignore-list.txt")],
 ];
-// Every pattern of the bench in one union, each once.
-PATTERN_SETS.push([
-  "all-cases",
-  [...new Set([...PATTERNS.map(([, p]) => p), ...PATTERN_SETS.flatMap(([, ps]) => ps)])],
-]);
+// Every pattern of the bench but the three real .gitignore sets in one
+// union, each once.
+const ALL_CASES = [
+  ...new Set([...PATTERNS.map(([, p]) => p), ...PATTERN_SETS.flatMap(([, ps]) => ps)]),
+];
+PATTERN_SETS.push(
+  ["global-586", fixture("bench-gitignore-global.txt")],
+  ["openssl-500", fixture("bench-gitignore-openssl.txt")],
+  ["joomla-705", fixture("bench-gitignore-joomla.txt")],
+  ["all-cases", ALL_CASES],
+);
 
 let count = 0;
 
@@ -51,7 +57,7 @@ export function fresh(pattern) {
 // A path no row matches. A first call on it runs every part a matcher
 // left for its first use: in a list matched one member at a time, each
 // member, where a hit would stop at the first.
-export const MISS = "target/debug/build/foo";
+export const MISS = "crates/core/src/foo";
 
 // Throws unless `path` is a miss for every input.
 export function assertMisses(libs, inputs, path) {

@@ -5,7 +5,7 @@
 // of a sorted set for the literal-only paths, an NFA over the graph for
 // everything else.
 
-import { IS_WINDOWS_SEP, lastSepBefore } from "../../bytes.js";
+import { IS_WINDOWS_SEP, lastSepBefore, nextSep } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph } from "./graph.js";
@@ -21,6 +21,7 @@ import {
   coversBelowSparse,
 } from "./nfa.js";
 import { computeStaticPrefixes, endsWithSepAware, suffixes } from "./facts.js";
+import { R_FIRST, R_INNER, R_LAST, chainIndex, probe, probeInfix } from "./chain-index.js";
 import {
   NFA_SMALL,
   NFA_SPARSE,
@@ -39,8 +40,13 @@ export class SegmentMatcher {
     // one set, first); none past the chain module's caps.
     this.chains = compiled.chains;
     // What a lone line does without: the NFA over the graph, which
-    // serves `matchDir` (and `isMatch` when the chains cannot).
+    // serves `matchDir` (and `isMatch` when the chains cannot), and,
+    // for many chains, their index.
     this.nfa = compiled.nfa;
+    this.index = compiled.index;
+    // The chains the current indexed call tried: 0–31, 32–63.
+    this.triedLo = 0;
+    this.triedHi = 0;
     this.ci = ci;
     this.dot = dot;
     this.byteOnly = byteOnly;
@@ -119,6 +125,7 @@ export class SegmentMatcher {
   // case-insensitive matcher skips them. Its own method, so `_isMatch`
   // stays small for the one-chain and NFA matchers.
   _anyChainMatches(chainList, str) {
+    if (this.index !== null) return this._indexedChainMatches(str);
     // The literal paths' set, when there is one, comes first.
     let from = 0;
     if (chainList[0].globstar === SET_G) {
@@ -155,6 +162,81 @@ export class SegmentMatcher {
       if (chainMatches(this, chain, str)) return true;
     }
     return false;
+  }
+
+  // `_anyChainMatches` through the chain index: the chains the path's
+  // last segment picks first, then those of its first, of its inner
+  // ones, then those without a key; each chain once.
+  _indexedChainMatches(str) {
+    const ix = this.index;
+    const ci = this.ci;
+    const len = str.length;
+    const lastStart = lastSepBefore(str, len) + 1;
+    const first = len > 0 ? str.charCodeAt(0) : -1;
+    const picked = ix.picked;
+    this.triedLo = 0;
+    this.triedHi = 0;
+    picked[0] = picked[1] = 0;
+    probe(ix, R_LAST, str, lastStart, len, ci);
+    if (ix.infix.length > 0) probeInfix(ix, str, lastStart, len, ci);
+    if (this._tryPicked(picked[0], picked[1], str, first, lastStart)) return true;
+    // Where the first segment ends; the last one starts after it.
+    const firstEnd = lastStart === 0 ? len : nextSep(str, 0);
+    if (ix.lookups[R_FIRST] !== 0) {
+      picked[0] = picked[1] = 0;
+      probe(ix, R_FIRST, str, 0, firstEnd, ci);
+      if (this._tryPicked(picked[0], picked[1], str, first, lastStart)) return true;
+    }
+    if (ix.lookups[R_INNER] !== 0) {
+      for (let s = 0, end = firstEnd; s < lastStart; s = end + 1, end = nextSep(str, s)) {
+        picked[0] = picked[1] = 0;
+        probe(ix, R_INNER, str, s, end, ci);
+        if (this._tryPicked(picked[0], picked[1], str, first, lastStart)) return true;
+      }
+    }
+    return this._tryPicked(ix.restLo, ix.restHi, str, first, lastStart);
+  }
+
+  // Try the chains of `lo`/`hi` (bits for chains 0–31, 32–63) not tried
+  // yet this call, in chain order.
+  _tryPicked(lo, hi, str, first, lastStart) {
+    lo &= ~this.triedLo;
+    hi &= ~this.triedHi;
+    this.triedLo |= lo;
+    this.triedHi |= hi;
+    while (lo !== 0) {
+      const c = 31 - Math.clz32(lo & -lo);
+      lo &= lo - 1;
+      if (this._tryChain(this.chains[c], str, first, lastStart)) return true;
+    }
+    while (hi !== 0) {
+      const c = 31 - Math.clz32(hi & -hi);
+      hi &= hi - 1;
+      if (this._tryChain(this.chains[c + 32], str, first, lastStart)) return true;
+    }
+    return false;
+  }
+
+  // One chain after the quick looks at the path's ends `_anyChainMatches`
+  // takes (exact tests: a case-insensitive matcher skips them).
+  _tryChain(chain, str, first, lastStart) {
+    if (chain.globstar === SET_G) return hasLiteral(this, chain.literals, str);
+    if (!this.ci) {
+      const len = str.length;
+      const suffix = chain.quickSuffixStr;
+      const last = len > 0 ? str.charCodeAt(len - 1) & 63 : 64;
+      if (suffix.length > 0) {
+        if (!str.endsWith(suffix)) return false;
+      } else if (last < 32) {
+        if (((chain.quickLastLo >>> last) & 1) === 0) return false;
+      } else if (last < 64) {
+        if (((chain.quickLastHi >>> (last - 32)) & 1) === 0) return false;
+      }
+      if (chain.quickHead >= 0 && chain.quickHead !== first) return false;
+      const prefix = chain.quickPrefixStr;
+      if (prefix.length > 0 && !str.startsWith(prefix, lastStart)) return false;
+    }
+    return chainMatches(this, chain, str);
   }
 
   _nfaMatch(str) {
@@ -213,5 +295,6 @@ function compileSegment(body, dot, ci, forceNfa) {
   // `matchDir` too; anything else needs the NFA.
   const line = chainList.length === 1 && chainList[0].globstar !== SET_G && chainList[0].g2 < 0;
   const nfa = line ? null : anyNfa(graph, ci);
-  return { elems: graph.elems, chains: exact(chainList), nfa };
+  const index = line ? null : chainIndex(chainList, graph.elems, graph.keys, ci);
+  return { elems: graph.elems, chains: exact(chainList), nfa, index };
 }

@@ -14,6 +14,7 @@ use std::hash::{BuildHasherDefault, Hash, Hasher};
 use crate::error::GlobError;
 use crate::parse::ast::Node;
 
+use super::chain_index::{KeyScratch, LINEAR_CHAINS, SegKeys, segment_keys};
 use super::wild::{Affix, Wild, WildKind, compile_wild, concat_lits};
 use super::{Bytes, Elem, NEVER, has_sep};
 
@@ -42,6 +43,9 @@ pub(super) struct Graph {
     pub(super) edges: Option<Edges>,
     /// The pattern's `node_weight`.
     pub(super) weight: usize,
+    /// A crossing brace's wildcard nodes and their keys, in node order:
+    /// what the chain index files a union's chains by.
+    pub(super) keys: Vec<(u32, SegKeys)>,
 }
 
 /// Successor lists in CSR form, the start's last (position `n`).
@@ -63,6 +67,7 @@ impl Graph {
             boundaries,
             linear,
             weight,
+            paths,
         } = survey(nodes);
         // Only a separator-crossing brace can need regrouping.
         let nodes = if linear {
@@ -71,6 +76,10 @@ impl Graph {
             choices(nodes)
         };
         let mut b = Builder::new(boundaries, linear, dot, ci);
+        // Only a union of more paths than `LINEAR_CHAINS` indexes them.
+        if paths > LINEAR_CHAINS {
+            b.keys = Some(Box::default());
+        }
         // A linear walk keeps one group and takes a few units per weight,
         // so only a separator-crossing brace can reach the budget.
         if !linear {
@@ -84,9 +93,7 @@ impl Graph {
                     b.end_after(t);
                 }
             } else {
-                b.cost += g.weight;
-                let elem = b.close(&g.buf);
-                let id = b.emit(elem, &g.tails);
+                let id = b.segment(&g);
                 b.end_after(id);
             }
         }
@@ -105,27 +112,37 @@ struct Survey {
     linear: bool,
     /// The pattern's `node_weight`.
     weight: usize,
+    /// At least as many as the paths through the graph: a crossing
+    /// brace adds its branches', a sequence multiplies its nodes'.
+    paths: usize,
 }
 
 /// How many segment boundaries the pattern has (a floor for its
-/// elements), whether it has a separator-crossing brace at all, and its
-/// weight (`node_weight`).
+/// elements), whether it has a separator-crossing brace at all, its
+/// weight (`node_weight`) and a bound on its paths.
 fn survey(nodes: &[Node]) -> Survey {
     let mut boundaries = 0;
     let mut linear = true;
     let mut weight = 0;
+    let mut paths = 1usize;
     for node in nodes {
         match node {
             Node::Brace(branches) => {
                 // A brace crosses iff its branches hold a boundary.
                 let before = boundaries;
+                let mut branch_paths = 0usize;
                 weight += 1;
                 for b in branches {
                     let inner = survey(b.seq());
                     boundaries += inner.boundaries;
                     weight += inner.weight;
+                    branch_paths = branch_paths.saturating_add(inner.paths);
                 }
-                linear &= boundaries == before;
+                let crosses = boundaries > before;
+                linear &= !crosses;
+                if crosses {
+                    paths = paths.saturating_mul(branch_paths);
+                }
             }
             Node::Literal(bytes) => weight += bytes.len(),
             Node::AnyChar | Node::Star | Node::Class(_) => weight += 1,
@@ -140,6 +157,7 @@ fn survey(nodes: &[Node]) -> Survey {
         boundaries,
         linear,
         weight,
+        paths,
     }
 }
 
@@ -226,6 +244,9 @@ impl Group<'_> {
     }
 }
 
+/// The keys read so far, by node, and the buffers reading them reuses.
+type KeyReading = (Vec<(u32, SegKeys)>, KeyScratch);
+
 /// Builds the graph. A pattern with a separator-crossing brace also
 /// records every node's predecessors (flat, `START` for the start,
 /// node `i` owning `preds[pred_at[i]..pred_at[i + 1]]`), the nodes the
@@ -233,6 +254,9 @@ impl Group<'_> {
 /// predecessors) hash; a linear pattern records its nodes only.
 struct Builder {
     elems: Vec<Elem>,
+    /// The wildcard segments' keys and the buffers that read them, for
+    /// a union the chain index may file.
+    keys: Option<Box<KeyReading>>,
     linear: bool,
     preds: Vec<u32>,
     pred_at: Vec<u32>,
@@ -255,6 +279,7 @@ impl Builder {
         let edges = if linear { 0 } else { boundaries + 1 };
         Builder {
             elems: Vec::with_capacity(boundaries + 1),
+            keys: None,
             linear,
             preds: Vec::with_capacity(edges),
             pred_at: Vec::with_capacity(edges),
@@ -273,6 +298,7 @@ impl Builder {
             elems: self.elems,
             edges,
             weight,
+            keys: self.keys.map_or_else(Vec::new, |k| k.0),
         }
     }
 
@@ -476,11 +502,10 @@ impl Builder {
     fn close_all(&mut self, groups: &mut Vec<Group<'_>>) {
         self.join_all(groups, Boundary::Sep, |b, g| {
             b.settle(g);
-            b.cost += g.weight;
-            let elem = b.close(&g.buf);
+            let id = b.segment(g);
             g.buf.clear();
             g.weight = 0;
-            b.emit(elem, &g.tails)
+            id
         });
     }
 
@@ -531,6 +556,23 @@ impl Builder {
         for g in groups.iter_mut() {
             g.dedupe_tails();
         }
+    }
+
+    /// The node of a group's closed segment after its tails. A crossing
+    /// brace's wildcard segments keep their keys (a union's chains are
+    /// filed by them); a wildcard node is never shared, so its id is new.
+    fn segment(&mut self, g: &Group<'_>) -> u32 {
+        self.cost += g.weight;
+        let elem = self.close(&g.buf);
+        let wild = matches!(elem, Elem::Wild(_));
+        let id = self.emit(elem, &g.tails);
+        if wild
+            && let Some(k) = &mut self.keys
+            && let Some(keys) = segment_keys(&g.buf, self.ci, &mut k.1)
+        {
+            k.0.push((id, keys));
+        }
+        id
     }
 
     /// The element of a closed segment. A wildcard's tables are charged

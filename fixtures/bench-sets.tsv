@@ -1,8 +1,9 @@
-# The union bench rows: label<TAB>pattern..., in both runtimes. Three more
+# The union bench rows: label<TAB>pattern..., in both runtimes. Six more
 # rows come from their own files: `ignore-list-40` (bench-ignore-list.txt),
-# `file-list-100` (bench-file-list.txt) and `gitignore-89`
-# (bench-gitignore-list.txt); `all-cases` is every pattern of the bench
-# in one union.
+# `file-list-100` (bench-file-list.txt), `gitignore-89`
+# (bench-gitignore-list.txt) and three real .gitignore sets, `global-586`,
+# `openssl-500` and `joomla-705` (bench-gitignore-{global,openssl,joomla}.txt);
+# `all-cases` is every pattern of the bench but those three in one union.
 solo-globstar	**/*.ts
 brace-equiv-4	**/*.ts	**/*.tsx	**/*.js	**/*.jsx
 brace-equiv-8	**/*.ts	**/*.tsx	**/*.js	**/*.jsx	**/*.mjs	**/*.cjs	**/*.mts	**/*.cts

@@ -14,6 +14,7 @@ use std::cmp::Ordering;
 
 use crate::dir_match::DirMatch;
 
+use super::chain_index::{ChainIndex, Role};
 use super::graph::{ACCEPT, Graph};
 use super::wild::{ByteSketch, WildKind, fold};
 use super::{Elem, SegmentMatcher, seg_end, seg_start};
@@ -103,6 +104,12 @@ impl Literals {
 
     pub(super) fn len(&self) -> usize {
         self.bounds.len() - 1
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.bounds
+            .windows(2)
+            .map(|w| &self.bytes[w[0] as usize..w[1] as usize])
     }
 
     /// Is the path one of them?
@@ -263,6 +270,24 @@ impl Graph {
 }
 
 impl Chain {
+    /// The elements whose segment the chain's shape pins, by node, in
+    /// the order the chain index tries them: the last when a tail ends
+    /// the path, the first when a head starts it, a block's first.
+    pub(super) fn anchors(&self) -> impl Iterator<Item = (Role, u32)> + '_ {
+        let n = self.nodes.len();
+        // Elements before `head` start the path, from `tail` on end it.
+        let (head, tail, block) = match self.shape {
+            // No globstar: `g` is past the end, every element is both.
+            Shape::Line(line) => (line.g as usize, (line.g as usize + 1).min(n), None),
+            Shape::Block { g1, g2 } => (g1 as usize, g2 as usize + 1, Some(g1 as usize + 1)),
+            Shape::Set(_) => (0, n, None),
+        };
+        let last = (tail < n || head == n && n > 0).then(|| (Role::Last, self.nodes[n - 1]));
+        let first = (head > 0).then(|| (Role::First, self.nodes[0]));
+        let inner = block.map(|b| (Role::Inner, self.nodes[b]));
+        last.into_iter().chain(first).chain(inner)
+    }
+
     pub(super) fn gate(&self, elems: &[Elem], ci: bool) -> Gate {
         // The set of literal paths is searched before any gate.
         if matches!(self.shape, Shape::Set(_)) {
@@ -354,12 +379,41 @@ impl SegmentMatcher {
         self.chains[from..]
             .iter()
             .zip(&gates[from..])
-            .any(|(chain, gate)| {
-                gate.last.may_end(path)
-                    && (gate.head == NO_HEAD || gate.head == first)
-                    && self.ends_like(chain, path, &mut last_start)
-                    && self.chain_matches(chain, path)
-            })
+            .any(|(chain, gate)| self.gated_matches(chain, gate, path, first, &mut last_start))
+    }
+
+    /// `any_chain_matches` through the chain index: the chains the path
+    /// picks, the literal set among them.
+    #[inline(never)]
+    pub(super) fn indexed_chain_matches(
+        &self,
+        index: &ChainIndex,
+        gates: &[Gate],
+        path: &[u8],
+    ) -> bool {
+        let ci = self.case_insensitive;
+        let first = path.first().map_or(NO_HEAD, |&b| fold(b, ci));
+        let mut last_start = None;
+        index.any(path, ci, |c| match &self.chains[c].shape {
+            Shape::Set(set) => set.contains(path, ci),
+            _ => self.gated_matches(&self.chains[c], &gates[c], path, first, &mut last_start),
+        })
+    }
+
+    /// A chain after its gates; `first` is the path's first byte, folded.
+    #[inline(always)]
+    fn gated_matches(
+        &self,
+        chain: &Chain,
+        gate: &Gate,
+        path: &[u8],
+        first: u8,
+        last_start: &mut Option<usize>,
+    ) -> bool {
+        gate.last.may_end(path)
+            && (gate.head == NO_HEAD || gate.head == first)
+            && self.ends_like(chain, path, last_start)
+            && self.chain_matches(chain, path)
     }
 
     /// Does the path end like the chain's last element: a literal, an

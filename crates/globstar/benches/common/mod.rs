@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 
 /// A path no row matches. A first call on it runs every part a matcher
 /// left for its first use (in a list of separate matchers, each one).
-pub const MISS: &str = "target/debug/build/foo";
+pub const MISS: &str = "crates/core/src/foo";
 
 /// The 11 paths the match benches answer.
 pub static PATHS: LazyLock<Vec<&str>> =
@@ -23,8 +23,10 @@ pub static SINGLE: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
 });
 
 /// The union rows: `(label, patterns)`. `ignore-list-40`, `file-list-100`
-/// and `gitignore-89` are files of their own; `all-cases` is every pattern
-/// of the bench in one union, each once.
+/// and `gitignore-89` are files of their own, and so are the three real
+/// .gitignore sets, `global-586`, `openssl-500` and `joomla-705`;
+/// `all-cases` is every pattern of the bench but those three in one
+/// union, each once.
 pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
     let mut out: Vec<_> = lines(include_str!("../../../../fixtures/bench-sets.tsv"))
         .into_iter()
@@ -57,6 +59,24 @@ pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
             all.push(p);
         }
     }
+    out.push((
+        "global-586",
+        lines(include_str!(
+            "../../../../fixtures/bench-gitignore-global.txt"
+        )),
+    ));
+    out.push((
+        "openssl-500",
+        lines(include_str!(
+            "../../../../fixtures/bench-gitignore-openssl.txt"
+        )),
+    ));
+    out.push((
+        "joomla-705",
+        lines(include_str!(
+            "../../../../fixtures/bench-gitignore-joomla.txt"
+        )),
+    ));
     out.push(("all-cases", all));
     out
 }
