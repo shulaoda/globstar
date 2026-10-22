@@ -35,22 +35,34 @@ import {
 } from "./elem.js";
 
 export class SegmentMatcher {
-  constructor(compiled, prefixes, suf, ci, byteOnly, dot) {
-    this.elems = compiled.elems;
+  // `opts.forceNfa` bypasses the chains (a test hook); `opts.byteOnly`
+  // the string mode, for a pattern with a byte past ASCII (and as a
+  // test hook that cross-checks the code paths).
+  constructor(body, dot, ci, opts) {
+    // The facts read the pattern as written; the graph walk regroups it.
+    const prefixes = computeStaticPrefixes(body);
+    const suf = suffixes(body);
+    const graph = buildGraph(body, dot, ci);
+    const chainList = opts.forceNfa ? [] : chains(graph, ci);
+    // A lone line (one chain through at most one globstar) serves
+    // `matchDir` too.
+    const line = chainList.length === 1 && chainList[0].globstar !== SET_G && chainList[0].g2 < 0;
+    this.elems = graph.elems;
     // The paths through the graph, tried in order (the literal ones as
-    // one set, first); none past the chain module's caps.
-    this.chains = compiled.chains;
+    // one set, first); none past the chain module's caps or for the
+    // test hook.
+    this.chains = exact(chainList);
     // What a lone line does without: the NFA over the graph, which
     // serves `matchDir` (and `isMatch` when the chains cannot), and,
     // for many chains, their index.
-    this.nfa = compiled.nfa;
-    this.index = compiled.index;
+    this.nfa = line ? null : anyNfa(graph, ci);
+    this.index = line ? null : chainIndex(chainList, graph, ci);
     // The chains the current indexed call tried: 0–31, 32–63.
     this.triedLo = 0;
     this.triedHi = 0;
     this.ci = ci;
     this.dot = dot;
-    this.byteOnly = byteOnly;
+    this.byteOnly = opts.byteOnly;
     this.prefixes = prefixes.map(flat);
     this.plain = !this.ci && !IS_WINDOWS_SEP;
     this.suffixes = suf.length > 0 ? suf.map(flat) : null;
@@ -85,17 +97,6 @@ export class SegmentMatcher {
     const set = first !== undefined && first.globstar === SET_G;
     const literals = set ? ` | literals ${first.literals.length}` : "";
     return `${runs.join(" ")} | chains ${this.chains.length - (set ? 1 : 0)}${literals} | nfa ${nfa}`;
-  }
-
-  // `opts.forceNfa` bypasses the chains (a test hook); `opts.byteOnly`
-  // the string mode, for a pattern with a byte past ASCII (and as a
-  // test hook that cross-checks the code paths).
-  static build(body, dot, ci, opts) {
-    // The facts read the pattern as written; the graph walk regroups it.
-    const prefixes = computeStaticPrefixes(body);
-    const suf = suffixes(body);
-    const compiled = compileSegment(body, dot, ci, opts.forceNfa);
-    return new SegmentMatcher(compiled, prefixes, suf, ci, opts.byteOnly, dot);
   }
 
   staticPrefixes() {
@@ -261,16 +262,4 @@ export class SegmentMatcher {
     }
     return DirMatch.from(exact, prefix, all);
   }
-}
-
-function compileSegment(body, dot, ci, forceNfa) {
-  const graph = buildGraph(body, dot, ci);
-  // The test hook keeps no chain.
-  const chainList = forceNfa ? [] : chains(graph, ci);
-  // A lone line (one chain through at most one globstar) serves
-  // `matchDir` too; anything else needs the NFA.
-  const line = chainList.length === 1 && chainList[0].globstar !== SET_G && chainList[0].g2 < 0;
-  const nfa = line ? null : anyNfa(graph, ci);
-  const index = line ? null : chainIndex(chainList, graph, ci);
-  return { elems: graph.elems, chains: exact(chainList), nfa, index };
 }

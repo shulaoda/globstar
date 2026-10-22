@@ -108,7 +108,7 @@ export function buildEngine(asts, opts) {
   const literal = nodeToLiteral(body);
   const ci = opts.caseInsensitive;
   if (literal !== null) return new LiteralMatcher(literal, ci, ascii);
-  return SegmentMatcher.build(body, opts.dot, ci, {
+  return new SegmentMatcher(body, opts.dot, ci, {
     forceNfa: opts.__engine === "nfa",
     byteOnly: opts.__engine === "bytes" || !ascii,
   });
