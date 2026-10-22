@@ -24,10 +24,11 @@
 // `fdir`'s `excludeSymlinks`).
 //
 // Errors are thrown, not swallowed, except where a root walk would see
-// nothing (WALKER_SPEC §9.4, §10). Compile failures land as
-// `WalkError("InvalidPattern")`; readdir failures (EACCES, ENOENT,
-// missing cwd) land as `WalkError("Io")`. We diverge from tinyglobby
-// (which suppresses IO errors) and fast-glob (which suppresses ENOENT)
+// nothing (WALKER_SPEC §9.3, §9.4, §10): a folder removed or made a file
+// after its parent listed it is left out. Compile failures land as
+// `WalkError("InvalidPattern")`; readdir failures (EACCES, a missing
+// cwd) land as `WalkError("Io")`. We diverge from tinyglobby (which
+// suppresses IO errors) and fast-glob (which suppresses every ENOENT)
 // on purpose: silent IO failures mask broken cwds and unreadable
 // subtrees.
 
@@ -64,14 +65,14 @@ export async function glob(patterns, options) {
             err = cause;
           }
         }
-        if (err) {
+        if (err && !gone(err)) {
           failed = true;
           reject(new WalkError("Io", { path: frame.absolute, cause: err }));
           return;
         }
         // Re-enter `submit` per descended dir so the next readdir
         // starts immediately — fans syscalls across libuv's threadpool.
-        processDirents(ctx, dirents, frame, out, descendShim);
+        if (!err) processDirents(ctx, dirents, frame, out, descendShim);
         if (pending === 0) resolve(out);
       });
     };
@@ -105,6 +106,7 @@ export function globSync(patterns, options) {
         dirents = readEachEntry(frame.absolute);
       }
     } catch (cause) {
+      if (gone(cause)) continue;
       throw new WalkError("Io", { path: frame.absolute, cause });
     }
 
@@ -468,6 +470,12 @@ function exists(p) {
 // `ftype=0`, some FUSE and network mounts), readdir lstats each entry
 // itself and fails the whole call when one vanishes between the two.
 const vanishedDuringRead = (err) => err?.code === "ENOENT" && err?.syscall === "lstat";
+
+// A read error that says the folder is no longer there: removed, or
+// replaced by a file, after its parent listed it — as if it had gone
+// before (§9.3). cwd was checked first, so it never stands for a missing
+// cwd.
+const gone = (err) => err?.code === "ENOENT" || err?.code === "ENOTDIR";
 
 // The entries of `dir`, typed by one lstat each; an entry that vanishes
 // in between is left out, as if it had gone before the read.

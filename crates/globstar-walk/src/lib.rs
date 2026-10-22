@@ -639,6 +639,9 @@ impl Iterator for Walk {
                         mark: self.stack.len(),
                     });
                 }
+                // Listed, then removed or made a file before it was read:
+                // as if it had gone before its folder was (§9.3).
+                Err(e) if gone(&e) => {}
                 Err(source) => {
                     return Some(Err(WalkError::Io {
                         path: frame.absolute,
@@ -689,6 +692,16 @@ fn nothing_there(err: &io::Error) -> bool {
     // std maps every platform's loop error to it, and Debug spells the
     // variant.
     || format!("{kind:?}") == "FilesystemLoop"
+}
+
+/// A read error that says the folder is no longer there: removed, or
+/// replaced by a file. The base was checked first, so it never stands for
+/// a missing base.
+fn gone(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
 }
 
 /// The (written, normalized) patterns as one [`Glob`], or `None` for

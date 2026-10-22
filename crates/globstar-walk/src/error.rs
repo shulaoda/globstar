@@ -37,7 +37,8 @@ pub enum WalkError {
 
     /// An I/O error, yielded in place while the walk goes on: the base
     /// is missing or not a folder, a seed's part or a folder could not
-    /// be read, or an entry could not be typed.
+    /// be read, or an entry could not be typed. A folder removed or made
+    /// a file after its parent listed it is left out, not an error.
     Io {
         /// Path where the error occurred.
         path: PathBuf,

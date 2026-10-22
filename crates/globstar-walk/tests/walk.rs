@@ -1618,6 +1618,27 @@ fn a_seed_finds_a_name_only_as_listed() {
     assert_eq!(t.walk(&[&format!("{nfd}/*.ts")]).len(), 1);
 }
 
+// A folder removed, or made a file, after its parent listed it is left
+// out, as if it had gone before: the rest of the walk goes on, with no
+// error. Twin of the check in walk.mjs.
+#[test]
+fn a_folder_gone_before_its_read_is_left_out() {
+    let t = TmpTree::new("gone", &["a/1.txt", "b/2.txt", "b/c/3.txt", "d/4.txt"]);
+    let mut walk = Walk::new("**/*.txt", t.root()).unwrap();
+    // The base holds folders only, so the first entry comes from the
+    // first of them read, and the other two are listed but not read.
+    let first = walk.next().unwrap().unwrap().into_path();
+    let top = first.strip_prefix(t.root()).unwrap().iter().next().unwrap();
+    let others: Vec<_> = ["a", "b", "d"].into_iter().filter(|&d| top != d).collect();
+    fs::remove_dir_all(t.root().join(others[0])).unwrap();
+    fs::remove_dir_all(t.root().join(others[1])).unwrap();
+    fs::write(t.root().join(others[1]), "now a file").unwrap();
+    for entry in walk {
+        let path = entry.unwrap().into_path();
+        assert!(path.starts_with(t.root().join(top)), "{path:?}");
+    }
+}
+
 // `!` and `!!` negate nothing: an empty pattern (GLOB_SPEC §6.1), named as
 // written. Twin of the check in walk.mjs.
 #[test]

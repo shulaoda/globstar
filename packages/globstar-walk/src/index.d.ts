@@ -109,7 +109,8 @@ export function globSync(patterns: string | Iterable<string>, options?: GlobOpti
  *   list, formatted like `["a", "b"]` and cut after three members. An
  *   ignore entry that starts with `!` is refused with no `.cause`.
  * - `"Io"` — a `readdir` / `stat` failed during traversal (missing
- *   `cwd`, EACCES, ENOENT on a vanished dir, …). `.path` is the
+ *   `cwd`, EACCES, …). A folder removed or made a file after its
+ *   parent listed it is left out, not an error. `.path` is the
  *   directory we tried to read (for a seed's `lstat`, the path it
  *   tried), `.cause` is the underlying Node error.
  *

@@ -521,6 +521,43 @@ await check("an entry that vanishes during a typed read is skipped", async () =>
   }
 });
 
+await check("a folder gone before its read is left out", async () => {
+  // A folder removed, or made a file, after its parent listed it is left
+  // out, as if it had gone before: the rest of the walk goes on, with no
+  // error. Twin of the Rust check.
+  const fsMod = (await import("node:fs")).default;
+  const real = { readdirSync: fsMod.readdirSync, readdir: fsMod.readdir };
+  let root;
+  // Once the root is listed, `b` is removed and `d` becomes a file.
+  const vanish = (dir) => {
+    if (dir !== root) return;
+    fs.rmSync(path.join(root, "b"), { recursive: true });
+    fs.rmSync(path.join(root, "d"), { recursive: true });
+    fs.writeFileSync(path.join(root, "d"), "now a file");
+  };
+  try {
+    fsMod.readdirSync = (dir, opts) => {
+      const names = real.readdirSync(dir, opts);
+      vanish(dir);
+      return names;
+    };
+    fsMod.readdir = (dir, opts, cb) =>
+      real.readdir(dir, opts, (err, names) => {
+        vanish(dir);
+        cb(err, names);
+      });
+    syncBuiltinESMExports();
+    for (const walk of [globSync, glob]) {
+      root = tmpTree("gone", ["a/1.txt", "b/2.txt", "b/c/3.txt", "d/4.txt"]);
+      assert.deepEqual(rel(root, await walk("**/*.txt", { cwd: root })), ["a/1.txt"], walk.name);
+    }
+  } finally {
+    fsMod.readdirSync = real.readdirSync;
+    fsMod.readdir = real.readdir;
+    syncBuiltinESMExports();
+  }
+});
+
 // ── A seed is reached as a root walk reaches it ─────────────────────────
 if (process.platform !== "win32" && process.getuid?.() !== 0) {
   await check("a seed under a folder the ignore set covers is not read", async () => {
