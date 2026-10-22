@@ -94,358 +94,177 @@ fn invalid(err: &WalkError) -> (&str, &str, Option<&globstar::GlobError>) {
     }
 }
 
+/// What patterns yield from one tree, compared as sets: seeds at literal
+/// heads and at every brace branch, unions, `!` parity, folders that match,
+/// and the options forwarded to the matcher.
 #[test]
-fn walker_literal_direct_hit() {
-    let t = TmpTree::new("literal", &["src/main.rs", "src/lib.rs", "README.md"]);
+fn walker_answers() {
+    let mut files = vec![
+        "README.md",
+        "package.json",
+        "tsconfig.json",
+        "main.js",
+        "main.min.js",
+        "src/main.rs",
+        "src/lib.rs",
+        "src/gen.rs",
+        "src/notes.md",
+        "src/main.ts",
+        "src/cli/run.rs",
+        "src/cli/commands/build.rs",
+        "src/components/button.ts",
+        "src/!(bundle.min).js",
+        "src/app.js",
+        "tests/smoke.rs",
+        "tests/smoke.ts",
+        "lib/vendored.rs",
+        "node_modules/pkg/index.ts",
+        "node_modules/pkg/package.json",
+        "node_modules/deep/nested/b.ts",
+        "dist/bundle.min.js",
+        "crates/core/src/lib.rs",
+        "crates/core/src/engine/mod.rs",
+        "crates/core/tests/integration.rs",
+        "crates/cli/src/main.rs",
+        "a/b/c/d/e/f/g/h/leaf.rs",
+        "a/b/c/d/shallow.rs",
+        "a/shallow.rs",
+        "target/debug/main",
+        "dots/.env",
+        "dots/main.rs",
+        "case/Main.TS",
+        "case/LIB.ts",
+        "empty/",
+    ];
+    let flat: Vec<String> = (0..100).map(|i| format!("flat/item_{i}.txt")).collect();
+    files.extend(flat.iter().map(String::as_str));
+    files.push("flat/README.md");
+    let t = TmpTree::new("answers", &files);
+    let rows: &[(&[&str], &[&str])] = &[
+        (&["src/main.rs"], &["src/main.rs"]),
+        (&["src/nothere.rs"], &[]),
+        (&["nothere/**/*.rs"], &[]),
+        (&["empty/**/*.rs"], &[]),
+        (&[], &[]),
+        // A member with no literal head walks from the root.
+        (
+            &["package.json", "*.md", "src/*.rs"],
+            &[
+                "README.md",
+                "package.json",
+                "src/gen.rs",
+                "src/lib.rs",
+                "src/main.rs",
+            ],
+        ),
+        (&["src/*.rs"], &["src/gen.rs", "src/lib.rs", "src/main.rs"]),
+        (
+            &["src/**/*.rs"],
+            &[
+                "src/cli/commands/build.rs",
+                "src/cli/run.rs",
+                "src/gen.rs",
+                "src/lib.rs",
+                "src/main.rs",
+            ],
+        ),
+        (
+            &["*.{json,md}"],
+            &["README.md", "package.json", "tsconfig.json"],
+        ),
+        // Literals that share a suffix are each seeded whole.
+        (
+            &["{package,tsconfig}.json"],
+            &["package.json", "tsconfig.json"],
+        ),
+        (
+            &["package.json", "tsconfig.json"],
+            &["package.json", "tsconfig.json"],
+        ),
+        (
+            &["{src,tests}/*.rs"],
+            &["src/gen.rs", "src/lib.rs", "src/main.rs", "tests/smoke.rs"],
+        ),
+        (
+            &["src/*.rs", "tests/*.rs"],
+            &["src/gen.rs", "src/lib.rs", "src/main.rs", "tests/smoke.rs"],
+        ),
+        (
+            &["README.md", "src/*.ts", "tests/*.ts"],
+            &["README.md", "src/main.ts", "tests/smoke.ts"],
+        ),
+        (
+            &["src/**/*.ts", "node_modules/**/package.json"],
+            &[
+                "node_modules/pkg/package.json",
+                "src/components/button.ts",
+                "src/main.ts",
+            ],
+        ),
+        (
+            &["crates/*/src/**/*.rs", "crates/*/tests/**/*.rs"],
+            &[
+                "crates/cli/src/main.rs",
+                "crates/core/src/engine/mod.rs",
+                "crates/core/src/lib.rs",
+                "crates/core/tests/integration.rs",
+            ],
+        ),
+        (
+            &["a/**/*.rs"],
+            &[
+                "a/b/c/d/e/f/g/h/leaf.rs",
+                "a/b/c/d/shallow.rs",
+                "a/shallow.rs",
+            ],
+        ),
+        (&["**/*.min.js"], &["dist/bundle.min.js", "main.min.js"]),
+        // `!` past the start is a literal byte: no extglob.
+        (&["src/!(*.min).js"], &["src/!(bundle.min).js"]),
+        (&["*.js", "!(*.min).js"], &["main.js", "main.min.js"]),
+        // Leading `!`s route by parity: odd ignores, even selects.
+        (&["!main.js"], &[]),
+        (&["!!main.js"], &["main.js"]),
+        (&["*.js", "!!!main.js"], &["main.min.js"]),
+        // A folder that matches is yielded too.
+        (&["src/components"], &["src/components"]),
+        (&["target"], &["target"]),
+        (&["dots/*"], &["dots/main.rs"]),
+        (&["case/*.ts"], &["case/LIB.ts"]),
+    ];
+    for &(patterns, expected) in rows {
+        assert_eq!(t.walk(patterns), set(expected), "{patterns:?}");
+    }
+    let flat: Vec<&str> = flat.iter().map(String::as_str).collect();
+    assert_eq!(t.walk(&["flat/*.txt"]), set(&flat));
 
-    assert_eq!(t.walk(&["src/main.rs"]), set(&["src/main.rs"]));
-}
-
-#[test]
-fn walker_star_extension_prunes_other_dirs() {
-    let t = TmpTree::new(
-        "starext",
-        &[
-            "src/main.rs",
-            "src/lib.rs",
-            "src/notes.md",
-            "tests/smoke.rs",
-        ],
-    );
-
-    assert_eq!(t.walk(&["src/*.rs"]), set(&["src/lib.rs", "src/main.rs"]));
-}
-
-#[test]
-fn walker_globstar_recursive() {
-    let t = TmpTree::new(
-        "globstar",
-        &[
-            "src/main.rs",
-            "src/cli/run.rs",
-            "src/cli/commands/build.rs",
-            "src/notes.md",
-            "tests/smoke.rs",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["src/**/*.rs"]),
-        set(&["src/cli/commands/build.rs", "src/cli/run.rs", "src/main.rs"])
-    );
-}
-
-#[test]
-fn walker_brace_expansion() {
-    let t = TmpTree::new("brace", &["a.ts", "b.tsx", "c.js", "d.rs"]);
-
-    assert_eq!(t.walk(&["*.{ts,tsx}"]), set(&["a.ts", "b.tsx"]));
-}
-
-#[test]
-fn walker_extglob_negate() {
-    // `(*.min).js` is parsed as literal `(` + Star + literal `.min).js`
-    // (no extglob support — `!(...)` is NOT bash extglob in this engine).
-    // None of the files is literally `(<anything>.min).js`, so an ignore
-    // pattern of that shape removes nothing from the walk result.
-    //
-    // The walker auto-splits leading-`!` patterns into the ignore set,
-    // so passing `["**/*.js", "!(*.min).js"]` is the same as
-    // `["**/*.js"]` + `ignore: ["(*.min).js"]`.
-    let t = TmpTree::new(
-        "extneg",
-        &["main.js", "main.min.js", "util.js", "util.min.js"],
-    );
-
-    assert_eq!(
-        t.walk(&["**/*.js", "!(*.min).js"]),
-        set(&["main.js", "main.min.js", "util.js", "util.min.js"])
-    );
-}
-
-#[test]
-fn walker_lone_negation_yields_nothing() {
-    // A lone `!`-prefixed pattern means "no positive patterns" after the
-    // auto-split — so the walker yields nothing.
-    let t = TmpTree::new("lone_neg", &["a.js", "b.js"]);
-
-    let got = t.walk(&["!a.js"]);
-    assert!(got.is_empty(), "expected empty, got {got:?}");
-}
-
-#[test]
-fn walker_multi_bang_parity_routes_by_count() {
-    // GLOB_SPEC §11.1: leading-`!` parity rule. Odd count → ignore set,
-    // even count → match set; all leading `!`s are stripped from the
-    // body. The JS walker uses the same rule (`packages/globstar-walk/src/walk.js`).
-    let t = TmpTree::new("multi_bang", &["a.js", "b.js"]);
-
-    // `!!a.js` (2 bangs, even) → positive `a.js`. Yields a.js only.
-    let got = t.walk(&["!!a.js"]);
-    assert_eq!(
-        got,
-        set(&["a.js"]),
-        "!!a.js should resolve to positive a.js"
-    );
-
-    // `**/*.js` + `!!!a.js` (3 bangs, odd) → ignore `a.js`. Yields b.js only.
-    let got = t.walk(&["**/*.js", "!!!a.js"]);
-    assert_eq!(
-        got,
-        set(&["b.js"]),
-        "!!!a.js should route a.js into ignore set"
-    );
-}
-
-#[test]
-fn walker_prunes_unrelated_subtrees() {
-    let t = TmpTree::new(
-        "prune",
-        &["src/a.ts", "src/b.ts", "other/c.ts", "other/deep/d.ts"],
-    );
-
-    assert_eq!(t.walk(&["src/**/*.ts"]), set(&["src/a.ts", "src/b.ts"]));
-}
-
-#[test]
-fn walker_empty_dir() {
-    let t = TmpTree::new("empty", &[]);
-    let got = t.walk(&["**/*.rs"]);
-    assert!(got.is_empty());
-}
-
-#[test]
-fn walker_yields_dir_match() {
-    let t = TmpTree::new(
-        "dirmatch",
-        &[
-            "src/components/",
-            "src/components/button.ts",
-            "src/other.ts",
-        ],
-    );
-
-    assert_eq!(t.walk(&["src/components"]), set(&["src/components"]));
-}
-
-#[test]
-fn walker_dot_protection_default_hides_dotfiles() {
-    let t = TmpTree::new("dotprot", &[".env", "main.rs"]);
-
-    assert_eq!(t.walk(&["*"]), set(&["main.rs"]));
-}
-
-#[test]
-fn walker_dot_true_includes_dotfiles() {
-    let t = TmpTree::new("dot_true", &[".env", "main.rs"]);
-
-    let opts = WalkOptions {
-        dot: true,
-        ..WalkOptions::new(t.root())
-    };
-    assert_eq!(t.walk_with(&["*"], opts), set(&[".env", "main.rs"]));
-}
-
-#[test]
-fn walker_case_sensitive_default_misses_other_case() {
-    let t = TmpTree::new("case_strict", &["Main.TS", "other.rs"]);
-
-    let got = t.walk(&["*.ts"]);
-    assert_eq!(
-        got,
-        set(&[]),
-        "case-sensitive default should not match Main.TS"
-    );
-}
-
-#[test]
-fn walker_case_insensitive_matches_mixed_case() {
-    let t = TmpTree::new("case_insens", &["Main.TS", "LIB.ts", "other.rs"]);
-
-    let opts = WalkOptions {
-        case_insensitive: true,
-        ..WalkOptions::new(t.root())
-    };
-    assert_eq!(t.walk_with(&["*.ts"], opts), set(&["Main.TS", "LIB.ts"]));
-}
-
-#[test]
-fn walker_missing_prefix_yields_nothing_silently() {
-    let t = TmpTree::new("missing", &["unrelated.rs"]);
-
-    let got = t.walk(&["nonexistent/**/*.rs"]);
-    assert!(got.is_empty());
-}
-
-#[test]
-fn walker_prefix_skips_sibling_dirs() {
-    let t = TmpTree::new(
-        "prefixskip",
-        &[
-            "src/main.ts",
-            "src/sub/foo.ts",
-            "node_modules/a.ts",
-            "node_modules/deep/nested/b.ts",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["src/**/*.ts"]),
-        set(&["src/main.ts", "src/sub/foo.ts"])
-    );
-}
-
-#[test]
-fn walker_brace_prefix_walks_both_roots() {
-    let t = TmpTree::new(
-        "braceroots",
-        &["src/main.rs", "tests/smoke.rs", "lib/vendored.rs"],
-    );
-
-    assert_eq!(
-        t.walk(&["{src,tests}/*.rs"]),
-        set(&["src/main.rs", "tests/smoke.rs"])
-    );
-}
-
-#[test]
-fn walker_pure_literal_missing_file_yields_nothing() {
-    let t = TmpTree::new("pureliteralmiss", &["other.rs"]);
-
-    let got = t.walk(&["src/main.rs"]);
-    assert!(got.is_empty());
-}
-
-#[test]
-fn walker_from_patterns_union() {
-    let t = TmpTree::new(
-        "multi_union",
-        &["src/main.ts", "src/lib.rs", "README.md", "tests/smoke.ts"],
-    );
-
-    assert_eq!(
-        t.walk(&["README.md", "src/*.rs", "**/*.ts"]),
-        set(&["README.md", "src/lib.rs", "src/main.ts", "tests/smoke.ts"])
-    );
-}
-
-#[test]
-fn walker_from_patterns_shared_prefix() {
-    let t = TmpTree::new(
-        "multi_shared_prefix",
-        &[
-            "src/main.ts",
-            "src/lib.rs",
-            "src/notes.md",
-            "dist/bundle.js",
-            "node_modules/pkg/index.ts",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["src/**/*.ts", "src/**/*.rs"]),
-        set(&["src/lib.rs", "src/main.ts"])
-    );
-}
-
-#[test]
-fn walker_from_patterns_distinct_prefixes() {
-    let t = TmpTree::new(
-        "multi_disjoint",
-        &["src/main.rs", "tests/smoke.rs", "lib/vendored.rs"],
-    );
-
-    assert_eq!(
-        t.walk(&["src/*.rs", "tests/*.rs"]),
-        set(&["src/main.rs", "tests/smoke.rs"])
-    );
-}
-
-#[test]
-fn walker_from_patterns_pruning_requires_all_agree() {
-    let t = TmpTree::new(
-        "multi_coop_pruning",
-        &["src/main.ts", "node_modules/pkg/package.json"],
-    );
-
-    assert_eq!(
-        t.walk(&["src/**/*.ts", "node_modules/**/package.json"]),
-        set(&["node_modules/pkg/package.json", "src/main.ts"])
-    );
-}
-
-#[test]
-fn walker_from_patterns_literal_file_in_union() {
-    let t = TmpTree::new("multi_literal_file", &["src/main.ts", "package.json"]);
-
-    assert_eq!(
-        t.walk(&["package.json", "src/**/*.ts"]),
-        set(&["package.json", "src/main.ts"])
-    );
-}
-
-#[test]
-fn walker_from_patterns_empty_yields_nothing() {
-    let t = TmpTree::new("multi_empty", &["main.rs"]);
-
-    assert!(t.walk(&[]).is_empty());
-}
-
-#[test]
-fn walker_ignore_skips_files() {
-    let t = TmpTree::new("ignore_files", &["src/main.rs", "src/gen.rs", "src/lib.rs"]);
-
-    let opts = WalkOptions {
-        ignore: vec!["**/gen.rs".into()],
-        ..WalkOptions::new(t.root())
+    let with = |patterns: &[&str], change: fn(&mut WalkOptions)| {
+        let mut opts = WalkOptions::new(t.root());
+        change(&mut opts);
+        t.walk_with(patterns, opts)
     };
     assert_eq!(
-        t.walk_with(&["src/*.rs"], opts),
+        with(&["dots/*"], |o| o.dot = true),
+        set(&["dots/.env", "dots/main.rs"])
+    );
+    assert_eq!(
+        with(&["case/*.ts"], |o| o.case_insensitive = true),
+        set(&["case/LIB.ts", "case/Main.TS"])
+    );
+    assert_eq!(
+        with(&["src/*.rs"], |o| o.ignore = vec!["**/gen.rs".into()]),
         set(&["src/lib.rs", "src/main.rs"])
     );
-}
-
-#[test]
-fn walker_ignore_prunes_dirs() {
-    let t = TmpTree::new(
-        "ignore_prune",
-        &[
-            "src/a.ts",
-            "src/deep/b.ts",
-            "node_modules/pkg/index.ts",
-            "node_modules/pkg/nested/x.ts",
-        ],
-    );
-
-    let opts = WalkOptions {
-        ignore: vec!["**/node_modules/**".into()],
-        ..WalkOptions::new(t.root())
-    };
     assert_eq!(
-        t.walk_with(&["**/*.ts"], opts),
-        set(&["src/a.ts", "src/deep/b.ts"])
+        with(&["**/*.ts"], |o| o.ignore =
+            vec!["**/node_modules/**".into()]),
+        set(&[
+            "case/LIB.ts",
+            "src/components/button.ts",
+            "src/main.ts",
+            "tests/smoke.ts"
+        ])
     );
-}
-
-#[test]
-fn walker_new_invalid_pattern_returns_err() {
-    let t = TmpTree::new("new_bad", &[]);
-    let err = Walk::new("[unclosed", t.root()).unwrap_err();
-    assert_eq!(invalid(&err).0, "[unclosed");
-}
-
-#[test]
-fn walker_ignore_invalid_pattern_returns_err() {
-    let t = TmpTree::new("ignore_bad", &["a.rs"]);
-    let err = Walk::new(
-        "*.rs",
-        WalkOptions {
-            ignore: vec!["[bad".into()],
-            ..WalkOptions::new(t.root())
-        },
-    )
-    .unwrap_err();
-    assert_eq!(invalid(&err).0, "[bad");
 }
 
 #[test]
@@ -503,347 +322,29 @@ fn walker_invalid_member_of_a_list_is_named() {
     );
 }
 
-#[test]
-fn walker_rust_workspace_finds_source_files() {
-    let t = TmpTree::new(
-        "rust_workspace",
-        &[
-            "Cargo.toml",
-            "Cargo.lock",
-            "crates/core/Cargo.toml",
-            "crates/core/src/lib.rs",
-            "crates/core/src/parser.rs",
-            "crates/core/src/engine/mod.rs",
-            "crates/core/src/engine/backtrack.rs",
-            "crates/core/tests/integration.rs",
-            "crates/cli/Cargo.toml",
-            "crates/cli/src/main.rs",
-            "crates/cli/src/args.rs",
-            "target/debug/deps/core-abc.rlib",
-            "target/debug/build/core-abc/build-script-build",
-            "target/release/cli.exe",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["crates/*/src/**/*.rs"]),
-        set(&[
-            "crates/cli/src/args.rs",
-            "crates/cli/src/main.rs",
-            "crates/core/src/engine/backtrack.rs",
-            "crates/core/src/engine/mod.rs",
-            "crates/core/src/lib.rs",
-            "crates/core/src/parser.rs",
-        ])
-    );
-}
-
-#[test]
-fn walker_rust_workspace_multi_source_and_tests() {
-    let t = TmpTree::new(
-        "rust_ws_set",
-        &[
-            "crates/core/src/lib.rs",
-            "crates/core/tests/integration.rs",
-            "crates/cli/src/main.rs",
-            "crates/cli/tests/smoke.rs",
-            "target/debug/deps/core.rlib",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["crates/*/src/**/*.rs", "crates/*/tests/**/*.rs"]),
-        set(&[
-            "crates/cli/src/main.rs",
-            "crates/cli/tests/smoke.rs",
-            "crates/core/src/lib.rs",
-            "crates/core/tests/integration.rs",
-        ])
-    );
-}
-
-#[test]
-fn walker_node_project_typescript_sources() {
-    let t = TmpTree::new(
-        "node_project",
-        &[
-            "package.json",
-            "tsconfig.json",
-            "src/index.ts",
-            "src/components/Button.tsx",
-            "src/components/Modal.tsx",
-            "src/utils/math.ts",
-            "src/utils/strings.ts",
-            "tests/Button.test.tsx",
-            "dist/index.js",
-            "dist/index.d.ts",
-            "node_modules/react/index.js",
-            "node_modules/react/index.d.ts",
-            "node_modules/lodash/src/index.ts",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["src/**/*.{ts,tsx}"]),
-        set(&[
-            "src/components/Button.tsx",
-            "src/components/Modal.tsx",
-            "src/index.ts",
-            "src/utils/math.ts",
-            "src/utils/strings.ts",
-        ])
-    );
-}
-
-#[test]
-fn walker_node_project_sources_and_tests() {
-    let t = TmpTree::new(
-        "node_src_and_tests",
-        &[
-            "src/Button.tsx",
-            "src/Button.test.tsx",
-            "src/utils.ts",
-            "tests/integration/auth.test.ts",
-            "node_modules/react/index.js",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["src/**/*.{ts,tsx}", "tests/**/*.test.{ts,tsx}"]),
-        set(&[
-            "src/Button.test.tsx",
-            "src/Button.tsx",
-            "src/utils.ts",
-            "tests/integration/auth.test.ts",
-        ])
-    );
-}
-
-#[test]
-fn walker_python_project_source_files() {
-    let t = TmpTree::new(
-        "python_project",
-        &[
-            "setup.py",
-            "README.md",
-            "src/mypackage/__init__.py",
-            "src/mypackage/core.py",
-            "src/mypackage/utils/helpers.py",
-            "src/mypackage/__pycache__/__init__.cpython-311.pyc",
-            "src/mypackage/__pycache__/core.cpython-311.pyc",
-            ".venv/bin/python",
-            ".venv/lib/python3.11/site-packages/pip/__init__.py",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["src/**/*.py"]),
-        set(&[
-            "src/mypackage/__init__.py",
-            "src/mypackage/core.py",
-            "src/mypackage/utils/helpers.py",
-        ])
-    );
-}
-
-#[test]
-fn walker_wide_flat_directory() {
-    let t = TmpTree::new("wide_flat", &[]);
-    for i in 0..100 {
-        t.touch(&format!("files/item_{i}.txt"));
-    }
-    t.touch("files/README.md");
-    t.touch("files/config.json");
-
-    let got = t.walk(&["files/*.txt"]);
-    assert_eq!(got.len(), 100);
-    assert!(got.contains("files/item_0.txt"));
-    assert!(got.contains("files/item_50.txt"));
-    assert!(got.contains("files/item_99.txt"));
-    assert!(!got.contains("files/README.md"));
-    assert!(!got.contains("files/config.json"));
-}
-
-#[test]
-fn walker_deep_nesting() {
-    let t = TmpTree::new(
-        "deep_nest",
-        &[
-            "a/b/c/d/e/f/g/h/leaf.rs",
-            "a/b/c/d/shallow.rs",
-            "a/shallow.rs",
-            "unrelated.rs",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["a/**/*.rs"]),
-        set(&[
-            "a/b/c/d/e/f/g/h/leaf.rs",
-            "a/b/c/d/shallow.rs",
-            "a/shallow.rs",
-        ])
-    );
-}
-
-#[test]
-fn walker_recursive_suffix_pattern() {
-    let t = TmpTree::new(
-        "recursive_suffix",
-        &[
-            "dist/bundle.min.js",
-            "dist/bundle.js",
-            "vendor/jquery.min.js",
-            "vendor/jquery.js",
-            "src/main.ts",
-            "public/assets/analytics.min.js",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["**/*.min.js"]),
-        set(&[
-            "dist/bundle.min.js",
-            "public/assets/analytics.min.js",
-            "vendor/jquery.min.js",
-        ])
-    );
-}
-
-#[test]
-fn walker_extglob_non_min_js() {
-    // `src/!(*.min).js` → `src/` + literal `!(` + Star + literal
-    // `.min).js`. `!` here isn't leading, so it's a literal byte; the
-    // pattern matches basenames of the shape `!(<anything>.min).js`.
-    let t = TmpTree::new(
-        "non_min_js",
-        &[
-            "src/main.js",
-            "src/utils.js",
-            "dist/bundle.min.js",
-            "dist/app.min.js",
-            "vendor/lib.js",
-            "README.md",
-            "src/!(bundle.min).js",
-        ],
-    );
-
-    assert_eq!(t.walk(&["src/!(*.min).js"]), set(&["src/!(bundle.min).js"]));
-}
-
-#[test]
-fn walker_literal_directory_target() {
-    let t = TmpTree::new(
-        "literal_target",
-        &["target/debug/main", "target/release/main", "src/main.rs"],
-    );
-
-    assert_eq!(t.walk(&["target"]), set(&["target"]));
-}
-
-#[test]
-fn walker_mixed_tiers_via_from_patterns() {
-    let t = TmpTree::new(
-        "mixed_tiers",
-        &[
-            "Cargo.toml",
-            "Cargo.lock",
-            "README.md",
-            "src/lib.rs",
-            "src/cli/main.rs",
-            "tests/smoke.rs",
-            "target/debug/deps/crate.rlib",
-        ],
-    );
-
-    assert_eq!(
-        t.walk(&["Cargo.toml", "*.md", "src/**/*.rs"]),
-        set(&["Cargo.toml", "README.md", "src/cli/main.rs", "src/lib.rs"])
-    );
-}
-
 /// Serializes tests that mutate process-wide CWD so they don't race
 /// against each other. The rest of this file uses absolute paths from
 /// `TmpTree::root()` and never touches CWD, so they don't need this guard.
 static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
-fn walker_default_options_walks_cwd() {
-    let _guard = CWD_LOCK.lock().expect("cwd lock poisoned");
-    let t = TmpTree::new("default_cwd", &["a.rs", "b.rs", "c.md"]);
-
-    let orig = std::env::current_dir().expect("save cwd");
-    std::env::set_current_dir(t.root()).expect("chdir into tmp");
-
-    // WalkOptions::default() → base = "." → should walk the current dir.
-    // Collect file names (paths are yielded absolute, so strip to
-    // basenames for assertion).
-    let files: BTreeSet<String> = Walk::new("*.rs", WalkOptions::default())
-        .expect("construct walker")
-        .map(|r| r.expect("no walker error in test"))
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-
-    std::env::set_current_dir(&orig).expect("restore cwd");
-
-    assert_eq!(files, set(&["a.rs", "b.rs"]));
-}
-
-#[test]
 fn walker_base_locked_to_construct_time_cwd() {
-    // Proves `std::path::absolute`-based base locking: changing CWD after
-    // construction does NOT redirect the walker to a different directory.
+    // The default base `.` is made absolute when the walker is built: it
+    // walks that folder, yields absolute paths, and a later `chdir` does
+    // not move it.
     let _guard = CWD_LOCK.lock().expect("cwd lock poisoned");
-    let t1 = TmpTree::new("locked_t1", &["only_in_t1.rs"]);
+    let t1 = TmpTree::new("locked_t1", &["only_in_t1.rs", "other.md"]);
     let t2 = TmpTree::new("locked_t2", &["only_in_t2.rs"]);
-
     let orig = std::env::current_dir().expect("save cwd");
     std::env::set_current_dir(t1.root()).expect("chdir into t1");
-
-    // Construct while CWD == t1.
+    let here = std::env::current_dir().expect("cwd");
     let walker = Walk::new("*.rs", WalkOptions::default()).expect("construct walker");
-
-    // Move CWD to t2 BEFORE iterating — with absolute-base lock-in, the
-    // walker should still walk t1 (not t2) because its base was snapshotted.
     std::env::set_current_dir(t2.root()).expect("chdir into t2");
-
-    let files: BTreeSet<String> = walker
-        .map(|r| r.expect("no walker error in test"))
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-
-    std::env::set_current_dir(&orig).expect("restore cwd");
-
-    assert_eq!(
-        files,
-        set(&["only_in_t1.rs"]),
-        "walker should be locked to t1 (its construct-time CWD), not t2"
-    );
-}
-
-#[test]
-fn walker_relative_base_yields_absolute_paths() {
-    // A relative input base (here `.` via WalkOptions::default()) should be
-    // absolutized at construction, so yielded paths come back absolute.
-    let _guard = CWD_LOCK.lock().expect("cwd lock poisoned");
-    let t = TmpTree::new("rel_base_abs_out", &["foo.rs"]);
-
-    let orig = std::env::current_dir().expect("save cwd");
-    std::env::set_current_dir(t.root()).expect("chdir into tmp");
-
-    let paths: Vec<PathBuf> = Walk::new("*.rs", WalkOptions::default())
-        .expect("construct walker")
+    let paths: Vec<PathBuf> = walker
         .map(|r| r.expect("no walker error in test").into_path())
         .collect();
-
     std::env::set_current_dir(&orig).expect("restore cwd");
-
-    assert_eq!(paths.len(), 1, "expected exactly one yielded path");
-    assert!(
-        paths[0].is_absolute(),
-        "walker with relative input base must yield absolute paths, got: {:?}",
-        paths[0]
-    );
+    assert_eq!(paths, [here.join("only_in_t1.rs")]);
 }
 
 #[test]
@@ -935,29 +436,6 @@ fn dir_entry_metadata_succeeds_for_regular_file() {
 
 #[cfg(unix)]
 #[test]
-fn walker_follow_links_off_drops_symlinks() {
-    // Aligns with tinyglobby's `excludeSymlinks` semantics: when
-    // `follow_links: false`, symlinks are dropped entirely (not
-    // emitted, not descended). Default is `true`, which is what the
-    // rest of the test corpus exercises.
-    use std::os::unix::fs::symlink;
-    let t = TmpTree::new("follow_off", &["real.txt"]);
-    symlink(t.root().join("real.txt"), t.root().join("link.txt")).expect("create file symlink");
-
-    let opts = WalkOptions {
-        follow_links: false,
-        ..WalkOptions::new(t.root())
-    };
-    // Only the real file — symlink dropped.
-    assert_eq!(
-        t.walk_with(&["*.txt"], opts),
-        set(&["real.txt"]),
-        "follow_links:false should drop symlinks entirely"
-    );
-}
-
-#[cfg(unix)]
-#[test]
 fn walker_is_dir_follows_the_link() {
     // `is_dir` says what the walk took the entry for: a link to a folder
     // is a folder (and is descended), while `file_type` keeps the link.
@@ -1040,28 +518,6 @@ fn walker_follow_links_on_breaks_cycles() {
 }
 
 // ── Seeds and pattern preprocessing ─────────────────────────────────────
-
-/// A union of literal patterns that share a trailing byte (e.g. the
-/// same extension) seeds each literal whole, not the shared prefix
-/// (`package`/`tsconfig`), which names no directory.
-#[test]
-fn walker_c1_multi_literal_shared_suffix() {
-    let t = TmpTree::new(
-        "c1-multi-lit",
-        &["package.json", "tsconfig.json", "readme.md"],
-    );
-    assert_eq!(
-        t.walk(&["package.json", "tsconfig.json"]),
-        set(&["package.json", "tsconfig.json"])
-    );
-}
-
-/// The same, via a leading brace whose branches share a suffix.
-#[test]
-fn walker_c1_brace_shared_suffix() {
-    let t = TmpTree::new("c1-brace", &["index.ts", "main.ts", "other.ts"]);
-    assert_eq!(t.walk(&["{index,main}.ts"]), set(&["index.ts", "main.ts"]));
-}
 
 /// A `..` in a pattern must not let the walk escape `base`, even
 /// though the sibling directory exists on disk.
@@ -1289,15 +745,6 @@ fn walker_seed_emits_looping_symlink_like_walk() {
 }
 
 #[test]
-fn walker_missing_base_yields_error() {
-    // A bad base fails loudly (one inline Err), not as a silent empty walk.
-    let results: Vec<_> = Walk::new("**/*.rs", "/nonexistent-globstar-base")
-        .unwrap()
-        .collect();
-    assert!(matches!(results.as_slice(), [Err(WalkError::Io { .. })]));
-}
-
-#[test]
 fn walker_bad_base_fails_for_every_pattern_shape() {
     // The base is checked whatever the pattern's shape: a missing or
     // non-folder base gives one Io error, never a silent empty walk.
@@ -1517,6 +964,7 @@ fn walker_takes_any_path_like_base() {
 fn walker_pattern_error_keeps_its_glob_error() {
     use std::error::Error;
     let err = Walk::new("[z-a]", ".").unwrap_err();
+    assert_eq!(invalid(&err).0, "[z-a]");
     let source = err.source().expect("a source");
     assert!(matches!(
         source.downcast_ref::<globstar::GlobError>(),

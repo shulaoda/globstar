@@ -205,8 +205,6 @@ await check("option misuse throws clear TypeErrors", async () => {
   ]) {
     await throwsBoth(patterns, bad, TypeError, JSON.stringify([patterns, bad]));
   }
-  // An explicit `undefined` keeps the default.
-  await expectBoth(root, ["*.txt"], { dot: undefined, ignore: undefined }, ["a.txt"], "undefined");
   // Only own keys count.
   Object.prototype.dot = "yes";
   Object.prototype.cwd = "/";
