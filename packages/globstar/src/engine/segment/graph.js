@@ -103,10 +103,10 @@ export function buildGraph(body, dot, ci) {
     if (g.state === B_OPEN) {
       for (const t of g.tails) b.link(t, ACCEPT);
     } else {
-      b.link(b.segment(g, g.buf), ACCEPT);
+      b.link(b.segment(g), ACCEPT);
     }
   }
-  if (b.cost > b.budget) tooComplex(b.budget);
+  if (b.cost > b.budget) throw new GlobError("TooComplex", { max: b.budget });
   // `weight`: the pattern's `nodeWeight`, read when the literal paths
   // are kept (a linear pattern keeps none, and reads 0); `keys`: what
   // the chain index files a union's chains by, null when it has none.
@@ -147,10 +147,6 @@ function tableBytes(w) {
   let bytes = 1;
   for (const s of w.suffixSetStr) bytes += s.length + 1;
   return bytes;
-}
-
-function tooComplex(max) {
-  throw new GlobError("TooComplex", { max });
 }
 
 // What a node costs the walk to copy and compile: a literal its length,
@@ -243,10 +239,6 @@ function groupKey(g) {
   let key = `${g.state},${g.pendingGlobstar ? 1 : 0},${g.tookSep ? 1 : 0}`;
   for (const n of g.buf) key += n.tag === N_LITERAL ? `|${n.str}` : `|#${n.tag}`;
   return key;
-}
-
-function makeMerged() {
-  return { groups: [], index: null };
 }
 
 function merge(out, g) {
@@ -373,7 +365,7 @@ class Builder {
             break;
           }
           // A `**` ending a branch reads the `/` after the brace.
-          const out = makeMerged();
+          const out = { groups: [], index: null };
           for (const branch of node.branches) {
             for (const g of groups) this.cost += groupCost(g);
             if (this.cost > this.budget) break;
@@ -432,8 +424,7 @@ class Builder {
   closeAll(groups) {
     this.joinAll(groups, B_SEP, (g) => {
       this.settle(g);
-      const buf = g.buf;
-      const id = this.segment(g, buf);
+      const id = this.segment(g);
       g.buf = [];
       g.weight = 0;
       return id;
@@ -473,15 +464,15 @@ class Builder {
     for (const g of groups) dedupeTails(g);
   }
 
-  // The node of a group's closed segment `buf` after its tails. A
+  // The node of a group's closed segment after its tails. A
   // union's wildcard segments keep their keys (its chains are filed by
   // them); a wildcard node is never shared, so its id is new.
-  segment(g, buf) {
+  segment(g) {
     this.cost += g.weight;
-    const elem = this.close(buf);
+    const elem = this.close(g.buf);
     const id = this.emit(elem, g.tails);
     if (this.keys !== null && elem.kind === EL_WILD) {
-      const keys = segmentKeys(buf, this.ci, this.keyRoom);
+      const keys = segmentKeys(g.buf, this.ci, this.keyRoom);
       if (keys !== null) {
         this.keyRoom -= segKeysLen(keys);
         this.keys[id] = keys;
