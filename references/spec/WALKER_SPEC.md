@@ -35,7 +35,7 @@ The walker layer adds the following on top of the glob matcher:
 - Pattern preprocessing — auto-splitting `!`-prefixed entries into the ignore set and stripping leading `/` so static prefixes resolve relative to `cwd`.
 - Filesystem traversal driven by the matcher's `match_dir` and `static_prefixes` outputs.
 - Output shaping — files-only, absolute paths joined from `cwd` (§8).
-- Loud error semantics — IO and pattern compile failures both throw (`WalkError`), no silent swallow.
+- Loud error semantics — IO and pattern compile failures both throw (`WalkError`), except where a root walk would see nothing (§9.3, §9.4, §10).
 
 ### 1.2 Out of scope
 
@@ -109,9 +109,7 @@ Forwarded to the matcher (ASCII-only). See GLOB_SPEC.md §13 for the precise sem
 
 Default is **`true`**, matching `tinyglobby`'s `followSymbolicLinks` default. Vite's `import.meta.glob` relies on this (e.g. pnpm-style `node_modules/<pkg>` symlinks must be traversed for the glob to see the real package contents).
 
-When `true`, the walker resolves symbolic-link directory entries via `fs.statSync` to determine whether the link target is a directory and should be descended. To prevent infinite descent on cyclic symlinks, the walker MUST also remember, along each way down, the folders it reached through a link, and skip the descent through a link whose target is one of them. The link names a directory, so it is never emitted itself (the output is files only, §8.1); the rest of the walk goes on. See §7.1 step 6 and §10 below.
-
-When `false`, symlinks are dropped entirely: NOT emitted as files, NOT descended. This matches `fdir`'s `excludeSymlinks` mode and `tinyglobby`'s `followSymbolicLinks: false`.
+How a link is typed, the cycle break, and `false` (links dropped: not emitted, not descended) are in §10.
 
 #### `ignore`
 
@@ -145,7 +143,7 @@ The walker exposes 5 options. The following toggles, common in other walkers, ar
 
 ### 4.1 Input shape
 
-`patterns` MAY be a single string or an iterable of strings (an array, a `Set`, …), read once. A single string is processed as if it were a one-element array. An empty array, OR an array whose elements all reduce to ignore-only entries, results in the walker emitting an empty result without traversing. `cwd` is still checked and the `ignore` patterns still compile first, so their errors surface (§9).
+`patterns` MAY be a single string or an iterable of strings (an array, a `Set`, …), read once. A single string is processed as if it were a one-element array.
 
 ### 4.2 `!`-prefix split (parity rule)
 
@@ -195,7 +193,7 @@ After preprocessing, the walker compiles two matchers (the Rust crate, which yie
 - `matcher` — the OR-union of the (preprocessed) positive set;
 - `ignore` — the OR-union of the (preprocessed) `opts.ignore` plus the `!`-routed negative set, or `null` when both are empty;
 
-If the positive set is empty after preprocessing (e.g. `glob(["!foo"])` with no other inputs), the walker MUST short-circuit and return an empty result without attempting any traversal.
+If the positive set is empty after preprocessing (an empty array, or one whose entries all reduce to ignore-only entries or to nothing, e.g. `glob(["!foo"])`), the walker MUST short-circuit and return an empty result without attempting any traversal. `cwd` is still checked and the `ignore` patterns still compile first, so their errors surface (§9).
 
 If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member the matcher failed in, as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`), and the underlying reason. The matcher reports that member (GLOB_SPEC §6), so nothing is compiled twice. When the members together ran past the expansion budget they share (GLOB_SPEC §6.2), the member named is the one it ran out in, and the reason says the patterns share the limit. An error no one member explains (the union's compile work, `TooComplex`) names the list, cut after three: `["a", "b", "c"] and 2 more`. When preprocessing changed the member, the reason names the text its byte offsets count in: `invalid character class range … at byte 5 … (in 'src/[z-a]', as the walker reads it)`. See §9.
 
@@ -268,7 +266,7 @@ Each frame carries a list `links` of the symlinks the walker descended through t
 
 1. Build the seed-frame stack from §6, then reverse it so the first seed pops first.
 2. While the stack is non-empty: pop a frame, `fs.readdirSync`, route the dirents through the per-frame loop with `results = out` and a local `descend` array, then push descended frames onto the stack in REVERSE so the next pop is the first child (preserves per-level forward order).
-3. `readdirSync` failures throw immediately; the stack and any already-pushed results are dropped.
+3. A `readdirSync` failure is handled as §9.3 says; one that throws drops the stack and any already-pushed results.
 
 ### 7.3 Async concurrent
 
@@ -279,7 +277,7 @@ Each frame carries a list `links` of the symlinks the walker descended through t
 3. The `submit(frame)` operation increments `pending`, calls `fs.readdir(frame.absolute, { withFileTypes: true }, callback)`, and returns. Inside the callback:
    - decrement `pending`;
    - if `failed` is already `true`, return (drop the late callback);
-   - if `err` is set, set `failed = true` and `reject(new WalkError("Io", { path: frame.absolute, cause: err }))`, then return;
+   - if `err` is set, handle it as §9.3 says: a gone folder is skipped (go on to the `pending` check); when it throws, set `failed = true`, reject with that error, and return;
    - otherwise, run the per-frame loop with `results = out` and a `descend` shim that calls `submit(frame)` immediately for each descended child;
    - if `pending === 0` after all the work, `resolve(out)`.
 4. Submit every seed.
@@ -288,19 +286,7 @@ The "drop late callback after failure" rule MUST hold so that in-flight readdirs
 
 ### 7.4 Path joining
 
-A child's absolute path is `withSep(parent) + child`, the only path concatenation inside the walker; a folder's `withSep(parent)` is made once for all its entries:
-
-```js
-function withSep(parent) {
-  const last = parent.charCodeAt(parent.length - 1);
-  if (last === 0x2f /* '/' */) return parent;
-  if (!WINDOWS) return parent + "/";
-  if (last === 0x5c /* '\\' */) return parent; // a drive root, `C:\`
-  return parent + (parent.startsWith("\\\\?\\") ? "\\" : "/");
-}
-```
-
-This bypasses `path.join`'s normalization (`..`, `.`, repeated `/`) because the walker only ever appends a single dirent name to a `path.resolve`'d cwd or to a previous child path — and, for a seed, one part of a static prefix at a time (§6 step 1 drops `..`, `.` and empty parts). §4.3's normalization (leading-`/` strip, `//` collapse, `.`-segment removal) plus that guard are what make this premise hold for the seed join; without them, pattern spellings would reach the output paths. Measured: `path.join` is ~100 µs slower per walk than this concatenation on a small Vite project tree.
+A child's absolute path is `withSep(parent) + name`: the folder's path with a separator after it (§8.2 says which, and none when the path already ends in one), then the name. This is the walker's only path concatenation. It skips `path.join` (~100 µs slower per walk on a small Vite project tree) and its normalization (`..`, `.`, repeated `/`), which is safe because only dirent names and seed parts guarded by §6 step 1 are appended to a `path.resolve`d cwd.
 
 ### 7.5 Result-order guarantees
 
@@ -320,7 +306,7 @@ The walker emits ONLY file paths. Directory paths are NEVER part of the output, 
 
 Each output path is the **`cwd`-prefixed absolute form** — there is no relative-output toggle. `cwd` is itself resolved to absolute at construction (§5), so output paths are always absolute regardless of the form `cwd` was passed in.
 
-Path separators are POSIX (`/`): the walker constructs paths from dirent names by string concatenation (§7.4), so the only separators present beyond what `path.resolve(cwd)` produced are the `/`s the walker inserted. On Windows, `path.resolve` returns the platform's preferred form (`C:\proj`), followed by the walker's `/`s; one file has one spelling whatever the pattern's shape. Two Windows forms differ, so that every path is one Win32 can open: a `cwd` that already ends in a separator (a drive root, `C:\`) gets none added, and under a verbatim `cwd` (`\\?\C:\proj`) the walker joins with `\`, since Win32 reads no `/` in such a path.
+Path separators are POSIX (`/`): the walker constructs paths from dirent names by string concatenation (§7.4), so the only separators present beyond what `path.resolve(cwd)` produced are the `/`s the walker inserted. On Windows, `path.resolve` returns the platform's preferred form (`C:\proj`), followed by the walker's `/`s; one file has one spelling whatever the pattern's shape. A `cwd` that already ends in a separator (`/`, or a drive root `C:\`) gets none added. And so that every path is one Win32 can open, under a verbatim `cwd` (`\\?\C:\proj`) the walker joins with `\`, since Win32 reads no `/` in such a path.
 
 Callers wanting a path relative to `cwd` should `path.relative(cwd, p)` at their boundary; this matches what Vite's `import.meta.glob` implementation does (it always passes `absolute: true` to tinyglobby and post-relativizes itself).
 
@@ -366,13 +352,11 @@ Thrown when:
 
 - `fs.statSync(cwd)` fails during §5 cwd validation;
 - the resolved `cwd` is not a directory;
-- a `readdirSync` (sync path) or `fs.readdir` callback (async path) reports an error. Two errors are not the folder's. A folder its parent listed may be gone by the time it is read (ENOENT: removed; ENOTDIR: replaced by a file): it is left out, as if it had gone before its parent was read, as fast-glob, tinyglobby and node-glob leave it out (walkdir and `ignore` yield an error and go on). `cwd` is checked first (§5), so a missing `cwd` still fails. And where a filesystem keeps no entry types (ext4 without `filetype`, XFS `ftype=0`, some FUSE and network mounts), `readdir` lstats each entry itself and fails with ENOENT from `lstat` when one vanishes in between. The walker then reads the names alone and lstats each, leaving out the ones that are gone, as if they had gone before the read. An entry that cannot be typed for another reason is the folder's error: in both runtimes it names the folder being read.
+- a `readdirSync` (sync path) or `fs.readdir` callback (async path) reports an error. Two errors are not the folder's. A folder its parent listed may be gone by the time it is read (ENOENT: removed; ENOTDIR: replaced by a file): it is left out, as if it had gone before its parent was read, as tinyglobby and node-glob leave it out, and fast-glob does on ENOENT (walkdir and `ignore` yield an error and go on). `cwd` is checked first (§5), so a missing `cwd` still fails. And where a filesystem keeps no entry types (ext4 without `filetype`, XFS `ftype=0`, some FUSE and network mounts), `readdir` lstats each entry itself and fails with ENOENT from `lstat` when one vanishes in between. The walker then reads the names alone and lstats each, leaving out the ones that are gone, as if they had gone before the read. An entry that cannot be typed for another reason is the folder's error: in both runtimes it names the folder being read.
 
 The async path REJECTS the returned Promise with the first such error and ignores subsequent late callbacks (§7.3). The sync path THROWS, abandoning any in-progress traversal.
 
 The walker MUST NOT silently swallow IO errors (no `onError` callback, no log-and-continue). Rationale: silent swallow would mask the most common failure mode — a typo'd `cwd` — by producing an empty result, which is the worst possible UX. Callers that explicitly want to ignore unreadable subtrees MUST `try`/`catch` and decide what to do at their layer.
-
-This is the walker's most visible divergence from `tinyglobby` and `fast-glob`, tinyglobby suppresses IO errors (`fdir`'s `suppressErrors`) and fast-glob suppresses `ENOENT`.
 
 ### 9.4 Stat failures during seeding
 
@@ -421,7 +405,7 @@ Output paths preserve the symlink path as discovered through `readdir`. `fs.real
 | `followSymlinks: false` semantics | drop entirely (no emit, no descend) | emit-as-file                  | drop entirely                | emit-as-file                 | varies       |
 | Dangling symlink                  | emitted as a file when it matches   | dropped                       | dropped                      | dropped                      | not measured |
 
-The walker is opinionated about errors: any failure throws by default. Combined with hard-wired files-only output, hard-wired absolute output, and a 5-option surface, this trades configurability for predictability — fewer modes means fewer surprises.
+The walker is opinionated about errors: they throw (§9), with no opt-out. Combined with hard-wired files-only output, hard-wired absolute output, and a 5-option surface, this trades configurability for predictability — fewer modes means fewer surprises.
 
 ---
 
@@ -432,5 +416,3 @@ The walker is opinionated about errors: any failure throws by default. Combined 
 - **Seed frame.** A frame produced from the matcher's static prefixes during initialization, before any `readdir` has been issued.
 - **Auto-split.** The walker's preprocessing of a `patterns` array that routes `!`-prefixed entries to the ignore set (§4.2).
 - **Static prefix.** The literal head of one expansion of the pattern's braces, up to its last whole segment (GLOB_SPEC.md §17). Walker uses these to skip directories no expansion can match.
-- **`withSep`.** A folder's absolute path with a separator after it; a child's path is that and its name, bypassing `path.join`'s normalization for measurable speedup (§7.4).
-- **Late callback.** An `fs.readdir` callback that fires after the walker has already rejected its returned Promise. The async traversal MUST drop these (§7.3).
