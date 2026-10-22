@@ -220,6 +220,37 @@ fn a_block_between_globstars_reads_the_middle_once() {
     assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
 }
 
+// A union's merge reads each member at each of its segments: long members
+// alike in every segment yet never the same are left apart, not read once
+// per segment, so 64 KB of them compiles in milliseconds. Twin of the
+// check in large.mjs.
+#[test]
+fn a_union_of_long_members_alike_in_every_segment_compiles_fast() {
+    let middle = "a/".repeat(16_000);
+    let few = vec![
+        format!("*/{middle}x/p"),
+        format!("*/{middle}y/q"),
+        "z".into(),
+    ];
+    let many: Vec<String> = (0..16)
+        .map(|i| format!("*/m{i:02}/{}n{i:02}", "a/".repeat(2000)))
+        .chain(["Q".into()])
+        .collect();
+    for (members, hit, miss) in [
+        (few, format!("b/{middle}x/p"), format!("b/{middle}x/q")),
+        (
+            many,
+            format!("b/m03/{}n03", "a/".repeat(2000)),
+            "b/m03/n04".into(),
+        ),
+    ] {
+        let start = std::time::Instant::now();
+        let union = Glob::union(&members).unwrap();
+        assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
+        assert!(union.is_match(hit.as_bytes()) && !union.is_match(miss.as_bytes()));
+    }
+}
+
 // The chain index reads a run of one-string nodes after a long list in
 // one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
 // the check in large.mjs.

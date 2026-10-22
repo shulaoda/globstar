@@ -87,6 +87,14 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     Node::of_seq(out)
 }
 
+/// What merging may read: this many nodes per node of the members, never
+/// fewer than `MIN_MERGE_READS`. Real unions read each member once or
+/// twice; long members alike in every segment yet never the same (apart
+/// in two literals) would be read once per segment, the square of their
+/// length.
+const MERGE_READS_PER_NODE: usize = 16;
+const MIN_MERGE_READS: usize = 4096;
+
 /// A member's part in the merge, once a group forms.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Member {
@@ -109,7 +117,11 @@ enum Member {
 /// compared node by node. Segments are taken from the last back: a
 /// member joins the deepest group it fits, and what that makes of it is
 /// not keyed again at the shallower segments, where roots would collide
-/// in vain.
+/// in vain. A union whose members, keyed at each of their segments, would
+/// be read past `MERGE_READS_PER_NODE` is not merged.
+// Kept out of `factor_branches`: inlined there, it builds unions up to
+// 0.4% slower.
+#[inline(never)]
 fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
     // (segment, cheap key, member, node) per literal ending a segment.
     let mut entries: Vec<(usize, u64, usize, usize)> = Vec::new();
@@ -141,6 +153,11 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
         }
     }
     if entries.len() < 2 {
+        return;
+    }
+    let reads: usize = entries.iter().map(|e| seqs[e.2].len()).sum();
+    let nodes: usize = seqs.iter().map(Vec::len).sum();
+    if reads > (MERGE_READS_PER_NODE * nodes).max(MIN_MERGE_READS) {
         return;
     }
     entries.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));

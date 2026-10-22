@@ -91,6 +91,13 @@ export function factorBranches(branches) {
   return out.length === 1 ? out[0] : concat(out);
 }
 
+// What merging may read: this many nodes per node of the members, never
+// fewer than MIN_MERGE_READS. Real unions read each member once or twice;
+// long members alike in every segment yet never the same (apart in two
+// literals) would be read once per segment, the square of their length.
+const MERGE_READS_PER_NODE = 16;
+const MIN_MERGE_READS = 4096;
+
 // A member's part in the merge, once a group forms (`state`, a
 // Uint8Array: every member starts FREE).
 const FREE = 0;
@@ -110,7 +117,8 @@ const ABSORBED = 2;
 // everything else, then compared node by node. Segments are taken from the
 // last back: a member joins the deepest group it fits, and what that makes
 // of it is not keyed again at the shallower segments, where roots would
-// collide in vain.
+// collide in vain. A union whose members, keyed at each of their segments,
+// would be read past MERGE_READS_PER_NODE is not merged.
 function mergeSegments(seqs, liftedWild) {
   // [segment, cheap key, member, node] per literal ending a segment.
   const entries = [];
@@ -138,6 +146,11 @@ function mergeSegments(seqs, liftedWild) {
     }
   }
   if (entries.length < 2) return seqs;
+  let reads = 0;
+  for (const e of entries) reads += seqs[e[2]].length;
+  let nodes = 0;
+  for (const s of seqs) nodes += s.length;
+  if (reads > Math.max(MERGE_READS_PER_NODE * nodes, MIN_MERGE_READS)) return seqs;
   // Entries alike so far share (segment, cheap key), taken segment by
   // segment from the last: sorted, they are runs. A comparator sort
   // costs V8 more than the rest of a small union's merge, so the few

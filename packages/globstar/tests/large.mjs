@@ -296,6 +296,28 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 300, `a block between globstars over 64,000 bytes took ${ms.toFixed(0)} ms`);
 }
 
+// A union's merge reads each member at each of its segments: long members
+// alike in every segment yet never the same are left apart, not read once
+// per segment, so 64 KB of them compiles in milliseconds. Twin of
+// `a_union_of_long_members_alike_in_every_segment_compiles_fast`.
+{
+  const middle = "a/".repeat(16_000);
+  const pad = (i) => String(i).padStart(2, "0");
+  const few = [`*/${middle}x/p`, `*/${middle}y/q`, "z"];
+  const many = Array.from({ length: 16 }, (_, i) => `*/m${pad(i)}/${"a/".repeat(2000)}n${pad(i)}`);
+  many.push("Q");
+  for (const [members, hit, miss] of [
+    [few, `b/${middle}x/p`, `b/${middle}x/q`],
+    [many, `b/m03/${"a/".repeat(2000)}n03`, "b/m03/n04"],
+  ]) {
+    const start = performance.now();
+    const union = compileMatcher(members);
+    const ms = performance.now() - start;
+    assert.ok(ms < 300, `${members.length} long members took ${ms.toFixed(0)} ms to compile`);
+    assert.ok(union.match(hit) && !union.match(miss));
+  }
+}
+
 // The chain index reads a run of one-string nodes after a long list in
 // one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
 // `a_run_after_a_long_list_reads_it_once`.
