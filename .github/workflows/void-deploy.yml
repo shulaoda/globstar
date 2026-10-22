@@ -35,17 +35,20 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write # the job mints the GitHub OIDC token `void deploy` presents
 
 env:
   VOID_API_URL: ${{ vars.VOID_API_URL || 'https://api.void.cloud' }}
   VOID_PROJECT: ${{ vars.VOID_PROJECT || 'globstar' }}
   # The CLI is not a dependency of the repository (it pulls in a full
-  # application stack); it is fetched here, pinned.
+  # application stack); it is fetched here, pinned. Its own dependencies
+  # resolve as they were published by VOID_BEFORE, so no release made
+  # after it runs beside the deploy token. Move both together.
   VOID_VERSION: 1.1.12
+  VOID_BEFORE: 2026-10-20T00:00:00Z
 
 jobs:
-  deploy:
+  # The build holds no deploy token: the docs' dependencies never see one.
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -55,8 +58,33 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm docs:build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: docs
+          path: docs/.vitepress/dist
+          if-no-files-found: error
+
+  deploy:
+    needs: build
+    # The platform trusts this workflow on main only.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # the job mints the GitHub OIDC token `void deploy` presents
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: docs
+          path: docs/.vitepress/dist
       - name: Deploy to Void
         working-directory: docs
+        env:
+          npm_config_before: ${{ env.VOID_BEFORE }}
         run: |
           npx --yes "void@$VOID_VERSION" connect "$VOID_API_URL" --no-login
           npx --yes "void@$VOID_VERSION" deploy --platform void --project "$VOID_PROJECT" --dir .vitepress/dist
