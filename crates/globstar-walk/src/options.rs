@@ -51,6 +51,12 @@ pub struct WalkOptions {
     /// filesystem (and case-variant brace prefixes can emit one file
     /// once per spelling). Workaround: write the prefix in the on-disk
     /// casing, or make it non-literal with a class like `[Ss]rc/...`.
+    ///
+    /// So on a case-insensitive filesystem (macOS and Windows by default)
+    /// an ignore entry does not hold against a pattern that spells its
+    /// literal head in another case: `.GIT/config` reaches `.git/config`
+    /// past `**/.git/**`. Walk such a filesystem with `true` when the
+    /// ignore list must hold against patterns from others.
     pub case_insensitive: bool,
 
     /// Follow symbolic links when descending. A link to a folder the walk

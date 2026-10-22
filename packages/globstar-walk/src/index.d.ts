@@ -17,7 +17,15 @@ export interface GlobOptions {
   cwd?: string | undefined;
   /** Match dot-files: names (path segments) that start with `.`. Default `false`. */
   dot?: boolean | undefined;
-  /** ASCII-case-insensitive byte comparison. Default `false`. */
+  /**
+   * ASCII-case-insensitive byte comparison. Default `false`. A pattern's
+   * literal head is opened as written, so on a case-insensitive file
+   * system (macOS and Windows by default) it reaches names spelled in
+   * another case, and an `ignore` entry does not hold against it:
+   * `.ENV` reaches `.env` past the ignore entry `.env`. Walk such a
+   * file system with `true` when the ignore list must hold against
+   * patterns from others.
+   */
   caseInsensitive?: boolean | undefined;
   /**
    * Follow symlinks when walking directories. A link to a folder the walk
