@@ -207,6 +207,19 @@ fn a_long_class_costs_one_lookup_per_byte() {
     assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
 }
 
+// Two globstars around a block: under `dot=false` the second one's dot
+// check reads the middle once, not once per place the block is tried.
+// Twin of the check in large.mjs.
+#[test]
+fn a_block_between_globstars_reads_the_middle_once() {
+    let glob = Glob::new_with("**/x/**/y", CompileOptions::default().dot(false)).unwrap();
+    let middle = "x/".repeat(32_000);
+    let start = std::time::Instant::now();
+    assert!(!glob.is_match(format!("{middle}.h/y").as_bytes()));
+    assert!(glob.is_match(format!("{middle}y").as_bytes()));
+    assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
+}
+
 // The chain index reads a run of one-string nodes after a long list in
 // one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
 // the check in large.mjs.

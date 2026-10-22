@@ -321,6 +321,10 @@ function blockBetween(m, ids, g1, g2, str, midStart, split) {
   // end of the path (`split` is then one past it).
   const midEnd = split - 1;
   const elems = m.elems;
+  // The first dot segment from where the second globstar starts. The
+  // block only moves right, so it is looked for again only once the
+  // block has passed it: one scan of the middle in all.
+  let dotAt = 0;
   let pos = midStart;
   for (;;) {
     let end = nextSep(str, pos);
@@ -330,7 +334,11 @@ function blockBetween(m, ids, g1, g2, str, midStart, split) {
       // Nothing before the block holds a dot segment (the loop stops at
       // the first); the second globstar checks after.
       const left = pos > midStart || elemAt(elems, ids, g1).kind === EL_G0;
-      if (left && absorbs(m, elemAt(elems, ids, g2).kind, str, taken + 1, split)) return true;
+      const from = taken + 1;
+      if (left) {
+        if (dotAt < from) dotAt = firstDot(m, str, from, midEnd);
+        if (absorbs(m, elemAt(elems, ids, g2).kind, str, from, split, dotAt)) return true;
+      }
     }
     // Past the middle, or at a dot segment the first globstar could not
     // take.

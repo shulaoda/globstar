@@ -283,6 +283,19 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 1000, `60,000 branches took ${ms.toFixed(0)} ms to compile`);
 }
 
+// Two globstars around a block: under `dot: false` the second one's dot
+// check reads the middle once, not once per place the block is tried.
+// Twin of `a_block_between_globstars_reads_the_middle_once`.
+{
+  const m = compileMatcher("**/x/**/y", { dot: false });
+  const middle = "x/".repeat(32_000);
+  const start = performance.now();
+  assert.equal(m.match(`${middle}.h/y`), false);
+  assert.equal(m.match(`${middle}y`), true);
+  const ms = performance.now() - start;
+  assert.ok(ms < 300, `a block between globstars over 64,000 bytes took ${ms.toFixed(0)} ms`);
+}
+
 // The chain index reads a run of one-string nodes after a long list in
 // one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
 // `a_run_after_a_long_list_reads_it_once`.

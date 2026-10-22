@@ -585,6 +585,10 @@ impl SegmentMatcher {
         // The middle's segments end before the tail's separator, or at
         // the end of the path (`split` is then one past it).
         let mid_end = split - 1;
+        // The first dot segment from where the second globstar starts.
+        // The block only moves right, so it is looked for again only once
+        // the block has passed it: one scan of the middle in all.
+        let mut dot_at = 0;
         let mut pos = mid_start;
         loop {
             let end = seg_end(path, pos);
@@ -592,8 +596,14 @@ impl SegmentMatcher {
                 // Nothing before the block holds a dot segment (the loop
                 // stops at the first); the second globstar checks after.
                 let left = pos > mid_start || elems.at(g1).nullable();
-                if left && self.absorbs(elems.at(g2), path, taken + 1, split, None) {
-                    return true;
+                let from = taken + 1;
+                if left {
+                    if dot_at < from {
+                        dot_at = self.first_dot(path, from, mid_end);
+                    }
+                    if self.absorbs(elems.at(g2), path, from, split, Some(dot_at)) {
+                        return true;
+                    }
                 }
             }
             // Past the middle, or at a dot segment the first globstar
