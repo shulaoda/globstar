@@ -8,12 +8,14 @@ const DEFAULTS = {
   ignore: [],
 };
 
-// The options bag with every default filled in. Only own keys count
-// (a key on `Object.prototype` changes nothing), a key set to
-// `undefined` keeps its default, an unknown key or a non-boolean flag is
-// a TypeError; `cwd` and `ignore` are checked where they are used.
+export const typeName = (v) => (v === null ? "null" : typeof v);
+
+// The options bag with every default filled in and `ignore` as a list.
+// Only own keys count (a key on `Object.prototype` changes nothing), a
+// key set to `undefined` keeps its default, and a value of the wrong type
+// or an unknown key is a TypeError.
 export function normalizeOptions(input) {
-  if (input === undefined || input === null) return { ...DEFAULTS };
+  input ??= {};
   if (typeof input !== "object" || Array.isArray(input)) {
     throw new TypeError(
       `options must be an object, got ${Array.isArray(input) ? "an array" : typeof input}`,
@@ -26,16 +28,23 @@ export function normalizeOptions(input) {
     Object.hasOwn(input, key) && input[key] !== undefined ? input[key] : DEFAULTS[key];
   const flag = (key) => {
     const v = opt(key);
-    if (typeof v !== "boolean") {
-      throw new TypeError(`${key} must be a boolean, got ${v === null ? "null" : typeof v}`);
-    }
+    if (typeof v !== "boolean") throw new TypeError(`${key} must be a boolean, got ${typeName(v)}`);
     return v;
   };
-  return {
-    cwd: opt("cwd"),
-    dot: flag("dot"),
-    caseInsensitive: flag("caseInsensitive"),
-    followSymlinks: flag("followSymlinks"),
-    ignore: opt("ignore"),
-  };
+  const dot = flag("dot");
+  const caseInsensitive = flag("caseInsensitive");
+  const followSymlinks = flag("followSymlinks");
+  const given = opt("ignore");
+  const ignore = typeof given === "string" ? [given] : given;
+  if (!Array.isArray(ignore)) {
+    throw new TypeError(`ignore must be a string or an array of strings, got ${typeName(given)}`);
+  }
+  for (const p of ignore) {
+    if (typeof p !== "string") {
+      throw new TypeError(`ignore pattern must be a string, got ${typeName(p)}`);
+    }
+  }
+  const cwd = opt("cwd");
+  if (typeof cwd !== "string") throw new TypeError(`cwd must be a string, got ${typeName(cwd)}`);
+  return { cwd, dot, caseInsensitive, followSymlinks, ignore };
 }

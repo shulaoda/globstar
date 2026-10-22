@@ -36,7 +36,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { compileMatcher, DirMatch, GlobError } from "@globstar/core";
 import { WalkError } from "./error.js";
-import { normalizeOptions } from "./options.js";
+import { normalizeOptions, typeName } from "./options.js";
 
 export async function glob(patterns, options) {
   const ctx = prepare(patterns, options);
@@ -119,7 +119,7 @@ function prepare(patterns, optsInput) {
   for (let i = 0; i < list.length; i++) {
     const raw = list[i];
     if (typeof raw !== "string") {
-      throw new TypeError(`pattern must be a string, got ${raw === null ? "null" : typeof raw}`);
+      throw new TypeError(`pattern must be a string, got ${typeName(raw)}`);
     }
     // To match a literal leading `!`, escape it: `\!foo`.
     const split = splitBangs(raw);
@@ -130,21 +130,8 @@ function prepare(patterns, optsInput) {
   // Positives first (error-precedence parity with Rust); ignore still
   // compiles before the no-positives early return.
   const matcher = compileUnion(positives, matcherOpts);
-  const ignoreInput = typeof opts.ignore === "string" ? [opts.ignore] : opts.ignore;
-  if (!Array.isArray(ignoreInput)) {
-    throw new TypeError(
-      `ignore must be a string or an array of strings, got ${
-        opts.ignore === null ? "null" : typeof opts.ignore
-      }`,
-    );
-  }
   const ignorePatterns = [];
-  for (const raw of ignoreInput) {
-    if (typeof raw !== "string") {
-      throw new TypeError(
-        `ignore pattern must be a string, got ${raw === null ? "null" : typeof raw}`,
-      );
-    }
+  for (const raw of opts.ignore) {
     // §3.2: ignore entries are never `!`-split, only normalized. A
     // leading `!` there would ignore everything else, and is refused.
     const n = normalizePattern(raw);
@@ -164,11 +151,6 @@ function prepare(patterns, optsInput) {
 
   // Lock cwd to an absolute path and validate BEFORE the empty-positives
   // early return: bad-cwd loudness must not depend on pattern content.
-  if (typeof opts.cwd !== "string") {
-    throw new TypeError(
-      `cwd must be a string, got ${opts.cwd === null ? "null" : typeof opts.cwd}`,
-    );
-  }
   const cwd = path.resolve(opts.cwd);
   let cwdStat;
   try {
@@ -188,10 +170,10 @@ function prepare(patterns, optsInput) {
     matcher,
     ignore,
     cwd,
-    followSymlinks: !!opts.followSymlinks,
+    followSymlinks: opts.followSymlinks,
     // Whether the ignore set can cover a whole subtree (matchDir
     // all-below), which `dot: false` never does.
-    pruneIgnored: !!opts.dot && ignore !== null,
+    pruneIgnored: opts.dot && ignore !== null,
     seedFrames: [],
     seedResults: [],
   };
