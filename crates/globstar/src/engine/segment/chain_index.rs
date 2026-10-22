@@ -513,9 +513,9 @@ impl ChainIndex {
         let n = seg.len();
         let mut todo = self.lookups[r];
         // A segment's start is packed only for a prefix lookup.
-        let back = pack_back(seg, ci);
+        let back = pack(seg.iter().rev().copied(), ci);
         let front = if todo >> (KEY_BYTES + 1) != 0 {
-            pack_front(seg, ci)
+            pack(seg.iter().copied(), ci)
         } else {
             0
         };
@@ -566,34 +566,6 @@ fn pack(bytes: impl Iterator<Item = u8>, ci: bool) -> u32 {
         w |= u32::from(fold(b, ci)) << (8 * i);
     }
     w
-}
-
-/// `pack` of a segment's last bytes, the last lowest.
-#[inline(always)]
-fn pack_back(seg: &[u8], ci: bool) -> u32 {
-    match *seg {
-        [.., a, b, c, d] => fold_word(u32::from_le_bytes([d, c, b, a]), ci),
-        _ => pack(seg.iter().rev().copied(), ci),
-    }
-}
-
-/// `pack` of a segment's first bytes, the first lowest.
-#[inline(always)]
-fn pack_front(seg: &[u8], ci: bool) -> u32 {
-    match *seg {
-        [a, b, c, d, ..] => fold_word(u32::from_le_bytes([a, b, c, d]), ci),
-        _ => pack(seg.iter().copied(), ci),
-    }
-}
-
-/// Four bytes folded when case-insensitive.
-#[inline(always)]
-fn fold_word(w: u32, ci: bool) -> u32 {
-    if ci {
-        u32::from_le_bytes(w.to_le_bytes().map(|b| b.to_ascii_lowercase()))
-    } else {
-        w
-    }
 }
 
 /// The low `len` bytes of a word.
