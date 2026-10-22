@@ -11,7 +11,7 @@
 #   descend-all-match = the directory matches AND every descendant does
 # The two `-all` results need dot=true: under dot=false no wildcard matches
 # the dot-led names below, so a subtree is never fully covered.
-# See tests/corpus/README.md for format details
+# See fixtures/corpus/README.md for format details
 # ============================================================================
 
 ## static.prefix.pruning

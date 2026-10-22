@@ -8,8 +8,9 @@
 //!   so the segment engine's NFA decides (`CompileOptions::force_nfa`)
 //!
 //! Single-pattern `is_match` rows live in `fixtures/corpus/corpus*.txt`
-//! (a row may expect `err:Kind` instead of an answer); `match_dir` rows
-//! in `fixtures/corpus/corpus-dir.txt`; multi-pattern rows in
+//! and `fixtures/ecosystem/{js,rust}/*.txt` (a row may expect `err:Kind`
+//! instead of an answer); `match_dir` rows in
+//! `fixtures/corpus/corpus-dir.txt`; multi-pattern rows in
 //! `fixtures/corpus/corpus-multi.txt` and `corpus-multi-dir.txt`.
 //!
 //! Nothing is skipped: a compile error where a row expects an answer is

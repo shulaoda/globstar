@@ -2,10 +2,10 @@
 // One-click benchmark runner.
 //
 // Compares globstar (default public API) against the dominant
-// ecosystem libraries on three axes (compile / match / memory) for
-// both single-pattern and multi-pattern matchers, plus end-to-end
-// walker timings. Rust + JS columns are merged into single tables so
-// rows can be read across runtimes.
+// ecosystem libraries in four tables (build / build + first non-match /
+// match / memory) for both single-pattern and multi-pattern matchers,
+// plus end-to-end walker timings. Rust + JS columns are merged into
+// single tables so rows can be read across runtimes.
 //
 //   node scripts/bench.mjs              # full run (~5 min on Apple Silicon)
 //   node scripts/bench.mjs --skip-rust  # JS only

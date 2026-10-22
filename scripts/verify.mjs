@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Corpus-driven correctness verification for both runtimes.
 //
-// Four corpora, all in `fixtures/corpus/`, share the same
-// harness:
+// Four corpora share the same harness; the files are in
+// `fixtures/corpus/`, and single also reads `fixtures/ecosystem/`:
 //
 //   single — SINGLE_FILES list below   single-pattern × 2 lanes
 //   multi  — `corpus-multi.txt`        N-pattern OR × 2 lanes

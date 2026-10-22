@@ -5,7 +5,7 @@
 # Default flags: dot=true (matches CompileOptions::default()),
 # case sensitive. Rows that assert Bash-style dot-protection (the
 # Walker layer default) carry explicit `dot=false`.
-# See tests/corpus/README.md for escape rules (\\, \t, \n)
+# See fixtures/corpus/README.md for how a tab (⇥) and a newline (⏎) are written
 # ============================================================================
 
 ## literal.exact

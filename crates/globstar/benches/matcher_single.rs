@@ -2,19 +2,15 @@
 //! matchers. Mirrors the JS-side `matcher_single.js` so the same
 //! `(pattern, path)` corpus drives both rows in the comparison table.
 //!
-//! Each pattern reports two timings:
+//! Each pattern reports three timings:
 //!
-//! - `compile` — build a fresh matcher per call and run its first
-//!   match: regex-backed matchers build their search cache on first
-//!   use, so the build alone undercounts them.
-//! - `match`   — precompiled matcher, batch-matched against every
-//!   entry in [`PATHS`] per iteration (walker model).
+//! - `build`   — a fresh matcher, before its first match.
+//! - `compile` — the build and its first call, a non-match.
+//! - `match`   — a precompiled matcher over every entry in [`PATHS`]
+//!   per iteration (walker model).
 //!
-//! `fast_glob`'s API is stateless — `glob_match(pattern, path)` does
-//! the parse and the match in one call — so its `compile` and `match`
-//! rows would coincide. We emit a single `fast_glob` row that does
-//! the per-call parse + match work, matching what the JS bench
-//! prints.
+//! `fast_glob` is stateless (`glob_match` parses and matches in one
+//! call), so it has a `match` row only.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;

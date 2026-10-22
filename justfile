@@ -41,13 +41,7 @@ fix:
     pnpm fix
     cargo fmt --all
 
-# Rust tests (single-pattern + multi-pattern corpus + walker
-# integration + bounded-exhaustive matchDir properties) + JS goldens: the
-# compiler-stages TSV fixture, the string-mode↔byte-mode differential
-# (fixed-seed, deterministic), the JS matchDir exhaustive twin, the
-# large-pattern checks, and the JS walker integration suite (temp-tree
-# fixtures, twin of walk.rs). Every `packages/*/tests/*.mjs` is a suite,
-# run as its own process, one at a time (some time themselves).
+# Rust tests and the JS suites, one process each, one at a time (some time themselves).
 test:
     cargo test --workspace
     node --test --test-concurrency=1 'packages/*/tests/*.mjs'

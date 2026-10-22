@@ -34,9 +34,6 @@ jobs:
       - name: Fuzz (smoke)
         run: just fuzz --count 20000 --seed ${{ github.run_number }}
 
-  # The Rust and JS suites plus the cross-runtime verify on every
-  # platform; Windows is the only place `corpus-windows.txt` and the
-  # `\`-separator paths run.
   # The oldest Node `engines` allows: the JS suites alone.
   node-22:
     runs-on: ubuntu-latest
@@ -50,6 +47,9 @@ jobs:
       - run: node --test --test-concurrency=1 'packages/*/tests/*.mjs'
       - run: node scripts/verify.mjs --skip-rust
 
+  # The Rust and JS suites plus the cross-runtime verify on every
+  # platform; Windows is the only place `corpus-windows.txt` and the
+  # `\`-separator paths run.
   test:
     strategy:
       fail-fast: false

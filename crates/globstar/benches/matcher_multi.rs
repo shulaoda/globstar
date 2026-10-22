@@ -17,13 +17,9 @@ use wax::Program as WaxPattern;
 mod common;
 use common::{MISS, PATHS};
 
-// ---------- globstar configurations ----------
-
 fn build_globstar(patterns: &[&str]) -> Glob {
     Glob::union(patterns.iter().copied()).unwrap()
 }
-
-// ---------- third-party libs ----------
 
 fn build_globset(patterns: &[&str]) -> globset::GlobSet {
     let mut b = globset::GlobSetBuilder::new();
@@ -42,7 +38,6 @@ fn build_wax<'a>(patterns: &[&'a str]) -> wax::Any<'a> {
     wax::any(patterns.iter().copied()).expect("wax any")
 }
 
-// ---------- BUILD bench ----------
 /// The build alone: what a library does before its first match.
 fn bench_build(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let mut group = c.benchmark_group(format!("build_{label}"));
@@ -58,7 +53,6 @@ fn bench_build(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.finish();
 }
 
-// ---------- COMPILE bench ----------
 /// A build and its first call, a non-match: regex-backed matchers build
 /// their search cache on first use, so the build alone undercounts
 /// them, and a miss makes separate matchers all run.
@@ -77,7 +71,6 @@ fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.finish();
 }
 
-// ---------- MATCH bench ----------
 fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let gs = build_globstar(patterns);
     let gset = build_globset(patterns);
