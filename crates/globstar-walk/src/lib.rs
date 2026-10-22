@@ -72,6 +72,16 @@
 //! yielded when it matches), and the rest of the walk continues; a link
 //! back to a plain ancestor is walked once more before it is caught.
 //!
+//! The break bounds each way down, not the walk: a folder that links
+//! reach by several routes is read once per route, each route giving
+//! paths of its own, so links that lead the same way more than once
+//! multiply the work. Fifteen folders, each but the last holding two
+//! links to the next, give `**/f` 32,767 paths, and one more folder
+//! doubles them. Every walker that follows links answers the same
+//! (walkdir, `ignore`, fast-glob, `find -L`). Walk a tree that others
+//! control (a cloned repository, an unpacked archive) with
+//! `follow_links: false`.
+//!
 //! Set `WalkOptions::follow_links = false` to drop symlinks entirely:
 //! they are NEITHER emitted NOR descended (matches `fdir`'s
 //! `excludeSymlinks` mode).

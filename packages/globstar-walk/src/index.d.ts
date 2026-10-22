@@ -23,7 +23,9 @@ export interface GlobOptions {
    * Follow symlinks when walking directories. A link to a folder the walk
    * already reached through a link on the way down (a cycle) is not
    * descended; the rest of the walk goes on. Folders are told apart by `(dev, ino)`, confirmed by
-   * `fs.realpathSync.native`, and by that path alone on Windows. When
+   * `fs.realpathSync.native`, and by that path alone on Windows. A folder
+   * that links reach by several routes is read once per route, so walk a
+   * tree that others control with `false`. When
    * `false`, symlinks are dropped entirely (neither emitted nor
    * descended); each entry is judged when its folder is read, so a folder
    * replaced by a symlink after that is read through the link. Default

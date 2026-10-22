@@ -56,7 +56,10 @@ pub struct WalkOptions {
     /// Follow symbolic links when descending. A link to a folder the walk
     /// already reached through a link on the way down (a cycle) is not
     /// descended; the rest of the walk goes on. Folders are told apart by `(dev, ino)` on Unix, confirmed
-    /// by canonical path, and by canonical path on Windows. When
+    /// by canonical path, and by canonical path on Windows. A folder that
+    /// links reach by several routes is read once per route, so walk a
+    /// tree that others control with `false` (see the
+    /// [crate docs](crate#symlinks)). When
     /// `false`, symlinks are dropped entirely — neither emitted nor
     /// descended (matches `tinyglobby` / `fdir`'s `excludeSymlinks`).
     /// Each entry is judged when its folder is read: a folder replaced by

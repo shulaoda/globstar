@@ -400,6 +400,8 @@ A folder's identity is its `(dev, ino)`, which the `statSync` of step 4 gave for
 
 Output paths preserve the symlink path as discovered through `readdir`. `fs.realpath` is called purely for cycle detection — the resolved path is NEVER substituted into the output.
 
+**Cost.** The cycle break bounds each way down, not the walk. A folder that links reach by several routes is read once per route, and each route gives paths of its own, so links that lead the same way more than once multiply the work: fifteen folders, each but the last holding two links to the next, give `**/f` 32,767 paths, and one more folder doubles them. Every walker that follows links answers the same (fast-glob, tinyglobby, node-glob's `follow`, walkdir, `find -L`); one that reads each real folder once (fdir's `withSymlinks()`) is bounded, but its output is real paths, which the paragraph above rules out. A tree that others control (a cloned repository, an unpacked archive, a folder another user can write) is walked with `followSymlinks: false`.
+
 ---
 
 ## 11. Differences from Other Walkers
