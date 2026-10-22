@@ -1,5 +1,9 @@
 use crate::parse::ast::Node;
 
+fn is_wildcard(n: &Node) -> bool {
+    matches!(n, Node::Star | Node::AnyChar | Node::Globstar)
+}
+
 /// One body for the union of `branches`: what they all start or end with
 /// is lifted out of the brace, whole tokens first, then the bytes shared by
 /// their first or last literals. Bytes are lifted only behind a lifted
@@ -52,7 +56,7 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let bytes = !out.is_empty();
     let head = bytes.then(|| lift_bytes(&mut seqs, true)).flatten();
     let tail = bytes.then(|| lift_bytes(&mut seqs, false)).flatten();
-    let lifted_wild = out.iter().chain(&suffix).any(Node::is_wildcard);
+    let lifted_wild = out.iter().chain(&suffix).any(is_wildcard);
     merge_segments(&mut seqs, lifted_wild);
 
     // Members that differ only in spelling (`**` and `**/**`, `\a` and

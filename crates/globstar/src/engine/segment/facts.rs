@@ -67,7 +67,11 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
         acc.clear();
         // Gluing the common tail to a branch that is not all-literal
         // would claim more than the branch guarantees.
-        if branch.is_pure_literal() {
+        if branch
+            .seq()
+            .iter()
+            .all(|n| matches!(n, Node::Literal(_) | Node::Separator))
+        {
             acc.extend_from_slice(&common);
         }
         push_run(trailing(branch.seq()), &mut acc);

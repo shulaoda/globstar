@@ -22,15 +22,21 @@ pub(crate) fn resolve_globstars(mut body: Node, budget: &mut usize) -> Result<No
     Ok(body)
 }
 
+fn has_globstar(node: &Node) -> bool {
+    match node {
+        Node::Globstar => true,
+        Node::Concat(xs) | Node::Brace(xs) => xs.iter().any(has_globstar),
+        _ => false,
+    }
+}
+
 /// Is a brace in `node` beside a `**`, or beside another brace when either
 /// holds a `**`? Only then can distribution change anything.
 fn may_touch(node: &Node) -> bool {
     let seq = node.seq();
     (0..seq.len()).any(|i| match &seq[i..] {
         [Node::Globstar, Node::Brace(_), ..] | [Node::Brace(_), Node::Globstar, ..] => true,
-        [a @ Node::Brace(_), b @ Node::Brace(_), ..] if a.has_globstar() || b.has_globstar() => {
-            true
-        }
+        [a @ Node::Brace(_), b @ Node::Brace(_), ..] if has_globstar(a) || has_globstar(b) => true,
         [Node::Brace(branches), ..] => branches.iter().any(may_touch),
         _ => false,
     })

@@ -49,23 +49,8 @@ impl CharClass {
 }
 
 impl Node {
-    pub fn has_globstar(&self) -> bool {
-        match self {
-            Node::Globstar => true,
-            Node::Concat(xs) | Node::Brace(xs) => xs.iter().any(Node::has_globstar),
-            _ => false,
-        }
-    }
-
-    /// Literals and separators only. A sequence holds no sequence, so
-    /// this and [`Node::to_literal_bytes`] read one level.
-    pub fn is_pure_literal(&self) -> bool {
-        self.seq()
-            .iter()
-            .all(|n| matches!(n, Node::Literal(_) | Node::Separator))
-    }
-
-    /// The bytes of a pure literal, `/` for a separator, sized once.
+    /// The bytes of a pure literal, `/` for a separator, sized once. A
+    /// sequence holds no sequence, so this reads one level.
     pub fn to_literal_bytes(&self) -> Option<Vec<u8>> {
         let mut len = 0;
         for node in self.seq() {
@@ -91,11 +76,6 @@ impl Node {
             Node::Concat(xs) => xs,
             other => std::slice::from_ref(other),
         }
-    }
-
-    /// A `*`, `?` or `**`.
-    pub(crate) fn is_wildcard(&self) -> bool {
-        matches!(self, Node::Star | Node::AnyChar | Node::Globstar)
     }
 
     /// [`Node::seq`], owned.
