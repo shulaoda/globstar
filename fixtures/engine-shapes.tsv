@@ -46,3 +46,9 @@ W:nfa | chains 1 | nfa none	a*b*c*d*e*f
 W:nfa | chains 1 | nfa none	x*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b
 G0 L G1 | chains 1 | nfa small	**/node_modules/**
 L(4) W:nfa | chains 2 | nfa small	a/[ab]	.h/a/ab/[ab]
+# A union's plain paths are one sorted set, a repeat folded; a union of one
+# body spelled twice, or of members that factor to a brace, is that body.
+L(4) G0 L(3) W:affix | chains 1 | literals 3 | nfa small	src/a.ts	lib/b.ts	src/a.ts	a/b/c	src/**/*.md
+literal	src/main.rs	src/main.rs
+literal	\a	a
+G0 W:set | chains 1 | nfa none	**/*.ts	**/*.tsx	**/*.js	**/*.jsx	**/*.md

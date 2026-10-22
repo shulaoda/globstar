@@ -121,6 +121,12 @@ for (const [a, b] of [
 }
 const folded = parse("\\a").body;
 assert.deepEqual(factorBranches([folded, parse("a").body]), folded);
+// Under case folding, plain paths that differ in case fold into one.
+const ciSet = buildEngine(
+  ["Src/A.ts", "src/a.ts", "LIB/b.ts", "x/*.md"].map((p) => parse(p)),
+  { dot: true, caseInsensitive: true },
+);
+assert.ok(ciSet.shape().includes("literals 2"), ciSet.shape());
 console.log("✓ members spelled differently fold into one");
 
 // Options: booleans only, own keys only, no unknown keys, the engine

@@ -26,6 +26,7 @@ src/**/*.ts	test/**/*.js	=>	src	test
 src/**	spec/**	=>	spec	src
 dir1/*.ts	dir2/*.ts	=>	dir1	dir2
 foo.ts	foobar.ts	=>	foo.ts	foobar.ts
+src/main.rs	src/main.rs	=>	src/main.rs
 src/mod1/index.ts	src/mod2/index.ts	=>	src/mod1/index.ts	src/mod2/index.ts
 node_modules/react/package.json	node_modules/vue/package.json	=>	node_modules/react/package.json	node_modules/vue/package.json
 README.md	node_modules/lodash/README.md	=>	README.md	node_modules/lodash/README.md

@@ -1,11 +1,9 @@
-//! Tests for `Glob::union` — the brace-merged multi-pattern compilation:
-//!   - equivalence with matching the members one by one
-//!     (`patterns.iter().any(|p| Glob::new(p).is_match(path))`)
-//!   - edge cases: empty input, single-pattern degeneration, negated rejection
-//!   - brace-meta safety: patterns containing `,` `{` `}` literal bytes
-//!   - corpus-driven differential
+//! Tests for `Glob::union` that the shared corpus cannot hold: equivalence
+//! with matching the members one by one
+//! (`patterns.iter().any(|p| Glob::new(p).is_match(path))`), the error
+//! contract, and the limits.
 
-use globstar::{CompileOptions, DirMatch, Glob, GlobError};
+use globstar::{CompileOptions, Glob, GlobError};
 use std::collections::BTreeSet;
 use std::fs;
 
@@ -40,51 +38,6 @@ fn members_share_one_expansion_budget() {
         err.root(),
         GlobError::BraceExpansionTooLarge { .. }
     ));
-}
-
-#[test]
-fn literal_paths_are_one_set() {
-    // Members that are plain paths are kept as one sorted set, searched
-    // once; a repeat folds; the others stay chains.
-    let members = ["src/a.ts", "lib/b.ts", "src/a.ts", "a/b/c", "src/**/*.md"];
-    let union = Glob::union(members).unwrap();
-    let nfa = Glob::union_with(members, CompileOptions::default().force_nfa(true)).unwrap();
-    assert_eq!(
-        union.shape(),
-        "L(4) G0 L(3) W:affix | chains 1 | literals 3 | nfa small"
-    );
-    for (path, want) in [
-        ("src/a.ts", true),
-        ("lib/b.ts", true),
-        ("a/b/c", true),
-        ("src/a.md", true),
-        ("src/x/y.md", true),
-        ("src/a.tsx", false),
-        ("a/b", false),
-        ("a/b/c/d", false),
-        ("", false),
-    ] {
-        assert_eq!(union.is_match(path.as_bytes()), want, "{path}");
-        assert_eq!(nfa.is_match(path.as_bytes()), want, "{path} (nfa)");
-    }
-    assert_eq!(union.match_dir(b"a/b"), DirMatch::Descend);
-    assert_eq!(union.match_dir(b"a/b/c"), DirMatch::Match);
-    assert_eq!(union.match_dir(b"lib"), DirMatch::Descend);
-    assert_eq!(union.match_dir(b"x"), DirMatch::Pruned);
-    // Case-insensitive: the set folds ASCII case on both sides.
-    let folded = Glob::union_with(
-        ["Src/A.ts", "src/a.ts", "LIB/b.ts", "x/*.md"],
-        CompileOptions::default().case_insensitive(true),
-    )
-    .unwrap();
-    assert!(folded.shape().contains("literals 2"));
-    for (path, want) in [("SRC/a.TS", true), ("lib/B.TS", true), ("src/b.ts", false)] {
-        assert_eq!(folded.is_match(path.as_bytes()), want, "{path}");
-    }
-    assert_eq!(
-        or_oracle(&members, b"src/a.ts"),
-        union.is_match(b"src/a.ts")
-    );
 }
 
 #[test]
@@ -180,23 +133,6 @@ fn a_member_error_names_the_member() {
 }
 
 #[test]
-fn duplicate_members_count_once() {
-    // A pattern given twice is parsed once and counts once: the union
-    // stays literal, with the member's own prefix.
-    let twice = Glob::union(["src/main.rs", "src/main.rs"]).unwrap();
-    assert_eq!(twice.shape(), "literal");
-    assert_eq!(
-        twice.static_prefixes(),
-        Glob::new("src/main.rs").unwrap().static_prefixes()
-    );
-    // The index in NegatedInUnion still counts every member given.
-    assert!(matches!(
-        Glob::union(["a", "a", "!b"]),
-        Err(GlobError::NegatedInUnion { index: 2, .. })
-    ));
-}
-
-#[test]
 fn members_spelled_differently_fold_into_one() {
     // One body under two spellings: factoring lifts all of it and keeps
     // one empty branch, so nothing follows an open `**` (graph.rs
@@ -215,7 +151,13 @@ fn members_spelled_differently_fold_into_one() {
             assert_eq!(union.match_dir(path), single.match_dir(path), "{a} {b}");
         }
     }
-    assert_eq!(Glob::union(["\\a", "a"]).unwrap().shape(), "literal");
+    // Under case folding, plain paths that differ in case fold into one.
+    let folded = Glob::union_with(
+        ["Src/A.ts", "src/a.ts", "LIB/b.ts", "x/*.md"],
+        CompileOptions::default().case_insensitive(true),
+    )
+    .unwrap();
+    assert!(folded.shape().contains("literals 2"), "{}", folded.shape());
 }
 
 #[test]
@@ -231,20 +173,17 @@ fn long_shared_prefixes_lift_in_one_pass() {
 }
 
 #[test]
-fn single_pattern_degenerates() {
-    let u = Glob::union(["foo.txt"]).unwrap();
-    assert!(u.is_match(b"foo.txt"));
-    assert!(!u.is_match(b"foo.tx"));
-    assert_eq!(u.shape(), "literal");
-}
-
-#[test]
 fn negated_members_are_rejected() {
     // Deliberate Rust/JS asymmetry: `Glob::union` is a pure OR of
     // positive patterns, so even a lone `!foo` is rejected — while the
     // JS `globstar()`/`compileMatcher()` factory accepts negation as
     // part of its include/exclude contract.
-    for (members, index) in [(&["a", "!b"][..], 1), (&["!foo"][..], 0)] {
+    // The index counts every member given, a repeat too.
+    for (members, index) in [
+        (&["a", "!b"][..], 1),
+        (&["!foo"][..], 0),
+        (&["a", "a", "!b"][..], 2),
+    ] {
         assert!(
             matches!(
                 Glob::union(members.iter().copied()),
@@ -252,31 +191,6 @@ fn negated_members_are_rejected() {
             ),
             "{members:?}"
         );
-    }
-}
-
-#[test]
-fn brace_meta_in_patterns_safe() {
-    // Patterns with literal `,` `{` `}` must not be re-interpreted by the
-    // AST-level merge — `union(["a,b.txt", "{x}.log"])` matches the
-    // literal strings, NOT the brace-expansions of those bytes.
-    let u = Glob::union(["a,b.txt", "{x}.log"]).unwrap();
-    assert!(u.is_match(b"a,b.txt"));
-    assert!(u.is_match(b"{x}.log"));
-    assert!(!u.is_match(b"a"));
-    assert!(!u.is_match(b"b.txt"));
-    assert!(!u.is_match(b"x.log"));
-}
-
-#[test]
-fn factoring_preserves_globstar_fold() {
-    // Factoring must not lift the trailing `/` across a `**`: the union
-    // of `//` and `a/**/` answers as the OR of its members.
-    let patterns = ["//", "a/**/"];
-    let u = Glob::union(patterns).unwrap();
-    let test_paths: &[&[u8]] = &[b"a/", b"a/b/", b"//", b"a/b/c/", b"foo"];
-    for p in test_paths {
-        assert_eq!(u.is_match(p), or_oracle(&patterns, p), "path {p:?}");
     }
 }
 
@@ -327,28 +241,6 @@ fn members_that_differ_in_one_segment_match_as_the_members_do() {
                 assert_eq!(union.is_match(path), want, "{members:?} dot={dot} {path:?}");
             }
         }
-    }
-}
-
-#[test]
-fn factoring_lifts_shared_prefix_for_globstar_patterns() {
-    // The whole point of factoring: the union produces the same segment
-    // graph as the hand-written brace, so it matches identically.
-    let u = Glob::union(["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.md"]).unwrap();
-    let manual = Glob::new("**/*.{ts,tsx,js,jsx,md}").unwrap();
-    let test_paths: &[&[u8]] = &[
-        b"foo.ts",
-        b"foo.tsx",
-        b"foo.js",
-        b"foo.jsx",
-        b"foo.md",
-        b"foo.rs",
-        b"a/b/c/foo.ts",
-        b"foo.txt",
-        b"",
-    ];
-    for p in test_paths {
-        assert_eq!(u.is_match(p), manual.is_match(p), "path {p:?}");
     }
 }
 

@@ -98,6 +98,8 @@
 ## or.solo (degenerate single-pattern array)
 ["**/*.ts"]	src/main.ts	match
 ["**/*.ts"]	src/main.rs	no-match
+["foo.txt"]	foo.txt	match
+["foo.txt"]	foo.tx	no-match
 
 # ============================================================================
 # union.equals.or — a union matches what the OR of its members matches:
@@ -177,3 +179,31 @@
 ["**/a*","**/b*"]	x/abc	match
 ["**/a*","**/b*"]	b	match
 ["**/a*","**/b*"]	x/c	no-match
+
+## or.literal_paths (plain paths are one sorted set, a repeat folds; the others stay chains)
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]	src/a.ts	match
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]	lib/b.ts	match
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]	a/b/c	match
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]	src/a.md	match
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]	src/x/y.md	match
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]	src/a.tsx	no-match
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]	a/b	no-match
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]	a/b/c/d	no-match
+["src/a.ts","lib/b.ts","src/a.ts","a/b/c","src/**/*.md"]		no-match
+["Src/A.ts","src/a.ts","LIB/b.ts","x/*.md"]	SRC/a.TS	match	case_insensitive=true
+["Src/A.ts","src/a.ts","LIB/b.ts","x/*.md"]	lib/B.TS	match	case_insensitive=true
+["Src/A.ts","src/a.ts","LIB/b.ts","x/*.md"]	src/b.ts	no-match	case_insensitive=true
+
+## or.brace_meta (`,` `{` `}` in a member are its own bytes, not a brace)
+["a,b.txt","{x}.log"]	a,b.txt	match
+["a,b.txt","{x}.log"]	{x}.log	match
+["a,b.txt","{x}.log"]	a	no-match
+["a,b.txt","{x}.log"]	b.txt	no-match
+["a,b.txt","{x}.log"]	x.log	no-match
+
+## or.globstar_fold (factoring does not lift the trailing `/` across a `**`)
+["//","a/**/"]	a/	match
+["//","a/**/"]	a/b/	match
+["//","a/**/"]	//	match
+["//","a/**/"]	a/b/c/	match
+["//","a/**/"]	foo	no-match
