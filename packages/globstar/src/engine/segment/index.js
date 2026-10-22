@@ -52,7 +52,7 @@ export class SegmentMatcher {
     this.dot = dot;
     this.byteOnly = byteOnly;
     this.prefixes = prefixes.map(flat);
-    this.factsPlain = !this.ci && !IS_WINDOWS_SEP;
+    this.plain = !this.ci && !IS_WINDOWS_SEP;
     this.suffixes = suf.length > 0 ? suf.map(flat) : null;
   }
 
@@ -224,7 +224,7 @@ export class SegmentMatcher {
   _prefilter(str) {
     const set = this.suffixes;
     if (set === null) return true;
-    const plain = this.factsPlain;
+    const plain = this.plain;
     for (let i = 0; i < set.length; i++) {
       if (plain ? str.endsWith(set[i]) : endsWithPattern(str, set[i], this.ci)) return true;
     }
