@@ -12,6 +12,7 @@ use crate::parse::ast::{ClassItem, Node};
 
 use super::Elem;
 use super::chain::{Chain, Shape};
+use super::graph::Graph;
 
 /// A union of at most this many chains (the literal set aside) tries
 /// them in turn after their gates, which costs less than the lookups.
@@ -19,8 +20,17 @@ pub(super) const LINEAR_CHAINS: usize = 10;
 
 /// A segment's strings multiply past this many no more: a product of
 /// alternatives (`[._]s[a-v][a-z]`) is cut to the nodes that fit; a
-/// single list (a merged set of names) is kept whatever its length.
+/// single list (a merged set of names) is kept up to the key room.
 const MAX_KEY_PRODUCT: usize = 64;
+
+/// The keys a union's segments may give, and the entries its index may
+/// file: one per unit of the pattern's weight, never fewer than 4096,
+/// so the index grows with the pattern, not with its chains times their
+/// keys. A segment whose keys pass what is left has none; an index past
+/// it is not built.
+pub(super) fn key_room(weight: usize) -> usize {
+    weight.max(4096)
+}
 
 /// A key compares this many outer bytes of a segment at most (the last
 /// of a suffix, the first of a prefix): the walk checks the rest.
@@ -89,6 +99,16 @@ pub(super) enum SegKeys {
     Infix(Box<[u8]>),
 }
 
+impl SegKeys {
+    /// What it takes of the key room.
+    pub(super) fn len(&self) -> usize {
+        match self {
+            SegKeys::Strings(keys) => keys.len(),
+            SegKeys::Infix(_) => 1,
+        }
+    }
+}
+
 /// Buffers `segment_keys` reuses from one segment to the next.
 #[derive(Debug, Default)]
 pub(super) struct KeyScratch {
@@ -98,19 +118,25 @@ pub(super) struct KeyScratch {
     next: Vec<Key>,
 }
 
-/// The keys of a segment's nodes (`one_kind`). A segment that is one
-/// brace its branches bind apart — a union's members of one segment,
-/// `{Makefile,inc.*,*.pc}` — is bound by all their keys, each its own
-/// kind; a branch without strings leaves it none.
-pub(super) fn segment_keys(nodes: &[&Node], ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
-    let keys = one_kind(nodes, ci, k);
+/// The keys of a segment's nodes (`one_kind`), none when they are more
+/// than `room`. A segment that is one brace its branches bind apart — a
+/// union's members of one segment, `{Makefile,inc.*,*.pc}` — is bound
+/// by all their keys, each its own kind; a branch without strings
+/// leaves it none.
+pub(super) fn segment_keys(
+    nodes: &[&Node],
+    ci: bool,
+    room: usize,
+    k: &mut KeyScratch,
+) -> Option<SegKeys> {
+    let keys = one_kind(nodes, ci, room, k);
     let (None, [Node::Brace(branches)]) = (&keys, nodes) else {
-        return keys;
+        return keys.filter(|keys| keys.len() <= room);
     };
     let mut out = Vec::new();
     for branch in branches {
         let seq: Vec<&Node> = branch.seq().iter().collect();
-        match segment_keys(&seq, ci, k)? {
+        match segment_keys(&seq, ci, room - out.len(), k)? {
             SegKeys::Strings(keys) => out.extend(keys),
             SegKeys::Infix(_) => return None,
         }
@@ -124,18 +150,19 @@ pub(super) fn segment_keys(nodes: &[&Node], ci: bool, k: &mut KeyScratch) -> Opt
 /// bytes (`*.py[cod]` ends with `.pyc`, `.pyo` or `.pyd`; `._*` starts
 /// with `._`); else its longest literal. None when it has no literal,
 /// or a string may be empty.
-fn one_kind(nodes: &[&Node], ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
+fn one_kind(nodes: &[&Node], ci: bool, room: usize, k: &mut KeyScratch) -> Option<SegKeys> {
     let KeyScratch {
         suffixes,
         prefixes,
         alts,
         next,
     } = k;
-    let taken = literal_run(nodes.iter().rev().copied(), true, ci, suffixes, alts, next);
+    let from_end = nodes.iter().rev().copied();
+    let taken = literal_run(from_end, true, ci, room, suffixes, alts, next);
     if taken == nodes.len() {
         return strings(Kind::Exact, suffixes);
     }
-    literal_run(nodes.iter().copied(), false, ci, prefixes, alts, next);
+    literal_run(nodes.iter().copied(), false, ci, room, prefixes, alts, next);
     let shortest = |keys: &[Key]| keys.iter().map(|k| k.len).min().unwrap_or(0);
     match (shortest(suffixes), shortest(prefixes)) {
         (0, 0) => {
@@ -163,43 +190,61 @@ fn strings(kind: Kind, keys: &[Key]) -> Option<SegKeys> {
 /// The strings of the literal nodes `nodes` yields from one end, as
 /// many as fit `MAX_KEY_PRODUCT`, into `out`; how many nodes they took.
 /// `back`: the nodes come last first, and each one's strings go in
-/// front.
+/// front. A node of one string waits in `fixed` for the next choice, so
+/// a run after a long list passes over the list once.
 fn literal_run<'a>(
     nodes: impl Iterator<Item = &'a Node>,
     back: bool,
     ci: bool,
+    room: usize,
     out: &mut Vec<Key>,
     alts: &mut Vec<Key>,
     next: &mut Vec<Key>,
 ) -> usize {
+    // `key`, then the string of the node read after it.
+    let join = |key: Key, node: Key| if back { node.then(key) } else { key.then(node) };
+    // The strings so far, then the ones waiting.
+    let flush = |out: &mut Vec<Key>, fixed: &mut Key| {
+        if fixed.len > 0 {
+            for o in out.iter_mut() {
+                *o = join(*o, *fixed);
+            }
+            *fixed = Key::EMPTY;
+        }
+    };
     out.clear();
     out.push(Key::EMPTY);
+    let mut fixed = Key::EMPTY;
     let mut taken = 0;
     for node in nodes {
         alts.clear();
-        if !alternatives(node, ci, alts) {
+        if !alternatives(node, ci, room, alts) {
             break;
         }
-        if alts.len() > 1 && out.len() > 1 && out.len() * alts.len() > MAX_KEY_PRODUCT {
-            break;
+        if let [one] = alts[..] {
+            fixed = join(fixed, one);
+        } else {
+            if out.len() > 1 && out.len() * alts.len() > MAX_KEY_PRODUCT {
+                break;
+            }
+            flush(out, &mut fixed);
+            next.clear();
+            for &o in out.iter() {
+                next.extend(alts.iter().map(|&a| join(o, a)));
+            }
+            std::mem::swap(out, next);
         }
-        next.clear();
-        for &o in out.iter() {
-            next.extend(
-                alts.iter()
-                    .map(|&a| if back { a.then(o) } else { o.then(a) }),
-            );
-        }
-        std::mem::swap(out, next);
         taken += 1;
     }
+    flush(out, &mut fixed);
     taken
 }
 
 /// The strings one literal node matches, into `out`: a literal, an
 /// ASCII class that is not negated (its bytes), a brace of literal
-/// branches. `false` for any other node.
-fn alternatives(node: &Node, ci: bool, out: &mut Vec<Key>) -> bool {
+/// branches. `false` for any other node, and for a brace of more than
+/// `room` strings.
+fn alternatives(node: &Node, ci: bool, room: usize, out: &mut Vec<Key>) -> bool {
     match node {
         Node::Literal(bytes) => out.push(Key::of(bytes, ci)),
         Node::Class(class) if !class.negated => {
@@ -224,13 +269,23 @@ fn alternatives(node: &Node, ci: bool, out: &mut Vec<Key>) -> bool {
                     // buffers.
                     seq => {
                         let (mut keys, mut alts, mut next) = (Vec::new(), Vec::new(), Vec::new());
-                        if literal_run(seq.iter(), false, ci, &mut keys, &mut alts, &mut next)
-                            < seq.len()
-                        {
+                        let taken = literal_run(
+                            seq.iter(),
+                            false,
+                            ci,
+                            room,
+                            &mut keys,
+                            &mut alts,
+                            &mut next,
+                        );
+                        if taken < seq.len() {
                             return false;
                         }
                         out.extend_from_slice(&keys);
                     }
+                }
+                if out.len() > room {
+                    return false;
                 }
             }
         }
@@ -277,15 +332,11 @@ pub(super) struct ChainIndex {
 }
 
 impl ChainIndex {
-    /// The index of a union's chains, `None` when they are few. `keys`
-    /// holds the wildcard elements' keys by node, in node order; a
-    /// literal element's key is itself.
-    pub(super) fn new(
-        chains: &[Chain],
-        elems: &[Elem],
-        keys: &[(u32, SegKeys)],
-        ci: bool,
-    ) -> Option<Box<Self>> {
+    /// The index of a union's chains over `graph`, `None` when they are
+    /// few or their entries pass the key room. The graph's keys are the
+    /// wildcard elements'; a literal element's key is itself.
+    pub(super) fn new(chains: &[Chain], graph: &Graph, ci: bool) -> Option<Box<Self>> {
+        let (elems, keys) = (&graph.elems, &graph.keys);
         let set = match &chains.first()?.shape {
             Shape::Set(set) => Some(set),
             _ => None,
@@ -353,6 +404,9 @@ impl ChainIndex {
             }
             if !filed {
                 index.rest |= 1 << c;
+            }
+            if entries.len() > key_room(graph.weight) {
+                return None;
             }
         }
         entries.sort_unstable();

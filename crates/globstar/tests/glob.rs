@@ -207,6 +207,22 @@ fn a_long_class_costs_one_lookup_per_byte() {
     assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
 }
 
+// The chain index reads a run of one-string nodes after a long list in
+// one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
+// the check in large.mjs.
+#[test]
+fn a_run_after_a_long_list_reads_it_once() {
+    let heads: Vec<String> = (0..11).map(|i| format!("p{i}/")).collect();
+    let names: Vec<String> = (0..6000).map(|i| format!("{i:x}")).collect();
+    let run = "[x]a".repeat(5000);
+    let pattern = format!("{{{}}}{run}{{{}}}", heads.join(","), names.join(","));
+    let start = std::time::Instant::now();
+    let glob = Glob::new(&pattern).unwrap();
+    assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
+    let path = format!("p3/{}176f", "xa".repeat(5000));
+    assert!(glob.is_match(path.as_bytes()));
+}
+
 // Windows: an escaped `\` is a literal no segment holds (§4.2), so its
 // expansion seeds nothing, and `match_dir` prunes where it is next.
 #[cfg(windows)]

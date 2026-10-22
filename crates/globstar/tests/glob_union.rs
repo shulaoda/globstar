@@ -103,6 +103,37 @@ fn a_union_at_the_chain_cap_tries_every_chain() {
 }
 
 #[test]
+fn a_union_past_the_key_room_answers_as_its_members() {
+    // One member gives more keys than the room (26 per class branch): its
+    // chain is found by its head, the others by their keys.
+    let classes: Vec<String> = (0..1000).map(|i| format!("[a-z]{i:x}")).collect();
+    let mut members: Vec<String> = (0..20).map(|i| format!("d{i}/**/*.x{i}")).collect();
+    members.push(format!("big/{{{}}}", classes.join(",")));
+    // 64 chains share 2,000 names: more entries than the room, so the
+    // union scans them.
+    let heads: Vec<String> = (0..64).map(|i| format!("{i:x}/")).collect();
+    let names: Vec<String> = (0..2000).map(|i| format!("n{i}")).collect();
+    let shared = format!("{{{}}}*{{{}}}", heads.join(","), names.join(","));
+    for (members, paths) in [
+        (
+            members.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["big/q3e7", "big/Q3e7", "big/q3e8", "d3/a/b.x3", "d3/b.x4"],
+        ),
+        (
+            vec![shared.as_str()],
+            ["3f/an1999", "3f/n2000", "40/n1", "a/n7", "3f/n19999"],
+        ),
+    ] {
+        let union = Glob::union(&members).unwrap();
+        assert!(union.is_match(paths[0].as_bytes()), "{}", paths[0]);
+        for path in paths {
+            let want = or_oracle(&members, path.as_bytes());
+            assert_eq!(union.is_match(path.as_bytes()), want, "{path}");
+        }
+    }
+}
+
+#[test]
 fn members_share_one_compile_work_bound() {
     // A list compiles as one pattern, so `TooComplex` is the list's:
     // not wrapped in `InMember`, even when one member alone is to blame.

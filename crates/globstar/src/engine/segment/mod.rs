@@ -144,7 +144,7 @@ impl SegmentMatcher {
             [c] if matches!(c.shape, Shape::Line(_)) => None,
             _ => Some(Box::new(Union {
                 nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref()),
-                pick: match ChainIndex::new(&chains, &graph.elems, &graph.keys, ci) {
+                pick: match ChainIndex::new(&chains, &graph, ci) {
                     Some(index) => Pick::Index(index),
                     None => Pick::Gates(chains.iter().map(|c| c.gate(&graph.elems, ci)).collect()),
                 },

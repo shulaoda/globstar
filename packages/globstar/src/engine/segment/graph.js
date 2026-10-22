@@ -22,7 +22,7 @@ import { flat } from "../../utf8.js";
 import { EL_LIT, EL_WILD, EL_G0, EL_G1, WK_AFFIX, WK_GENERIC, NEVER_LEN, exact } from "./elem.js";
 import { nfaTableBytes } from "./seg-nfa.js";
 import { compileWild, concatLits, makeWild } from "./wild.js";
-import { LINEAR_CHAINS, segmentKeys } from "./chain-index.js";
+import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain-index.js";
 import { GlobError } from "../../error.js";
 
 // Successor marker for "the pattern ends here".
@@ -92,7 +92,10 @@ export function buildGraph(body, dot, ci) {
   }
   const b = new Builder(dot, ci, linear, budget);
   // Only a union of more paths than LINEAR_CHAINS indexes them.
-  if (!linear && pathBound(nodes) > LINEAR_CHAINS) b.keys = [];
+  if (!linear && pathBound(nodes) > LINEAR_CHAINS) {
+    b.keys = [];
+    b.keyRoom = keyRoom(weight);
+  }
   // Only a separator-crossing brace can need regrouping.
   if (!linear) regroup(body);
   const groups = b.walk(nodes, false, [firstGroup()]);
@@ -303,8 +306,10 @@ class Builder {
     this.dot = dot;
     this.ci = ci;
     // The wildcard segments' keys by node, for a union the chain index
-    // may file; null for any other pattern.
+    // may file; null for any other pattern. `keyRoom`: what is left of
+    // the key room.
     this.keys = null;
+    this.keyRoom = 0;
   }
 
   emit(elem, tails) {
@@ -481,8 +486,11 @@ class Builder {
     const elem = this.close(buf);
     const id = this.emit(elem, g.tails);
     if (this.keys !== null && elem.kind === EL_WILD) {
-      const keys = segmentKeys(buf, this.ci);
-      if (keys !== null) this.keys[id] = keys;
+      const keys = segmentKeys(buf, this.ci, this.keyRoom);
+      if (keys !== null) {
+        this.keyRoom -= segKeysLen(keys);
+        this.keys[id] = keys;
+      }
     }
     return id;
   }

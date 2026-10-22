@@ -14,7 +14,7 @@ use crate::bytes::has_escaped_sep;
 use crate::error::GlobError;
 use crate::parse::ast::Node;
 
-use super::chain_index::{KeyScratch, LINEAR_CHAINS, SegKeys, segment_keys};
+use super::chain_index::{KeyScratch, LINEAR_CHAINS, SegKeys, key_room, segment_keys};
 use super::wild::{Affix, Wild, WildKind, compile_wild, concat_lits};
 use super::{Bytes, Elem, NEVER};
 
@@ -83,7 +83,11 @@ impl Graph {
         let mut b = Builder::new(boundaries, linear, dot, ci);
         // Only a union of more paths than `LINEAR_CHAINS` indexes them.
         if paths > LINEAR_CHAINS {
-            b.keys = Some(Box::default());
+            b.keys = Some(Box::new(KeyReading {
+                keys: Vec::new(),
+                room: key_room(weight),
+                scratch: KeyScratch::default(),
+            }));
         }
         // A linear walk keeps one group and takes a few units per weight,
         // so only a separator-crossing brace can reach the budget.
@@ -279,8 +283,13 @@ impl Group<'_> {
     }
 }
 
-/// The keys read so far, by node, and the buffers reading them reuses.
-type KeyReading = (Vec<(u32, SegKeys)>, KeyScratch);
+/// The keys read so far, by node, what is left of the key room, and the
+/// buffers reading them reuses.
+struct KeyReading {
+    keys: Vec<(u32, SegKeys)>,
+    room: usize,
+    scratch: KeyScratch,
+}
 
 /// Builds the graph. A pattern with a separator-crossing brace also
 /// records every node's predecessors (flat, `START` for the start,
@@ -333,7 +342,7 @@ impl Builder {
             elems: self.elems,
             edges,
             weight,
-            keys: self.keys.map_or_else(Vec::new, |k| k.0),
+            keys: self.keys.map_or_else(Vec::new, |k| k.keys),
         }
     }
 
@@ -603,9 +612,10 @@ impl Builder {
         let id = self.emit(elem, &g.tails);
         if wild
             && let Some(k) = &mut self.keys
-            && let Some(keys) = segment_keys(&g.buf, self.ci, &mut k.1)
+            && let Some(keys) = segment_keys(&g.buf, self.ci, k.room, &mut k.scratch)
         {
-            k.0.push((id, keys));
+            k.room -= keys.len();
+            k.keys.push((id, keys));
         }
         id
     }

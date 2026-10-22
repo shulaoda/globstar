@@ -103,6 +103,33 @@ console.log("✓ large patterns compile on a small stack");
   assert.ok(!union.match("d1/q/f.x2"));
 }
 
+// A union past the key room answers as its members do: one member gives
+// more keys than the room (26 per class branch) and is found by its
+// head; 64 chains sharing 2,000 names file more entries than the room
+// and are scanned. Twin of `a_union_past_the_key_room_answers_as_its_members`
+// in crates/globstar/tests/glob_union.rs.
+{
+  const hex = (i) => i.toString(16);
+  const members = [
+    ...Array.from({ length: 20 }, (_, i) => `d${i}/**/*.x${i}`),
+    `big/{${Array.from({ length: 1000 }, (_, i) => `[a-z]${hex(i)}`).join(",")}}`,
+  ];
+  const heads = Array.from({ length: 64 }, (_, i) => `${hex(i)}/`);
+  const names = Array.from({ length: 2000 }, (_, i) => `n${i}`);
+  const shared = [`{${heads.join(",")}}*{${names.join(",")}}`];
+  for (const [list, paths] of [
+    [members, ["big/q3e7", "big/Q3e7", "big/q3e8", "d3/a/b.x3", "d3/b.x4"]],
+    [shared, ["3f/an1999", "3f/n2000", "40/n1", "a/n7", "3f/n19999"]],
+  ]) {
+    const union = compileMatcher(list);
+    assert.ok(union.match(paths[0]), paths[0]);
+    for (const path of paths) {
+      const want = list.some((p) => compileMatcher(p).match(path));
+      assert.equal(union.match(path), want, path);
+    }
+  }
+}
+
 // About 4,200 in-segment states: past the closure budget, each step
 // closes its set as it goes.
 {
@@ -166,6 +193,23 @@ for (const { name, patterns, path, matches, maxKept } of [
     path: "dir14777/file14777",
     matches: true,
     maxKept: 32 * MB,
+  },
+  // The chain index holds a key or so per byte: chains that share a long
+  // list, or a brace of class branches, are not filed under every string
+  // of it.
+  {
+    name: "64 heads, 12,000 names",
+    patterns: `{${names(64, (i) => `${i.toString(16)}/`).join(",")}}*{${names(12_000, (i) => i.toString(16)).join(",")}}`,
+    path: "3f/a2edf",
+    matches: true,
+    maxKept: 2 * MB,
+  },
+  {
+    name: "11 heads, 1,000 class branches",
+    patterns: `{${names(11, (i) => `${i.toString(16)}/`).join(",")}}{${names(1_000, (i) => `[#-_]${i.toString(16)}`).join(",")}}`,
+    path: "a/Z3e7",
+    matches: true,
+    maxKept: 2 * MB,
   },
   // A long literal next to a product is not copied into every suffix.
   {
@@ -237,6 +281,19 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   compileMatcher(`x{?${",".repeat(60_000)}}`);
   const ms = performance.now() - start;
   assert.ok(ms < 1000, `60,000 branches took ${ms.toFixed(0)} ms to compile`);
+}
+
+// The chain index reads a run of one-string nodes after a long list in
+// one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
+// `a_run_after_a_long_list_reads_it_once`.
+{
+  const heads = Array.from({ length: 11 }, (_, i) => `p${i}/`);
+  const names = Array.from({ length: 6000 }, (_, i) => i.toString(16));
+  const start = performance.now();
+  const m = compileMatcher(`{${heads.join(",")}}${"[x]a".repeat(5000)}{${names.join(",")}}`);
+  const ms = performance.now() - start;
+  assert.ok(ms < 200, `a run after 6,000 names took ${ms.toFixed(0)} ms to compile`);
+  assert.ok(m.match(`p3/${"xa".repeat(5000)}176f`));
 }
 
 // A class is a byte table: one lookup per byte, however many items it

@@ -71,6 +71,33 @@ fn large_patterns_stay_small() {
             16 * MB,
             32 * MB,
         ),
+        // The chain index holds a key or so per byte: chains that share a
+        // long list, or a brace of class branches, are not filed under
+        // every string of it.
+        (
+            "64 heads, 12,000 names",
+            vec![format!(
+                "{{{}}}*{{{}}}",
+                names(64, |i| format!("{i:x}/")).join(","),
+                names(12_000, |i| format!("{i:x}")).join(",")
+            )],
+            "3f/a2edf",
+            true,
+            MB,
+            8 * MB,
+        ),
+        (
+            "11 heads, 1,000 class branches",
+            vec![format!(
+                "{{{}}}{{{}}}",
+                names(11, |i| format!("{i:x}/")).join(","),
+                names(1_000, |i| format!("[#-_]{i:x}")).join(",")
+            )],
+            "a/Z3e7",
+            true,
+            MB,
+            8 * MB,
+        ),
         // A long literal next to a product is not copied into every suffix.
         (
             "{a,b} x10 and 60 KB",

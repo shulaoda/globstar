@@ -18,8 +18,17 @@ export const LINEAR_CHAINS = 10;
 
 // A segment's strings multiply past this many no more: a product of
 // alternatives (`[._]s[a-v][a-z]`) is cut to the nodes that fit; a
-// single list (a merged set of names) is kept whatever its length.
+// single list (a merged set of names) is kept up to the key room.
 const MAX_KEY_PRODUCT = 64;
+
+// The keys a union's segments may give, and the entries its index may
+// file: one per unit of the pattern's weight, never fewer than 4096, so
+// the index grows with the pattern, not with its chains times their
+// keys. A segment whose keys pass what is left has none; an index past
+// it is not built.
+export function keyRoom(weight) {
+  return Math.max(weight, 4096);
+}
 
 // A key compares this many outer characters of a segment at most (the
 // last of a suffix, the first of a prefix): the walk checks the rest.
@@ -63,17 +72,23 @@ function then(a, b) {
   return { len: a.len + b.len, back, front };
 }
 
+// What a segment's keys take of the key room.
+export function segKeysLen(k) {
+  return k.keys === null ? 1 : k.keys.length;
+}
+
 // The keys of a segment's nodes (`oneKind`): `{ keys }`, a list of
-// [kind, key], or `{ infix }`. A segment that is one brace its branches
-// bind apart — a union's members of one segment, `{Makefile,inc.*,*.pc}`
-// — is bound by all their keys, each its own kind; a branch without
-// strings leaves it none.
-export function segmentKeys(nodes, ci) {
-  const keys = oneKind(nodes, ci);
-  if (keys !== null || nodes.length !== 1 || nodes[0].tag !== N_BRACE) return keys;
+// [kind, key], or `{ infix }`; null when they are more than `room`. A
+// segment that is one brace its branches bind apart — a union's members
+// of one segment, `{Makefile,inc.*,*.pc}` — is bound by all their keys,
+// each its own kind; a branch without strings leaves it none.
+export function segmentKeys(nodes, ci, room) {
+  const keys = oneKind(nodes, ci, room);
+  if (keys !== null || nodes.length !== 1 || nodes[0].tag !== N_BRACE)
+    return keys !== null && segKeysLen(keys) > room ? null : keys;
   const out = [];
   for (const branch of nodes[0].branches) {
-    const k = segmentKeys(seq(branch), ci);
+    const k = segmentKeys(seq(branch), ci, room - out.length);
     if (k === null || k.keys === null) return null;
     for (const kk of k.keys) out.push(kk);
   }
@@ -85,12 +100,12 @@ export function segmentKeys(nodes, ci) {
 // literal nodes that end it or that start it, whichever bind more
 // characters; else its longest literal. Null when it has no literal, or
 // a string may be empty.
-function oneKind(nodes, ci) {
+function oneKind(nodes, ci, room) {
   const suffixes = [];
-  const taken = literalRun(nodes, true, ci, suffixes);
+  const taken = literalRun(nodes, true, ci, room, suffixes);
   if (taken === nodes.length) return strings(K_EXACT, suffixes);
   const prefixes = [];
-  literalRun(nodes, false, ci, prefixes);
+  literalRun(nodes, false, ci, room, prefixes);
   const s = shortest(suffixes);
   const p = shortest(prefixes);
   if (s === 0 && p === 0) {
@@ -120,28 +135,44 @@ function strings(kind, keys) {
 }
 
 // The strings of the literal nodes at one end of `nodes`, as many as
-// fit MAX_KEY_PRODUCT, into `out`; how many nodes they took. `back`:
-// from the last node on, each one's strings going in front.
-function literalRun(nodes, back, ci, out) {
+// fit MAX_KEY_PRODUCT, appended to `out`; how many nodes they took.
+// `back`: from the last node on, each one's strings going in front. A
+// node of one string waits in `fixed` for the next choice, so a run
+// after a long list passes over the list once.
+function literalRun(nodes, back, ci, room, out) {
+  // `key`, then the string of the node read after it.
+  const join = back ? (key, node) => then(node, key) : then;
   let cur = [EMPTY_KEY];
+  let fixed = EMPTY_KEY;
+  // The strings so far, then the ones waiting.
+  const flush = () => {
+    if (fixed.len === 0) return;
+    for (let i = 0; i < cur.length; i++) cur[i] = join(cur[i], fixed);
+    fixed = EMPTY_KEY;
+  };
   let taken = 0;
   for (let k = 0; k < nodes.length; k++) {
-    const alts = alternatives(nodes[back ? nodes.length - 1 - k : k], ci);
+    const alts = alternatives(nodes[back ? nodes.length - 1 - k : k], ci, room);
     if (alts === null) break;
-    if (alts.length > 1 && cur.length > 1 && cur.length * alts.length > MAX_KEY_PRODUCT) break;
-    const next = [];
-    for (const o of cur) for (const a of alts) next.push(back ? then(a, o) : then(o, a));
-    cur = next;
+    if (alts.length === 1) fixed = join(fixed, alts[0]);
+    else {
+      if (cur.length > 1 && cur.length * alts.length > MAX_KEY_PRODUCT) break;
+      flush();
+      const next = [];
+      for (const o of cur) for (const a of alts) next.push(join(o, a));
+      cur = next;
+    }
     taken++;
   }
+  flush();
   for (const k of cur) out.push(k);
   return taken;
 }
 
 // The strings one literal node matches: a literal, an ASCII class that
 // is not negated (its characters), a brace of literal branches; null
-// for any other node.
-function alternatives(node, ci) {
+// for any other node, and for a brace of more than `room` strings.
+function alternatives(node, ci, room) {
   if (node.tag === N_LITERAL) return [keyOf(node.str, ci)];
   if (node.tag === N_CLASS) {
     if (node.neg) return null;
@@ -158,13 +189,9 @@ function alternatives(node, ci) {
     const out = [];
     for (const branch of node.branches) {
       const s = seq(branch);
-      if (s.length === 1 && s[0].tag === N_LITERAL) {
-        out.push(keyOf(s[0].str, ci));
-        continue;
-      }
-      const keys = [];
-      if (literalRun(s, false, ci, keys) < s.length) return null;
-      for (const k of keys) out.push(k);
+      if (s.length === 1 && s[0].tag === N_LITERAL) out.push(keyOf(s[0].str, ci));
+      else if (literalRun(s, false, ci, room, out) < s.length) return null;
+      if (out.length > room) return null;
     }
     return out;
   }
@@ -194,11 +221,13 @@ function anchors(chain) {
   return out;
 }
 
-// The index of a union's chains, null when they are few. `keys` holds
-// the wildcard elements' keys by node (holes for the others); a literal
-// element's key is itself.
-export function chainIndex(chains, elems, keys, ci) {
+// The index of a union's chains over `graph`, null when they are few or
+// their entries pass the key room. The graph's keys are the wildcard
+// elements', by node (holes for the others); a literal element's key is
+// itself.
+export function chainIndex(chains, graph, ci) {
   if (chains.length === 0) return null;
+  const { elems, keys } = graph;
   // The literal paths' set, when there is one, is the first chain.
   const set = chains[0].literals !== undefined;
   const from = set ? 1 : 0;
@@ -248,6 +277,7 @@ export function chainIndex(chains, elems, keys, ci) {
       if (c < 32) ix.restLo |= 1 << c;
       else ix.restHi |= 1 << (c - 32);
     }
+    if (entries.length > keyRoom(graph.weight)) return null;
   }
   // Each key and chain once.
   entries.sort((a, b) => a[0] - b[0] || a[1] - b[1]);

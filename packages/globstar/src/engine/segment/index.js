@@ -271,6 +271,6 @@ function compileSegment(body, dot, ci, forceNfa) {
   // `matchDir` too; anything else needs the NFA.
   const line = chainList.length === 1 && chainList[0].globstar !== SET_G && chainList[0].g2 < 0;
   const nfa = line ? null : anyNfa(graph, ci);
-  const index = line ? null : chainIndex(chainList, graph.elems, graph.keys, ci);
+  const index = line ? null : chainIndex(chainList, graph, ci);
   return { elems: graph.elems, chains: exact(chainList), nfa, index };
 }
