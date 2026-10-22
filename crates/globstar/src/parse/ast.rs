@@ -32,33 +32,18 @@ pub enum Node {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CharClass {
     pub negated: bool,
-    pub items: Vec<ClassItem>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClassItem {
-    Byte(u8),
-    Range(u8, u8),
+    /// Inclusive byte ranges; a lone byte `b` is `(b, b)`.
+    pub ranges: Vec<(u8, u8)>,
 }
 
 /// The oracle the byte-set tests check against.
-#[cfg(test)]
-impl ClassItem {
-    pub fn matches(self, b: u8) -> bool {
-        match self {
-            Self::Byte(x) => x == b,
-            Self::Range(lo, hi) => lo <= b && b <= hi,
-        }
-    }
-}
-
 #[cfg(test)]
 impl CharClass {
     pub fn matches(&self, b: u8) -> bool {
         if crate::bytes::is_sep(b) {
             return false;
         }
-        let listed = self.items.iter().any(|it| it.matches(b));
+        let listed = self.ranges.iter().any(|&(lo, hi)| lo <= b && b <= hi);
         listed ^ self.negated
     }
 }

@@ -10,7 +10,7 @@
 //! that (a dense set per state is quadratic in the states) it closes its
 //! set as it goes, so memory stays linear in the pattern.
 
-use crate::parse::ast::{CharClass, ClassItem, Node};
+use crate::parse::ast::{CharClass, Node};
 
 use super::NEVER;
 use super::bits::{Bits, Wide};
@@ -139,11 +139,7 @@ impl ByteSet {
             bits: [0; 4],
             negated: cls.negated,
         };
-        for &item in &cls.items {
-            let (lo, hi) = match item {
-                ClassItem::Byte(b) => (b, b),
-                ClassItem::Range(lo, hi) => (lo, hi),
-            };
+        for &(lo, hi) in &cls.ranges {
             (lo..=hi).for_each(|b| set.add(b));
         }
         if ci {
@@ -538,7 +534,7 @@ mod tests {
     use super::ByteSet;
     use crate::parse::ast::Node;
 
-    // The table takes exactly the bytes the class's items define, for
+    // The table takes exactly the bytes the class's ranges define, for
     // every byte, negated or not, with ranges and repeats.
     #[test]
     fn a_byte_set_takes_what_its_class_does() {

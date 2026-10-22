@@ -11,7 +11,7 @@
 // quadratic in the states) it closes its set as it goes, so memory stays
 // linear in the pattern.
 
-import { CI_BYTE, N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, seq } from "../../parse/ast.js";
+import { N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, seq } from "../../parse/ast.js";
 import { ctz32, IS_WINDOWS_SEP } from "../../bytes.js";
 import { exact, NEVER_LEN } from "./elem.js";
 import { wordsFor, bitTest, bitSet, bitsIsZero, bitsEqual } from "./bits.js";
@@ -71,9 +71,7 @@ export function compileSegNfa(nodes, dot, ci) {
 // too, before the negation (§13).
 function byteSet(cls, ci) {
   const bits = [0, 0, 0, 0, 0, 0, 0, 0];
-  for (const it of cls.items) {
-    const lo = it.tag === CI_BYTE ? it.b : it.lo;
-    const hi = it.tag === CI_BYTE ? it.b : it.hi;
+  for (const { lo, hi } of cls.ranges) {
     for (let b = lo; b <= hi; b++) bits[b >> 5] |= 1 << (b & 31);
   }
   const has = (b) => ((bits[b >> 5] >>> (b & 31)) & 1) === 1;

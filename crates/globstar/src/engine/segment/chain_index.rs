@@ -8,7 +8,7 @@
 //! pick: the walk decides, the index only chooses which chains to ask.
 
 use crate::bytes::{fold, seg_end, seg_start};
-use crate::parse::ast::{ClassItem, Node};
+use crate::parse::ast::Node;
 
 use super::Elem;
 use super::chain::{Chain, Shape};
@@ -248,11 +248,7 @@ fn alternatives(node: &Node, ci: bool, room: usize, out: &mut Vec<Key>) -> bool 
     match node {
         Node::Literal(bytes) => out.push(Key::of(bytes, ci)),
         Node::Class(class) if !class.negated => {
-            for item in &class.items {
-                let (lo, hi) = match *item {
-                    ClassItem::Byte(b) => (b, b),
-                    ClassItem::Range(lo, hi) => (lo, hi),
-                };
+            for &(lo, hi) in &class.ranges {
                 if !hi.is_ascii()
                     || out.len() + usize::from(hi.saturating_sub(lo)) >= MAX_KEY_PRODUCT
                 {

@@ -11,9 +11,6 @@ export const N_GLOBSTAR = 5;
 export const N_CLASS = 6;
 export const N_BRACE = 7;
 
-export const CI_BYTE = 0;
-const CI_RANGE = 1;
-
 const SEP_NODE = Object.freeze({ tag: N_SEPARATOR });
 const ANYCHAR_NODE = Object.freeze({ tag: N_ANYCHAR });
 const STAR_NODE = Object.freeze({ tag: N_STAR });
@@ -35,21 +32,15 @@ export function star() {
 export function globstar() {
   return GLOBSTAR_NODE;
 }
-export function klass(neg, items) {
-  return { tag: N_CLASS, neg, items };
+// `ranges`: inclusive `{ lo, hi }` byte ranges; a lone byte `b` is `b..b`.
+export function klass(neg, ranges) {
+  return { tag: N_CLASS, neg, ranges };
 }
 export function brace(branches) {
   return { tag: N_BRACE, branches };
 }
 export function concat(children) {
   return { tag: N_CONCAT, children };
-}
-
-export function classItemByte(b) {
-  return { tag: CI_BYTE, b };
-}
-export function classItemRange(lo, hi) {
-  return { tag: CI_RANGE, lo, hi };
 }
 
 // The bytes of a pure-literal body, one char each, or `null`. A sequence

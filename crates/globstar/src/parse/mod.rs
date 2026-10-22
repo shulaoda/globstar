@@ -192,7 +192,7 @@ impl<'a> Parser<'a> {
             self.pos += 1;
         }
 
-        let mut items: Vec<ClassItem> = Vec::with_capacity(4);
+        let mut ranges = Vec::with_capacity(4);
 
         // A `]` first is a member (§8.5), and like any member it can start
         // a range: `[]-a]` is `]..=a`.
@@ -204,7 +204,7 @@ impl<'a> Parser<'a> {
             };
             if b == b']' && !first {
                 self.pos += 1;
-                return Ok(CharClass { negated, items });
+                return Ok(CharClass { negated, ranges });
             }
             first = false;
             let range_at = self.pos;
@@ -219,9 +219,9 @@ impl<'a> Parser<'a> {
                         high,
                     });
                 }
-                items.push(ClassItem::Range(low, high));
+                ranges.push((low, high));
             } else {
-                items.push(ClassItem::Byte(low));
+                ranges.push((low, low));
             }
         }
     }

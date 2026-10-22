@@ -12,8 +12,6 @@ import {
   klass,
   brace,
   concat,
-  classItemByte,
-  classItemRange,
 } from "./ast.js";
 import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } from "../error.js";
 import { resolveGlobstars } from "./globstar.js";
@@ -194,7 +192,7 @@ function parseClass(state) {
     state.pos++;
   }
 
-  const items = [];
+  const ranges = [];
   // A `]` first is a member (§8.5), and like any member it can start a
   // range: `[]-a]` is `]..=a`.
   let first = true;
@@ -203,7 +201,7 @@ function parseClass(state) {
     const b = input.charCodeAt(state.pos);
     if (b === RBRACK && !first) {
       state.pos++;
-      return klass(negated, items);
+      return klass(negated, ranges);
     }
     first = false;
     const rangeAt = state.pos;
@@ -212,9 +210,9 @@ function parseClass(state) {
       state.pos++;
       const hi = parseClassByte(state, startPos);
       if (hi < lo) throw new GlobError("InvalidRange", { at: rangeAt, low: lo, high: hi });
-      items.push(classItemRange(lo, hi));
+      ranges.push({ lo, hi });
     } else {
-      items.push(classItemByte(lo));
+      ranges.push({ lo, hi: lo });
     }
   }
 }

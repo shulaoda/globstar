@@ -8,7 +8,7 @@
 // a path's own last, first and inner segments and tries only the
 // chains they pick (`_indexedChainMatches`); the chain walk decides.
 
-import { CI_BYTE, N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";
+import { N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";
 import { EL_LIT, EL_WILD } from "./elem.js";
 import { fold } from "../../bytes.js";
 
@@ -177,9 +177,7 @@ function alternatives(node, ci, room) {
   if (node.tag === N_CLASS) {
     if (node.neg) return null;
     const out = [];
-    for (const it of node.items) {
-      const lo = it.tag === CI_BYTE ? it.b : it.lo;
-      const hi = it.tag === CI_BYTE ? it.b : it.hi;
+    for (const { lo, hi } of node.ranges) {
       if (hi >= 0x80 || out.length + Math.max(0, hi - lo) >= MAX_KEY_PRODUCT) return null;
       for (let c = lo; c <= hi; c++) out.push(keyOf(String.fromCharCode(c), ci));
     }

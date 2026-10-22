@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import {
-  CI_BYTE,
   N_ANYCHAR,
   N_BRACE,
   N_CLASS,
@@ -50,10 +49,8 @@ function astDump(node) {
     case N_GLOBSTAR:
       return "G";
     case N_CLASS:
-      return `${node.neg ? "N" : "K"}(${node.items
-        .map((item) =>
-          item.tag === CI_BYTE ? bytes([item.b]) : `${bytes([item.lo])}-${bytes([item.hi])}`,
-        )
+      return `${node.neg ? "N" : "K"}(${node.ranges
+        .map(({ lo, hi }) => (lo === hi ? bytes([lo]) : `${bytes([lo])}-${bytes([hi])}`))
         .join(",")})`;
     case N_BRACE:
       return `B(${node.branches.map(astDump).join("|")})`;
@@ -259,14 +256,12 @@ console.log("✓ limits");
 console.log("✓ engine shapes");
 
 // A class matches through a byte table, which must take exactly what the
-// class's items define (ASCII here: a path string holds no lone byte past
+// class's ranges define (ASCII here: a path string holds no lone byte past
 // 0x7f). Twin of `a_byte_set_takes_what_its_class_does`.
 {
   const { isPathSep } = await import("../src/bytes.js");
-  // The class's own meaning, item by item: the oracle for its byte table.
-  const inClass = (items, b) =>
-    !isPathSep(b) &&
-    items.some((it) => (it.tag === CI_BYTE ? it.b === b : b >= it.lo && b <= it.hi));
+  // The class's own meaning, range by range: the oracle for its byte table.
+  const inClass = (ranges, b) => !isPathSep(b) && ranges.some(({ lo, hi }) => b >= lo && b <= hi);
   for (const pattern of [
     "[a]",
     "[!a]",
@@ -290,7 +285,7 @@ console.log("✓ engine shapes");
         if (b === 0x2f || (process.platform === "win32" && b === 0x5c)) continue; // separators
         // Case folding adds each listed letter's other case, then the
         // class is negated.
-        const listed = (c) => inClass(cls.items, c);
+        const listed = (c) => inClass(cls.ranges, c);
         const letter = /[a-z]/i.test(String.fromCharCode(b));
         const want = (listed(b) || (ci && letter && listed(b ^ 0x20))) !== cls.neg;
         assert.equal(m.match("x" + String.fromCharCode(b)), want, `${pattern} (ci ${ci}) at ${b}`);

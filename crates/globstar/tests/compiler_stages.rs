@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use globstar::parse::ast::{ClassItem, Node};
+use globstar::parse::ast::Node;
 use globstar::parse::parse;
 
 const CASES: &str = include_str!("../../../fixtures/compiler-stages.tsv");
@@ -43,17 +43,14 @@ fn ast_dump(node: &Node, out: &mut String) {
         Node::Globstar => out.push('G'),
         Node::Class(class) => {
             out.push_str(if class.negated { "N(" } else { "K(" });
-            for (i, item) in class.items.iter().enumerate() {
+            for (i, &(lo, hi)) in class.ranges.iter().enumerate() {
                 if i != 0 {
                     out.push(',');
                 }
-                match item {
-                    ClassItem::Byte(b) => bytes(out, &[*b]),
-                    ClassItem::Range(lo, hi) => {
-                        bytes(out, &[*lo]);
-                        out.push('-');
-                        bytes(out, &[*hi]);
-                    }
+                bytes(out, &[lo]);
+                if hi != lo {
+                    out.push('-');
+                    bytes(out, &[hi]);
                 }
             }
             out.push(')');

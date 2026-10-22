@@ -346,7 +346,7 @@ fn attach(seq: Seq, other: Seq, front: bool, budget: &mut usize) -> Result<Seq, 
 fn weight(items: &[Item]) -> usize {
     let cost = |item: &Item| match item {
         Item::Token(Node::Literal(bytes)) => bytes.len(),
-        Item::Token(Node::Class(class)) => 1 + class.items.len(),
+        Item::Token(Node::Class(class)) => 1 + class.ranges.len(),
         Item::Token(_) => 1,
         Item::Brace { branches, .. } => branches.iter().map(|b| 1 + weight(&b.items)).sum(),
     };

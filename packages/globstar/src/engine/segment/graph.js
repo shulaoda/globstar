@@ -7,7 +7,6 @@
 // nothing is multiplied out.
 
 import {
-  CI_BYTE,
   brace,
   N_BRACE,
   N_CLASS,
@@ -224,12 +223,8 @@ const nodesEqual = (a, b) => a.length === b.length && a.every((n, i) => nodeEqua
 
 // Classes equal by content, as Rust's derived `==` compares them.
 function classEqual(a, b) {
-  if (a.neg !== b.neg || a.items.length !== b.items.length) return false;
-  return a.items.every((x, i) => {
-    const y = b.items[i];
-    if (x.tag !== y.tag) return false;
-    return x.tag === CI_BYTE ? x.b === y.b : x.lo === y.lo && x.hi === y.hi;
-  });
+  if (a.neg !== b.neg || a.ranges.length !== b.ranges.length) return false;
+  return a.ranges.every((x, i) => x.lo === b.ranges[i].lo && x.hi === b.ranges[i].hi);
 }
 
 // Groups joined when they agree on boundary, pending `**/` and partial
