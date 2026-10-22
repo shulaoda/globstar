@@ -1,55 +1,13 @@
-// `matchDir` in its two roles. JS twin of `crates/globstar/tests/
-// dir_match.rs`: a pattern that selects files decides whether a
-// directory is worth walking into; a pattern that excludes files decides
-// whether a directory can be skipped whole, or needs no more tests below.
+// `matchDir` where the shared corpus cannot reach: a list with a negated
+// member (Rust's `Glob::union` refuses one) and the `DirMatch` helpers.
+// The verdicts of plain patterns and lists are rows of
+// `fixtures/corpus/corpus-dir.txt` and `corpus-multi-dir.txt`.
 
 import assert from "node:assert/strict";
 import { compileMatcher, DirMatch } from "../src/index.js";
 
-const verdict = (pattern, dir) => compileMatcher(pattern, { dot: true }).matchDir(dir);
-
-// Every verdict has a pattern.
-assert.equal(verdict("src/**/*.ts", "lib"), DirMatch.Pruned);
-assert.equal(verdict("src", "src"), DirMatch.Match);
-assert.equal(verdict("src/**/*.ts", "src"), DirMatch.Descend);
-assert.equal(verdict("src{,/**/*.ts}", "src"), DirMatch.DescendAndMatch);
-assert.equal(verdict("dist/**", "dist"), DirMatch.DescendAll);
-assert.equal(verdict("**", "a"), DirMatch.DescendAllAndMatch);
-
-// Selecting files: walk into a directory unless nothing can match below.
-{
-  const select = compileMatcher(["src/**/*.ts", "docs/**/*.md"]);
-  assert.ok(DirMatch.mayMatchBelow(select.matchDir("")));
-  assert.ok(DirMatch.mayMatchBelow(select.matchDir("src")));
-  assert.ok(DirMatch.mayMatchBelow(select.matchDir("docs/guide")));
-  assert.equal(select.matchDir("node_modules"), DirMatch.Pruned);
-  assert.ok(!DirMatch.mayMatchBelow(select.matchDir("node_modules")));
-  const all = compileMatcher("src/**", { dot: true });
-  assert.ok(DirMatch.matchesAllBelow(all.matchDir("src")));
-}
-
-// Excluding files: skip a directory only when everything below is excluded.
-{
-  const exclude = compileMatcher(["**/node_modules/**", "**/*.log"], { dot: true });
-  assert.ok(DirMatch.matchesAllBelow(exclude.matchDir("node_modules")));
-  assert.ok(DirMatch.matchesAllBelow(exclude.matchDir("a/b/node_modules")));
-  const src = exclude.matchDir("src");
-  assert.ok(DirMatch.mayMatchBelow(src) && !DirMatch.matchesAllBelow(src));
-  // A file pattern matching the directory's own path says nothing about
-  // the files below it; the directory must not be skipped.
-  const dir = compileMatcher("**/*.log", { dot: true }).matchDir("x.log");
-  assert.equal(dir, DirMatch.DescendAndMatch);
-  assert.ok(DirMatch.matches(dir) && !DirMatch.matchesAllBelow(dir));
-  // Where nothing below can be excluded, no more tests are needed under it.
-  const built = compileMatcher(["dist/**", "build/**"], { dot: true });
-  assert.equal(built.matchDir("src"), DirMatch.Pruned);
-  assert.equal(built.matchDir("dist"), DirMatch.DescendAll);
-}
-
-// A negated pattern is always worth walking, and says exactly whether the
-// directory itself matches (§15.4), alone or in a list.
-assert.equal(compileMatcher("!**/*.ts").matchDir("src"), DirMatch.DescendAndMatch);
-assert.equal(compileMatcher("!**/*.ts").matchDir("a.ts"), DirMatch.Descend);
+// A negated member says exactly whether the directory itself matches
+// (§15.4).
 for (const [d, matches] of [
   ["lib", true],
   ["src", true],
@@ -79,7 +37,7 @@ assert.equal(DirMatch.from(false, false, true), DirMatch.DescendAll);
   assert.ok(!DirMatch.matchesAllBelow(m.matchDir("lib")));
 }
 
-console.log("✓ matchDir verdicts serve both the selecting and the excluding role");
+console.log("✓ matchDir with a negated member, and the DirMatch helpers");
 
 // Windows: an escaped `\` is a literal no segment holds (§4.2), so its
 // expansion seeds nothing, and `matchDir` prunes where it is next. Twin

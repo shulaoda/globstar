@@ -434,3 +434,23 @@ a/**/*/*/*	a/x/y/z	descend-all-match	dot=true
 
 ## spec.15.catalog
 **/*.ts	anything	descend
+
+## match_dir.roles (§15.1)
+# A pattern that selects files decides whether a folder is worth walking
+# into; one that excludes files, whether a folder can be skipped whole.
+src/**/*.ts	lib	pruned	dot=true
+src	src	match	dot=true
+src/**/*.ts	src	descend	dot=true
+src{,/**/*.ts}	src	descend-match	dot=true
+dist/**	dist	descend-all	dot=true
+**	a	descend-all-match	dot=true
+src/**	src	descend-all	dot=true
+# A file pattern matching the folder's own path says nothing about the
+# files below it.
+**/*.log	x.log	descend-match	dot=true
+# A negated pattern is always worth walking, and says whether the folder
+# itself matches (§15.4).
+!**/*.ts		descend-match	dot=true
+!**/*.ts	src	descend-match	dot=true
+!**/*.ts	a.ts	descend	dot=true
+!**/*.ts	x/y.ts	descend	dot=true
