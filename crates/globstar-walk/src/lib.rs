@@ -127,6 +127,7 @@ use std::fs;
 use std::io;
 use std::path;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use globstar::{CompileOptions, Glob, GlobError};
 
@@ -193,12 +194,35 @@ struct Frame {
     /// cycle break (see [`link_to_descend`]). Inherited unchanged by a
     /// plain descent; a seed
     /// starts with the links on its prefix.
-    links: Vec<Link>,
+    links: Links,
+}
+
+/// The symlinks descended through to reach a frame, the nearest first.
+/// A frame shares the list of the frame it was found in, so each link is
+/// held once, however many folders wait below it.
+#[derive(Debug, Clone, Default)]
+struct Links(Option<Arc<LinkNode>>);
+
+#[derive(Debug)]
+struct LinkNode {
+    link: Link,
+    up: Links,
+}
+
+impl Links {
+    fn iter(&self) -> impl Iterator<Item = &Link> {
+        std::iter::successors(self.0.as_deref(), |node| node.up.0.as_deref()).map(|node| &node.link)
+    }
+
+    fn push(&mut self, link: Link) {
+        let up = Links(self.0.take());
+        self.0 = Some(Arc::new(LinkNode { link, up }));
+    }
 }
 
 /// A symlink descended through: the identity of its target, so a link
 /// back to it on the way down is found.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Link {
     /// The target's `(dev, ino)`, from the `stat` that typed the link.
     #[cfg(unix)]
@@ -383,7 +407,7 @@ impl Walk {
                 absolute: self.base.clone(),
                 relative: Vec::new(),
                 depth: 0,
-                links: Vec::new(),
+                links: Links::default(),
             };
             if prefix.is_empty() {
                 self.stack.push(frame);
@@ -820,7 +844,7 @@ fn join(dir: &Path, name: &OsStr) -> PathBuf {
 /// the `stat` gave for free; a hit is confirmed by canonical path, since
 /// some file systems hand out inode numbers that are not unique.
 #[cfg(unix)]
-fn link_to_descend(links: &[Link], path: &Path, target: &fs::Metadata) -> Option<Link> {
+fn link_to_descend(links: &Links, path: &Path, target: &fs::Metadata) -> Option<Link> {
     use std::os::unix::fs::MetadataExt;
     let id = (target.dev(), target.ino());
     let mut same = links.iter().filter(|l| l.id == id).peekable();
@@ -839,7 +863,7 @@ fn link_to_descend(links: &[Link], path: &Path, target: &fs::Metadata) -> Option
 /// Windows has no cheap identity in a `stat`: the canonical path is
 /// compared.
 #[cfg(not(unix))]
-fn link_to_descend(links: &[Link], path: &Path, _target: &fs::Metadata) -> Option<Link> {
+fn link_to_descend(links: &Links, path: &Path, _target: &fs::Metadata) -> Option<Link> {
     let canonical = fs::canonicalize(path).ok()?;
     (!links.iter().any(|l| l.canonical == canonical)).then_some(Link { canonical })
 }
