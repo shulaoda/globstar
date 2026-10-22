@@ -156,7 +156,6 @@ function nsToString(ns) {
       return `${(ns / factor).toFixed(2)} ${u}`;
     }
   }
-  return `${ns.toFixed(2)} ns`;
 }
 
 function formatCell(val, opts = {}) {
@@ -184,7 +183,6 @@ const rust = {};
 const js = {};
 
 if (!SKIP_RUST) {
-  step("rust build (release)", "cargo", ["build", "--release", "--workspace"]);
   rust.matcherSingle = parseCriterion(
     step("rust matcher single", "cargo", ["bench", "--bench", "matcher_single", "--", "--quick"]),
   );

@@ -69,11 +69,6 @@ export function assertMisses(libs, inputs, path) {
   }
 }
 
-// A fresh variant of every member of a pattern set.
-export function freshSet(patterns) {
-  return patterns.map(fresh);
-}
-
 // Throws unless every library gives the first one's answer on every
 // (input, path): the rows must time the same answers.
 export function assertAgree(libs, inputs, paths) {

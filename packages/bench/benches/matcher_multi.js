@@ -6,7 +6,7 @@ import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { globstar } from "@globstar/core";
-import { PATTERN_SETS, freshSet, matcherBench } from "./shared.js";
+import { PATTERN_SETS, fresh, matcherBench } from "./shared.js";
 
 // picomatch and micromatch take a list of patterns themselves (their
 // matcher tries the members in order and stops at the first hit).
@@ -41,5 +41,5 @@ await matcherBench(
     ],
     ["micromatch", (patterns) => micro.matcher(patterns, DOT), (m, s) => m(s)],
   ],
-  freshSet,
+  (patterns) => patterns.map(fresh),
 );
