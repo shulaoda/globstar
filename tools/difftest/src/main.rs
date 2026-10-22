@@ -2,7 +2,7 @@
 //!
 //! Reads one request per line on stdin and writes one result token per line
 //! on stdout, through `globstar`'s public API, plus the hidden
-//! `is_match_nfa` for the lanes that cross-check the NFA. The JS driver
+//! `force_nfa` option for the lanes that cross-check the NFA. The JS driver
 //! (`scripts/fuzz.mjs`) generates random inputs,
 //! feeds the SAME inputs to this binary and to the `@globstar/core` JS
 //! port, and asserts the two agree. This measures JS↔Rust drift on the
@@ -17,10 +17,10 @@
 //! | line                                  | op                | output tokens                                   |
 //! |---------------------------------------|-------------------|-------------------------------------------------|
 //! | `m <flags> <pattern> <path>`          | `Glob::is_match`  | `match` / `no-match` / `err:<Kind>`             |
-//! | `n <flags> <pattern> <path>`          | `Glob::is_match_nfa` (the NFA, chains bypassed) | as `m`          |
+//! | `n <flags> <pattern> <path>`          | `force_nfa` + `is_match` (the NFA, no chains) | as `m`            |
 //! | `d <flags> <pattern> <dir>`           | `Glob::match_dir` | `pruned` / `descend` / `match` / `descend-match` / `descend-all` / `descend-all-match` / `err:<Kind>` |
 //! | `u <flags> <path> <pat1> [pat2 ...]`  | `Glob::union` + `is_match` | as `m`                                 |
-//! | `un <flags> <path> <pat1> [pat2 ...]` | `Glob::union` + `is_match_nfa` | as `m`                             |
+//! | `un <flags> <path> <pat1> [pat2 ...]` | `Glob::union` + `force_nfa` + `is_match` | as `m`                   |
 //! | `ud <flags> <dir> <pat1> [pat2 ...]`  | `Glob::union` + `match_dir` | as `d`                                |
 //! | `s <flags> <pat1> [pat2 ...]`         | `Glob::static_prefixes` (union when >1) | `px:<escaped,sorted>` / `err:<Kind>` |
 //!
@@ -63,7 +63,7 @@ fn handle(line: &str) -> String {
     }
     let cmd = cols[0];
     let opts = match parse_flags(cols[1]) {
-        Some(o) => o,
+        Some(o) => o.force_nfa(matches!(cmd, "n" | "un")),
         None => return "err:BadRequest".to_string(),
     };
 
@@ -135,8 +135,7 @@ fn handle(line: &str) -> String {
 /// The answer to query `m`, `n` or `d` on `input`.
 fn answer(query: &str, g: &Glob, input: &[u8]) -> String {
     match query {
-        "m" => is_match_token(g.is_match(input)),
-        "n" => is_match_token(g.is_match_nfa(input)),
+        "m" | "n" => is_match_token(g.is_match(input)),
         _ => dir_token(g.match_dir(input)),
     }
 }

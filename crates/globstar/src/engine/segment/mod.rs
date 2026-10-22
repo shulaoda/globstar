@@ -23,6 +23,7 @@ mod nfa;
 mod seg_nfa;
 mod wild;
 
+use crate::CompileOptions;
 use crate::dir_match::DirMatch;
 use crate::error::GlobError;
 use crate::parse::ast::Node;
@@ -31,7 +32,7 @@ use crate::bytes;
 use chain::{Chain, Gate, Shape};
 use chain_index::ChainIndex;
 use graph::Graph;
-use nfa::{AnyNfa, any_nfa, chain_nfa};
+use nfa::{AnyNfa, any_nfa};
 use wild::{ByteSketch, Wild, WildKind};
 
 /// A byte string the matcher keeps: literals, affixes, suffixes,
@@ -131,14 +132,20 @@ enum Pick {
 }
 
 impl SegmentMatcher {
-    pub(crate) fn build(mut body: Node, dot: bool, ci: bool) -> Result<Box<Self>, GlobError> {
+    pub(crate) fn build(mut body: Node, opts: CompileOptions) -> Result<Box<Self>, GlobError> {
+        let (dot, ci) = (opts.dot, opts.case_insensitive);
         // The facts read the pattern as written; the graph walk
         // regroups it.
         let survey = graph::survey(body.seq());
         let suffixes = facts::suffixes(&body);
         let prefixes = facts::static_prefixes(&body, survey.weight);
         let graph = Graph::build(&mut body, survey, dot, ci)?;
-        let chains = graph.chains(ci);
+        // The test hook keeps no chain.
+        let chains = if opts.force_nfa {
+            Box::default()
+        } else {
+            graph.chains(ci)
+        };
         // A lone line serves `match_dir` too; anything else needs the NFA.
         let union = match &chains[..] {
             [c] if matches!(c.shape, Shape::Line(_)) => None,
@@ -223,21 +230,6 @@ impl SegmentMatcher {
             _ => (self.chains.len(), String::new()),
         };
         format!("{} | chains {chains}{literals} | nfa {nfa}", runs.join(" "))
-    }
-
-    /// `is_match` through an NFA only (test hook): the matcher's own,
-    /// or one laid out over the lone chain it kept instead.
-    pub(crate) fn is_match_nfa(&self, path: &[u8]) -> bool {
-        if !self.prefilter(path) {
-            return false;
-        }
-        match &self.union {
-            Some(u) => u.nfa.is_match(self, path),
-            None => {
-                let (m, nfa) = chain_nfa(self);
-                nfa.is_match(&m, path)
-            }
-        }
     }
 
     pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {

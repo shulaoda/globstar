@@ -11,8 +11,9 @@
 //
 // Two lanes per match row:
 //   - globstar     — public API (`globstar(...)`, `Glob::new` / `Glob::union`)
-//   - nfa          — the same matcher with the segment engine's anchored
-//                    chains bypassed, so its NFA is checked on every row
+//   - nfa          — the same patterns compiled with no anchored chains
+//                    (`force_nfa` / `__engine: "nfa"`), so the segment
+//                    engine's NFA decides
 //
 // Nothing is skipped: a compile error where a row expects an answer is
 // a failure (a single-pattern row may expect `err:Kind`), and a row the

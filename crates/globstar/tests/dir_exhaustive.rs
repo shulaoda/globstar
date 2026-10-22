@@ -10,7 +10,7 @@
 //!    descend — a pruning walker must never lose a match;
 //! 3. `Pruned` implies no universe descendant matches;
 //! 4. the segment engine's anchored chains and its NFA agree on every
-//!    `is_match` (`Glob::is_match_nfa`);
+//!    `is_match` (`CompileOptions::force_nfa`);
 //! 5. the all-below flag is set exactly when every path up to three
 //!    levels below the dir matches — a directory is skipped whole only
 //!    when nothing below it escapes. Three levels is past the deepest
@@ -123,7 +123,8 @@ fn check_below(patterns: &[String], paths: &[String], suffixes: &[String], dot: 
     for pattern in patterns {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
         let glob = Glob::new_with(pattern, opts).expect("compile");
-        check_glob(pattern, &glob, paths, suffixes, &below, dot, ci);
+        let nfa = Glob::new_with(pattern, opts.force_nfa(true)).expect("compile");
+        check_glob(pattern, [&glob, &nfa], paths, suffixes, &below, dot, ci);
     }
 }
 
@@ -136,7 +137,8 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
     for set in sets {
         let opts = CompileOptions::default().dot(dot).case_insensitive(ci);
         let glob = Glob::union_with(set.iter().copied(), opts).expect("union");
-        check_glob(set, &glob, paths, &suffixes, &below, dot, ci);
+        let nfa = Glob::union_with(set.iter().copied(), opts.force_nfa(true)).expect("union");
+        check_glob(set, [&glob, &nfa], paths, &suffixes, &below, dot, ci);
     }
 }
 
@@ -146,7 +148,7 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
 /// holds exactly when every `dir/s` matches.
 fn check_glob(
     label: &dyn std::fmt::Debug,
-    glob: &Glob,
+    [glob, nfa]: [&Glob; 2],
     paths: &[String],
     suffixes: &[String],
     below: &[Vec<usize>],
@@ -159,7 +161,7 @@ fn check_glob(
     }
     for (i, dir) in paths.iter().enumerate() {
         let ctx = format!("{label:?} dir={dir:?} dot={dot} ci={ci}");
-        let nfa = glob.is_match_nfa(dir.as_bytes());
+        let nfa = nfa.is_match(dir.as_bytes());
         assert_eq!(
             matched[i], nfa,
             "is_match disagreement: {ctx} chains={} nfa={nfa}",

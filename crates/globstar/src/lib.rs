@@ -73,6 +73,10 @@ pub struct CompileOptions {
     /// ASCII-only case folding, `false` by default; non-ASCII bytes
     /// compare verbatim (GLOB_SPEC.md §13 / §14.3).
     pub case_insensitive: bool,
+
+    /// No anchored chains, so the graph NFA decides (test hook; JS
+    /// `__engine: "nfa"`).
+    force_nfa: bool,
 }
 
 impl Default for CompileOptions {
@@ -80,6 +84,7 @@ impl Default for CompileOptions {
         Self {
             dot: true,
             case_insensitive: false,
+            force_nfa: false,
         }
     }
 }
@@ -95,6 +100,14 @@ impl CompileOptions {
     /// set to `v`.
     pub fn case_insensitive(mut self, v: bool) -> Self {
         self.case_insensitive = v;
+        self
+    }
+
+    /// These options with the segment engine's anchored chains left out:
+    /// a test hook that cross-checks them against the NFA.
+    #[doc(hidden)]
+    pub fn force_nfa(mut self, v: bool) -> Self {
+        self.force_nfa = v;
         self
     }
 }
@@ -211,11 +224,7 @@ impl Glob {
     fn from_body(body: Node, negated: bool, opts: CompileOptions) -> Result<Self, GlobError> {
         let engine = match body.to_literal_bytes() {
             Some(lit) => Engine::Literal(LiteralMatcher::new(lit.into(), opts.case_insensitive)),
-            None => Engine::Segment(SegmentMatcher::build(
-                body,
-                opts.dot,
-                opts.case_insensitive,
-            )?),
+            None => Engine::Segment(SegmentMatcher::build(body, opts)?),
         };
         Ok(Self { engine, negated })
     }
@@ -229,18 +238,6 @@ impl Glob {
         let raw = match &self.engine {
             Engine::Literal(m) => m.is_match(path),
             Engine::Segment(m) => m.is_match(path),
-        };
-        raw ^ self.negated
-    }
-
-    /// [`is_match`](Self::is_match) with the segment engine's anchored
-    /// chains bypassed: the NFA over the whole pattern graph decides.
-    /// A test hook that cross-checks the two code paths.
-    #[doc(hidden)]
-    pub fn is_match_nfa(&self, path: &[u8]) -> bool {
-        let raw = match &self.engine {
-            Engine::Literal(m) => m.is_match(path),
-            Engine::Segment(m) => m.is_match_nfa(path),
         };
         raw ^ self.negated
     }

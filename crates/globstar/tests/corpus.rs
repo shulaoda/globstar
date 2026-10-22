@@ -4,8 +4,8 @@
 //! and asserts it agrees with the recorded truth:
 //!
 //! - `globstar`     — public API (`Glob::new` / `Glob::union`), engine dispatch
-//! - `nfa`          — the same `Glob`, `is_match` forced onto the segment
-//!   engine's NFA instead of its anchored chains (`Glob::is_match_nfa`)
+//! - `nfa`          — the same patterns compiled with no anchored chains,
+//!   so the segment engine's NFA decides (`CompileOptions::force_nfa`)
 //!
 //! Single-pattern `is_match` rows live in `fixtures/corpus/corpus*.txt`
 //! (a row may expect `err:Kind` instead of an answer); `match_dir` rows
@@ -346,16 +346,11 @@ fn corpus_single_engines_vs_truth() {
             let pattern = row.pattern();
             let want = row.want(parse_match);
             let g = Glob::new_with(&pattern, row.opts());
-            globstar.record(
-                judge(
-                    g.as_ref()
-                        .map(|g| g.is_match(&row.path))
-                        .map_err(Clone::clone),
-                    &want,
-                ),
-                || row.describe(&pattern, "globstar"),
-            );
-            nfa.record(judge(g.map(|g| g.is_match_nfa(&row.path)), &want), || {
+            globstar.record(judge(g.map(|g| g.is_match(&row.path)), &want), || {
+                row.describe(&pattern, "globstar")
+            });
+            let g = Glob::new_with(&pattern, row.opts().force_nfa(true));
+            nfa.record(judge(g.map(|g| g.is_match(&row.path)), &want), || {
                 row.describe(&pattern, "nfa")
             });
         }
@@ -374,16 +369,11 @@ fn corpus_multi_engines_vs_truth() {
         let patterns = row.patterns();
         let want = row.want(parse_match);
         let g = Glob::union_with(&patterns, row.opts());
-        globstar.record(
-            judge(
-                g.as_ref()
-                    .map(|g| g.is_match(&row.path))
-                    .map_err(Clone::clone),
-                &want,
-            ),
-            || row.describe(&patterns, "globstar"),
-        );
-        nfa.record(judge(g.map(|g| g.is_match_nfa(&row.path)), &want), || {
+        globstar.record(judge(g.map(|g| g.is_match(&row.path)), &want), || {
+            row.describe(&patterns, "globstar")
+        });
+        let g = Glob::union_with(&patterns, row.opts().force_nfa(true));
+        nfa.record(judge(g.map(|g| g.is_match(&row.path)), &want), || {
             row.describe(&patterns, "nfa")
         });
     }

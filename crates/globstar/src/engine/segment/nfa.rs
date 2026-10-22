@@ -3,8 +3,6 @@
 //! while they fit `MAX_ROW_BYTES`, a sparse step beyond; it runs when
 //! the chains cannot serve, and answers `match_dir` where it is kept.
 
-use std::borrow::Cow;
-
 use crate::bytes::{cmp_folded, seg_end};
 use crate::dir_match::DirMatch;
 
@@ -242,21 +240,6 @@ fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         ends,
         reach1,
     }
-}
-
-/// The NFA over the lone chain a matcher kept instead of one, and the
-/// matcher it runs on: the chain's elements in path order (test hook).
-pub(super) fn chain_nfa(m: &SegmentMatcher) -> (Cow<'_, SegmentMatcher>, AnyNfa) {
-    let nodes = &m.chains[0].nodes;
-    let m = if nodes.is_empty() {
-        Cow::Borrowed(m)
-    } else {
-        let mut lone = m.clone();
-        lone.elems = nodes.iter().map(|&i| m.elems[i as usize].clone()).collect();
-        Cow::Owned(lone)
-    };
-    let nfa = any_nfa(&m.elems, m.case_insensitive, None);
-    (m, nfa)
 }
 
 impl<B: Bits> Nfa<B> {

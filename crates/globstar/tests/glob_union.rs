@@ -48,6 +48,7 @@ fn literal_paths_are_one_set() {
     // once; a repeat folds; the others stay chains.
     let members = ["src/a.ts", "lib/b.ts", "src/a.ts", "a/b/c", "src/**/*.md"];
     let union = Glob::union(members).unwrap();
+    let nfa = Glob::union_with(members, CompileOptions::default().force_nfa(true)).unwrap();
     assert_eq!(
         union.shape(),
         "L(4) G0 L(3) W:affix | chains 1 | literals 3 | nfa small"
@@ -64,7 +65,7 @@ fn literal_paths_are_one_set() {
         ("", false),
     ] {
         assert_eq!(union.is_match(path.as_bytes()), want, "{path}");
-        assert_eq!(union.is_match_nfa(path.as_bytes()), want, "{path} (nfa)");
+        assert_eq!(nfa.is_match(path.as_bytes()), want, "{path} (nfa)");
     }
     assert_eq!(union.match_dir(b"a/b"), DirMatch::Descend);
     assert_eq!(union.match_dir(b"a/b/c"), DirMatch::Match);
