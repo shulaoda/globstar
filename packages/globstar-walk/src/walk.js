@@ -41,44 +41,32 @@ import { normalizeOptions } from "./options.js";
 export async function glob(patterns, options) {
   const ctx = prepare(patterns, options);
   if (ctx === null) return [];
+  const out = ctx.seedResults;
+  if (ctx.seedFrames.length === 0) return out;
 
   return new Promise((resolve, reject) => {
-    const out = ctx.seedResults;
-    if (ctx.seedFrames.length === 0) {
-      resolve(out);
-      return;
-    }
-
     let pending = 0;
     let failed = false;
     const submit = (frame) => {
-      if (failed) return;
       pending++;
       fs.readdir(frame.absolute, { withFileTypes: true }, (err, dirents) => {
         pending--;
         if (failed) return; // late callback after rejection — drop it
-        if (err && vanishedDuringRead(err)) {
+        if (err) {
           try {
-            dirents = readEachEntry(frame.absolute);
-            err = null;
-          } catch (cause) {
-            err = cause;
+            dirents = afterReadError(err, frame.absolute);
+          } catch (e) {
+            failed = true;
+            reject(e);
+            return;
           }
-        }
-        if (err && !gone(err)) {
-          failed = true;
-          reject(new WalkError("Io", { path: frame.absolute, cause: err }));
-          return;
         }
         // Re-enter `submit` per descended dir so the next readdir
         // starts immediately — fans syscalls across libuv's threadpool.
-        if (!err) processDirents(ctx, dirents, frame, out, descendShim);
+        if (dirents !== null) processDirents(ctx, dirents, frame, out, descendShim);
         if (pending === 0) resolve(out);
       });
     };
-    // `processDirents` calls `descend.push(frame)` per child to recurse;
-    // wrapping `submit` in a push-shaped sink lets sync (real array)
-    // and async (immediate fan-out) share the inner loop verbatim.
     const descendShim = { push: submit };
 
     for (let i = 0; i < ctx.seedFrames.length; i++) submit(ctx.seedFrames[i]);
@@ -99,15 +87,10 @@ export function globSync(patterns, options) {
 
     let dirents;
     try {
-      try {
-        dirents = fs.readdirSync(frame.absolute, { withFileTypes: true });
-      } catch (err) {
-        if (!vanishedDuringRead(err)) throw err;
-        dirents = readEachEntry(frame.absolute);
-      }
-    } catch (cause) {
-      if (gone(cause)) continue;
-      throw new WalkError("Io", { path: frame.absolute, cause });
+      dirents = fs.readdirSync(frame.absolute, { withFileTypes: true });
+    } catch (err) {
+      dirents = afterReadError(err, frame.absolute);
+      if (dirents === null) continue;
     }
 
     descend.length = 0;
@@ -224,7 +207,7 @@ function prepare(patterns, optsInput) {
 function initFromPrefixes(ctx) {
   for (const bytes of ctx.matcher.staticPrefixes()) {
     let frame = { absolute: ctx.cwd, relative: "", links: [] };
-    const prefix = bytesToString(bytes);
+    const prefix = Buffer.from(bytes).toString();
     if (prefix === "") {
       ctx.seedFrames.push(frame);
       continue;
@@ -476,6 +459,18 @@ const vanishedDuringRead = (err) => err?.code === "ENOENT" && err?.syscall === "
 // cwd.
 const gone = (err) => err?.code === "ENOENT" || err?.code === "ENOTDIR";
 
+// The entries of `dir` after its read failed with `err`, or `null` when it
+// is gone (§9.3); any other failure throws the `WalkError` naming `dir`.
+function afterReadError(err, dir) {
+  try {
+    if (vanishedDuringRead(err)) return readEachEntry(dir);
+  } catch (cause) {
+    err = cause;
+  }
+  if (gone(err)) return null;
+  throw new WalkError("Io", { path: dir, cause: err });
+}
+
 // The entries of `dir`, typed by one lstat each; an entry that vanishes
 // in between is left out, as if it had gone before the read.
 function readEachEntry(dir) {
@@ -547,10 +542,4 @@ function withSep(parent) {
   if (!WINDOWS) return parent + "/";
   if (last === 0x5c) return parent;
   return parent + (parent.startsWith("\\\\?\\") ? "\\" : "/");
-}
-
-// Static prefixes are ASCII / valid UTF-8 bytes (parser-produced from
-// a user pattern string), so plain Buffer decode is safe.
-function bytesToString(bytes) {
-  return Buffer.from(bytes).toString("utf8");
 }
