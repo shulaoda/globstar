@@ -1191,7 +1191,7 @@ fn walker_seed_emits_broken_symlink_like_walk() {
     assert_eq!(via_seed, expected, "seed must surface the broken symlink");
 
     // The seeded entry's file_type is symlink-preserving, like every
-    // walk-produced entry (entry.rs: the canonical is_symlink check).
+    // walk-produced entry (see DirEntry::file_type).
     let entry = Walk::new("links/broken.txt", t.root())
         .unwrap()
         .next()

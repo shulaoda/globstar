@@ -1,23 +1,15 @@
-//! Construction-time options for [`Walk`](crate::Walk).
-//!
-//! Anything path-like converts to [`WalkOptions`] via [`From`], so
-//! `Walk::new(pattern, "./src")` works without spelling out the
-//! struct. For base + one tweak, use struct-update syntax on top of
-//! [`WalkOptions::new`]:
-//!
-//! ```
-//! use globstar_walk::WalkOptions;
-//!
-//! let opts = WalkOptions { dot: true, ..WalkOptions::new("./src") };
-//! # let _ = opts;
-//! ```
-
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-/// Configuration for a [`Walk`](crate::Walk). See module docs for
-/// construction ergonomics; per-field defaults are in the [`Default`]
-/// impl.
+/// Configuration for a [`Walk`](crate::Walk). For a base and one
+/// change, update [`WalkOptions::new`]:
+///
+/// ```
+/// use globstar_walk::WalkOptions;
+///
+/// let opts = WalkOptions { dot: true, ..WalkOptions::new("./src") };
+/// # let _ = opts;
+/// ```
 #[derive(Debug, Clone)]
 pub struct WalkOptions {
     /// Root directory to walk. Default: `.` (current working directory).

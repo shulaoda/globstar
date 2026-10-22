@@ -1,36 +1,5 @@
-// Filesystem glob built on top of `globstar`.
-//
-//   glob(patterns, options?)      → Promise<string[]>      (concurrent readdir)
-//   globSync(patterns, options?)  → string[]               (DFS readdirSync)
-//
-// `!`-prefixed entries auto-split into the ignore set:
-//
-//   glob(["**/*.ts", "!**/*.test.ts"])
-//     ≡  glob(["**/*.ts"], { ignore: ["**/*.test.ts"] })
-//
-// Output is always **absolute** file paths, joined from the resolved
-// `cwd` (locked at construction via `path.resolve`). Directory matches
-// aren't emitted — files only. Callers that want paths relative to
-// `cwd` can `path.relative(cwd, p)` at their boundary; this matches
-// what Vite's `import.meta.glob` does internally (it always passes
-// `absolute: true` to tinyglobby and post-relativizes itself).
-//
-// Symlinks: `followSymlinks: true` (default, matching tinyglobby)
-// follows the link via `fs.statSync` to detect dir-vs-file targets, and
-// breaks cycles by remembering, along each way down, the folders reached
-// through a link (`linkToDescend`): a link to one of them is not
-// descended, the rest of the walk continues. `followSymlinks: false`
-// drops symlinks entirely (neither emitted nor descended; matches
-// `fdir`'s `excludeSymlinks`).
-//
-// Errors are thrown, not swallowed, except where a root walk would see
-// nothing (WALKER_SPEC §9.3, §9.4, §10): a folder removed or made a file
-// after its parent listed it is left out. Compile failures land as
-// `WalkError("InvalidPattern")`; readdir failures (EACCES, a missing
-// cwd) land as `WalkError("Io")`. We diverge from tinyglobby (which
-// suppresses IO errors) and fast-glob (which suppresses every ENOENT)
-// on purpose: silent IO failures mask broken cwds and unreadable
-// subtrees.
+// `glob` (concurrent readdir) and `globSync` (DFS) over `@globstar/core`.
+// The behavior is specified in references/spec/WALKER_SPEC.md.
 
 import * as fs from "node:fs";
 import * as path from "node:path";

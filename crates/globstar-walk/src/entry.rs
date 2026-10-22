@@ -1,39 +1,10 @@
-//! Directory entries yielded by [`Walk`](crate::Walk).
-//!
-//! A thin, minimal analog of `walkdir::DirEntry` that fits our own
-//! walker — we don't build on `walkdir`; we read directories via
-//! `std::fs::read_dir` plus glob-aware pruning, and carry the bits we
-//! pick up for free so consumers don't re-stat.
-//!
-//! Layout invariants:
-//!
-//! - **`file_type` is eagerly cached** at walk time. Recursive descent
-//!   already needs to know "dir or not" to decide whether to descend, so
-//!   preserving that [`FileType`](std::fs::FileType) is a zero-cost win
-//!   — callers get `.is_file()` / `.is_dir()` / `.is_symlink()` through
-//!   the standard library's `FileType` API without a syscall.
-//! - **`depth` is tracked in the traversal frame**, not recomputed per
-//!   entry. `base` is depth 0, its direct children are depth 1, etc.
-//! - **`file_name` is lazily derived** from `path.file_name()` — matches
-//!   walkdir's choice, saves ~64 bytes per entry (no extra `OsString`),
-//!   and path-slice access is essentially free.
-//! - **Windows metadata is eagerly cached** — `FindFirstFileW` returns
-//!   attributes at readdir time, so each entry keeps them (a seed's come
-//!   from its `lstat`). On Unix, `stat` costs one syscall per call, so we
-//!   stay lazy and only hit the filesystem when the user actually asks.
-//!
-//! The struct is deliberately slimmer than `walkdir::DirEntry` — no
-//! `follow_link` flag (our `file_type` is always symlink-preserving,
-//! so `entry.file_type().is_symlink()` is the canonical check) and no
-//! Unix `ino` field (rarely needed by glob consumers; can be revisited).
-
 use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
 /// A single entry yielded by [`Walk`](crate::Walk): its absolute path,
 /// the [`FileType`](std::fs::FileType) cached at readdir, and its depth
-/// below `base`. (See the module docs for the caching rationale.)
+/// below `base`.
 #[derive(Debug, Clone)]
 pub struct DirEntry {
     pub(crate) path: PathBuf,
@@ -67,6 +38,7 @@ impl DirEntry {
     }
 
     /// Cached [`FileType`](std::fs::FileType) for this entry — no syscall.
+    /// Does not follow symlinks.
     ///
     /// `FileType` already exposes `.is_file()` and `.is_symlink()`, which
     /// this crate does not repeat on `DirEntry`; [`is_dir`](Self::is_dir)
