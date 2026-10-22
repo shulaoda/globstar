@@ -11,26 +11,16 @@ export const N_GLOBSTAR = 5;
 export const N_CLASS = 6;
 export const N_BRACE = 7;
 
-const SEP_NODE = Object.freeze({ tag: N_SEPARATOR });
-const ANYCHAR_NODE = Object.freeze({ tag: N_ANYCHAR });
-const STAR_NODE = Object.freeze({ tag: N_STAR });
-const GLOBSTAR_NODE = Object.freeze({ tag: N_GLOBSTAR });
+// One frozen node each; union.js compares them by identity, cheaper than
+// reading `tag` off nodes of several shapes.
+export const SEP_NODE = Object.freeze({ tag: N_SEPARATOR });
+export const ANYCHAR_NODE = Object.freeze({ tag: N_ANYCHAR });
+export const STAR_NODE = Object.freeze({ tag: N_STAR });
+export const GLOBSTAR_NODE = Object.freeze({ tag: N_GLOBSTAR });
 
 // `str` holds the literal's bytes, one char per byte.
 export function lit(str) {
   return { tag: N_LITERAL, str };
-}
-export function sep() {
-  return SEP_NODE;
-}
-export function anyChar() {
-  return ANYCHAR_NODE;
-}
-export function star() {
-  return STAR_NODE;
-}
-export function globstar() {
-  return GLOBSTAR_NODE;
 }
 // `ranges`: inclusive `{ lo, hi }` byte ranges; a lone byte `b` is `b..b`.
 export function klass(neg, ranges) {

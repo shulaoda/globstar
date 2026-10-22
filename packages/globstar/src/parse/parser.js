@@ -5,10 +5,10 @@ import {
   N_GLOBSTAR,
   N_BRACE,
   lit,
-  sep,
-  anyChar,
-  star,
-  globstar,
+  SEP_NODE,
+  ANYCHAR_NODE,
+  STAR_NODE,
+  GLOBSTAR_NODE,
   klass,
   brace,
   concat,
@@ -97,12 +97,12 @@ function parseSequence(state, depth) {
       }
       case SLASH:
         flush();
-        nodes.push(sep());
+        nodes.push(SEP_NODE);
         state.pos++;
         break;
       case QUESTION:
         flush();
-        nodes.push(anyChar());
+        nodes.push(ANYCHAR_NODE);
         state.pos++;
         break;
       case STAR: {
@@ -113,7 +113,7 @@ function parseSequence(state, depth) {
           state.pos++;
         }
         // A run of exactly two is a `**`; any other run is a star.
-        nodes.push(run === 2 ? doubleStar(state, nodes, inBrace) : star());
+        nodes.push(run === 2 ? doubleStar(state, nodes, inBrace) : STAR_NODE);
         break;
       }
       case LBRACK:
@@ -173,11 +173,11 @@ function doubleStar(state, nodes, inBrace) {
   if (next === undefined || next === SLASH) after = true;
   else if (next === LBRACE || (inBrace && (next === COMMA || next === RBRACE))) after = undefined;
   else after = false;
-  if (before === false || after === false) return star();
+  if (before === false || after === false) return STAR_NODE;
   const folds =
     nodes.length >= 2 && last.tag === N_SEPARATOR && nodes[nodes.length - 2].tag === N_GLOBSTAR;
   if (before === undefined || after === undefined || folds) state.pending = true;
-  return globstar();
+  return GLOBSTAR_NODE;
 }
 
 function parseClass(state) {

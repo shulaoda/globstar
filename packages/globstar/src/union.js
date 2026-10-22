@@ -1,24 +1,18 @@
 import {
+  ANYCHAR_NODE,
+  GLOBSTAR_NODE,
   N_CONCAT,
   N_GLOBSTAR,
   N_LITERAL,
   N_SEPARATOR,
-  anyChar,
+  SEP_NODE,
+  STAR_NODE,
   brace,
   concat,
-  globstar,
   lit,
-  sep,
-  star,
 } from "./parse/ast.js";
 
-// The structural nodes are singletons: an identity test is cheaper than
-// reading `tag` off nodes of several shapes.
-const SEP = sep();
-const STAR = star();
-const GLOBSTAR = globstar();
-const ANYCHAR = anyChar();
-const isWildcard = (n) => n === STAR || n === GLOBSTAR || n === ANYCHAR;
+const isWildcard = (n) => n === STAR_NODE || n === GLOBSTAR_NODE || n === ANYCHAR_NODE;
 
 // One body for the union of `branches`: what they all start or end with is
 // lifted out of the brace, whole tokens first, then the bytes shared by their
@@ -45,7 +39,7 @@ export function factorBranches(branches) {
   members: for (const s of seqs) {
     let hasLiteral = false;
     for (const n of s) {
-      if (n === SEP) continue members;
+      if (n === SEP_NODE) continue members;
       if (n.tag === N_LITERAL) hasLiteral = true;
     }
     single++;
@@ -53,7 +47,7 @@ export function factorBranches(branches) {
     someLiteral ||= hasLiteral;
   }
   let aSet = literals;
-  for (let i = 0; aSet && i < suffix.length && suffix[i] !== SEP; i++) {
+  for (let i = 0; aSet && i < suffix.length && suffix[i] !== SEP_NODE; i++) {
     aSet = suffix[i].tag === N_LITERAL;
   }
   if (single > 1 && !aSet && someLiteral && (prefix.length > 0 || suffix.length > 0)) {
@@ -128,8 +122,8 @@ function mergeSegments(seqs, liftedWild) {
     let plain = true;
     for (let j = 0; j < s.length && plain; j++) {
       const n = s[j];
-      if (n === GLOBSTAR || n === STAR || n === ANYCHAR) wild = true;
-      else if (n !== SEP && n.tag !== N_LITERAL) plain = false;
+      if (isWildcard(n)) wild = true;
+      else if (n !== SEP_NODE && n.tag !== N_LITERAL) plain = false;
     }
     // A lone node merges with nothing: a literal is a brace alternative
     // as it is, a wildcard ends in no literal.
@@ -137,7 +131,7 @@ function mergeSegments(seqs, liftedWild) {
     let k = 0;
     let start = 0;
     for (let end = 0; end <= s.length; end++) {
-      if (end < s.length && s[end] !== SEP) continue;
+      if (end < s.length && s[end] !== SEP_NODE) continue;
       if (end > start && s[end - 1].tag === N_LITERAL) {
         entries.push([k, cheapKey(s, end - 1), i, end - 1]);
       }

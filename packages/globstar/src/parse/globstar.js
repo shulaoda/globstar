@@ -19,8 +19,8 @@ import {
   N_LITERAL,
   N_SEPARATOR,
   N_STAR,
-  sep,
-  star,
+  SEP_NODE,
+  STAR_NODE,
 } from "./ast.js";
 import { GlobError, MAX_BRACE_NESTING, MAX_EXPANSION } from "../error.js";
 
@@ -58,7 +58,7 @@ function mayTouch(node) {
 // `before`/`after` tell whether the neighbors of `node` are such boundaries.
 // Returns the node that takes its place.
 function decide(node, before, after) {
-  if (node.tag === N_GLOBSTAR) return before && after ? node : star();
+  if (node.tag === N_GLOBSTAR) return before && after ? node : STAR_NODE;
   if (node.tag === N_BRACE) {
     const { branches } = node;
     for (let k = 0; k < branches.length; k++) branches[k] = decide(branches[k], before, after);
@@ -189,7 +189,7 @@ function rewrite(node, budget) {
         (out.edges[1] & (SEP | NONE)) === 0 ||
         (next !== undefined && next.tag !== N_SEPARATOR && next.tag !== N_BRACE)
       ) {
-        item = star();
+        item = STAR_NODE;
       }
     }
     out.edges = join(out.edges, edges(item));
@@ -279,8 +279,8 @@ function split(branches, facing, front) {
   }
   if (seps.length > 0) {
     const items = group(seps).items;
-    if (front) items.unshift(sep());
-    else items.push(sep());
+    if (front) items.unshift(SEP_NODE);
+    else items.push(SEP_NODE);
     groups.push(seqOf(items));
   }
   if (rest.length > 0) groups.push(group(rest));
