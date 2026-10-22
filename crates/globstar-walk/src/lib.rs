@@ -297,10 +297,9 @@ impl Walk {
         // there would ignore everything else, and is refused.
         let mut ignore_patterns: Vec<(String, String)> = Vec::new();
         for s in &opts.ignore {
-            let n = normalize_pattern(s);
-            if n.is_empty() && !s.is_empty() {
+            let Some(n) = normalize_pattern(s) else {
                 continue;
-            }
+            };
             if n.starts_with('!') {
                 return Err(WalkError::InvalidPattern {
                     pattern: s.clone(),
@@ -682,22 +681,23 @@ impl Iterator for Walk {
 /// names the folder before it, so it becomes a trailing `/` (`d/.` ≡
 /// `d/`, never the files `d` would match). `/` in a pattern is always
 /// structural (`\/` is a parse error), so textual splitting is safe.
-/// Returns `""` when nothing remains (`.`, `./`).
-fn normalize_pattern(s: &str) -> String {
-    let s = s.trim_start_matches('/');
+/// `None` when nothing remains (`.`, `./`, `//`): it selects or ignores
+/// nothing. The written `""` stays, for the core to refuse.
+fn normalize_pattern(raw: &str) -> Option<String> {
+    let s = raw.trim_start_matches('/');
     let trailing = s.ends_with('/') || s.ends_with("/.");
     let segs: Vec<&str> = s
         .split('/')
         .filter(|seg| !seg.is_empty() && *seg != ".")
         .collect();
     if segs.is_empty() {
-        return String::new();
+        return raw.is_empty().then(String::new);
     }
     let mut out = segs.join("/");
     if trailing {
         out.push('/');
     }
-    out
+    Some(out)
 }
 
 /// A stat error that means no entry can be at the path, so a root walk
@@ -789,10 +789,7 @@ fn name_list(patterns: &[(String, String)]) -> String {
 /// and again after each `!` run, which can expose a `/` and then
 /// another run: `!/!x` ≡ `!!x`, the body `x` with two `!`.
 fn split_bangs(raw: &str) -> Option<(usize, String)> {
-    let mut body = normalize_pattern(raw);
-    if body.is_empty() && !raw.is_empty() {
-        return None;
-    }
+    let mut body = normalize_pattern(raw)?;
     let mut bangs = 0;
     loop {
         let run = body.bytes().take_while(|&b| b == b'!').count();
@@ -800,12 +797,7 @@ fn split_bangs(raw: &str) -> Option<(usize, String)> {
             return Some((bangs, body));
         }
         bangs += run;
-        let tail = &body[run..];
-        let next = normalize_pattern(tail);
-        if next.is_empty() && !tail.is_empty() {
-            return None;
-        }
-        body = next;
+        body = normalize_pattern(&body[run..])?;
     }
 }
 

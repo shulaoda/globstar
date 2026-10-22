@@ -165,7 +165,7 @@ function prepare(patterns, optsInput) {
     // §3.2: ignore entries are never `!`-split, only normalized. A
     // leading `!` there would ignore everything else, and is refused.
     const n = normalizePattern(raw);
-    if (n === "" && raw !== "") continue;
+    if (n === null) continue;
     if (n.startsWith("!")) {
       throw new WalkError("InvalidPattern", {
         pattern: raw,
@@ -382,14 +382,16 @@ const WINDOWS = process.platform === "win32";
 // names the folder before it, so it becomes a trailing `/` (`d/.` ≡
 // `d/`, never the files `d` would match). `/` in a pattern is always
 // structural (`\/` is a parse error), so textual splitting is safe.
-// Returns "" when nothing remains (`.`, `./`).
-function normalizePattern(s) {
+// `null` when nothing remains (`.`, `./`, `//`): it selects or ignores
+// nothing. The written "" stays, for the core to refuse.
+function normalizePattern(raw) {
   let i = 0;
-  while (i < s.length && s.charCodeAt(i) === 0x2f) i++;
-  if (i > 0) s = s.slice(i);
+  while (i < raw.length && raw.charCodeAt(i) === 0x2f) i++;
+  const s = raw.slice(i);
   const trailingSlash = s.endsWith("/") || s.endsWith("/.");
   const segs = s.split("/").filter((seg) => seg !== "" && seg !== ".");
-  return segs.length === 0 ? "" : segs.join("/") + (trailingSlash ? "/" : "");
+  if (segs.length === 0) return raw === "" ? "" : null;
+  return segs.join("/") + (trailingSlash ? "/" : "");
 }
 
 // WALKER_SPEC §4.2: the `!` count and the body of a written pattern;
@@ -398,18 +400,15 @@ function normalizePattern(s) {
 // again after each `!` run, which can expose a `/` and then another
 // run: `!/!x` ≡ `!!x`, the body `x` with two `!`.
 function splitBangs(raw) {
-  let body = normalizePattern(raw);
-  if (body === "" && raw !== "") return null;
   let bangs = 0;
-  for (;;) {
+  for (let body = normalizePattern(raw); body !== null; ) {
     let run = 0;
     while (run < body.length && body.charCodeAt(run) === 0x21 /* ! */) run++;
     if (run === 0) return { bangs, body };
     bangs += run;
-    const tail = body.slice(run);
-    body = normalizePattern(tail);
-    if (body === "" && tail !== "") return null;
+    body = normalizePattern(body.slice(run));
   }
+  return null;
 }
 
 // Compiles `{ raw, body }` pairs (`body` normalized: leading `/`
