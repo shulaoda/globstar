@@ -25,11 +25,8 @@ use std::path::PathBuf;
 
 const FIXTURES_DIR: &str = "../../fixtures";
 
-/// The spec corpus, and the ecosystem corpus (`fixtures/ecosystem/`): the
-/// cases other libraries' suites assert, with our answers. The suites were
-/// run on POSIX, where the libraries themselves behave as recorded, so the
-/// ecosystem rows run everywhere but Windows.
-const SINGLE_FILES: &[&str] = &[
+/// The spec corpus's single-pattern files.
+const SPEC_FILES: &[&str] = &[
     "corpus/corpus.txt",
     "corpus/corpus-realworld.txt",
     "corpus/corpus-utf8.txt",
@@ -42,31 +39,27 @@ const SINGLE_FILES: &[&str] = &[
     "corpus/corpus-windows.txt",
     #[cfg(not(windows))]
     "corpus/corpus-unix.txt",
-    #[cfg(not(windows))]
-    "ecosystem/js/picomatch.txt",
-    #[cfg(not(windows))]
-    "ecosystem/js/picomatch-diff.txt",
-    #[cfg(not(windows))]
-    "ecosystem/js/micromatch.txt",
-    #[cfg(not(windows))]
-    "ecosystem/js/micromatch-diff.txt",
-    #[cfg(not(windows))]
-    "ecosystem/js/minimatch.txt",
-    #[cfg(not(windows))]
-    "ecosystem/js/minimatch-diff.txt",
-    #[cfg(not(windows))]
-    "ecosystem/rust/globset.txt",
-    #[cfg(not(windows))]
-    "ecosystem/rust/globset-diff.txt",
-    #[cfg(not(windows))]
-    "ecosystem/rust/fast-glob.txt",
-    #[cfg(not(windows))]
-    "ecosystem/rust/fast-glob-diff.txt",
-    #[cfg(not(windows))]
-    "ecosystem/rust/wax.txt",
-    #[cfg(not(windows))]
-    "ecosystem/rust/wax-diff.txt",
 ];
+
+/// The spec corpus, then the ecosystem corpus (`fixtures/ecosystem/`):
+/// other libraries' suites with our answers. They were recorded on POSIX,
+/// so Windows skips them.
+fn single_files() -> Vec<String> {
+    let mut files: Vec<String> = SPEC_FILES.iter().map(|f| f.to_string()).collect();
+    if cfg!(windows) {
+        return files;
+    }
+    for side in ["js", "rust"] {
+        let mut names: Vec<String> = std::fs::read_dir(corpus_path(&format!("ecosystem/{side}")))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.ends_with(".txt"))
+            .collect();
+        names.sort();
+        files.extend(names.into_iter().map(|n| format!("ecosystem/{side}/{n}")));
+    }
+    files
+}
 
 fn corpus_path(name: &str) -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
@@ -340,8 +333,8 @@ fn corpus_single_engines_vs_truth() {
     let mut globstar = Stats::default();
     let mut nfa = Stats::default();
     let mut rows = 0;
-    for file in SINGLE_FILES {
-        for row in rows_of(file, true) {
+    for file in single_files() {
+        for row in rows_of(&file, true) {
             rows += 1;
             let pattern = row.pattern();
             let want = row.want(parse_match);

@@ -15,8 +15,10 @@ not pin), plus the platform-gated `corpus-unix.txt` and
 Other surfaces: `corpus-dir.txt` (`match_dir`), `corpus-multi.txt` /
 `corpus-multi-dir.txt` (unions).
 
-The file lists are hard-coded in `crates/globstar/tests/corpus.rs` and `scripts/verify.mjs` —
-a new corpus file must be registered in BOTH, or it runs nowhere.
+The spec corpus files are listed by hand in `crates/globstar/tests/corpus.rs` and
+`scripts/verify.mjs` — a new one must be added to BOTH, or it runs nowhere. Every
+`.txt` in `../ecosystem/js/` and `../ecosystem/rust/` runs without a list, on every
+platform but Windows.
 
 ## Format
 

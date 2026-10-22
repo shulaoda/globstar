@@ -29,7 +29,7 @@
 //   node scripts/verify.mjs --skip-js    # Rust only
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -52,10 +52,9 @@ if (SKIP_RUST && SKIP_JS) {
 
 const FIXTURES_DIR = resolve(ROOT, "fixtures");
 
-// The spec corpus, and the ecosystem corpus (`fixtures/ecosystem/`): the
-// cases other libraries' suites assert, with our answers. The suites were
-// run on POSIX, where the libraries themselves behave as recorded, so the
-// ecosystem rows run everywhere but Windows.
+// The spec corpus, then the ecosystem corpus (`fixtures/ecosystem/`):
+// other libraries' suites with our answers. They were recorded on POSIX,
+// so Windows skips them.
 const SINGLE_FILES = [
   "corpus/corpus.txt",
   "corpus/corpus-realworld.txt",
@@ -68,20 +67,12 @@ const SINGLE_FILES = [
   process.platform === "win32" ? "corpus/corpus-windows.txt" : "corpus/corpus-unix.txt",
   ...(process.platform === "win32"
     ? []
-    : [
-        "ecosystem/js/picomatch.txt",
-        "ecosystem/js/picomatch-diff.txt",
-        "ecosystem/js/micromatch.txt",
-        "ecosystem/js/micromatch-diff.txt",
-        "ecosystem/js/minimatch.txt",
-        "ecosystem/js/minimatch-diff.txt",
-        "ecosystem/rust/globset.txt",
-        "ecosystem/rust/globset-diff.txt",
-        "ecosystem/rust/fast-glob.txt",
-        "ecosystem/rust/fast-glob-diff.txt",
-        "ecosystem/rust/wax.txt",
-        "ecosystem/rust/wax-diff.txt",
-      ]),
+    : ["js", "rust"].flatMap((side) =>
+        readdirSync(join(FIXTURES_DIR, "ecosystem", side))
+          .filter((name) => name.endsWith(".txt"))
+          .sort()
+          .map((name) => `ecosystem/${side}/${name}`),
+      )),
 ];
 
 // ── shared helpers ──────────────────────────────────────────────────
