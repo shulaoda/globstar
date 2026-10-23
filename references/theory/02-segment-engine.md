@@ -188,9 +188,11 @@ nodes and edges, both within the walk's budget — the NFA over
 the graph is the non-backtracking floor that rules out ReDoS — and
 O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 65
 wildcard-only segments for the all-below proof (64 and the step that
-shows the set has settled) and 4096 element
-compares for a chain's tail tokens; past them it gives the safe
-answer (GLOB_SPEC §15.5). The engine answers `is_match`, `match_dir`,
+shows the set has settled), then, where elements split the names by
+length, at most 64 more (one per set of states a length class fires;
+512 firings, holding at most 64 states per NFA state in all), and
+4096 element compares for a chain's tail tokens; past them it gives
+the safe answer (GLOB_SPEC §15.5). The engine answers `is_match`, `match_dir`,
 and `static_prefixes` natively.
 
 ## JS dual-mode execution

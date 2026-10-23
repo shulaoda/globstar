@@ -13,7 +13,10 @@ pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     fn is_zero(&self) -> bool;
     fn clear(&mut self);
     fn or_with(&mut self, other: &Self);
+    fn and_with(&mut self, other: &Self);
     fn intersects(&self, other: &Self) -> bool;
+    /// How many bits are set.
+    fn count(&self) -> usize;
     /// Visit every set bit, ascending.
     fn for_each(&self, f: impl FnMut(usize));
     /// The words, lowest bits first.
@@ -50,8 +53,16 @@ impl Bits for u64 {
         *self |= *other;
     }
     #[inline]
+    fn and_with(&mut self, other: &Self) {
+        *self &= *other;
+    }
+    #[inline]
     fn intersects(&self, other: &Self) -> bool {
         *self & *other != 0
+    }
+    #[inline]
+    fn count(&self) -> usize {
+        self.count_ones() as usize
     }
     #[inline]
     fn for_each(&self, mut f: impl FnMut(usize)) {
@@ -104,8 +115,16 @@ impl Bits for Wide {
             *a |= *b;
         }
     }
+    fn and_with(&mut self, other: &Self) {
+        for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
+            *a &= *b;
+        }
+    }
     fn intersects(&self, other: &Self) -> bool {
         self.0.iter().zip(other.0.iter()).any(|(a, b)| a & b != 0)
+    }
+    fn count(&self) -> usize {
+        self.0.iter().map(|w| w.count_ones() as usize).sum()
     }
     fn for_each(&self, mut f: impl FnMut(usize)) {
         for (w, &word) in self.0.iter().enumerate() {

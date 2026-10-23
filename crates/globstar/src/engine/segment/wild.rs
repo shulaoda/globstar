@@ -81,6 +81,69 @@ impl Wild {
     }
 }
 
+/// What an element takes through its wildcards alone (dot=true), by
+/// segment length: `match_dir`'s all-below (see `nfa.rs`).
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct Lens {
+    /// Bit `L` for every segment of `L` bytes (1 ≤ L ≤ 31).
+    pub(super) bits: u32,
+    /// Every segment of `from` bytes or more (≤ 32; 0: none).
+    pub(super) from: u32,
+}
+
+impl Lens {
+    /// Every non-empty segment.
+    pub(super) const ALL: Lens = Lens { bits: 0, from: 1 };
+
+    /// The length classes of an NFA's `k + 1` it holds every segment
+    /// of, bit `c - 1` for class `c`: lengths 1 to `k` one by one, and
+    /// every longer one as `k + 1` (see `len_classes` in `nfa.rs`).
+    #[inline]
+    pub(super) fn classes(self, k: u32) -> u32 {
+        let from = if self.from == 0 {
+            0
+        } else {
+            u32::MAX << (self.from - 1)
+        };
+        (self.bits >> 1 | from) & u32::MAX >> (31 - k)
+    }
+
+    /// The longest length it singles out: 0 when it holds every length
+    /// or none.
+    pub(super) fn reach(self) -> u32 {
+        let top = 31 - self.bits.leading_zeros().min(31);
+        top.max(self.from.saturating_sub(1))
+    }
+}
+
+impl Wild {
+    /// Only `?`s and `*`s with nothing literal around them (a suffix
+    /// that may be empty) take every segment of a length.
+    pub(super) fn lens(&self) -> Lens {
+        let bare = match &self.kind {
+            WildKind::Affix(affix) => affix.bytes.is_empty(),
+            WildKind::Suffixes(set) => set.prefix.is_empty() && set.empty,
+            WildKind::Generic(nfa) => return nfa.lens(),
+        };
+        if !bare {
+            Lens::default()
+        } else if self.variable {
+            let from = self.min_len.max(1);
+            Lens {
+                bits: 0,
+                from: if from <= 32 { from } else { 0 },
+            }
+        } else if (1..=31).contains(&self.min_len) {
+            Lens {
+                bits: 1 << self.min_len,
+                from: 0,
+            }
+        } else {
+            Lens::default()
+        }
+    }
+}
+
 /// The rarer kinds are boxed so an `Elem` stays 40 bytes.
 #[derive(Debug, Clone)]
 pub(super) enum WildKind {

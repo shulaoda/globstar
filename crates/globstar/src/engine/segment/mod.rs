@@ -34,7 +34,7 @@ use chain::{Chain, Gate, Shape};
 use chain_index::ChainIndex;
 use graph::Graph;
 use nfa::{AnyNfa, any_nfa};
-use wild::{ByteSketch, Wild, WildKind};
+use wild::{ByteSketch, Lens, Wild, WildKind};
 
 /// A byte string the matcher keeps: literals, affixes, suffixes,
 /// static prefixes.
@@ -89,6 +89,17 @@ impl Elem {
             Elem::Lit(_) | Elem::Join => false,
             Elem::Wild(w) => w.any_seg,
             Elem::G0 | Elem::G1 => true,
+        }
+    }
+
+    /// What it takes through its wildcards alone (dot=true), by
+    /// segment length (`match_dir`'s all-below).
+    #[inline]
+    fn lens(&self) -> Lens {
+        match self {
+            Elem::Lit(_) | Elem::Join => Lens::default(),
+            Elem::Wild(w) => w.lens(),
+            Elem::G0 | Elem::G1 => Lens::ALL,
         }
     }
 

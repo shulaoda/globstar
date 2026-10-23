@@ -15,14 +15,21 @@ import {
   isGlobstar,
   nullable,
 } from "./elem.js";
-import { asciiLower, cmpFolded, ctz32, litEq, nextSep } from "../../bytes.js";
+import { asciiLower, cmpFolded, ctz32, litEq, nextSep, popcnt32 } from "../../bytes.js";
 import { ACCEPT } from "./graph.js";
-import { wildConsumes } from "./wild.js";
+import { wildConsumes, wildLenBits, wildLenFrom } from "./wild.js";
 
 // The wildcard-only segments `coversBelow` feeds before it gives up: a
 // pattern needs about one more than its longest run of them, and "not
 // provable" is a valid answer (GLOB_SPEC §15.5).
 const MAX_COVER_SEGMENTS = 64;
+// The search by length (`coversByLength`) gives up past this many sets
+// of states that segments fire, past eight times as many firings of a
+// class, or once the sets it fires hold this many states per state of
+// the NFA (counted at each firing): it costs about what as many
+// segments do.
+const MAX_COVER_SETS = 64;
+const MAX_COVER_FIRINGS = 8 * MAX_COVER_SETS;
 
 // ── building ────────────────────────────────────────────────────────
 
@@ -42,6 +49,35 @@ function layout(graph) {
 // One int32 of states up to 32, sparse beyond.
 export function anyNfa(graph, ci) {
   return graph.elems.length + 1 <= 32 ? denseNfa(graph) : sparseNfa(graph, ci);
+}
+
+// The lengths `coversBelow` tells apart: 1 to K one by one, and every
+// longer one as K + 1, where K is the most an element singles out (a
+// `?` K = 1, a `??*` K = 1 too: it takes every length from 2). Past
+// that every element takes every length or none. 0 when no element
+// takes some lengths but not others: the search by length is the
+// wildcard-only one then.
+function lenClasses(elems) {
+  let k = 0;
+  for (const e of elems) {
+    if (e.kind !== EL_WILD) continue;
+    const bits = wildLenBits(e.wild);
+    const from = wildLenFrom(e.wild);
+    if (bits !== 0) k = Math.max(k, 31 - Math.clz32(bits));
+    if (from > 1) k = Math.max(k, from - 1);
+  }
+  return k;
+}
+
+// The length classes the element takes every segment of through its
+// wildcards alone (dot=true), bit c - 1 for class c of an NFA's K + 1
+// (`k` = K, see `lenClasses`).
+function classMask(e, k) {
+  const classes = -1 >>> (31 - k);
+  if (isGlobstar(e)) return classes;
+  if (e.kind !== EL_WILD) return 0;
+  const from = wildLenFrom(e.wild);
+  return ((wildLenBits(e.wild) >>> 1) | (from !== 0 ? -1 << (from - 1) : 0)) & classes;
 }
 
 // Int32 active set: at most 32 states. `after` holds per state the
@@ -76,7 +112,20 @@ function denseNfa(graph) {
   }
   let init = 0;
   for (const t of start) init = addTarget(init, t);
-  return { kind: NFA_SMALL, after: exact(after), init, accept, reach1 };
+  // Per length class, the states a segment of it fires for sure.
+  const k = lenClasses(elems);
+  let fire = null;
+  if (k > 0) {
+    fire = new Int32Array(k + 1);
+    for (let s = 0; s < n; s++) {
+      let mask = classMask(elems[s], k);
+      while (mask !== 0) {
+        fire[ctz32(mask)] |= 1 << s;
+        mask &= mask - 1;
+      }
+    }
+  }
+  return { kind: NFA_SMALL, after: exact(after), init, accept, reach1, fire };
 }
 
 // Past 32 states the graph NFA is stepped sparsely. A position keeps
@@ -166,6 +215,8 @@ function sparseNfa(graph, ci) {
     ends,
     reach1,
     accept,
+    // See `lenClasses`.
+    lenClasses: lenClasses(elems),
     // Mark arrays reused across calls (see `nfaRunSparse`).
     scratch: null,
   };
@@ -240,8 +291,13 @@ function nfaStepWild(m, active) {
 // Feeds wildcard-only segments until the set settles, requiring an
 // accept after each one. A real segment fires every transition a
 // wildcard-only one does, so `true` holds for all real paths; `false`
-// may only mean "not provable".
+// may only mean "not provable". Where that proves nothing, segments of
+// each length may (`coversByLength`).
 export function coversBelow(m, active) {
+  return coversWild(m, active) || (m.nfa.fire !== null && coversByLength(m, active));
+}
+
+function coversWild(m, active) {
   const acceptBit = 1 << m.nfa.accept;
   // Tokens only move forward or sit on a globstar, so the set settles
   // within the number of states.
@@ -255,6 +311,61 @@ export function coversBelow(m, active) {
   return false;
 }
 
+// A wildcard-only segment fires what takes every segment, and segments
+// of one length fire more: `?` takes every one-unit name and `??*`
+// every longer one, so side by side they cover every name though
+// neither does alone. The segments of one length class (`lenClasses`)
+// fire the same states for sure, so the sets the classes fire, from
+// `active` on, stand for every path below: what each fired set enters
+// must hold accept. A real segment fires at least what its class does,
+// so `true` holds for all real paths. An empty fired set enters
+// nothing, and a set's takers (its states that take some length) fire
+// what the same takers fired before. The search visits fired sets, which
+// are the same in every NFA, in the same order, and gives up past its
+// caps (MAX_COVER_SETS).
+function coversByLength(m, active) {
+  const g = m.nfa;
+  const fire = g.fire;
+  let takes = 0;
+  for (const f of fire) takes |= f;
+  const budget = MAX_COVER_SETS * (g.accept + 1);
+  let firings = 0;
+  let work = 0;
+  const seen = [];
+  // The takers fired from.
+  const tried = [];
+  for (let i = -1; i < seen.length; i++) {
+    let set = active;
+    if (i >= 0) {
+      set = enterFired(g, seen[i]);
+      if ((set & (1 << g.accept)) === 0) return false;
+    }
+    if (tried.includes(set & takes)) continue;
+    tried.push(set & takes);
+    for (let c = 0; c < fire.length; c++) {
+      const fired = set & fire[c];
+      if (fired === 0 || ++firings > MAX_COVER_FIRINGS) return false;
+      work += popcnt32(fired);
+      if (work > budget) return false;
+      if (seen.includes(fired)) continue;
+      if (seen.length === MAX_COVER_SETS) return false;
+      seen.push(fired);
+    }
+  }
+  return true;
+}
+
+// What the states of `fired` enter once they take a segment.
+function enterFired(g, fired) {
+  let next = 0;
+  while (fired !== 0) {
+    const s = ctz32(fired);
+    fired &= fired - 1;
+    next |= g.after[s];
+  }
+  return next;
+}
+
 // ── running, sparse active set ──────────────────────────────────────
 
 // An active set over `stamp`'s indices: states first, then position `p`
@@ -263,13 +374,11 @@ export function coversBelow(m, active) {
 // clearing it is one increment. The sets live on the NFA and are
 // reused: a match never nests another on the same matcher.
 function sparseScratch(g) {
-  if (g.scratch === null) {
-    const size = 2 * g.n + 2;
-    const set = () => ({ items: [], len: 0, stamp: new Int32Array(size), gen: 1 });
-    g.scratch = { a: set(), b: set() };
-  }
+  if (g.scratch === null) g.scratch = { a: newSet(g), b: newSet(g), c: null };
   return g.scratch;
 }
+
+const newSet = (g) => ({ items: [], len: 0, stamp: new Int32Array(2 * g.n + 2), gen: 1 });
 
 function clearSet(set) {
   set.len = 0;
@@ -397,8 +506,23 @@ export function sparseReach1(g, set) {
 // As `coversBelow`, over the set `nfaRunSparse` or `initSparse` left.
 export function coversBelowSparse(m, active) {
   const g = m.nfa;
+  if (g.lenClasses === 0) return coversWildSparse(m, active, false);
+  // The search by length starts where the wildcard-only one does.
+  return coversWildSparse(m, active, true) || coversByLengthSparse(m, active);
+}
+
+// `keep`: leave `active` as it is, stepping through the other two
+// scratch sets.
+function coversWildSparse(m, active, keep) {
+  const g = m.nfa;
   const scratch = sparseScratch(g);
   let next = active === scratch.a ? scratch.b : scratch.a;
+  const first = active;
+  let spare = active;
+  if (keep) {
+    if (scratch.c === null) scratch.c = newSet(g);
+    spare = scratch.c;
+  }
   const base = g.n + 1;
   const anySeg = (s) => elemAnySeg(m.elems[s]);
   const limit = Math.min(g.n + 1, MAX_COVER_SEGMENTS);
@@ -419,11 +543,120 @@ export function coversBelowSparse(m, active) {
     }
     if (!sparseHas(next, g.accept)) return false;
     if (next.len === active.len && sameSet(next, active)) return true;
-    const t = active;
+    const t = active === first ? spare : active;
     active = next;
     next = t;
   }
   return false;
+}
+
+// As `coversByLength`; a fired set is its states, ascending.
+function coversByLengthSparse(m, active) {
+  const g = m.nfa;
+  const k = g.lenClasses;
+  const next = sparseScratch(g).a;
+  const budget = MAX_COVER_SETS * (g.n + 1);
+  let firings = 0;
+  let work = 0;
+  const seen = new SetIndex();
+  const tried = new SetIndex();
+  // Class `c` fires `sets[at[c]..at[c + 1]]`.
+  const at = new Int32Array(k + 2);
+  for (let i = -1; i < seen.sets.length; i++) {
+    if (i >= 0) {
+      clearSet(next);
+      for (const s of seen.sets[i]) fireSparse(m, g, s, next);
+      if (!sparseHas(next, g.accept)) return false;
+    }
+    const states = takers(m, g, i < 0 ? active : next);
+    const h = hashStates(states, 0, states.length);
+    if (tried.has(states, 0, states.length, h)) continue;
+    tried.add(states, 0, states.length, h);
+    // Every class's fired set, a counting sort of the states by the
+    // classes they take.
+    const masks = states.map((s) => classMask(m.elems[s], k));
+    at.fill(0);
+    for (let mask of masks) {
+      for (; mask !== 0; mask &= mask - 1) at[ctz32(mask) + 1]++;
+    }
+    for (let c = 0; c <= k; c++) at[c + 1] += at[c];
+    const sets = new Int32Array(at[k + 1]);
+    const end = at.slice(0, k + 1);
+    for (let j = 0; j < states.length; j++) {
+      for (let mask = masks[j]; mask !== 0; mask &= mask - 1) sets[end[ctz32(mask)]++] = states[j];
+    }
+    for (let c = 0; c <= k; c++) {
+      const lo = at[c];
+      const hi = at[c + 1];
+      if (lo === hi || ++firings > MAX_COVER_FIRINGS) return false;
+      work += hi - lo;
+      if (work > budget) return false;
+      const h = hashStates(sets, lo, hi);
+      if (seen.has(sets, lo, hi, h)) continue;
+      if (seen.sets.length === MAX_COVER_SETS) return false;
+      seen.add(sets, lo, hi, h);
+    }
+  }
+  return true;
+}
+
+function hashStates(a, lo, hi) {
+  let h = 0x811c9dc5;
+  for (let j = lo; j < hi; j++) h = Math.imul(h ^ a[j], 0x01000193);
+  return h;
+}
+
+// Sets of states, ascending, each found again by its hash.
+class SetIndex {
+  constructor() {
+    this.sets = [];
+    this.byHash = new Map();
+  }
+
+  // Is `a[lo..hi]`, of hash `h`, one of the sets?
+  has(a, lo, hi, h) {
+    const which = this.byHash.get(h);
+    if (which === undefined) return false;
+    for (const j of which) {
+      const b = this.sets[j];
+      if (b.length !== hi - lo) continue;
+      let k = 0;
+      while (k < b.length && b[k] === a[lo + k]) k++;
+      if (k === b.length) return true;
+    }
+    return false;
+  }
+
+  add(a, lo, hi, h) {
+    const which = this.byHash.get(h);
+    if (which === undefined) this.byHash.set(h, [this.sets.length]);
+    else which.push(this.sets.length);
+    this.sets.push(a.slice(lo, hi));
+  }
+}
+
+// The states of `set` that take every segment of some length,
+// ascending: what a length class may fire. Literals take none.
+function takers(m, g, set) {
+  const out = [];
+  const base = g.n + 1;
+  const take = (s) => {
+    if (classMask(m.elems[s], g.lenClasses) !== 0) out.push(s);
+  };
+  for (let k = 0; k < set.len; k++) {
+    const item = set.items[k];
+    if (item >= base) {
+      const p = item - base;
+      for (let j = g.otherAt[p]; j < g.otherAt[p + 1]; j++) take(g.others[j]);
+    } else if (item !== g.accept) {
+      take(item);
+    }
+  }
+  const sorted = Int32Array.from(out).sort();
+  let n = 0;
+  for (let k = 0; k < sorted.length; k++)
+    if (k === 0 || sorted[k] !== sorted[k - 1]) sorted[n++] = sorted[k];
+  return sorted.subarray(0, n);
 }
 
 function sameSet(a, b) {

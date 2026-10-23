@@ -174,9 +174,9 @@ This is the formal counterpart of `references/spec/GLOB_SPEC.md` §15.4 and §16
 
 `prefix_match` over-approximates: `Descend` means a descendant MAY match. `all_below` under-approximates: it is set only when every descendant provably matches. Both err on the consumer's safe side.
 
-The engine decides it by simulation. A _wildcard-only_ byte is one that `?`, `*` and `**` consume and that every literal and class rejects; a wildcard-only path is built from such bytes and separators. Starting from the state set that `d` left behind, the engine feeds every wildcard-only path in `R` and requires an accept after each segment.
+The engine decides it by simulation. A _wildcard-only_ byte is one that `?`, `*` and `**` consume and that every literal and class rejects; a wildcard-only path is built from such bytes and separators, so only the lengths of its segments tell two apart. Starting from the state set that `d` left behind, the engine feeds every wildcard-only path in `R` and requires an accept after each segment.
 
-A wildcard-only segment of any length, stepped until the set settles:
+First a wildcard-only segment of any length, stepped until the set settles:
 
 ```
 S ← the state set after the segments of d
@@ -190,11 +190,29 @@ repeat:
 
 Tokens only move right along a sequence or sit on a globstar, so the loop ends within the number of states; it is capped at 65 steps (GLOB_SPEC §15.5). The per-`Wild` bit is precomputed: `*` and `?*` have it, `*.js` and `?` do not, and a `Generic` in-segment NFA gets it from the same simulation run over its `Any` states.
 
+Where that answers `false`, segments of each length may still prove the flag: `?` takes every one-byte name and `??*` every longer one, so `{**/?,**/??*}` covers every name though no element does alone. Each `Wild` knows the lengths whose every name its wildcards alone take: bit `L` for 1 ≤ L ≤ 31 and "every length from `from` on" (≤ 32), read off its affixes (`?` repeated with nothing literal around it, a `*` among them for the open form) or off the same simulation of a `Generic` NFA, one byte at a time. With K the longest length some element singles out, lengths 1 to K and "longer than K" are the length classes: within one, every element takes every name or none. The engine searches the fired sets, the states a class's segments take, from the set `d` left:
+
+```
+for each set S reached (the set d left, then what each fired set enters):
+    T ← the states of S that take every segment of some class
+    if T was seen: continue          (it fires what it fired before)
+    for each class c:
+        F ← the states of T that take every segment of class c
+        if F is empty: return false
+        if F is new: queue it
+for each F queued:
+    S ← what F enters
+    if S has no accept: return false
+return true when the queue is done
+```
+
+A real segment fires at least what its class fires, so by induction every real path below `d` reaches, after each segment, a superset of a set the search visited, each holding accept. An empty fired set enters nothing, so it answers `false` at once. The fired sets are the same in every NFA kind (the dense and sparse ones step the same sets of states), and the search visits them in one order, so every NFA gives the same answer. It gives up (`false`) past 64 fired sets, past 512 firings of a class, or once the fired sets hold 64 states per state of the NFA, counted at each firing: it costs about what 64 segments do.
+
 On a lone chain the simulation has a closed form, which `chain_dir` uses: the globstar is alive after `d`, every tail element is such a `Wild`, and every shorter tail token is alive as well (the tail's first j elements take the last j segments, the globstar released before them), for 1 ≤ j < tail length, within a budget of 4,096 element compares.
 
 Under `dot=false` it returns `false` without simulating: `**` does not match a dot-led name, so some `d/.x` always escapes.
 
-One corner is not provable: branches that split the names by length — `?/**/?` with `**/??*` — cover together, but the rule asks each `Wild` to take every length on its own and answers `false` there. Union members that merge into one segment (`**/?` with `**/??*` factors to `**/?{,?*}`) are one `Wild` and are proven; factoring merges members, not the braces a user wrote, so `{**/?,**/??*}` stays two branches and is not.
+Branches that split the names by length — `?/**/?` with `**/??*` at `a`, `{**/?,**/??*}` anywhere — are proven by the length search. What stays unprovable is past its bounds: an element that singles out a length past 31 bytes (`?` repeated 33 times, with `*` or not) counts as taking no length, and a pattern whose fired sets pass the caps answers `false`.
 
 ## 3. Walker integration
 
@@ -223,7 +241,7 @@ This is the soundness property the walker requires: it may safely prune any subt
 match_dir(P, d) ∈ {DescendAll, DescendAllAndMatch}   ⇒   d ++ "/" ++ s ∈ L(P)
 ```
 
-_Proof sketch._ Take any real `s` and the wildcard-only path `s'` of the same shape — the same number of segments, the same lengths. Every transition a wildcard-only byte fires, a real non-separator byte fires too (`dot=true`, so no wildcard is dot-protected), and separators fire the same transitions in both. By induction the state set after `s` contains the one after `s'`. The simulation visited `s'` — it covers every shape — and found an accept there. ∎
+_Proof sketch._ Take any real `s` and the wildcard-only path `s'` of the same shape — the same number of segments, the same lengths. Every transition a wildcard-only byte fires, a real non-separator byte fires too (`dot=true`, so no wildcard is dot-protected), and separators fire the same transitions in both. By induction the state set after `s` contains the one after `s'`. The simulation visited `s'` — the any-length one covers every shape at once, the length search every sequence of length classes, and a wildcard-only segment fires the same states as any other of its class — and found an accept there. ∎
 
 This is the soundness property an excluding consumer requires: it may skip any directory that receives a `DescendAll…` verdict, and no path it hides escapes the pattern.
 

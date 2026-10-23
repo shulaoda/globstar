@@ -53,13 +53,16 @@ export function compileSegNfa(nodes, dot, ci) {
   const small = b.kinds.length <= 32;
   const nfa = small ? new SegNfaSmall(b, entry, dot) : new SegNfaWide(b, entry, dot);
   const test = small ? (a, s) => (a & (1 << s)) !== 0 : bitTest;
+  const lens = small ? lensSmall(nfa) : lensWide(nfa);
+  nfa.lenBits = lens.bits;
+  nfa.lenFrom = lens.from;
   return {
     nfa,
     minLen: satisfiable(b, entry) ? 0 : NEVER_LEN,
     dotProtect: !dot && wildLed(b, nfa.initDotBlocked, test),
     // Does it accept every non-empty segment through its wildcards
     // alone? (`matchDir` all-below.)
-    anySeg: small ? anySegSmall(nfa) : anySegWide(nfa),
+    anySeg: lens.from === 1,
   };
 }
 
@@ -221,6 +224,9 @@ class SegNfaSmall {
     this.initDotBlocked = dot ? this.init : closeSmall(b, 1 << entry, true);
     this.acceptMask = 1 << (n - 1);
     this.countsBytes = b.countsBytes;
+    // What its wildcards alone take, by length (see `lensSmall`).
+    this.lenBits = 0;
+    this.lenFrom = 0;
   }
 
   matches(str, s0, e0) {
@@ -256,14 +262,18 @@ class SegNfaSmall {
   }
 }
 
-// Step the entry set through the wildcards only, one unit at a time,
-// until it settles; every length from 1 up must accept.
-function anySegSmall(nfa) {
+// What the wildcards alone accept, by segment length: the entry set
+// stepped through them one unit at a time. Bit L of `bits` marks that
+// every segment of L units matches (1 ≤ L ≤ 31), and `from` that every
+// one of `from` units or more does (≤ 32; 0: none known), so `from` 1
+// is "every non-empty segment" (`matchDir`'s all-below, see
+// `coversBelow` in nfa.js). Every loop is a star's one-unit self-loop,
+// so the set settles within the number of states.
+function lensSmall(nfa) {
   const kinds = nfa.kinds;
+  const lens = { bits: 0, from: 0, run: 0 };
   let active = nfa.init;
-  // Every loop is a star's one-unit self-loop, so the set settles within
-  // the number of states.
-  for (let step = 0; step <= kinds.length; step++) {
+  for (let len = 1; len <= kinds.length + 1; len++) {
     let next = 0;
     let bits = active;
     while (bits !== 0) {
@@ -271,11 +281,32 @@ function anySegSmall(nfa) {
       bits &= bits - 1;
       if (kinds[s] === S_ANY) next |= nfa.closures[nfa.nexts[s]];
     }
-    if ((next & nfa.acceptMask) === 0) return false;
-    if (next === active) return true;
+    const more = addLen(lens, len, (next & nfa.acceptMask) !== 0);
+    if (next === active) return settle(lens);
+    if (next === 0 || !more) break;
     active = next;
   }
-  return false;
+  return lens;
+}
+
+// Length `len` matched (`ok`) or not. Is a longer one still worth the
+// step? Past 31 units only a run of matching lengths that started by
+// 32 is.
+function addLen(lens, len, ok) {
+  if (!ok) lens.run = 0;
+  else if (lens.run === 0) lens.run = len;
+  if (ok && len < 32) lens.bits |= 1 << len;
+  return len < 32 || (lens.run !== 0 && lens.run <= 32);
+}
+
+// The set settled: every longer length matches as the last one did, so
+// the run of matching lengths it ends never ends. `bits` keeps only the
+// lengths below it.
+function settle(lens) {
+  if (lens.run === 0 || lens.run > 32) return lens;
+  lens.from = lens.run;
+  if (lens.from < 32) lens.bits &= ~(-1 << lens.from);
+  return lens;
 }
 
 // The same automaton over Int32Array words: more than 32 states. The
@@ -321,6 +352,9 @@ class SegNfaWide {
     this.initDotBlocked = dot ? this.init : entrySet(true);
     this.accept = n - 1;
     this.countsBytes = b.countsBytes;
+    // What its wildcards alone take, by length (see `lensSmall`).
+    this.lenBits = 0;
+    this.lenFrom = 0;
   }
 
   matches(str, s0, e0) {
@@ -393,19 +427,21 @@ function stepClosing(nfa, active, next, c) {
   closeWide(nfa, next, false);
 }
 
-function anySegWide(nfa) {
+function lensWide(nfa) {
   const kinds = nfa.kinds;
+  const lens = { bits: 0, from: 0, run: 0 };
   let active = nfa.init.slice();
   let next = new Int32Array(nfa.words);
-  for (let step = 0; step <= kinds.length; step++) {
+  for (let len = 1; len <= kinds.length + 1; len++) {
     stepClosing(nfa, active, next, -1);
-    if (!bitTest(next, nfa.accept)) return false;
-    if (bitsEqual(next, active)) return true;
+    const more = addLen(lens, len, bitTest(next, nfa.accept));
+    if (bitsEqual(next, active)) return settle(lens);
+    if (bitsIsZero(next) || !more) break;
     const t = active;
     active = next;
     next = t;
   }
-  return false;
+  return lens;
 }
 
 class SegBuilder {

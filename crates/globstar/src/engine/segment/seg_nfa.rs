@@ -14,7 +14,7 @@ use crate::parse::ast::{CharClass, Node};
 
 use super::NEVER;
 use super::bits::{Bits, Wide};
-use super::wild::{Wild, WildKind};
+use super::wild::{Lens, Wild, WildKind};
 
 const UNSET: u32 = u32::MAX;
 
@@ -88,19 +88,23 @@ impl SegNfa {
         });
 
         let satisfiable = satisfiable::<B>(&states, entry, words);
-        let nfa = SegNfaImpl {
+        let mut nfa = SegNfaImpl {
             states,
             init,
             init_dot_blocked,
             closures,
             accept: n - 1,
             words,
+            lens: Lens::default(),
         };
+        nfa.lens = nfa.step_lens();
         Wild {
             min_len: if satisfiable { 0 } else { NEVER },
             variable: true,
             dot_protect: !dot && !can_lit_dot,
-            any_seg: nfa.any_seg(),
+            // Does it accept every non-empty segment through its
+            // wildcards alone? (`match_dir` all-below.)
+            any_seg: nfa.lens.from == 1,
             kind: WildKind::Generic(Box::new(kind(nfa))),
         }
     }
@@ -109,6 +113,14 @@ impl SegNfa {
         match self {
             SegNfa::Small(n) => n.matches(seg),
             SegNfa::Wide(n) => n.matches(seg),
+        }
+    }
+
+    /// What its wildcards alone take, by length (`Wild::lens`).
+    pub(super) fn lens(&self) -> Lens {
+        match self {
+            SegNfa::Small(n) => n.lens,
+            SegNfa::Wide(n) => n.lens,
         }
     }
 
@@ -196,6 +208,8 @@ pub(super) struct SegNfaImpl<B: Bits> {
     closures: Box<[B]>,
     accept: usize,
     words: usize,
+    /// What its wildcards alone take, by length (see `step_lens`).
+    lens: Lens,
 }
 
 #[derive(Debug, Clone)]
@@ -281,24 +295,47 @@ impl<B: Bits> SegNfaImpl<B> {
         close(&self.states, next, false);
     }
 
-    /// Step the entry set through wildcards only, one byte at a time,
-    /// until it settles; every length from 1 up must accept.
-    fn any_seg(&self) -> bool {
+    /// What the wildcards alone accept, by segment length (see
+    /// `Lens`): the entry set stepped through them one byte at a time.
+    /// Every loop is a star's one-byte self-loop, so the set settles
+    /// within `states.len()` steps; past 31 bytes only a run of
+    /// matching lengths that started by 32 is worth the steps.
+    fn step_lens(&self) -> Lens {
+        let mut lens = Lens::default();
+        // Where the run of matching lengths up to this one started (0:
+        // this one did not match).
+        let mut run = 0;
         let mut active = self.init.clone();
         let mut next = B::zero(self.words);
-        // Every loop is a star's one-byte self-loop, so the set settles
-        // within `states.len()` steps.
-        for _ in 0..=self.states.len() {
+        for len in 1..=self.states.len() as u32 + 1 {
             self.step_closing(&active, &mut next, None);
-            if !next.test(self.accept) {
-                return false;
+            let ok = next.test(self.accept);
+            if !ok {
+                run = 0;
+            } else if run == 0 {
+                run = len;
             }
+            if ok && len < 32 {
+                lens.bits |= 1 << len;
+            }
+            let open = (1..=32).contains(&run);
             if next == active {
-                return true;
+                // Settled: every longer length matches as this one did,
+                // so the run never ends. `bits` keeps the lengths below.
+                if open {
+                    lens.from = run;
+                    if run < 32 {
+                        lens.bits &= (1 << run) - 1;
+                    }
+                }
+                return lens;
+            }
+            if next.is_zero() || (len >= 32 && !open) {
+                break;
             }
             std::mem::swap(&mut active, &mut next);
         }
-        false
+        lens
     }
 }
 
