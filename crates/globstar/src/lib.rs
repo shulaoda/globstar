@@ -261,7 +261,8 @@ impl Glob {
     /// heads are bytes spelled with `/` and in the pattern's case: every
     /// match starts with one of them byte for byte, except that under
     /// `case_insensitive` a match may differ in case, and on Windows in
-    /// its separators (`\`). An empty prefix means the root.
+    /// its separators (`\`). An empty prefix means the root. Past a size
+    /// bound, a head is a shorter prefix that still holds (GLOB_SPEC §17).
     pub fn static_prefixes(&self) -> Vec<Vec<u8>> {
         if self.negated {
             return vec![Vec::new()];

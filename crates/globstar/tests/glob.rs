@@ -193,6 +193,17 @@ fn prefix_expansion_stays_within_the_budget() {
     assert_eq!(p.len(), 1000);
     let bytes: usize = p.iter().map(Vec::len).sum();
     assert!(bytes <= 4 * pattern.len(), "{bytes} bytes of prefixes");
+    // A head costs the bytes read to reach it: a file list keeps its heads,
+    // while 4,096 names behind a 16 KB folder pass 64 budgets of those and
+    // keep the folder.
+    let files: Vec<String> = (0..4000)
+        .map(|i| format!("packages/foo/src/components/xyz/Comp{i:04}.tsx"))
+        .collect();
+    assert_eq!(Glob::union(&files).unwrap().static_prefixes().len(), 4000);
+    let names: Vec<String> = (0..4096).map(|i| format!("{i:x}")).collect();
+    let folder = "x".repeat(16_384);
+    let p = prefixes(&format!("{folder}/{{{}}}", names.join(",")));
+    assert!(p == [folder.as_bytes()], "{} prefixes", p.len());
 }
 
 // A class is a byte table: one lookup per byte, however many items it

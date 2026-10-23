@@ -894,7 +894,7 @@ An implementation MAY use literal facts (prefix, suffix, substring, exact) to re
 
 The reference implementations compute them from the brace expansions of §10.1: for each expansion, its literal head up to its last whole segment, with heads a shorter one covers removed. An expansion with no literal head gives the empty prefix `""`, which covers every other head; so does a negated pattern or union member, since its matches can fall anywhere. The list is in the pattern's case (a case-insensitive match may differ there, §13) and holds `/` only (a Windows path with `\` may differ there, §14.4). An expansion that can match nothing gives no head: on Windows, one through an escaped `\` (§4.2), so a pattern all of whose expansions are dead has an empty list.
 
-The work is bounded linearly in the pattern; past the bound a head ends at its last whole segment, which is a shorter prefix and still holds.
+The work is bounded linearly in the pattern; past the bound a head ends at its last whole segment, which is a shorter prefix and still holds. The output is bounded linearly too: once the expansions recorded have read, in total, a fixed multiple of that bound in bytes, the list is the one head read up to the first brace, which every expansion shares.
 
 ---
 

@@ -9,15 +9,15 @@ import { compileMatcher, DirMatch } from "../src/index.js";
 
 const lib = JSON.stringify(new URL("../src/index.js", import.meta.url).href);
 
-// Runs `body` (with `compileMatcher` in scope) on a worker with a small
-// stack and resolves to what it posts back.
-function onSmallStack(body) {
+// Runs `body` (with `compileMatcher` in scope) on a worker with
+// `resourceLimits` and resolves to what it posts back.
+function onWorker(body, resourceLimits) {
   const code = `
     const { parentPort } = require("node:worker_threads");
     import(${lib}).then(({ compileMatcher }) => parentPort.postMessage((() => { ${body} })()));
   `;
   return new Promise((resolve, reject) => {
-    const w = new Worker(code, { eval: true, resourceLimits: { stackSizeMb: 0.5 } });
+    const w = new Worker(code, { eval: true, resourceLimits });
     w.once("message", resolve);
     w.once("error", reject);
   });
@@ -26,16 +26,51 @@ function onSmallStack(body) {
 // The in-segment closures are built without recursion, so a long
 // segment, or a long list under dot=false, fits a small stack.
 assert.deepEqual(
-  await onSmallStack(`
+  await onWorker(
+    `
     const seg = compileMatcher("a" + "*{,}".repeat(2000) + "b");
     const names = Array.from({ length: 2000 }, (_, i) => "*x" + i);
     const list = compileMatcher("{" + names.join(",") + "}", { dot: false });
     return [seg.match("axb"), list.match("ax1999"), list.match(".x1999")];
-  `),
+  `,
+    { stackSizeMb: 0.5 },
+  ),
   [true, true, false],
 );
 
 console.log("✓ large patterns compile on a small stack");
+
+// A long head before many branches is not copied out once per branch
+// into the static prefixes: 32 KB patterns compile in milliseconds on a
+// 64 MB heap. Twin of the check in tools/memory-check/tests/large_patterns.rs.
+for (const [name, ms, hit] of await onWorker(
+  `
+  const x = (n) => "x".repeat(n);
+  const names = Array.from({ length: 4096 }, (_, i) => i.toString(16));
+  return [
+    ["16 KB head, 16,000 empty branches", x(16384) + "{" + ",".repeat(16382) + "}", x(16384)],
+    ["32 KB head, {,,,,,,,} x7", x(32705) + "{,,,,,,,}".repeat(7), x(32705)],
+    ["32 KB head, {,,,,,,,} x7 and /y", x(32703) + "/" + "{,,,,,,,}".repeat(7) + "y", x(32703) + "/y"],
+    ["16 KB head, 8,000 branches", x(16384) + "{" + "a,".repeat(8191) + "a}", x(16384) + "a"],
+    ["16 KB head, 4,096 names", x(16384) + "/{" + names.join(",") + "}", x(16384) + "/aaa"],
+    [
+      "16 KB head cut back by *, 8,000 branches",
+      "abcdefghijklmnop/" + x(16384) + "{" + "b,".repeat(8191) + "b}*",
+      "abcdefghijklmnop/" + x(16384) + "bq",
+    ],
+  ].map(([name, pattern, path]) => {
+    const start = performance.now();
+    const m = compileMatcher(pattern);
+    return [name, performance.now() - start, m.match(path)];
+  });
+`,
+  { maxOldGenerationSizeMb: 64 },
+)) {
+  assert.ok(hit, name);
+  assert.ok(ms < 300, `${name}: ${ms.toFixed(0)} ms to compile`);
+}
+
+console.log("✓ long heads before many branches stay small");
 
 // A union too big for the chains agrees with its members: its graph NFA
 // is sparse at both 100 and 600 members (Rust keeps dense rows at 100). Twin of

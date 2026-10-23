@@ -101,6 +101,20 @@ assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
   assert.equal(px.length, 1000);
   assert.ok(px.reduce((n, p) => n + p.length, 0) <= 4 * pattern.length, "prefixes stay linear");
 }
+// A head costs the bytes read to reach it: a file list keeps its heads,
+// while 4,096 names behind a 16 KB folder pass 64 budgets of those and
+// keep the folder.
+{
+  const pad = (i) => String(i).padStart(4, "0");
+  const files = Array.from(
+    { length: 4000 },
+    (_, i) => `packages/foo/src/components/xyz/Comp${pad(i)}.tsx`,
+  );
+  assert.equal(prefixesOf(files).length, 4000);
+  const names = Array.from({ length: 4096 }, (_, i) => i.toString(16));
+  const folder = "x".repeat(16_384);
+  assert.deepEqual(prefixesOf(`${folder}/{${names.join(",")}}`), [folder]);
+}
 console.log("✓ static prefix extraction");
 
 // One body under two spellings: factoring lifts all of it and keeps one

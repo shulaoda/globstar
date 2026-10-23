@@ -131,7 +131,8 @@ export interface Matcher {
    * heads are UTF-8 bytes spelled with `/` and in the pattern's case:
    * every match starts with one of them, except that with
    * `caseInsensitive` a match may differ in case, and on Windows in its
-   * separators. An empty prefix means the root.
+   * separators. An empty prefix means the root. Past a size bound, a
+   * head is a shorter prefix that still holds (GLOB_SPEC §17).
    */
   staticPrefixes(): Uint8Array[];
 }

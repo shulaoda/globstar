@@ -24,6 +24,10 @@ fn cost(patterns: &[String]) -> (usize, usize, Glob) {
 #[test]
 fn large_patterns_stay_small() {
     let names = |n: usize, f: fn(usize) -> String| (0..n).map(f).collect::<Vec<_>>();
+    let x = |n: usize| "x".repeat(n);
+    let (x16, x32, nest) = (x(16_384), x(32_705), format!("{}/y", x(32_703)));
+    let (one, distinct) = (format!("{x16}a"), format!("{x16}/aaa"));
+    let cut = format!("abcdefghijklmnop/{x16}bq");
     let cases = [
         // A long name list stays a sorted suffix index.
         (
@@ -156,6 +160,63 @@ fn large_patterns_stay_small() {
             true,
             8 * MB,
             32 * MB,
+        ),
+        // A long head before many branches is not copied out once per
+        // branch into the static prefixes: 32 KB patterns. Twin of the
+        // check in packages/globstar/tests/large.mjs.
+        (
+            "16 KB head, 16,000 empty branches",
+            vec![format!("{x16}{{{}}}", ",".repeat(16_382))],
+            &x16,
+            true,
+            MB,
+            16 * MB,
+        ),
+        (
+            "32 KB head, {,,,,,,,} x7",
+            vec![format!("{x32}{}", "{,,,,,,,}".repeat(7))],
+            &x32,
+            true,
+            MB,
+            16 * MB,
+        ),
+        (
+            "32 KB head, {,,,,,,,} x7 and /y",
+            vec![format!("{}/{}y", x(32_703), "{,,,,,,,}".repeat(7))],
+            &nest,
+            true,
+            MB,
+            16 * MB,
+        ),
+        (
+            "16 KB head, 8,000 branches",
+            vec![format!("{x16}{{{}a}}", "a,".repeat(8_191))],
+            &one,
+            true,
+            MB,
+            16 * MB,
+        ),
+        (
+            "16 KB head, 4,096 names",
+            vec![format!(
+                "{x16}/{{{}}}",
+                names(4_096, |i| format!("{i:x}")).join(",")
+            )],
+            &distinct,
+            true,
+            MB,
+            16 * MB,
+        ),
+        (
+            "16 KB head cut back by *, 8,000 branches",
+            vec![format!(
+                "abcdefghijklmnop/{x16}{{{}b}}*",
+                "b,".repeat(8_191)
+            )],
+            &cut,
+            true,
+            MB,
+            16 * MB,
         ),
     ];
     for (name, patterns, path, matches, max_kept, max_peak) in cases {

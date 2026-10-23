@@ -83,10 +83,12 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
     set.into_boxed_slice()
 }
 
-/// How deep brace expansions may nest along one static prefix, and the
-/// part of the budget for reading them that every pattern gets.
+/// How deep brace expansions may nest along one static prefix, the
+/// part of the budget for reading them that every pattern gets, and how
+/// many budgets of bytes recording the heads may cost.
 const MAX_HEAD_DEPTH: usize = 64;
 const HEAD_BUDGET_FLOOR: usize = 4096;
+const HEAD_COPY_FACTOR: usize = 64;
 
 /// The deepest segment-bounded literal head of each expansion,
 /// deduplicated, sorted by (length, bytes). A brace in the head is taken
@@ -100,15 +102,26 @@ const HEAD_BUDGET_FLOOR: usize = 4096;
 /// budget, or past `MAX_HEAD_DEPTH` nested braces, the head ends at its
 /// last whole segment, a shorter prefix that still holds: `{a,b}{c,d}…`
 /// stops after a few braces instead of doubling, and a brace before a
-/// long literal copies it a few times, not once per branch.
+/// long literal copies it a few times, not once per branch. Recording a
+/// head costs every byte read to reach it (JS copies them all to cut the
+/// head out): past `HEAD_COPY_FACTOR` budgets of those, the reading
+/// stops and starts again as if at the depth limit, which gives the one
+/// head before the first brace, shared by every expansion.
 pub(super) fn static_prefixes(body: &Node, weight: usize) -> Box<[Bytes]> {
-    let nodes = body.seq();
-    let mut heads = Heads {
-        spent: 0,
-        budget: HEAD_BUDGET_FLOOR + 2 * weight,
-        out: Vec::with_capacity(1),
+    let read_at = |depth| {
+        let mut heads = Heads {
+            spent: 0,
+            budget: HEAD_BUDGET_FLOOR + 2 * weight,
+            copied: 0,
+            out: Vec::with_capacity(1),
+        };
+        heads.read(body.seq(), None, &mut Vec::new(), 0, depth);
+        heads
     };
-    heads.read(nodes, None, &mut Vec::new(), 0, 0);
+    let mut heads = read_at(0);
+    if heads.copied > HEAD_COPY_FACTOR.saturating_mul(heads.budget) {
+        heads = read_at(MAX_HEAD_DEPTH);
+    }
     let out = if heads.out.len() > 1 {
         dedupe(heads.out)
     } else {
@@ -126,6 +139,7 @@ struct Then<'a> {
 struct Heads {
     spent: usize,
     budget: usize,
+    copied: usize,
     out: Vec<Bytes>,
 }
 
@@ -209,7 +223,13 @@ impl Heads {
         while let [rest @ .., b'/'] = head {
             head = rest;
         }
-        self.out.push(Bytes::from(head));
+        self.copied += acc.len();
+        if self.copied > HEAD_COPY_FACTOR.saturating_mul(self.budget) {
+            // An empty head covers all the others: the reading stops.
+            self.out = vec![Bytes::default()];
+        } else {
+            self.out.push(Bytes::from(head));
+        }
         acc.truncate(mark);
     }
 }

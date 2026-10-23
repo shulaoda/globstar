@@ -27,7 +27,7 @@ Same inputs, returns a `Matcher` with the walker-facing surface:
 | `matchDir(path)`   | `DirMatchValue` | What the directory means for the pattern set. See [Directory matching](../guide/directory-matching.md).                                                            |
 | `staticPrefixes()` | `Uint8Array[]`  | Literal prefixes every match starts with: each expansion's literal head up to its last whole segment, in the pattern's case. An empty `Uint8Array` means the root. |
 
-`match` and `matchDir` throw `TypeError` on non-string input. The prefixes are bytes because paths are matched as bytes; decode with `new TextDecoder().decode(prefix)` when you need a string.
+`match` and `matchDir` throw `TypeError` on non-string input. The prefixes are bytes because paths are matched as bytes; decode with `new TextDecoder().decode(prefix)` when you need a string. Past a size bound, a head is a shorter prefix that still holds.
 
 ## Options
 

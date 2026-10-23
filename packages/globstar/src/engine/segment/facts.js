@@ -58,10 +58,12 @@ function suffixSet(nodes) {
   return set;
 }
 
-// How deep brace expansions may nest along one static prefix, and the
-// part of its budget that does not depend on the pattern.
+// How deep brace expansions may nest along one static prefix, the part
+// of its budget that does not depend on the pattern, and how many
+// budgets of bytes recording the heads may cost.
 const MAX_HEAD_DEPTH = 64;
 const HEAD_BUDGET_FLOOR = 4096;
+const HEAD_COPY_FACTOR = 64;
 
 // The deepest segment-bounded literal head of each expansion,
 // deduplicated, sorted by (length, bytes). A brace in the head is taken
@@ -76,12 +78,30 @@ const HEAD_BUDGET_FLOOR = 4096;
 // nested braces, the head ends at its last whole segment, a shorter
 // prefix that still holds: `{a,b}{c,d}…` stops after a few braces
 // instead of doubling, and a brace before a long literal copies it a few
-// times, not once per branch.
+// times, not once per branch. Recording a head costs every byte read to
+// reach it (the slice flattens them all): past HEAD_COPY_FACTOR budgets
+// of those, the reading stops and starts again as if at the depth limit,
+// which gives the one head before the first brace, shared by every
+// expansion.
 export function computeStaticPrefixes(body) {
   const nodes = seq(body);
-  const heads = { root: nodes, spent: 0, limit: HEAD_BUDGET_FLOOR, weighed: false, out: [] };
-  readHeads(heads, nodes, 0, null, "", 0, 0);
+  let heads = readAt(nodes, 0);
+  if (heads.copied > HEAD_COPY_FACTOR * heads.limit) heads = readAt(nodes, MAX_HEAD_DEPTH);
   return dedupe(heads.out);
+}
+
+// Read the heads of the whole pattern `nodes`, from brace depth `depth`.
+function readAt(nodes, depth) {
+  const heads = {
+    root: nodes,
+    spent: 0,
+    limit: HEAD_BUDGET_FLOOR,
+    weighed: false,
+    copied: 0,
+    out: [],
+  };
+  readHeads(heads, nodes, 0, null, "", 0, depth);
+  return heads;
 }
 
 // Read `nodes` from `at`, then `then` (`{ nodes, at, next }`: what
@@ -130,19 +150,30 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
     }
   }
   while (end > 0 && acc.charCodeAt(end - 1) === 0x2f) end--;
-  heads.out.push(acc.slice(0, end));
+  heads.copied += acc.length;
+  if (within(heads, heads.copied, HEAD_COPY_FACTOR)) {
+    heads.out.push(acc.slice(0, end));
+  } else {
+    // An empty head covers all the others: the reading stops.
+    heads.out = [""];
+  }
 }
 
-// Spend `n` units, unless that passes the limit (the floor until it is
-// spent, then the floor plus twice the weight).
+// Spend `n` units, unless that passes the limit.
 function afford(heads, n) {
-  if (heads.spent + n > heads.limit && !heads.weighed) {
+  if (!within(heads, heads.spent + n, 1)) return false;
+  heads.spent += n;
+  return true;
+}
+
+// Whether `used` stays within `factor` limits. The limit is the floor
+// until `used` passes it, then the floor plus twice the weight.
+function within(heads, used, factor) {
+  if (used > factor * heads.limit && !heads.weighed) {
     heads.weighed = true;
     for (const node of heads.root) heads.limit += 2 * nodeWeight(node);
   }
-  if (heads.spent + n > heads.limit) return false;
-  heads.spent += n;
-  return true;
+  return used <= factor * heads.limit;
 }
 
 function opensSegment(node) {
