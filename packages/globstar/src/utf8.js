@@ -20,7 +20,7 @@ export function utf8Length(str, s = 0, t = str.length) {
 // each byte one char code: the byte-space string `utf8Latin1` builds
 // when there is no `Buffer`, and the copy `flat` makes. `[]` yields `""`.
 const CHUNK = 4096; // `fromCharCode.apply` has an argument-count ceiling.
-export function latin1(bytes) {
+function latin1(bytes) {
   const n = bytes.length;
   if (n <= CHUNK) return n === 0 ? "" : String.fromCharCode.apply(null, bytes);
   let out = "";

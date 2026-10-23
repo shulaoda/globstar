@@ -24,7 +24,7 @@ export function popcnt32(v) {
 // ASCII case-insensitive byte equality, the twin of Rust's
 // `u8::eq_ignore_ascii_case`: lowercase both via the `0x20` case bit,
 // then require a letter so non-letter pairs (`@`/`` ` ``) stay unequal.
-export function eqByteCi(a, b) {
+function eqByteCi(a, b) {
   if (a === b) return true;
   const l = a | 0x20;
   return l === (b | 0x20) && l >= 0x61 && l <= 0x7a;

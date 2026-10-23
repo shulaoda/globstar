@@ -57,7 +57,7 @@ export function seq(n) {
 // Does the node end in a `**` in some expansion, with only what may read
 // as nothing after it? Such a `**` reads the `/` after the node as its
 // `**/`.
-export function endsWithGlobstar(n) {
+function endsWithGlobstar(n) {
   if (n.tag === N_GLOBSTAR) return true;
   if (n.tag === N_CONCAT) return endsInGlobstar(n.children, n.children.length, false);
   return n.tag === N_BRACE && n.branches.some(endsWithGlobstar);
