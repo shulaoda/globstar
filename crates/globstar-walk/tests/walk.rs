@@ -946,6 +946,47 @@ fn walker_splits_bangs_in_one_pass() {
 }
 
 #[test]
+fn walker_refuses_a_pattern_too_long_as_written() {
+    // Counted in bytes as written, before the `!` split and normalizing,
+    // so a `/` run cannot hide the length; a 1 MB `/[…` was quoted twice
+    // in a 2 MB message. Twin of the check in walk.mjs.
+    use globstar::error::MAX_PATTERN_LEN;
+    let t = TmpTree::new("too_long", &["x"]);
+    let huge = format!("/[{}", "a".repeat(1 << 20));
+    let padded = "/".repeat(MAX_PATTERN_LEN) + "x";
+    let wide = "é".repeat(MAX_PATTERN_LEN / 2) + "x";
+    let cases = [
+        (&huge, false),
+        (&padded, false),
+        (&wide, false),
+        (&huge, true),
+    ];
+    for (written, in_ignore) in cases {
+        let mut patterns = vec!["**"];
+        let mut opts = WalkOptions::new(t.root());
+        if in_ignore {
+            opts.ignore.push(written.clone());
+        } else {
+            patterns.push(written);
+        }
+        let start = std::time::Instant::now();
+        let err = Walk::from_patterns(patterns, opts).unwrap_err();
+        assert!(start.elapsed().as_millis() < 500, "{:?}", start.elapsed());
+        let (pattern, reason, source) = invalid(&err);
+        let head: String = written.chars().take(64).collect();
+        assert_eq!(pattern, head + "…");
+        let len = written.len();
+        assert_eq!(reason, format!("pattern too long: {len} > 65536"));
+        assert!(matches!(source, Some(globstar::GlobError::TooLong { .. })));
+        assert!(err.to_string().len() < 200, "{err}");
+    }
+    // At the limit as written it is read as usual.
+    let fits = "/".repeat(MAX_PATTERN_LEN - 1) + "x";
+    let wide_fits = "é".repeat(MAX_PATTERN_LEN / 2);
+    assert_eq!(t.walk(&[&fits, &wide_fits]), set(&["x"]));
+}
+
+#[test]
 fn walker_refuses_an_ignore_entry_that_starts_with_bang() {
     // `!src/**` as an ignore entry would ignore everything else, so it is
     // refused, alone or in a list.

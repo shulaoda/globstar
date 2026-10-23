@@ -17,10 +17,23 @@ const MB: usize = 1 << 20;
 #[test]
 fn a_walk_holds_little() {
     let root = std::env::temp_dir().join(format!("globstar-walk-memory-{}", std::process::id()));
+    too_long_refused_unread(&root);
     folders_not_entries(&root.join("entries"));
     #[cfg(unix)]
     each_link_once(&root.join("links"));
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+// A pattern too long as written is refused before the walker copies or
+// normalizes it: `a/` × 4M (8 MB) peaked at 80 MB, ten times its size.
+fn too_long_refused_unread(root: &Path) {
+    let pattern = "a/".repeat(4 * MB);
+    let base = LIVE.load(Relaxed);
+    PEAK.store(base, Relaxed);
+    let err = Walk::new(&pattern, root).unwrap_err();
+    let peak = PEAK.load(Relaxed) - base;
+    assert!(err.to_string().len() < 200, "{err}");
+    assert!(peak < 16 << 10, "{peak} bytes at the peak");
 }
 
 // A folder's entries stream out as they are read; only its child

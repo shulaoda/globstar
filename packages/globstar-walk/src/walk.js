@@ -3,7 +3,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { compileMatcher, DirMatch, GlobError } from "@globstar/core";
+import { compileMatcher, DirMatch, GlobError, MAX_PATTERN_LEN } from "@globstar/core";
 import { WalkError } from "./error.js";
 import { normalizeOptions, typeName } from "./options.js";
 
@@ -90,6 +90,7 @@ function prepare(patterns, optsInput) {
     if (typeof raw !== "string") {
       throw new TypeError(`pattern must be a string, got ${typeName(raw)}`);
     }
+    checkLength(raw);
     // To match a literal leading `!`, escape it: `\!foo`.
     const split = splitBangs(raw);
     if (split === null) continue; // `.`, `//`, `!.` — selects or ignores nothing
@@ -101,6 +102,7 @@ function prepare(patterns, optsInput) {
   const matcher = compileUnion(positives, matcherOpts);
   const ignorePatterns = [];
   for (const raw of opts.ignore) {
+    checkLength(raw);
     // §3.2: ignore entries are never `!`-split, only normalized. A
     // leading `!` there would ignore everything else, and is refused.
     const n = normalizePattern(raw);
@@ -388,6 +390,23 @@ function compileUnion(patterns, opts) {
     if (raw !== body) reason += ` (in '${body}', as the walker reads it)`;
     throw new WalkError("InvalidPattern", { pattern: raw, reason, cause: e });
   }
+}
+
+// WALKER_SPEC §9.2: a written pattern or ignore entry longer than
+// MAX_PATTERN_LEN bytes is refused before it is split or normalized, and
+// named by its first characters only. A UTF-16 unit takes 1 to 3 bytes.
+function checkLength(raw) {
+  if (raw.length <= MAX_PATTERN_LEN / 3) return;
+  const len = Buffer.byteLength(raw);
+  if (len <= MAX_PATTERN_LEN) return;
+  let head = "";
+  let shown = 0;
+  for (const ch of raw) {
+    if (shown++ === 64) break;
+    head += ch;
+  }
+  const cause = new GlobError("TooLong", { len, max: MAX_PATTERN_LEN });
+  throw new WalkError("InvalidPattern", { pattern: `${head}…`, reason: cause.message, cause });
 }
 
 // A list of patterns as one name, cut after the first few.

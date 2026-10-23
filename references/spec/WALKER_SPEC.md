@@ -143,7 +143,7 @@ The walker exposes 5 options. The following toggles, common in other walkers, ar
 
 ### 4.1 Input shape
 
-`patterns` MAY be a single string or an iterable of strings (an array, a `Set`, …), read once. A single string is processed as if it were a one-element array.
+`patterns` MAY be a single string or an iterable of strings (an array, a `Set`, …), read once. A single string is processed as if it were a one-element array. Each pattern, and each `ignore` entry, is first checked for length as written (§9.2).
 
 ### 4.2 `!`-prefix split (parity rule)
 
@@ -344,7 +344,9 @@ class WalkError extends Error {
 
 ### 9.2 `InvalidPattern`
 
-Raised during `prepare()` when any positive or `ignore` pattern fails to compile, or an `ignore` entry starts with `!`: `globSync` throws, `glob` rejects its Promise. The walker catches the matcher's `GlobError` (GLOB_SPEC.md §6) and re-throws it wrapped in `WalkError("InvalidPattern")` so callers have a single error type to match on at the walker layer.
+Raised during `prepare()` when any positive or `ignore` pattern fails to compile or is too long as written, or an `ignore` entry starts with `!`: `globSync` throws, `glob` rejects its Promise. The walker catches the matcher's `GlobError` (GLOB_SPEC.md §6) and re-throws it wrapped in `WalkError("InvalidPattern")` so callers have a single error type to match on at the walker layer.
+
+A pattern or `ignore` entry longer than `MAX_PATTERN_LEN` (65,536 UTF-8 bytes) as written is refused before the §4.2 split and the §4.3 normalization, which would hide its length (`/` × 100,000 + `x` reads as `x`). Its `cause` is the matcher's `TooLong` for that length, its `reason` that error's message (`pattern too long: 100001 > 65536`), and its `pattern` its first 64 characters followed by `…`. Every pattern an error quotes is then within the limit, so a message quotes at most two such texts (a member and the text the walker read it as, §4.4), or three for a list.
 
 ### 9.3 `Io`
 

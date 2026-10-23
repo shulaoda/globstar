@@ -107,7 +107,10 @@ export function globSync(patterns: string | Iterable<string>, options?: GlobOpti
  *   list fails as a whole rather than in one member (`TooComplex`, the
  *   bound on compile work its members share), `.pattern` is the whole
  *   list, formatted like `["a", "b"]` and cut after three members. An
- *   ignore entry that starts with `!` is refused with no `.cause`.
+ *   ignore entry that starts with `!` is refused with no `.cause`. A
+ *   pattern or ignore entry longer than `MAX_PATTERN_LEN` bytes as
+ *   written is refused before it is read (a `TooLong` `.cause`), and
+ *   `.pattern` is its first 64 characters and `…`.
  * - `"Io"` — a `readdir` / `stat` failed during traversal (missing
  *   `cwd`, EACCES, …). A folder removed or made a file after its
  *   parent listed it is left out, not an error. `.path` is the

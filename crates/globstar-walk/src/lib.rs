@@ -129,6 +129,7 @@ use std::path;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use globstar::error::MAX_PATTERN_LEN;
 use globstar::{CompileOptions, Glob, GlobError};
 
 /// An iterator over paths under a base directory that match one or more
@@ -279,6 +280,7 @@ impl Walk {
         let mut negatives: Vec<(String, String)> = Vec::new();
         for p in patterns {
             let raw = p.as_ref();
+            check_length(raw)?;
             let Some((bangs, body)) = split_bangs(raw) else {
                 continue; // `.`, `//`, `!.` — selects or ignores nothing
             };
@@ -297,6 +299,7 @@ impl Walk {
         // there would ignore everything else, and is refused.
         let mut ignore_patterns: Vec<(String, String)> = Vec::new();
         for s in &opts.ignore {
+            check_length(s)?;
             let Some(n) = normalize_pattern(s) else {
                 continue;
             };
@@ -770,6 +773,25 @@ fn compile_union(
             reason,
             source: Some(source),
         }
+    })
+}
+
+/// WALKER_SPEC §9.2: a written pattern or ignore entry longer than
+/// [`MAX_PATTERN_LEN`] is refused before it is split or normalized, and
+/// named by its first characters only.
+fn check_length(raw: &str) -> Result<(), WalkError> {
+    if raw.len() <= MAX_PATTERN_LEN {
+        return Ok(());
+    }
+    let source = GlobError::TooLong {
+        len: raw.len(),
+        max: MAX_PATTERN_LEN,
+    };
+    let head: String = raw.chars().take(64).collect();
+    Err(WalkError::InvalidPattern {
+        pattern: format!("{head}…"),
+        reason: source.to_string(),
+        source: Some(source),
     })
 }
 

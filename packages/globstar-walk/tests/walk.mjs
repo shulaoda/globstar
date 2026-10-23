@@ -246,6 +246,42 @@ await check("bangs split in one pass", async () => {
   }
 });
 
+await check("a pattern too long as written is refused", async () => {
+  // Counted in bytes as written, before the `!` split and normalizing, so
+  // a `/` run cannot hide the length; a 1 MB `/[…` was quoted twice in a
+  // 2 MB message. Twin of `walker_refuses_a_pattern_too_long_as_written`.
+  const root = tmpTree("toolong", ["x"]);
+  const max = 65536; // MAX_PATTERN_LEN
+  const huge = "/[" + "a".repeat(1 << 20);
+  const padded = "/".repeat(max) + "x";
+  const wide = "é".repeat(max / 2) + "x";
+  for (const [written, inIgnore] of [
+    [huge, false],
+    [padded, false],
+    [wide, false],
+    [huge, true],
+  ]) {
+    const patterns = inIgnore ? ["**"] : ["**", written];
+    const options = { cwd: root, ignore: inIgnore ? [written] : [] };
+    const start = performance.now();
+    await throwsBoth(
+      patterns,
+      options,
+      (e) =>
+        e instanceof WalkError &&
+        e.kind === "InvalidPattern" &&
+        e.pattern === written.slice(0, 64) + "…" &&
+        e.reason === `pattern too long: ${Buffer.byteLength(written)} > ${max}` &&
+        e.cause?.kind === "TooLong" &&
+        e.message.length < 200,
+    );
+    assert.ok(performance.now() - start < 500, `${written.length} chars took too long to refuse`);
+  }
+  // At the limit as written it is read as usual.
+  const fits = ["/".repeat(max - 1) + "x", "é".repeat(max / 2)];
+  await expectBoth(root, fits, {}, ["x"], "at the limit");
+});
+
 await check("an ignore entry that starts with `!` is refused", async () => {
   // It would ignore everything else. Twin of
   // `walker_refuses_an_ignore_entry_that_starts_with_bang`.

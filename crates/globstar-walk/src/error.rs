@@ -21,7 +21,10 @@ pub enum WalkError {
         /// list fails as a whole rather than in one member (`TooComplex`,
         /// the bound on compile work its members share, GLOB_SPEC §6.2),
         /// this is the whole list, formatted like `["a", "b"]` and cut
-        /// after three members.
+        /// after three members. A pattern or ignore entry longer than
+        /// [`MAX_PATTERN_LEN`](globstar::error::MAX_PATTERN_LEN) bytes as
+        /// written is refused before it is read (`TooLong`), and named by
+        /// its first 64 characters and `…`.
         pattern: String,
         /// Human-readable reason (from the underlying parser). When the
         /// walker read the pattern differently (a leading `!` or `/`
