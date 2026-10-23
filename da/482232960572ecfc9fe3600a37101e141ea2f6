@@ -1,0 +1,47 @@
+crates/globstar/src/engine/segment/bits.rs
+  s_43b9a5518ea7f8::t_925bb9bdc54f9d 16,18-19,56-59,64-67,118-122,126-128
+crates/globstar/src/engine/segment/mod.rs
+  s_43b9a5518ea7f8::t_ebe0e9918f2299 37,95-105
+crates/globstar/src/engine/segment/nfa.rs
+  s_43b9a5518ea7f8::t_7a44c5fe67e2da 6-7,20-27,40-42,69-70,134-143,202-216,221,288,374-376,378-382,398-458,464,630-636,666-740
+crates/globstar/src/engine/segment/seg_nfa.rs
+  s_43b9a5518ea7f8::t_5f05c9ed2b63b9 17,91,98,100,105-107,119-126,211-212,298-307,310,312-316,318-321,323-334,338
+crates/globstar/src/engine/segment/wild.rs
+  s_43b9a5518ea7f8::t_3f967ec41f0101 84-146
+crates/globstar/tests/glob.rs
+  s_43b9a5518ea7f8::t_cad975ecd6a51a 143-210
+fixtures/corpus/corpus-dir.txt
+  s_43b9a5518ea7f8::t_cb68eca5edba35 396-403
+packages/globstar/src/bytes.js
+  s_43b9a5518ea7f8::t_6a80b9675812eb 17-23
+packages/globstar/src/engine/segment/nfa.js
+  s_43b9a5518ea7f8::t_95137b4876f4a7 18,20,26-32,54-82,115-128,218-219,294-295,297-300,314-368,377,381-382,508-516,520-525,546,553-661
+packages/globstar/src/engine/segment/seg-nfa.js
+  s_43b9a5518ea7f8::t_88f78da009ee3c 56-58,65,227-229,265-272,274,276,284-286,289-309,355-357,430,432,435,437-439,444
+packages/globstar/src/engine/segment/wild.js
+  s_43b9a5518ea7f8::t_67b34b4f308e18 101-122
+packages/globstar/tests/dir-match.mjs
+  s_43b9a5518ea7f8::t_a44d267074b01e 42-97
+references/spec/GLOB_SPEC.md
+  s_43b9a5518ea7f8::t_0375eda1038e57 783-785,790
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_1abd45e121e70b 191-195
+references/theory/04-walker-and-pruning.md
+  s_43b9a5518ea7f8::t_439d75df002a7f 177,179,193-210,215,244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "da482232960572ecfc9fe3600a37101e141ea2f6",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
