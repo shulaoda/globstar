@@ -231,60 +231,12 @@ impl<B: Bits> SegNfaImpl<B> {
         // Under dot=true the blocked closure equals `init`, so the compile
         // already collapsed the dot decision into which set this picks.
         let protected_start = seg.first() == Some(&b'.');
-        let mut active = if protected_start {
+        let active = if protected_start {
             self.init_dot_blocked.clone()
         } else {
             self.init.clone()
         };
-        let mut next = B::zero(self.words);
-        if self.closures.is_empty() {
-            for &c in seg {
-                if active.is_zero() {
-                    return false;
-                }
-                self.step_closing(&active, &mut next, c);
-                std::mem::swap(&mut active, &mut next);
-            }
-            return active.test(self.accept);
-        }
-        // The common case, written out: one OR of a kept closure per
-        // consumer that fires (through `step_closing` it costs up to 50%).
-        for &c in seg {
-            if active.is_zero() {
-                return false;
-            }
-            next.clear();
-            active.for_each(|s| match &self.states[s] {
-                SegState::Byte(b, nx) => {
-                    if *b == c {
-                        next.or_with(&self.closures[*nx as usize]);
-                    }
-                }
-                SegState::Class(cls, nx) => {
-                    if cls.has(c) {
-                        next.or_with(&self.closures[*nx as usize]);
-                    }
-                }
-                SegState::Any(nx, _) => next.or_with(&self.closures[*nx as usize]),
-                _ => {}
-            });
-            std::mem::swap(&mut active, &mut next);
-        }
-        active.test(self.accept)
-    }
-
-    /// `next` = what `active` reaches over byte `c`, without the kept
-    /// closures: the consumers move, then `close` adds what their
-    /// targets reach.
-    fn step_closing(&self, active: &B, next: &mut B, c: u8) {
-        next.clear();
-        active.for_each(|s| match &self.states[s] {
-            SegState::Byte(b, nx) if *b == c => next.set(*nx as usize),
-            SegState::Class(cls, nx) if cls.has(c) => next.set(*nx as usize),
-            SegState::Any(nx, _) => next.set(*nx as usize),
-            _ => {}
-        });
-        close(&self.states, next, false);
+        run(&self.states, &self.closures, active, seg, self.words).test(self.accept)
     }
 
     /// What the wildcards alone accept, by segment length (see `Lens`).
@@ -476,6 +428,47 @@ fn close<B: Bits>(states: &[SegState], set: &mut B, block: bool) {
     }
 }
 
+/// `active` after every byte of `seg`, or empty once nothing is left:
+/// one OR of a kept closure per consumer that fires, or without kept
+/// closures (`closures` empty) the consumers move and `close` adds what
+/// their targets reach. Forced inline, one loop per way: it is the
+/// in-segment NFAs' whole inner loop.
+#[inline(always)]
+fn run<B: Bits>(states: &[SegState], closures: &[B], mut active: B, seg: &[u8], words: usize) -> B {
+    let mut next = B::zero(words);
+    if closures.is_empty() {
+        for &c in seg {
+            if active.is_zero() {
+                break;
+            }
+            next.clear();
+            active.for_each(|s| match &states[s] {
+                SegState::Byte(b, nx) if *b == c => next.set(*nx as usize),
+                SegState::Class(cls, nx) if cls.has(c) => next.set(*nx as usize),
+                SegState::Any(nx, _) => next.set(*nx as usize),
+                _ => {}
+            });
+            close(states, &mut next, false);
+            std::mem::swap(&mut active, &mut next);
+        }
+        return active;
+    }
+    for &c in seg {
+        if active.is_zero() {
+            break;
+        }
+        next.clear();
+        active.for_each(|s| match &states[s] {
+            SegState::Byte(b, nx) if *b == c => next.or_with(&closures[*nx as usize]),
+            SegState::Class(cls, nx) if cls.has(c) => next.or_with(&closures[*nx as usize]),
+            SegState::Any(nx, _) => next.or_with(&closures[*nx as usize]),
+            _ => {}
+        });
+        std::mem::swap(&mut active, &mut next);
+    }
+    active
+}
+
 /// Each state's ε-closure, in one backward pass: every ε-edge points to
 /// a later state, whose closure is done (a `*` stays in its own).
 fn closures<B: Bits>(states: &[SegState], words: usize) -> Box<[B]> {
@@ -641,33 +634,7 @@ impl GlueNfa {
             &mut active,
             !dot && seg.first() == Some(&b'.'),
         );
-        let mut next = self.set();
-        for &c in seg {
-            if active.is_zero() {
-                return;
-            }
-            next.clear();
-            if self.closures.is_empty() {
-                active.for_each(|s| match &self.states[s] {
-                    SegState::Byte(b, nx) if *b == c => next.set(*nx as usize),
-                    SegState::Class(cls, nx) if cls.has(c) => next.set(*nx as usize),
-                    SegState::Any(nx, _) => next.set(*nx as usize),
-                    _ => {}
-                });
-                close(&self.states, &mut next, false);
-            } else {
-                active.for_each(|s| match &self.states[s] {
-                    SegState::Byte(b, nx) if *b == c => next.or_with(&self.closures[*nx as usize]),
-                    SegState::Class(cls, nx) if cls.has(c) => {
-                        next.or_with(&self.closures[*nx as usize]);
-                    }
-                    SegState::Any(nx, _) => next.or_with(&self.closures[*nx as usize]),
-                    _ => {}
-                });
-            }
-            std::mem::swap(&mut active, &mut next);
-        }
-        active.for_each(|s| {
+        run(&self.states, &self.closures, active, seg, self.words).for_each(|s| {
             if let SegState::Exit(node) = self.states[s] {
                 exit(node as usize);
             }

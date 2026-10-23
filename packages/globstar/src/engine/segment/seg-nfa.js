@@ -378,48 +378,27 @@ class SegNfaWide {
 
   matches(str, s0, e0) {
     const protectedStart = e0 > s0 && str.charCodeAt(s0) === 0x2e;
-    let active = (protectedStart ? this.initDotBlocked : this.init).slice();
-    const words = this.words;
-    let next = new Int32Array(words);
-    if (this.closures === null) {
-      for (let i = s0; i < e0; i++) {
-        if (bitsIsZero(active)) return false;
-        stepClosing(this, active, next, str.charCodeAt(i));
-        const t = active;
-        active = next;
-        next = t;
-      }
-      return bitTest(active, this.accept);
-    }
-    const kinds = this.kinds;
-    const byteVals = this.byteVals;
-    const nexts = this.nexts;
-    const clsRefs = this.clsRefs;
-    const closures = this.closures;
-    for (let i = s0; i < e0; i++) {
-      if (bitsIsZero(active)) return false;
-      const c = str.charCodeAt(i);
-      next.fill(0);
-      for (let w = 0; w < words; w++) {
-        let bits = active[w];
-        while (bits !== 0) {
-          const s = w * 32 + ctz32(bits);
-          bits &= bits - 1;
-          const k = kinds[s];
-          if (
-            k === S_BYTE ? byteVals[s] === c : k === S_CLASS ? setHas(clsRefs[s], c) : k === S_ANY
-          ) {
-            const base = nexts[s] * words;
-            for (let q = 0; q < words; q++) next[q] |= closures[base + q];
-          }
-        }
-      }
-      const t = active;
-      active = next;
-      next = t;
-    }
-    return bitTest(active, this.accept);
+    const active = (protectedStart ? this.initDotBlocked : this.init).slice();
+    return bitTest(runWide(this, active, str, s0, e0), this.accept);
   }
+}
+
+// `active` after every code unit of `str[s0..e0]`, or empty once nothing
+// is left: through the kept closures, or without them (`closures` null)
+// the consumers move and closeWide adds what their targets reach. It
+// steps `active` in place.
+function runWide(nfa, active, str, s0, e0) {
+  let next = new Int32Array(active.length);
+  for (let i = s0; i < e0; i++) {
+    if (bitsIsZero(active)) break;
+    const c = str.charCodeAt(i);
+    if (nfa.closures === null) stepClosing(nfa, active, next, c);
+    else stepKept(nfa, active, next, c);
+    const t = active;
+    active = next;
+    next = t;
+  }
+  return active;
 }
 
 // `next` = what `active` reaches over code unit `c`, without kept
@@ -588,16 +567,7 @@ export class GlueNfa {
       e0 = str.length;
     }
     closeWide(this, active, !dot && e0 > s0 && str.charCodeAt(s0) === 0x2e);
-    let next = this.set();
-    for (let i = s0; i < e0; i++) {
-      if (bitsIsZero(active)) return;
-      const c = str.charCodeAt(i);
-      if (this.closures === null) stepClosing(this, active, next, c);
-      else stepKept(this, active, next, c);
-      const t = active;
-      active = next;
-      next = t;
-    }
+    active = runWide(this, active, str, s0, e0);
     for (let w = 0; w < active.length; w++) {
       for (let bits = active[w]; bits !== 0; bits &= bits - 1) {
         const s = w * 32 + ctz32(bits);
