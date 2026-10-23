@@ -1,0 +1,53 @@
+crates/globstar/src/engine/segment/mod.rs
+  s_43b9a5518ea7f8::t_06a65298480392 59-62,82,89,91,98-102,216
+packages/globstar/src/engine/segment/index.js
+  s_43b9a5518ea7f8::t_d08826df1d4f90 32,84
+packages/globstar/src/engine/segment/nfa.js
+  s_43b9a5518ea7f8::t_69e8b6a48f1e52 9,58-59,62,107-109,119,384-385
+crates/globstar/tests/glob.rs
+  s_43b9a5518ea7f8::t_4784efe6fc1262 103-106,108-112,114-124
+docs/guide/braces.md
+  s_43b9a5518ea7f8::t_702d885e5f27db 17
+crates/globstar/src/engine/segment/nfa.rs
+  s_43b9a5518ea7f8::t_2bb47f2e0b61a5 143-144,156-158,194-196,199,306,458
+tools/memory-check/tests/large_patterns.rs
+  s_43b9a5518ea7f8::t_07b2eed021cbee 166-175
+crates/globstar/src/engine/segment/chain.rs
+  s_43b9a5518ea7f8::t_e890ac5444bd50 181-187,191,194,604,669
+packages/globstar/src/engine/segment/elem.js
+  s_43b9a5518ea7f8::t_87e3105561bdc5 10-12,16,33-34,37
+packages/globstar/tests/large.mjs
+  s_43b9a5518ea7f8::t_6d6f582795da2d 479-482,484-492,494-495,497
+docs/guide/errors.md
+  s_43b9a5518ea7f8::t_ce879cbf71b935 39,70
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_76448cf8527d25 17,20-21,38-46,122-124,171-173,187
+references/spec/GLOB_SPEC.md
+  s_43b9a5518ea7f8::t_2528f845ae246a 317
+packages/globstar/tests/compiler-stages.mjs
+  s_43b9a5518ea7f8::t_c8f430fb7dbac7 198
+crates/globstar/tests/glob_union.rs
+  s_43b9a5518ea7f8::t_1523bee375b749 104
+packages/globstar/src/engine/segment/chain.js
+  s_43b9a5518ea7f8::t_1a3ccc6203058b 10,15,94-98,101
+crates/globstar/src/engine/segment/graph.rs
+  s_43b9a5518ea7f8::t_27040b3a2d4b43 113,425-426,436,453,466-484,520-522,588
+packages/globstar/src/engine/segment/graph.js
+  s_43b9a5518ea7f8::t_ddc5ddc6a1c146 21-31,54,103,122,340,347-349,411,439,493-506
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2ac6ea4c9065a6739a1b0e4ee1fb12b29d2d6449",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
