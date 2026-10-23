@@ -5,7 +5,7 @@ pub struct Ast {
     pub body: Node,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Node {
     /// Concatenation of zero or more nodes. The parser never produces one
     /// of a single node, nor one inside another; the empty one is an empty
@@ -29,7 +29,7 @@ pub enum Node {
     Brace(Vec<Node>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CharClass {
     pub negated: bool,
     /// Inclusive byte ranges; a lone byte `b` is `(b, b)`.

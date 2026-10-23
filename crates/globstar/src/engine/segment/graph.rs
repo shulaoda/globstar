@@ -27,13 +27,24 @@ const START: u32 = u32::MAX;
 /// The work the graph walk may take: 64 units per unit of pattern
 /// weight (`node_weight`), and never less than 2^20. A unit is a node,
 /// an edge, a copied token, or a byte of the tables a wildcard segment
-/// builds (`Wild::table_bytes`). Patterns of ordinary shape need one to
-/// three per unit; only a shape whose segments multiply (`a{a,/}`
+/// builds (`Wild::table_bytes`). Patterns of ordinary shape need two to
+/// four per unit; only a shape whose segments multiply (`a{a,/}`
 /// repeated, one node per pair of braces) reaches it, and it fails
 /// before it costs much.
 const BUDGET_PER_WEIGHT: usize = 64;
 
 const MIN_BUDGET: usize = 1 << 20;
+
+/// The edges the graph may keep: 16 per unit of pattern weight, and
+/// never fewer than 4096. A sparse NFA step walks the successors of
+/// what is active, so this keeps a segment's cost linear in the
+/// pattern. Ordinary patterns keep one or two per unit, and two wide
+/// braces side by side stay far below it; branches that may be empty,
+/// side by side (`{a/,}` repeated), give a node an edge from each one
+/// before it, and fail.
+const EDGES_PER_WEIGHT: usize = 16;
+
+const MIN_EDGES: usize = 4096;
 
 /// The graph as the walk leaves it: the nodes and, for a pattern with
 /// a separator-crossing brace, their edges. A linear pattern is
@@ -93,9 +104,13 @@ impl Graph {
         // so only a separator-crossing brace can reach the budget.
         if !linear {
             b.budget = MIN_BUDGET.max(weight.saturating_mul(BUDGET_PER_WEIGHT));
+            b.max_edges = MIN_EDGES.max(weight.saturating_mul(EDGES_PER_WEIGHT));
         }
         let groups = b.walk(body.seq(), false, vec![Group::first()]);
         for mut g in groups {
+            if b.over() {
+                break;
+            }
             b.settle(&mut g);
             if g.state == Boundary::Open {
                 for &t in &g.tails {
@@ -107,7 +122,12 @@ impl Graph {
             }
         }
         if b.over() {
-            return Err(GlobError::TooComplex { max: b.budget });
+            let max = if b.cost > b.budget {
+                b.budget
+            } else {
+                b.max_edges
+            };
+            return Err(GlobError::TooComplex { max });
         }
         Ok(b.finish(weight))
     }
@@ -144,7 +164,7 @@ pub(super) fn survey(nodes: &[Node]) -> Survey {
                 for b in branches {
                     let inner = survey(b.seq());
                     boundaries += inner.boundaries;
-                    weight += inner.weight;
+                    weight += inner.weight.max(1);
                     branch_paths = branch_paths.saturating_add(inner.paths);
                 }
                 let crosses = boundaries > before;
@@ -153,8 +173,9 @@ pub(super) fn survey(nodes: &[Node]) -> Survey {
                     paths = paths.saturating_mul(branch_paths);
                 }
             }
-            Node::Literal(bytes) => weight += bytes.len(),
-            Node::AnyChar | Node::Star | Node::Class(_) => weight += 1,
+            Node::Literal(_) | Node::AnyChar | Node::Star | Node::Class(_) => {
+                weight += node_weight(node);
+            }
             Node::Separator | Node::Globstar => {
                 boundaries += 1;
                 weight += 1;
@@ -171,14 +192,16 @@ pub(super) fn survey(nodes: &[Node]) -> Survey {
 }
 
 /// What a node costs the walk to copy and compile: a literal its
-/// length, a brace one plus its branches, anything else one.
+/// length, a class one plus its ranges, a brace one plus its branches
+/// (an empty one too), anything else one.
 pub(super) fn node_weight(node: &Node) -> usize {
     match node {
         Node::Literal(bytes) => bytes.len(),
+        Node::Class(class) => 1 + class.ranges.len(),
         Node::Brace(branches) => {
             1 + branches
                 .iter()
-                .map(|b| b.seq().iter().map(node_weight).sum::<usize>())
+                .map(|b| b.seq().iter().map(node_weight).sum::<usize>().max(1))
                 .sum::<usize>()
         }
         _ => 1,
@@ -281,6 +304,13 @@ impl Group<'_> {
         }
         h.finish()
     }
+
+    /// The same over all of each node.
+    fn whole_key(&self) -> u64 {
+        let mut h = Fnv(self.key());
+        self.buf.hash(&mut h);
+        h.finish()
+    }
 }
 
 /// The keys read so far, by node, what is left of the key room, and the
@@ -306,12 +336,15 @@ struct Builder {
     pred_at: Vec<u32>,
     ends: Vec<u32>,
     memo: HashMap<u64, u32, BuildHasherDefault<Fnv>>,
-    /// The walk's work so far: nodes and their edges, the groups it
-    /// copied and closed by their `cost` and weight, and the tables its
+    /// The walk's work so far: nodes and their edges, the tokens it
+    /// added to groups by their weight, the groups it copied, closed and
+    /// hashed whole by their `cost` and weight, and the tables its
     /// wildcard segments built. Past `budget` the walk stops and the
     /// pattern is too complex.
     cost: usize,
     budget: usize,
+    /// Past this many stored edges (`ends` too) the walk stops as well.
+    max_edges: usize,
     dot: bool,
     ci: bool,
 }
@@ -331,6 +364,7 @@ impl Builder {
             memo: HashMap::with_capacity_and_hasher(edges, Default::default()),
             cost: 0,
             budget: usize::MAX,
+            max_edges: usize::MAX,
             dot,
             ci,
         }
@@ -447,7 +481,7 @@ impl Builder {
     }
 
     fn over(&self) -> bool {
-        self.cost > self.budget
+        self.cost > self.budget || self.preds.len() + self.ends.len() > self.max_edges
     }
 
     /// Walk a sequence of nodes; `sep_after` tells whether a `/` follows
@@ -490,7 +524,10 @@ impl Builder {
                         }
                         let copies = groups.to_vec();
                         for g in self.walk(branch.seq(), after, copies) {
-                            out.add(g);
+                            if self.over() {
+                                break;
+                            }
+                            self.cost += out.add(g);
                         }
                     }
                     groups = out.groups;
@@ -507,6 +544,11 @@ impl Builder {
                     for g in groups.iter_mut() {
                         // The parser never glues a `**` to text.
                         debug_assert!(g.buf.is_empty());
+                        // Tails a pending `**/` gathered become one `G0`:
+                        // kept, they would pile up (`{**,a}/` × k: k² edges).
+                        if g.tails.len() > 1 {
+                            self.settle(g);
+                        }
                         g.pending_globstar = true;
                         g.took_sep = !sep_next;
                     }
@@ -520,6 +562,7 @@ impl Builder {
                 Node::Globstar => self.globstar_all(&mut groups),
                 node => {
                     let weight = node_weight(node);
+                    self.cost += groups.len();
                     for g in groups.iter_mut() {
                         g.buf.push(node);
                         g.weight += weight;
@@ -533,11 +576,15 @@ impl Builder {
 
     /// Emit a group's pending `**/`. It is always a `G0`: it absorbs
     /// empty segments too, which makes the separators around it lenient.
+    /// After a lone `G0` it is that one (`**/**/` ≡ `**/`).
     fn settle(&mut self, g: &mut Group<'_>) {
         if !g.pending_globstar {
             return;
         }
-        let id = self.emit(Elem::G0, &g.tails);
+        let id = match g.tails[..] {
+            [t] if t != START && self.elems[t as usize].nullable() => t,
+            _ => self.emit(Elem::G0, &g.tails),
+        };
         g.rebase(id, Boundary::Sep);
     }
 
@@ -581,6 +628,9 @@ impl Builder {
         let mut joined: Option<Group<'a>> = None;
         let mut taken = Vec::new();
         for mut g in groups.drain(..) {
+            if self.over() {
+                break;
+            }
             if g.took_sep {
                 g.took_sep = false;
                 taken.push(g);
@@ -652,42 +702,67 @@ impl Builder {
 /// Groups joined when they agree on boundary, pending `**/` and partial
 /// segment: their continuations are the same nodes. A union leaves a
 /// group per member, so past `LINEAR_GROUPS` they are found by a hash
-/// of that key.
+/// of that key, and by a hash of whole nodes once more than
+/// `LINEAR_GROUPS` groups apart share one (members apart only inside a
+/// class or a brace).
 #[derive(Default)]
 struct Merged<'a> {
     groups: Vec<Group<'a>>,
     index: HashMap<u64, Vec<u32>, BuildHasherDefault<Fnv>>,
+    whole: bool,
 }
 
 const LINEAR_GROUPS: usize = 16;
 
 impl<'a> Merged<'a> {
+    /// Add a group; returns the weight it hashed whole, which the walk
+    /// is charged.
     // Kept out of the recursive walk: inlined there, it costs the
     // unions of many branches 3–5% of their compile time.
     #[inline(never)]
-    fn add(&mut self, g: Group<'a>) {
+    fn add(&mut self, g: Group<'a>) -> usize {
         let n = self.groups.len();
         if n == LINEAR_GROUPS {
-            for (i, o) in self.groups.iter().enumerate() {
-                self.index.entry(o.key()).or_default().push(i as u32);
-            }
+            self.index_all();
         }
+        let mut hashed = if self.whole { g.weight } else { 0 };
+        let mut refile = false;
         let found = if n < LINEAR_GROUPS {
             self.groups.iter().position(|o| o.agrees(&g))
         } else {
-            let bucket = self.index.entry(g.key()).or_default();
+            let bucket = self.index.entry(self.key(&g)).or_default();
             let found = bucket
                 .iter()
                 .map(|&i| i as usize)
                 .find(|&i| self.groups[i].agrees(&g));
             if found.is_none() {
                 bucket.push(n as u32);
+                refile = !self.whole && bucket.len() > LINEAR_GROUPS;
             }
             found
         };
         match found {
             Some(i) => self.groups[i].tails.extend(g.tails),
             None => self.groups.push(g),
+        }
+        if refile {
+            self.whole = true;
+            self.index_all();
+            hashed += self.groups.iter().map(|o| o.weight).sum::<usize>();
+        }
+        hashed
+    }
+
+    fn key(&self, g: &Group<'_>) -> u64 {
+        if self.whole { g.whole_key() } else { g.key() }
+    }
+
+    /// File every group by its key.
+    fn index_all(&mut self) {
+        self.index.clear();
+        for (i, o) in self.groups.iter().enumerate() {
+            let key = self.key(o);
+            self.index.entry(key).or_default().push(i as u32);
         }
     }
 }
@@ -723,7 +798,7 @@ fn crosses(node: &Node) -> bool {
     }
 }
 
-/// FNV-1a: the node keys are a few bytes, hashed once per node.
+/// FNV-1a over the keys of nodes and groups, most of them a few bytes.
 #[derive(Default)]
 struct Fnv(u64);
 

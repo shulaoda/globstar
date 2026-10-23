@@ -353,6 +353,54 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   }
 }
 
+// The graph walk finds a union's groups by all they hold: members alike
+// but for a class or an in-segment brace are not each compared with
+// every one before, so 32,768 of them compile in milliseconds. Twin of
+// `members_apart_only_in_a_class_or_brace_compile_fast`.
+{
+  const side = (i) => (i % 2 ? "b" : "a");
+  const hex = (i) => i.toString(16).padStart(4, "0");
+  for (const { form, hit } of [
+    { form: (i) => `${side(i)}/[${hex(i)}]x`, hit: "b/3x" },
+    { form: (i) => `${side(i)}/{${hex(i)},q}x`, hit: "b/qx" },
+    { form: (i) => `**/[${hex(i)}].log`, hit: "x/3.log" },
+  ]) {
+    const members = Array.from({ length: 32_768 }, (_, i) => form(i));
+    members.push("c/d");
+    const start = performance.now();
+    const union = compileMatcher(members);
+    const ms = performance.now() - start;
+    assert.ok(ms < 1000, `${hit}: ${ms.toFixed(0)} ms to compile`);
+    assert.ok(union.match(hit) && !union.match("b/zzx"), hit);
+  }
+}
+
+// Keying groups by all they hold costs the walk their weight, where an
+// empty brace branch weighs one: groups that each hold a brace of 40,000
+// empty branches fail in milliseconds, in a list past the budget or met
+// again at 30 nested braces. Twin of
+// `groups_keyed_whole_count_toward_the_compile_work`.
+{
+  const core = (n, m) => {
+    const classes = Array.from(
+      { length: n },
+      (_, i) => `/[${String.fromCharCode(97 + Math.floor(i / 26), 65 + (i % 26))}]`,
+    );
+    return `{${classes.join(",")}}{${",".repeat(m)}}`;
+  };
+  let nested = core(60, 40_000);
+  for (let i = 0; i < 30; i++) nested = `{${nested},/z${i}}`;
+  for (const members of [
+    [`p${core(650, 40_000)}{y,z/}`, `q${core(650, 40_000)}{y,z/}`],
+    [`${nested}{y,/q}`],
+  ]) {
+    const start = performance.now();
+    assert.throws(() => compileMatcher(members), { kind: "TooComplex" });
+    const ms = performance.now() - start;
+    assert.ok(ms < 500, `${members.length} members: ${ms.toFixed(0)} ms to fail`);
+  }
+}
+
 // The chain index reads a run of one-string nodes after a long list in
 // one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
 // `a_run_after_a_long_list_reads_it_once`.
@@ -384,13 +432,47 @@ for (const [pattern, path] of [
   ["{**,a}/".repeat(80) + "x", "a/x"],
   ["{a,b,/}".repeat(14), "abababa/bababa"],
   ["{/,a,}".repeat(20), "aa/a"],
-  ["{a/,}".repeat(800), "a/a/"],
+  ["{a/,}".repeat(64), "a/a/"],
 ]) {
   const start = performance.now();
   const m = compileMatcher(pattern);
   const ms = performance.now() - start;
   assert.ok(ms < 200, `${pattern.slice(0, 7)} x${pattern.length}: ${ms.toFixed(0)} ms to compile`);
   assert.ok(m.match(path), pattern.slice(0, 7));
+}
+
+// Braces with a `**/` side by side chain their globstars, so the graph
+// keeps a few edges per brace: 8,192 of them (57 KB) compile, and a path
+// pays per segment for the states, not their square. Twin of
+// `side_by_side_globstar_braces_stay_linear`.
+for (const unit of ["{**,a}/", "{**,*}/"]) {
+  const path = "a/".repeat(16) + "x";
+  const start = performance.now();
+  const m = compileMatcher(unit.repeat(8192) + "x");
+  assert.ok(m.match(path), unit);
+  assert.ok(DirMatch.matches(m.matchDir(path)), unit);
+  const ms = performance.now() - start;
+  assert.ok(ms < 500, `${unit} x8192: ${ms.toFixed(0)} ms`);
+}
+
+// Branches that may be empty, side by side, let each segment follow
+// every one before it. Past 16 edges per unit of pattern (never fewer
+// than 4,096) the pattern fails fast, so no segment walks a successor
+// list as long as the pattern, and what compiles matches a long path in
+// milliseconds. Twin of `edges_that_multiply_fail_fast`.
+{
+  const path = "/a".repeat(2000) + "/x";
+  const m = compileMatcher("{,/**/a}".repeat(64) + "/x");
+  let start = performance.now();
+  assert.ok(m.match(path));
+  let ms = performance.now() - start;
+  assert.ok(ms < 500, `{,/**/a} x64 on 2,000 segments: ${ms.toFixed(0)} ms`);
+  for (const unit of ["{,/**/a}", "{a/,}"]) {
+    start = performance.now();
+    assert.throws(() => compileMatcher(unit.repeat(800) + "/x"), { kind: "TooComplex" });
+    ms = performance.now() - start;
+    assert.ok(ms < 200, `${unit} x800: ${ms.toFixed(0)} ms to fail`);
+  }
 }
 
 // A big union compiles in milliseconds (its groups are found by key, not
@@ -418,7 +500,6 @@ for (const [pattern, path] of [
     "{a,b,/}".repeat(4096),
     "{/,a,}".repeat(4096),
     lists(2048),
-    "{**,a}/".repeat(8192) + "x",
     "{a/,}".repeat(8192),
     // Segments with big tables (suffix products, NFAs): charged too.
     "{a,b,/}".repeat(96),
@@ -429,6 +510,41 @@ for (const [pattern, path] of [
     const ms = performance.now() - start;
     assert.ok(ms < 1000, `${pattern.slice(0, 7)}: ${ms.toFixed(0)} ms to fail`);
   }
+}
+
+// A long class, or a long run of `?` or of classes, or a brace of empty
+// branches, copied into every segment a brace leaves open: each copy
+// counts, a class by its ranges, a brace by its branches, so these fail
+// in milliseconds on a 64 MB heap, while a long class copied into a few
+// segments still compiles. Twin of the checks in
+// tools/memory-check/tests/large_patterns.rs.
+for (const [name, ms, ok] of await onWorker(
+  `
+  const copied = (n, open, unit, close) => {
+    const head = "{" + Array.from({ length: n }, (_, i) => "a/" + i).join(",") + "}" + open;
+    return head + unit.repeat(Math.floor((16384 - head.length - close.length) / unit.length)) + close;
+  };
+  return [
+    ["500 copies of a class", copied(500, "[a-z", "!-~", "]"), "TooComplex"],
+    ["1,024 copies of ?s", copied(1024, "", "?", ""), "TooComplex"],
+    ["512 copies of classes", copied(512, "", "[\\x01-\\x7f]", ""), "TooComplex"],
+    ["1,024 copies of a brace", copied(1024, "{", ",", "}"), "TooComplex"],
+    ["16 copies of a class", copied(16, "[a-z", "\\x01-\\x7f", "]"), true],
+  ].map(([name, pattern, want]) => {
+    const start = performance.now();
+    let got;
+    try {
+      got = compileMatcher(pattern).match("a/3x");
+    } catch (e) {
+      got = e.kind;
+    }
+    return [name, performance.now() - start, got === want];
+  });
+`,
+  { maxOldGenerationSizeMb: 64 },
+)) {
+  assert.ok(ok, name);
+  assert.ok(ms < 300, `${name}: ${ms.toFixed(0)} ms`);
 }
 
 // `matchDir` on long wildcard chains: the all-below proof feeds at most

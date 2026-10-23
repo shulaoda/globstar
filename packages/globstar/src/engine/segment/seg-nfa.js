@@ -71,8 +71,13 @@ export function compileSegNfa(nodes, dot, ci) {
 // too, before the negation (§13).
 function byteSet(cls, ci) {
   const bits = [0, 0, 0, 0, 0, 0, 0, 0];
+  // A word at a time: a class costs its ranges, not the bytes they span.
   for (const { lo, hi } of cls.ranges) {
-    for (let b = lo; b <= hi; b++) bits[b >> 5] |= 1 << (b & 31);
+    for (let w = lo >> 5; w <= hi >> 5; w++) {
+      const from = w === lo >> 5 ? lo & 31 : 0;
+      const to = w === hi >> 5 ? hi & 31 : 31;
+      bits[w] |= (-1 >>> (31 - (to - from))) << from;
+    }
   }
   const has = (b) => ((bits[b >> 5] >>> (b & 31)) & 1) === 1;
   for (let b = 0x41; b <= 0x5a; b++) {

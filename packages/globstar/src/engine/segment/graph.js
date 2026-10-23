@@ -85,11 +85,13 @@ export function buildGraph(body, dot, ci) {
   // only a separator-crossing brace can reach the budget.
   let weight = 0;
   let budget = Infinity;
+  let maxEdges = Infinity;
   if (!linear) {
     for (const n of nodes) weight += nodeWeight(n);
     budget = Math.max(MIN_BUDGET, weight * BUDGET_PER_WEIGHT);
+    maxEdges = Math.max(MIN_EDGES, weight * EDGES_PER_WEIGHT);
   }
-  const b = new Builder(dot, ci, linear, budget);
+  const b = new Builder(dot, ci, linear, budget, maxEdges);
   // Only a union of more paths than LINEAR_CHAINS indexes them.
   if (!linear && pathBound(nodes) > LINEAR_CHAINS) {
     b.keys = [];
@@ -99,6 +101,7 @@ export function buildGraph(body, dot, ci) {
   if (!linear) regroup(body);
   const groups = b.walk(nodes, false, [firstGroup()]);
   for (const g of groups) {
+    if (b.over()) break;
     b.settle(g);
     if (g.state === B_OPEN) {
       for (const t of g.tails) b.link(t, ACCEPT);
@@ -106,7 +109,9 @@ export function buildGraph(body, dot, ci) {
       b.link(b.segment(g), ACCEPT);
     }
   }
-  if (b.cost > b.budget) throw new GlobError("TooComplex", { max: b.budget });
+  if (b.over()) {
+    throw new GlobError("TooComplex", { max: b.cost > b.budget ? b.budget : b.maxEdges });
+  }
   // `weight`: the pattern's `nodeWeight`, read when the literal paths
   // are kept (a linear pattern keeps none, and reads 0); `keys`: what
   // the chain index files a union's chains by, null when it has none.
@@ -129,12 +134,21 @@ function pathBound(nodes) {
 // The work the graph walk may take: 64 units per unit of pattern weight
 // (`nodeWeight`), and never less than 2^20. A unit is a node, an edge, a
 // copied token, or a byte of the tables a wildcard segment builds
-// (`tableBytes`). Patterns of ordinary shape need one to three per
+// (`tableBytes`). Patterns of ordinary shape need two to four per
 // unit; only a shape whose segments multiply (`a{a,/}` repeated, one
 // node per pair of braces) reaches it, and it fails before it costs
 // much.
 const BUDGET_PER_WEIGHT = 64;
 const MIN_BUDGET = 1 << 20;
+
+// The edges the graph may keep: 16 per unit of pattern weight, and never
+// fewer than 4096. A sparse NFA step walks the successors of what is
+// active, so this keeps a segment's cost linear in the pattern. Ordinary
+// patterns keep one or two per unit, and two wide braces side by side
+// stay far below it; branches that may be empty, side by side (`{a/,}`
+// repeated), give a node an edge from each one before it, and fail.
+const EDGES_PER_WEIGHT = 16;
+const MIN_EDGES = 4096;
 
 // What the wild's tables take, in the bytes the Rust tables take, so
 // both runtimes refuse the same patterns: a set's suffixes and their
@@ -150,12 +164,18 @@ function tableBytes(w) {
 }
 
 // What a node costs the walk to copy and compile: a literal its length,
-// a brace one plus its branches, anything else one.
+// a class one plus its ranges, a brace one plus its branches (an empty
+// one too), anything else one.
 export function nodeWeight(node) {
   if (node.tag === N_LITERAL) return node.str.length;
+  if (node.tag === N_CLASS) return 1 + node.ranges.length;
   if (node.tag !== N_BRACE) return 1;
   let w = 1;
-  for (const b of node.branches) for (const n of seq(b)) w += nodeWeight(n);
+  for (const b of node.branches) {
+    let branch = 0;
+    for (const n of seq(b)) branch += nodeWeight(n);
+    w += Math.max(1, branch);
+  }
   return w;
 }
 
@@ -226,7 +246,9 @@ function classEqual(a, b) {
 // Groups joined when they agree on boundary, pending `**/` and partial
 // segment: their continuations are the same nodes. A union leaves a
 // group per member, so past LINEAR_GROUPS they are found by a key of
-// each node's kind (and a literal's bytes).
+// each node's kind (and a literal's bytes), and by a key of whole nodes
+// once more than LINEAR_GROUPS groups apart share one (members apart
+// only inside a class or a brace).
 const LINEAR_GROUPS = 16;
 
 const agrees = (o, g) =>
@@ -241,29 +263,72 @@ function groupKey(g) {
   return key;
 }
 
+// The same over all of each node.
+function wholeKey(g) {
+  let key = `${g.state},${g.pendingGlobstar ? 1 : 0},${g.tookSep ? 1 : 0}`;
+  for (const n of g.buf) key += nodeKey(n);
+  return key;
+}
+
+// A node's content, written so that no two share a key: a literal
+// length first, a class its ranges, a brace or sequence its count and
+// then each part.
+function nodeKey(n) {
+  switch (n.tag) {
+    case N_LITERAL:
+      return `|${n.str.length}:${n.str}`;
+    case N_CLASS:
+      return `|${n.neg ? "!" : ""}[${n.ranges.map((r) => `${r.lo}-${r.hi}`).join(",")}]`;
+    case N_BRACE:
+      return `|{${n.branches.length}${n.branches.map(nodeKey).join("")}`;
+    case N_CONCAT:
+      return `|(${n.children.length}${n.children.map(nodeKey).join("")}`;
+    default:
+      return `|#${n.tag}`;
+  }
+}
+
+const keyOf = (out, g) => (out.whole ? wholeKey(g) : groupKey(g));
+
+// Add a group; returns the weight it hashed whole, which the walk is
+// charged.
 function merge(out, g) {
   const n = out.groups.length;
   let found = -1;
+  let hashed = out.whole ? g.weight : 0;
+  let refile = false;
   if (n < LINEAR_GROUPS) {
     found = out.groups.findIndex((o) => agrees(o, g));
   } else {
-    if (out.index === null) {
-      out.index = new Map();
-      out.groups.forEach((o, i) => {
-        const key = groupKey(o);
-        const bucket = out.index.get(key);
-        if (bucket === undefined) out.index.set(key, [i]);
-        else bucket.push(i);
-      });
-    }
-    const key = groupKey(g);
+    if (out.index === null) indexAll(out);
+    const key = keyOf(out, g);
     const bucket = out.index.get(key);
     found = bucket?.find((i) => agrees(out.groups[i], g)) ?? -1;
     if (bucket === undefined) out.index.set(key, [n]);
-    else if (found === -1) bucket.push(n);
+    else if (found === -1) {
+      bucket.push(n);
+      refile = !out.whole && bucket.length > LINEAR_GROUPS;
+    }
   }
   if (found === -1) out.groups.push(g);
   else for (const t of g.tails) out.groups[found].tails.push(t);
+  if (refile) {
+    out.whole = true;
+    indexAll(out);
+    for (const o of out.groups) hashed += o.weight;
+  }
+  return hashed;
+}
+
+// File every group by its key.
+function indexAll(out) {
+  out.index = new Map();
+  out.groups.forEach((o, i) => {
+    const key = keyOf(out, o);
+    const bucket = out.index.get(key);
+    if (bucket === undefined) out.index.set(key, [i]);
+    else bucket.push(i);
+  });
 }
 
 // Up to this many reusable nodes are found by a scan, past it by key.
@@ -272,7 +337,7 @@ const LINEAR_NODES = 16;
 const memoKey = (kind, lit, at) => `${kind}:${lit ?? ""}|${at}`;
 
 class Builder {
-  constructor(dot, ci, linear, budget) {
+  constructor(dot, ci, linear, budget, maxEdges) {
     // Elements in emission order and (unless linear) each node's
     // successors in a parallel array.
     this.elems = [];
@@ -284,12 +349,16 @@ class Builder {
     // also an index by key.
     this.memo = [];
     this.memoIndex = null;
-    // The walk's work so far: nodes and their edges, the groups it
-    // copied and closed by their cost and weight, and the tables its
-    // wildcard segments built. Past `budget` the walk stops and the
-    // pattern is too complex.
+    // The walk's work so far: nodes and their edges, the tokens it added
+    // to groups by their weight, the groups it copied, closed and hashed
+    // whole by their cost and weight, and the tables its wildcard
+    // segments built. Past `budget` the walk stops and the pattern is too
+    // complex.
     this.cost = 0;
     this.budget = budget;
+    // Past `maxEdges` stored edges (to ACCEPT too) the walk stops as well.
+    this.edges = 0;
+    this.maxEdges = maxEdges;
     this.dot = dot;
     this.ci = ci;
     // The wildcard segments' keys by node, for a union the chain index
@@ -337,15 +406,20 @@ class Builder {
 
   link(tail, id) {
     if (this.linear) return;
+    this.edges++;
     if (tail === START) this.start.push(id);
     else this.succs[tail].push(id);
+  }
+
+  over() {
+    return this.cost > this.budget || this.edges > this.maxEdges;
   }
 
   // Walk a sequence of nodes; `sepAfter` tells whether a `/` follows it
   // outside (after the brace it is a branch of).
   walk(nodes, sepAfter, groups) {
     for (let i = 0; i < nodes.length; i++) {
-      if (this.cost > this.budget) break;
+      if (this.over()) break;
       const node = nodes[i];
       const sepNext = nodes[i + 1]?.tag === N_SEPARATOR;
       // A `/` follows: next, or after the brace this is a branch of.
@@ -365,11 +439,14 @@ class Builder {
             break;
           }
           // A `**` ending a branch reads the `/` after the brace.
-          const out = { groups: [], index: null };
+          const out = { groups: [], index: null, whole: false };
           for (const branch of node.branches) {
             for (const g of groups) this.cost += groupCost(g);
-            if (this.cost > this.budget) break;
-            for (const g of this.walk(seq(branch), after, groups.map(forkGroup))) merge(out, g);
+            if (this.over()) break;
+            for (const g of this.walk(seq(branch), after, groups.map(forkGroup))) {
+              if (this.over()) break;
+              this.cost += merge(out, g);
+            }
           }
           groups = out.groups;
           for (const g of groups) dedupeTails(g);
@@ -384,6 +461,9 @@ class Builder {
             // the separators around it are lenient (§9.5). It is emitted
             // later, when it is known that no bare `**` absorbs it.
             for (const g of groups) {
+              // Tails a pending `**/` gathered become one G0: kept, they
+              // would pile up (`{**,a}/` × k: k² edges).
+              if (g.tails.length > 1) this.settle(g);
               g.pendingGlobstar = true;
               g.tookSep = !sepNext;
             }
@@ -406,6 +486,7 @@ class Builder {
   // Add an in-segment node to every group's partial segment.
   push(groups, node) {
     const weight = nodeWeight(node);
+    this.cost += groups.length;
     for (const g of groups) {
       g.buf.push(node);
       g.weight += weight;
@@ -413,10 +494,13 @@ class Builder {
   }
 
   // Emit a group's pending `**/`. It is always a G0: it absorbs empty
-  // segments too, which makes the separators around it lenient.
+  // segments too, which makes the separators around it lenient. After a
+  // lone G0 it is that one (`**/**/` ≡ `**/`).
   settle(g) {
     if (!g.pendingGlobstar) return;
-    rebase(g, this.emit(G0_ELEM, g.tails), B_SEP);
+    const t = g.tails[0];
+    const lone = g.tails.length === 1 && t !== START && this.elems[t] === G0_ELEM;
+    rebase(g, lone ? t : this.emit(G0_ELEM, g.tails), B_SEP);
   }
 
   // Close every group's segment into one node per group; they all
@@ -447,6 +531,7 @@ class Builder {
     let joined = null;
     const taken = [];
     for (const g of groups) {
+      if (this.over()) break;
       if (g.tookSep) {
         g.tookSep = false;
         taken.push(g);

@@ -56,13 +56,17 @@ pub enum GlobError {
         max: usize,
     },
     /// Compiling would take more than `max` steps of work: braces whose
-    /// segments multiply (`a{a,/}` repeated many times). `max` grows with
-    /// the pattern, so every pattern of ordinary shape compiles. A list
-    /// given to `Glob::union` compiles as one, so this is the list's
-    /// error (never inside [`InMember`](Self::InMember)), and members
-    /// that each compile alone can fail together.
+    /// segments multiply (`a{a,/}` repeated many times), or that copy a
+    /// long class into many segments, or whose graph would keep more
+    /// than `max` edges (`{a/,}` repeated: each segment may follow every
+    /// one before it). `max` grows with the pattern, so
+    /// every pattern of ordinary shape compiles. A list given to
+    /// `Glob::union` compiles as one, so this is the list's error (never
+    /// inside [`InMember`](Self::InMember)), and members that each
+    /// compile alone can fail together.
     TooComplex {
-        /// The work this pattern was allowed.
+        /// The bound that was passed: the work this pattern was
+        /// allowed, or the edges its graph may keep.
         max: usize,
     },
     /// Character class range with right endpoint smaller than left.

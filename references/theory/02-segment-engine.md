@@ -29,11 +29,17 @@ partial segment) reaching a point of the pattern, so `{a/,b/}x` is
 three nodes with `x` shared, and `{a/,b/}` repeated k times is 2k+1
 nodes, not 2^k sequences. The in-segment branches of such a brace are
 walked as one choice (`{a,b,/}` as `{{a,b},/}`), and pending `**/`
-count once (`**/**/` ≡ `**/`). Partial segments that differ in length
-still give a group each: `a{a,/}` repeated k times is O(k²) nodes. The
-walk counts its work and stops past 64 units per unit of pattern
-weight, so such a shape fails with `TooComplex` instead of growing
-(see Compile).
+count once (`**/**/` ≡ `**/`), except that one whose group gathered
+tails from several branches becomes a `G0` of its own when the next is
+read: `{**,a}/` repeated k times keeps about 5k edges, not one group
+whose tails pile up into k² of them. Partial segments that differ in
+length still give a group each: `a{a,/}` repeated k times is O(k²)
+nodes. And a node takes an edge from each tail of its group, so
+branches that may be empty, side by side, give O(k²) edges among O(k)
+nodes (`{a/,}` repeated: each `a` follows every one before it). The
+walk counts its work and its edges and stops past 64 units, or 16
+edges, per unit of pattern weight, so such a shape fails with
+`TooComplex` instead of growing (see Compile).
 
 ## Matching
 
@@ -146,12 +152,20 @@ made, one finds a group by its key past the first 16 (JS scans its
 first 16 nodes before it keys them). Every pattern
 the parser accepts compiles unless its separator-crossing braces make
 its segments multiply: the walk counts its work — a unit per node and
-edge, each group it copies and each segment it closes by their size,
-and the tables a wildcard segment builds (its suffix list, its NFA's
-states and closures) by their bytes — and fails with `TooComplex` past
-max(2^20, 64 × the pattern's weight). Ordinary patterns and big unions need one to three units
+edge, each token it adds to a group, each group it copies or keys by
+all its nodes and each segment it closes by their size, and the tables
+a wildcard segment builds (its suffix list, its NFA's states and
+closures) by their bytes — and fails with `TooComplex` past
+max(2^20, 64 × the pattern's weight), where a literal weighs its
+bytes, a class one plus its ranges, a brace one plus its branches (an
+empty one weighs one) and any other token one. Ordinary patterns and big unions need two to four units
 per weight, and a walk without a crossing brace has no budget at
-all. The other limits are the parser's — 64 KiB of pattern, 32 levels
+all. It also fails once the graph would keep more than max(4096, 16 ×
+the weight) edges: a sparse step walks the successors of what is
+active, so this holds a segment's cost to the pattern's size, where
+ordinary patterns keep at most two edges per weight and two wide
+braces side by side well under sixteen. The other limits
+are the parser's — 64 KiB of pattern, 32 levels
 of brace nesting, the brace-expansion budget — and the chain,
 literal-set, suffix-group, suffix-product, closure and dense-row
 thresholds pick a representation, never reject one.
@@ -163,7 +177,8 @@ once, a separator-crossing brace adds one node per branch rather than
 a product, and the walk's work is capped as above. Every table built
 from the graph — chains, suffix products, in-segment closures, NFA
 rows — has a size budget past which a linear representation takes
-over, so memory is linear too. Match O(n·m) worst case — the NFA over
+over, so memory is linear too. Match O(n·m) worst case, m the graph's
+nodes and edges, both within max(4096, 16 × the weight) — the NFA over
 the graph is the non-backtracking floor that rules out ReDoS — and
 O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 65
 wildcard-only segments for the all-below proof (64 and the step that

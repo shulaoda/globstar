@@ -1,6 +1,6 @@
 //! Integration tests for the Glob type.
 
-use globstar::{CompileOptions, Glob};
+use globstar::{CompileOptions, Glob, GlobError};
 
 #[test]
 fn large_shapes_stay_on_segment_engine() {
@@ -80,6 +80,44 @@ fn wide_graphs_step_by_what_is_active() {
         assert!(!g.is_match(path.as_bytes()));
     }
     assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
+}
+
+// Braces with a `**/` side by side chain their globstars, so the graph
+// keeps a few edges per brace: 8,192 of them (57 KB) compile, and a path
+// pays per segment for the states, not their square. Twin of the check
+// in large.mjs.
+#[test]
+fn side_by_side_globstar_braces_stay_linear() {
+    let path = "a/".repeat(16) + "x";
+    for unit in ["{**,a}/", "{**,*}/"] {
+        let start = std::time::Instant::now();
+        let g = Glob::new(&(unit.repeat(8192) + "x")).unwrap();
+        assert!(g.is_match(path.as_bytes()), "{unit}");
+        assert!(g.match_dir(path.as_bytes()).matches(), "{unit}");
+        let took = start.elapsed();
+        assert!(took.as_secs() < 2, "{unit}: {took:?}");
+    }
+}
+
+// Branches that may be empty, side by side, let each segment follow
+// every one before it. Past 16 edges per unit of pattern (never fewer
+// than 4,096) the pattern fails fast, so no segment walks a successor
+// list as long as the pattern, and what compiles matches a long path in
+// milliseconds. Twin of the check in large.mjs.
+#[test]
+fn edges_that_multiply_fail_fast() {
+    let path = "/a".repeat(2000) + "/x";
+    let g = Glob::new(&("{,/**/a}".repeat(64) + "/x")).unwrap();
+    let start = std::time::Instant::now();
+    assert!(g.is_match(path.as_bytes()));
+    assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
+    for unit in ["{,/**/a}", "{a/,}"] {
+        let start = std::time::Instant::now();
+        let err = Glob::new(&(unit.repeat(800) + "/x")).unwrap_err();
+        let took = start.elapsed();
+        assert!(matches!(err, GlobError::TooComplex { .. }), "{err:?}");
+        assert!(took.as_secs() < 1, "{unit}: {took:?}");
+    }
 }
 
 #[test]
@@ -259,6 +297,64 @@ fn a_union_of_long_members_alike_in_every_segment_compiles_fast() {
         let union = Glob::union(&members).unwrap();
         assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
         assert!(union.is_match(hit.as_bytes()) && !union.is_match(miss.as_bytes()));
+    }
+}
+
+// The graph walk finds a union's groups by all they hold: members alike
+// but for a class or an in-segment brace are not each compared with
+// every one before, so 32,768 of them compile in milliseconds. Twin of
+// the check in large.mjs.
+#[test]
+fn members_apart_only_in_a_class_or_brace_compile_fast() {
+    let side = |i: usize| ["a", "b"][i % 2];
+    let list = |form: &dyn Fn(usize) -> String| -> Vec<String> {
+        (0..32_768).map(form).chain(["c/d".into()]).collect()
+    };
+    for (members, hit) in [
+        (list(&|i| format!("{}/[{i:04x}]x", side(i))), "b/3x"),
+        (list(&|i| format!("{}/{{{i:04x},q}}x", side(i))), "b/qx"),
+        (list(&|i| format!("**/[{i:04x}].log")), "x/3.log"),
+    ] {
+        let start = std::time::Instant::now();
+        let union = Glob::union(&members).unwrap();
+        let elapsed = start.elapsed();
+        assert!(elapsed.as_millis() < 1000, "{hit}: {elapsed:?}");
+        assert!(union.is_match(hit.as_bytes()) && !union.is_match(b"b/zzx"));
+    }
+}
+
+// Keying groups by all they hold costs the walk their weight, where an
+// empty brace branch weighs one: groups that each hold a brace of 40,000
+// empty branches fail in milliseconds, in a list past the budget or met
+// again at 30 nested braces. Twin of the check in large.mjs.
+#[test]
+fn groups_keyed_whole_count_toward_the_compile_work() {
+    let core = |n: usize, m: usize| {
+        let classes: Vec<String> = (0..n)
+            .map(|i| {
+                let (a, b) = (b'a' + (i / 26) as u8, b'A' + (i % 26) as u8);
+                format!("/[{}{}]", a as char, b as char)
+            })
+            .collect();
+        format!("{{{}}}{{{}}}", classes.join(","), ",".repeat(m))
+    };
+    let nested = (0..30).fold(core(60, 40_000), |p, i| format!("{{{p},/z{i}}}"));
+    for members in [
+        vec![
+            format!("p{}{{y,z/}}", core(650, 40_000)),
+            format!("q{}{{y,z/}}", core(650, 40_000)),
+        ],
+        vec![nested + "{y,/q}"],
+    ] {
+        let start = std::time::Instant::now();
+        let err = Glob::union(&members).unwrap_err();
+        let took = start.elapsed();
+        assert!(matches!(err, GlobError::TooComplex { .. }), "{err:?}");
+        assert!(
+            took.as_millis() < 500,
+            "{} members: {took:?}",
+            members.len()
+        );
     }
 }
 

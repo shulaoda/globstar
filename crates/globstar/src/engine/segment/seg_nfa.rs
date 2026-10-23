@@ -139,8 +139,13 @@ impl ByteSet {
             bits: [0; 4],
             negated: cls.negated,
         };
+        // A word at a time: a class costs its ranges, not the bytes they span.
         for &(lo, hi) in &cls.ranges {
-            (lo..=hi).for_each(|b| set.add(b));
+            for w in lo >> 6..=hi >> 6 {
+                let from = if w == lo >> 6 { lo & 63 } else { 0 };
+                let to = if w == hi >> 6 { hi & 63 } else { 63 };
+                set.bits[usize::from(w)] |= (u64::MAX >> (63 - (to - from))) << from;
+            }
         }
         if ci {
             for b in b'A'..=b'Z' {
@@ -550,6 +555,8 @@ mod tests {
             "[\\\\]",
             "[\x01-\x7f]",
             "[!\x01-\x7f]",
+            "[\x1f-\x21]",
+            "[?-A]",
             "[bbbbbb]",
             "[a-cb-dz]",
             "[!\u{e9}]",

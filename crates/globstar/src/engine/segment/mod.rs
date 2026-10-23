@@ -5,8 +5,9 @@
 //! compares, the literal-only paths by one search of a sorted set, and
 //! a union of many paths asks only those its path's segments pick;
 //! everything else runs an NFA whose active set grows with the
-//! pattern, so no pattern is too big for it. Only braces whose segments
-//! multiply are refused, by the compile walk (`GlobError::TooComplex`).
+//! pattern, so no pattern is too big for it. Only braces whose segments,
+//! or the edges between them, multiply are refused, by the compile walk
+//! (`GlobError::TooComplex`).
 //!
 //! `graph` builds the graph, `chain` and `nfa` match over it,
 //! `chain_index` picks a big union's chains, `wild` (with `seg_nfa`)

@@ -28,6 +28,7 @@ fn large_patterns_stay_small() {
     let (x16, x32, nest) = (x(16_384), x(32_705), format!("{}/y", x(32_703)));
     let (one, distinct) = (format!("{x16}a"), format!("{x16}/aaa"));
     let cut = format!("abcdefghijklmnop/{x16}bq");
+    let wide = copied(16, "[a-z", "\x01-\x7f", "]");
     let cases = [
         // A long name list stays a sorted suffix index.
         (
@@ -129,6 +130,15 @@ fn large_patterns_stay_small() {
             4 * MB,
             16 * MB,
         ),
+        // Side by side, their `**/` chain: a few edges per brace.
+        (
+            "{**,a}/ x8192",
+            vec!["{**,a}/".repeat(8192) + "x"],
+            "a/x",
+            true,
+            2 * MB,
+            16 * MB,
+        ),
         (
             "{a,b,/} x14",
             vec!["{a,b,/}".repeat(14)],
@@ -146,12 +156,12 @@ fn large_patterns_stay_small() {
             16 * MB,
         ),
         (
-            "{a/,} x800",
-            vec!["{a/,}".repeat(800)],
+            "{a/,} x64",
+            vec!["{a/,}".repeat(64)],
             "a/a/",
             true,
+            MB,
             16 * MB,
-            64 * MB,
         ),
         (
             "60,000 branches",
@@ -160,6 +170,15 @@ fn large_patterns_stay_small() {
             true,
             8 * MB,
             32 * MB,
+        ),
+        // A long class copied into a few segments still compiles.
+        (
+            "16 KB class in 16 segments",
+            vec![wide],
+            "a/3x",
+            true,
+            MB,
+            16 * MB,
         ),
         // A long head before many branches is not copied out once per
         // branch into the static prefixes: 32 KB patterns. Twin of the
@@ -259,6 +278,15 @@ fn even_steps(name: &str, shape: fn(usize) -> String, from: usize, to: usize) {
     }
 }
 
+/// `{a/0,…,a/(n-1)}`, then `open`, `unit` repeated and `close`: 16 KB
+/// whose tail every one of the brace's `n` segments copies.
+fn copied(n: usize, open: &str, unit: &str, close: &str) -> String {
+    let heads: Vec<String> = (0..n).map(|i| format!("a/{i}")).collect();
+    let head = format!("{{{}}}{open}", heads.join(","));
+    let units = (16_384 - head.len() - close.len()) / unit.len();
+    format!("{head}{}{close}", unit.repeat(units))
+}
+
 // Braces whose segments multiply would build a node per pair of them;
 // the walk gives up early, with little memory spent.
 fn too_complex_patterns_fail_early() {
@@ -272,12 +300,19 @@ fn too_complex_patterns_fail_early() {
         "{a,b,/}".repeat(4096),
         "{/,a,}".repeat(4096),
         lists(2048),
-        "{**,a}/".repeat(8192) + "x",
         "{a/,}".repeat(8192),
         // Segments with big tables (suffix products, NFAs): charged
         // too, so neither shape keeps them up to the budget.
         "{a,b,/}".repeat(96),
         "{a,b,c,d,e,f,g,h,/}".repeat(3421),
+        // A long class, or a long run of `?` or of classes, or a brace of
+        // empty branches, copied into every segment a brace leaves open:
+        // each copy counts, a class by its ranges, a brace by its branches.
+        // Twin of the check in packages/globstar/tests/large.mjs.
+        copied(500, "[a-z", "!-~", "]"),
+        copied(1024, "", "?", ""),
+        copied(512, "", "[\x01-\x7f]", ""),
+        copied(1024, "{", ",", "}"),
     ] {
         let base = LIVE.load(Relaxed);
         PEAK.store(base, Relaxed);

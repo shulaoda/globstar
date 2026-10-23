@@ -195,7 +195,7 @@ console.log("✓ matcher options are checked");
   const whole = thrown(() => compileMatcher(["a", heavy]));
   assert.equal(whole.kind, "TooComplex");
   assert.equal(whole.index, undefined);
-  const each = "{a,b,/}".repeat(30);
+  const each = "{a,b,/}".repeat(24);
   compileMatcher(each);
   assert.equal(thrown(() => compileMatcher([each, `x/${each}`])).kind, "TooComplex");
   const range = thrown(() => compileMatcher("src/[abcz-a].ts"));
@@ -294,6 +294,8 @@ console.log("✓ engine shapes");
     "[\\\\]",
     "[\x01-\x7f]",
     "[!\x01-\x7f]",
+    "[\x1f-\x21]",
+    "[?-A]",
     "[bbbbbb]",
     "[a-cb-dz]",
   ]) {
