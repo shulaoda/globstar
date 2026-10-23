@@ -1,0 +1,27 @@
+crates/globstar/src/engine/segment/nfa.rs
+  s_43b9a5518ea7f8::t_637837c35da08b 47-53
+crates/globstar/src/engine/segment/seg_nfa.rs
+  s_43b9a5518ea7f8::t_b5e4ae18edf443 665
+references/theory/01-glob-as-regular-language.md
+  s_43b9a5518ea7f8::t_0dd43947107e2a 73
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_696f5d63069c7c 173
+references/theory/03-literal-prefilter.md
+  s_43b9a5518ea7f8::t_acfd85c0b43477 82,85-87,226,232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d6bf9c3ff16b3ecb75f34de5190f3dab4761db44",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
