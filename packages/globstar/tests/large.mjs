@@ -414,6 +414,26 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(m.match(`p3/${"xa".repeat(5000)}176f`));
 }
 
+// The chain index searches a path's last segment for the first 16 bytes
+// of a member's literal at most, and the walk checks the rest: members
+// `x3/*` + 400 `a`s + `q3*` turn down a 64 KB segment of `a`s in
+// milliseconds, under caseInsensitive too. Twin of
+// `a_long_infix_is_searched_for_its_start`.
+{
+  const lit = "a".repeat(400);
+  const members = Array.from({ length: 16 }, (_, i) => `x${i}/*${lit}q${i}*`);
+  const far = "d/" + "a".repeat(65_536);
+  for (const caseInsensitive of [false, true]) {
+    const m = compileMatcher(members, { caseInsensitive });
+    const start = performance.now();
+    assert.ok(!m.match(far));
+    const ms = performance.now() - start;
+    assert.ok(ms < 200, `caseInsensitive=${caseInsensitive}: ${ms.toFixed(0)} ms`);
+    assert.ok(m.match(`x3/${lit}q3`));
+    assert.ok(!m.match(`x3/${lit.slice(1)}q3`));
+  }
+}
+
 // A class is a byte table: one lookup per byte, however many items it
 // lists: 30,000 items over 65,000 bytes. Twin of `a_long_class_costs_one_lookup_per_byte`.
 {

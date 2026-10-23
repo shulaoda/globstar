@@ -34,6 +34,11 @@ export function keyRoom(weight) {
 // last of a suffix, the first of a prefix): the walk checks the rest.
 const KEY_BYTES = 4;
 
+// An infix is at most this many first characters of a literal: the
+// search for it costs at most that many compares per character of a
+// path's last segment, and the walk checks the rest.
+const MAX_INFIX = 16;
+
 // How a segment's strings bind it: every match is one of them, ends
 // with one, or starts with one.
 const K_EXACT = 0;
@@ -98,8 +103,8 @@ export function segmentKeys(nodes, ci, room) {
 // One kind of keys for a segment's nodes: its strings when it is
 // literal (`.DS_Store`, `[Dd]ebug`, `{dist,out}`); else those of the
 // literal nodes that end it or that start it, whichever bind more
-// characters; else its longest literal. Null when it has no literal, or
-// a string may be empty.
+// characters; else the start of its longest literal. Null when it has
+// no literal, or a string may be empty.
 function oneKind(nodes, ci, room) {
   const suffixes = [];
   const taken = literalRun(nodes, true, ci, room, suffixes);
@@ -116,7 +121,7 @@ function oneKind(nodes, ci, room) {
     }
     if (longest === null) return null;
     let infix = "";
-    for (let i = 0; i < longest.length; i++)
+    for (let i = 0; i < Math.min(longest.length, MAX_INFIX); i++)
       infix += String.fromCharCode(fold(longest.charCodeAt(i), ci));
     return { keys: null, infix };
   }

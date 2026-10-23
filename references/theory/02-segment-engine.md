@@ -67,9 +67,10 @@ A union of more than 10 chains does not try them all: a _chain index_
 files each chain under the literal strings one of its anchored
 segments must have — its last element's segment (a name, `.DS_Store`;
 the end of an extension, `*.log`; the start of a prefix, `._*`; a
-literal it holds, `*.so.*`), else its first's, else the first of its
-block, any segment but the last — read off that segment's nodes, small
-classes and braces expanded (`[Dd]ebug`, `*.py[cod]`), while the graph
+literal it holds, `*.so.*`, by its first 16 bytes at most), else its
+first's, else the first of its block, any segment but the last — read
+off that segment's nodes, small classes and braces expanded
+(`[Dd]ebug`, `*.py[cod]`), while the graph
 is built. The literal set is filed under its paths' first segments. A
 key is its length and outer four bytes, a lookup one hash probe, and a
 64-bit sketch of the outer bytes skips the lookups that cannot hit; a

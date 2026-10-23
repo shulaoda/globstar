@@ -36,6 +36,11 @@ pub(super) fn key_room(weight: usize) -> usize {
 /// of a suffix, the first of a prefix): the walk checks the rest.
 const KEY_BYTES: usize = 4;
 
+/// An infix is at most this many first bytes of a literal: the search
+/// for it costs at most that many compares per byte of a path's last
+/// segment, and the walk checks the rest.
+const MAX_INFIX: usize = 16;
+
 /// How a segment's strings bind it: every match is one of them, ends
 /// with one, or starts with one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +100,8 @@ impl Key {
 #[derive(Debug)]
 pub(super) enum SegKeys {
     Strings(Vec<(Kind, Key)>),
-    /// Every match holds this literal (`*.so.*` holds `.so.`), folded.
+    /// Every match holds this literal (`*.so.*` holds `.so.`): its first
+    /// `MAX_INFIX` bytes, folded.
     Infix(Box<[u8]>),
 }
 
@@ -148,8 +154,8 @@ pub(super) fn segment_keys(
 /// literal (`.DS_Store`, `[Dd]ebug`, `{dist,out}`); else those of the
 /// literal nodes that end it or that start it, whichever bind more
 /// bytes (`*.py[cod]` ends with `.pyc`, `.pyo` or `.pyd`; `._*` starts
-/// with `._`); else its longest literal. None when it has no literal,
-/// or a string may be empty.
+/// with `._`); else the start of its longest literal. None when it has
+/// no literal, or a string may be empty.
 fn one_kind(nodes: &[&Node], ci: bool, room: usize, k: &mut KeyScratch) -> Option<SegKeys> {
     let KeyScratch {
         suffixes,
@@ -174,7 +180,11 @@ fn one_kind(nodes: &[&Node], ci: bool, room: usize, k: &mut KeyScratch) -> Optio
                 })
                 .max_by_key(|bytes| bytes.len())?;
             Some(SegKeys::Infix(
-                longest.iter().map(|&b| fold(b, ci)).collect(),
+                longest
+                    .iter()
+                    .take(MAX_INFIX)
+                    .map(|&b| fold(b, ci))
+                    .collect(),
             ))
         }
         (s, p) if p > s => strings(Kind::Prefix, prefixes),

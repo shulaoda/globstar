@@ -374,6 +374,28 @@ fn a_run_after_a_long_list_reads_it_once() {
     assert!(glob.is_match(path.as_bytes()));
 }
 
+// The chain index searches a path's last segment for the first 16 bytes
+// of a member's literal at most, and the walk checks the rest: members
+// `x3/*` + 400 `a`s + `q3*` turn down a 64 KB segment of `a`s in
+// microseconds, without a compare of the whole literal at every byte.
+// Twin of the check in large.mjs.
+#[test]
+fn a_long_infix_is_searched_for_its_start() {
+    let lit = "a".repeat(400);
+    let members: Vec<String> = (0..16).map(|i| format!("x{i}/*{lit}q{i}*")).collect();
+    let far = format!("d/{}", "a".repeat(65_536));
+    for ci in [false, true] {
+        let opts = CompileOptions::default().case_insensitive(ci);
+        let union = Glob::union_with(&members, opts).unwrap();
+        let start = std::time::Instant::now();
+        assert!(!union.is_match(far.as_bytes()));
+        let took = start.elapsed();
+        assert!(took.as_millis() < 500, "ci={ci}: {took:?}");
+        assert!(union.is_match(format!("x3/{lit}q3").as_bytes()));
+        assert!(!union.is_match(format!("x3/{}q3", &lit[1..]).as_bytes()));
+    }
+}
+
 // Windows: an escaped `\` is a literal no segment holds (§4.2), so its
 // expansion seeds nothing, and `match_dir` prunes where it is next.
 #[cfg(windows)]
