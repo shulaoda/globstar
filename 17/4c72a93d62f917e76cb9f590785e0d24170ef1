@@ -1,0 +1,21 @@
+crates/globstar/src/engine/segment/seg_nfa.rs
+  s_43b9a5518ea7f8::t_1e5d24abd86c7e 234,239,431-471,637
+packages/globstar/src/engine/segment/seg-nfa.js
+  s_43b9a5518ea7f8::t_2a30ee919a5e1b 381-399,401,570
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "174c72a93d62f917e76cb9f590785e0d24170ef1",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
