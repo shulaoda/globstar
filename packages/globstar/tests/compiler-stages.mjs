@@ -171,7 +171,7 @@ console.log("✓ matcher options are checked");
 // Twins of `a_member_error_names_the_member` (glob_union.rs) and
 // `invalid_range_points_at_the_range` (glob.rs).
 {
-  const { GlobError, DirMatch, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } =
+  const { GlobError, DirMatch, MAX_PATTERN_LEN, MAX_BRACE_NESTING } =
     await import("../src/index.js");
   const thrown = (f) => {
     try {
@@ -188,16 +188,40 @@ console.log("✓ matcher options are checked");
   assert.equal(member.at, 4);
   assert.ok(member.message.startsWith("pattern 2: "), member.message);
   assert.equal(thrown(() => compileMatcher("lib/[a")).index, undefined);
-  // A `TooComplex` is the list's own: the list compiles as one pattern,
-  // so it names no member, and members that each compile alone can fail
-  // together. Twin of `members_share_one_compile_work_bound`.
+  // `{a,b,/}` repeated cuts its segments into glued pieces: alone or in a
+  // list, it compiles, and the list answers as its members. Twin of
+  // `braces_whose_segments_multiply_compile_as_one`.
   const heavy = "{a,b,/}".repeat(100);
-  const whole = thrown(() => compileMatcher(["a", heavy]));
-  assert.equal(whole.kind, "TooComplex");
-  assert.equal(whole.index, undefined);
   const each = "{a,b,/}".repeat(28);
-  compileMatcher(each);
-  assert.equal(thrown(() => compileMatcher([each, `x/${each}`])).kind, "TooComplex");
+  for (const members of [
+    ["a", heavy],
+    [each, `x/${each}`],
+  ]) {
+    const union = compileMatcher(members);
+    const alone = members.map((p) => compileMatcher(p));
+    for (const path of ["a", "ab/ba", "x/a/b", "x//", "/a/b/", "abc", "x/ab"]) {
+      assert.equal(
+        union.match(path),
+        alone.some((m) => m.match(path)),
+        path,
+      );
+    }
+  }
+  // Members of separator-crossing braces around a `**`, ten of which once
+  // copied past a shared expansion budget, compile as one. Twin of
+  // `members_that_compile_alone_compile_together`.
+  const each10 = "{,/}".repeat(10) + "**/f";
+  const members = Array.from({ length: 10 }, (_, i) => `${each10}${i}`);
+  const union = compileMatcher(members);
+  const alone = members.map((p) => compileMatcher(p));
+  for (const path of ["f0", "a/f3", "/f9", "a//b/f1", "///f2", "f", "a/f10"]) {
+    assert.equal(
+      union.match(path),
+      alone.some((m) => m.match(path)),
+      path,
+    );
+  }
+  assert.ok(union.match("a/f3") && !union.match("f"));
   const range = thrown(() => compileMatcher("src/[abcz-a].ts"));
   assert.equal(range.at, 8);
   const json = JSON.parse(JSON.stringify(range));
@@ -206,7 +230,7 @@ console.log("✓ matcher options are checked");
   // Any iterable is a list; DirMatch is frozen; the limits are exported.
   assert.equal(compileMatcher(new Set(["*.ts", "*.js"])).match("a.js"), true);
   assert.ok(Object.isFrozen(DirMatch));
-  assert.deepEqual([MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION], [65536, 32, 4096]);
+  assert.deepEqual([MAX_PATTERN_LEN, MAX_BRACE_NESTING], [65536, 32]);
 }
 console.log("✓ errors and API surface");
 

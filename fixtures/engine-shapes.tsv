@@ -22,17 +22,17 @@ W:set G0 L G0 W:affix(2) | chains 2 | nfa small	src/**/*.ts	tests/**/*.ts	lib/**
 # set there; a literal member, or one that starts its segment, stays as it
 # is.
 G0 W:set G1 W:affix | chains 2 | nfa small	**/node_modules/**	**/.git/**	**/*.log
-L G0(2) W:set W:affix | chains 2 | nfa small	**/.DS_Store	**/Thumbs.db	src/**/*.ts
+G0 L G0 W:set W:affix | chains 2 | nfa small	**/.DS_Store	**/Thumbs.db	src/**/*.ts
 L(5) | chains 0 | literals 3 | nfa small	src/a/x.ts	src/a/y.ts	src/b/x.ts
 L(4) G1 | chains 2 | nfa small	a/x/**	b/y/**
-L W:set G1 L G0 W:affix | chains 2 | nfa small	a/x/**	a/y/**	b/**/*.ts
+L W:set L G0 G1 W:affix | chains 2 | nfa small	a/x/**	a/y/**	b/**/*.ts
 G0 L G0 W:set L | chains 2 | nfa small	**/*.log	**/*.tmp	src/**/x
 L W:affix L W:affix W:set L G1 | chains 2 | nfa small	packages/*/dist/**	packages/*/coverage/**	apps/*/out/**
 G0 L G0 W:affix(2) L | chains 3 | nfa small	**/.env.*	**/vite.config.*	src/**/x
 # A lifted `**/` that would leave names and wildcards in one segment is
 # taken back: the names make a set chain, each wildcard its own chain.
 G0 W:set W:affix | chains 2 | nfa small	**/.DS_Store	**/Thumbs.db	**/*.log
-G0 L G1 L W:affix | chains 3 | nfa small	**/.DS_Store	**/*.log	**/node_modules/**
+G0 L(2) W:affix G1 | chains 3 | nfa small	**/.DS_Store	**/*.log	**/node_modules/**
 G0 W:affix(2) | chains 2 | nfa small	**/a*	**/b*
 L G0 L G0 L G0(2) L G0 L G0 L G0 W:set W:affix W:set W:affix L W:affix(4) | chains 9 | nfa small	src/**/*.ts	src/**/*.tsx	tests/**/*.test.ts	lib/**/*.{js,mjs}	**/*.json	**/package.json	**/.env*	components/**/*.vue	scripts/**/*.sh	docs/**/*.md
 L(7) | chains 0 | literals 8 | nfa small	{a/,b/}{a/,b/}{a/,b/}x

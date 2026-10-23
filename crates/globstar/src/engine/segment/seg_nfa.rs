@@ -12,9 +12,10 @@
 
 use crate::parse::ast::{CharClass, Node};
 
-use super::NEVER;
 use super::bits::{Bits, Wide};
+use super::graph::{ACCEPT, Edges};
 use super::wild::{Lens, Wild, WildKind};
+use super::{Elem, INNER, NEVER};
 
 const UNSET: u32 = u32::MAX;
 
@@ -123,14 +124,6 @@ impl SegNfa {
             SegNfa::Wide(n) => n.lens,
         }
     }
-
-    /// The states and the kept closures, in bytes (`Wild::table_bytes`).
-    pub(super) fn table_bytes(&self) -> usize {
-        match self {
-            SegNfa::Small(n) => n.table_bytes(),
-            SegNfa::Wide(n) => n.table_bytes(),
-        }
-    }
 }
 
 /// A class as the bytes it takes, one bit each, with its negation applied
@@ -227,13 +220,12 @@ enum SegState {
     Split(u32, u32),
     Jump(u32),
     Match,
+    /// A glued piece's segment may end here, at graph node `.0` (see
+    /// `GlueNfa`): kept in a set as `Match` is.
+    Exit(u32),
 }
 
 impl<B: Bits> SegNfaImpl<B> {
-    fn table_bytes(&self) -> usize {
-        self.states.len() * size_of::<SegState>() + self.closures.len() * self.words * 8
-    }
-
     #[inline]
     fn matches(&self, seg: &[u8]) -> bool {
         // Under dot=true the blocked closure equals `init`, so the compile
@@ -418,7 +410,7 @@ fn satisfiable<B: Bits>(states: &[SegState], entry: usize, words: usize) -> bool
             continue;
         }
         let (a, b) = match state {
-            SegState::Match => return true,
+            SegState::Match | SegState::Exit(_) => return true,
             SegState::Class(cls, _) if cls.is_empty() => continue,
             SegState::Split(a, b) | SegState::Any(a, b) => (*a, *b),
             SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Jump(n) => (*n, UNSET),
@@ -456,7 +448,11 @@ fn close<B: Bits>(states: &[SegState], set: &mut B, block: bool) {
                 // A `*` stays and leaves.
                 SegState::Any(_, exit) if *exit != UNSET => (*exit, UNSET, true),
                 SegState::Class(cls, _) if block && cls.negated => (UNSET, UNSET, false),
-                SegState::Byte(..) | SegState::Class(..) | SegState::Any(..) | SegState::Match => {
+                SegState::Byte(..)
+                | SegState::Class(..)
+                | SegState::Any(..)
+                | SegState::Match
+                | SegState::Exit(_) => {
                     continue;
                 }
             };
@@ -513,6 +509,215 @@ fn closures<B: Bits>(states: &[SegState], words: usize) -> Box<[B]> {
     out.into_boxed_slice()
 }
 
+/// The pieces of every segment a separator-crossing brace cuts (see
+/// `graph.rs`), as one NFA of the same states. A piece is its nodes'
+/// states, then a fan of ε-edges: one to each piece glued after it,
+/// and an `Exit` when its segment may end there. A join among pieces
+/// is the fan alone. A segment is matched from the entry states of the
+/// pieces the graph NFA holds, all at once, and the exits it reaches
+/// are where the graph NFA goes on. Nodes are laid out in graph order,
+/// and a piece is glued only to later ones, so every ε-edge still
+/// points to a later state.
+#[derive(Debug, Clone)]
+pub(super) struct GlueNfa {
+    states: Box<[SegState]>,
+    /// Per-state ε-closures while they fit `MAX_CLOSURE_BYTES`, as in
+    /// `SegNfaImpl`.
+    closures: Box<[Wide]>,
+    words: usize,
+    /// Per graph node, the range of its states (empty outside the
+    /// pieces).
+    spans: Box<[(u32, u32)]>,
+}
+
+impl GlueNfa {
+    /// The NFA of the nodes that are glued to their predecessors
+    /// (`glued`) or have a successor glued to them, each of which becomes
+    /// an `Elem::Piece`. `pieces` holds a wildcard node's nodes.
+    pub(super) fn new(
+        elems: &mut [Elem],
+        edges: &Edges,
+        glued: &[bool],
+        pieces: &[Vec<&Node>],
+        ci: bool,
+    ) -> Self {
+        let n = elems.len();
+        let glued_to = |t: u32| t != ACCEPT && glued[t as usize];
+        let mut b = SegBuilder {
+            states: Vec::new(),
+            tails: Vec::new(),
+            ci,
+        };
+        let mut spans = vec![(0, 0); n];
+        // The fan states that wait for a later piece's first state.
+        let mut waiting: Vec<Vec<u32>> = vec![Vec::new(); n];
+        for i in 0..n {
+            let succ = edges.succ(i);
+            if !glued[i] && !succ.iter().any(|&t| glued_to(t)) {
+                continue;
+            }
+            let first = b.states.len() as u32;
+            let (lit, one);
+            let nodes: &[&Node] = match &elems[i] {
+                Elem::Lit(bytes) => {
+                    lit = Node::Literal(bytes.to_vec());
+                    one = [&lit];
+                    &one
+                }
+                Elem::Wild(_) => &pieces[i],
+                // A join is the fan alone.
+                Elem::Join => &[],
+                _ => unreachable!("a globstar is never glued"),
+            };
+            let entry = b.compile_nodes(nodes.iter().copied());
+            for s in std::mem::take(&mut waiting[i]) {
+                b.patch(s, entry);
+            }
+            let tails = std::mem::take(&mut b.tails);
+            let exit = succ.iter().any(|&t| !glued_to(t));
+            let glues = succ.iter().filter(|&&t| glued_to(t));
+            let ways = usize::from(exit) + glues.clone().count();
+            // Split `k` takes leaf `k` or the rest, as a brace's do.
+            let fan = b.states.len();
+            for _ in 1..ways {
+                b.alloc(SegState::Split(UNSET, UNSET));
+            }
+            let mut leaves = Vec::with_capacity(ways);
+            if exit {
+                leaves.push(b.alloc(SegState::Exit(i as u32)));
+            }
+            for &t in glues {
+                let s = b.alloc(SegState::Jump(UNSET));
+                waiting[t as usize].push(s);
+                leaves.push(s);
+            }
+            for k in 0..ways - 1 {
+                let rest = if k + 2 < ways {
+                    (fan + k + 1) as u32
+                } else {
+                    leaves[k + 1]
+                };
+                b.states[fan + k] = SegState::Split(leaves[k], rest);
+            }
+            let fan_entry = if ways > 1 { fan as u32 } else { leaves[0] };
+            for t in tails {
+                b.patch(t, fan_entry);
+            }
+            spans[i] = (first, b.states.len() as u32);
+            elems[i] = Elem::Piece(if glued[i] { INNER } else { entry });
+        }
+        let states = b.states.into_boxed_slice();
+        let words = Wide::words(states.len());
+        let closures = if states.len() * words * 8 <= MAX_CLOSURE_BYTES {
+            closures(&states, words)
+        } else {
+            Box::default()
+        };
+        GlueNfa {
+            states,
+            closures,
+            words,
+            spans: spans.into_boxed_slice(),
+        }
+    }
+
+    /// An empty set of its states.
+    pub(super) fn set(&self) -> Wide {
+        Wide::zero(self.words)
+    }
+
+    /// Calls `exit` with each node whose piece ends a match of `seg`
+    /// begun at the entry states in `active`. A protected leading `.`
+    /// (`dot` off) is taken only by name, as in `SegNfaImpl`.
+    pub(super) fn exits(
+        &self,
+        mut active: Wide,
+        seg: &[u8],
+        dot: bool,
+        mut exit: impl FnMut(usize),
+    ) {
+        close(
+            &self.states,
+            &mut active,
+            !dot && seg.first() == Some(&b'.'),
+        );
+        let mut next = self.set();
+        for &c in seg {
+            if active.is_zero() {
+                return;
+            }
+            next.clear();
+            if self.closures.is_empty() {
+                active.for_each(|s| match &self.states[s] {
+                    SegState::Byte(b, nx) if *b == c => next.set(*nx as usize),
+                    SegState::Class(cls, nx) if cls.has(c) => next.set(*nx as usize),
+                    SegState::Any(nx, _) => next.set(*nx as usize),
+                    _ => {}
+                });
+                close(&self.states, &mut next, false);
+            } else {
+                active.for_each(|s| match &self.states[s] {
+                    SegState::Byte(b, nx) if *b == c => next.or_with(&self.closures[*nx as usize]),
+                    SegState::Class(cls, nx) if cls.has(c) => {
+                        next.or_with(&self.closures[*nx as usize]);
+                    }
+                    SegState::Any(nx, _) => next.or_with(&self.closures[*nx as usize]),
+                    _ => {}
+                });
+            }
+            std::mem::swap(&mut active, &mut next);
+        }
+        active.for_each(|s| {
+            if let SegState::Exit(node) = self.states[s] {
+                exit(node as usize);
+            }
+        });
+    }
+
+    /// What the wildcards alone take from the entry states in `entries`
+    /// (dot=true): each node a piece of which they end a segment at,
+    /// with the lengths every segment of which they take there, as
+    /// `SegNfaImpl::step_lens` finds a segment's. A segment of a length
+    /// reaches the nodes it does for every segment of it, so a node
+    /// stands for all the segments between these entries and it, as a
+    /// whole segment does.
+    pub(super) fn wild_exits(&self, entries: &Wide) -> Vec<(u32, Lens)> {
+        let at = wild_lengths(&self.states, entries);
+        self.states
+            .iter()
+            .zip(at)
+            .filter_map(|(state, lengths)| match state {
+                SegState::Exit(node) => Some((*node, lengths.lens())),
+                _ => None,
+            })
+            .filter(|&(_, lens)| lens != Lens::default())
+            .collect()
+    }
+
+    /// The states of `node` from which some segment reaches an exit
+    /// that `exits_on` holds for (`node`'s own when `exit_on`), added to
+    /// `good`; whether its entry is one. Called for each node from the
+    /// last back: every edge leads to a later state, so what a state
+    /// leads to is known when it is reached.
+    pub(super) fn reach(&self, node: usize, exit_on: bool, good: &mut Wide) -> bool {
+        let (lo, hi) = self.spans[node];
+        for s in (lo as usize..hi as usize).rev() {
+            let to = |t: u32| t != UNSET && t as usize != s && good.test(t as usize);
+            let on = match &self.states[s] {
+                SegState::Exit(_) => exit_on,
+                SegState::Class(cls, _) if cls.is_empty() => false,
+                SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Jump(n) => to(*n),
+                SegState::Any(a, b) | SegState::Split(a, b) => to(*a) || to(*b),
+                SegState::Match => false,
+            };
+            if on {
+                good.set(s);
+            }
+        }
+        lo < hi && good.test(lo as usize)
+    }
+}
+
 struct SegBuilder {
     states: Vec<SegState>,
     tails: Vec<u32>,
@@ -536,7 +741,7 @@ impl SegBuilder {
             | SegState::Jump(n) => *n = target,
             // A Split is never a dangling tail: a brace returns its
             // branches' leaf tails.
-            SegState::Split(..) | SegState::Match => unreachable!(),
+            SegState::Split(..) | SegState::Match | SegState::Exit(_) => unreachable!(),
         }
     }
 

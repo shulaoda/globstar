@@ -10,7 +10,9 @@ use crate::dir_match::DirMatch;
 
 use super::bits::{Bits, Wide};
 use super::graph::{ACCEPT, Edges};
-use super::{Elem, SegmentMatcher};
+use super::seg_nfa::GlueNfa;
+use super::wild::Lens;
+use super::{Elem, INNER, SegmentMatcher};
 
 /// The wildcard-only segments `covers_below` feeds before it gives up:
 /// a pattern needs about one more than its longest run of them, and
@@ -68,6 +70,8 @@ pub(super) struct SparseNfa {
     reach1: Wide,
     /// See `len_classes`.
     len_classes: u32,
+    /// The glued pieces' NFA, when the graph has pieces.
+    glue: Option<Box<GlueNfa>>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,17 +101,25 @@ impl AnyNfa {
 }
 
 /// The NFA over the graph: dense rows in a `u64`, or past 64 states
-/// within `MAX_ROW_BYTES` and `MAX_DENSE_LITS`; sparse beyond.
-pub(super) fn any_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> AnyNfa {
+/// within `MAX_ROW_BYTES` and `MAX_DENSE_LITS`; sparse beyond, and for
+/// a graph with pieces, which keeps `glue`, their NFA, with it.
+pub(super) fn any_nfa(
+    elems: &[Elem],
+    ci: bool,
+    edges: Option<&Edges>,
+    glue: Option<Box<GlueNfa>>,
+) -> AnyNfa {
     let states = elems.len() + 1;
-    if states <= 64 {
+    if glue.is_some() {
+        AnyNfa::Sparse(Box::new(sparse_nfa(elems, ci, edges, glue)))
+    } else if states <= 64 {
         AnyNfa::Small(dense_nfa(elems, edges))
     } else if states * Wide::words(states) * 8 <= MAX_ROW_BYTES
         && edges.is_none_or(|e| lit_fanout(elems, e) <= MAX_DENSE_LITS)
     {
         AnyNfa::Wide(Box::new(dense_nfa(elems, edges)))
     } else {
-        AnyNfa::Sparse(Box::new(sparse_nfa(elems, ci, edges)))
+        AnyNfa::Sparse(Box::new(sparse_nfa(elems, ci, edges, None)))
     }
 }
 
@@ -141,15 +153,23 @@ fn len_classes(elems: &[Elem]) -> u32 {
     elems.iter().map(|e| e.lens().reach()).max().unwrap_or(0)
 }
 
-/// The successors of position `p` (`n`: the start): the stored ones
-/// of a graph with a crossing brace, else the next position.
-fn succ_of(edges: Option<&Edges>, n: usize, p: usize) -> impl Iterator<Item = u32> + '_ {
+/// The successors of position `p` (`n`: the start) that start a
+/// segment: the stored ones of a graph with a crossing brace but the
+/// pieces glued to `p` (the glue NFA's), else the next position.
+fn succ_of<'a>(
+    elems: &'a [Elem],
+    edges: Option<&'a Edges>,
+    p: usize,
+) -> impl Iterator<Item = u32> + 'a {
+    let n = elems.len();
     let (next, stored): (Option<u32>, &[u32]) = match edges {
         Some(e) => (None, e.succ(p)),
         None if p == n => (Some(0), &[]),
         None => (Some(if p + 1 < n { p as u32 + 1 } else { ACCEPT }), &[]),
     };
-    next.into_iter().chain(stored.iter().copied())
+    let glued = |t: u32| t != ACCEPT && matches!(elems[t as usize], Elem::Piece(INNER));
+    next.into_iter()
+        .chain(stored.iter().copied().filter(move |&t| !glued(t)))
 }
 
 /// The NFA over the graph (whose `edges` a crossing brace stores; a
@@ -186,7 +206,7 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
     };
     for i in (0..n).rev() {
         let el = &elems[i];
-        let mut c = closure_of(&mut succ_of(edges, n, i), &after);
+        let mut c = closure_of(&mut succ_of(elems, edges, i), &after);
         // A state reaches accept through ≥ 1 segment iff its element
         // can consume one and what follows reaches accept.
         if el.satisfiable() && (c.test(accept) || c.intersects(&reach1)) {
@@ -198,7 +218,7 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
         }
         after[i] = c;
     }
-    let init = closure_of(&mut succ_of(edges, n, n), &after);
+    let init = closure_of(&mut succ_of(elems, edges, n), &after);
     // Per length class, the states a segment of it fires for sure.
     let k = len_classes(elems);
     let fire = if k == 0 {
@@ -224,7 +244,12 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
 
 /// The sparse NFA over the graph: each position keeps its successors,
 /// the start's last, the literal ones sorted by literal.
-fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
+fn sparse_nfa(
+    elems: &[Elem],
+    ci: bool,
+    edges: Option<&Edges>,
+    glue: Option<Box<GlueNfa>>,
+) -> SparseNfa {
     // The start is position `n`.
     let n = elems.len();
 
@@ -235,11 +260,21 @@ fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
     // one segment whenever it reaches it at all, or a join, which takes
     // none and reaches it as its successors do: no set holds a join's
     // state, only its position, see `enter`.)
+    // (A piece reaches it iff a segment takes it to an exit that does,
+    // see `GlueNfa::reach`.)
     let mut reach1 = Wide::zero(Wide::words(2 * n + 2));
+    let mut good = None;
     for i in (0..n).rev() {
-        if (elems[i].satisfiable() || matches!(elems[i], Elem::Join))
-            && succ_of(edges, n, i).any(|t| t == ACCEPT || reach1.test(t as usize))
-        {
+        let on = succ_of(elems, edges, i).any(|t| t == ACCEPT || reach1.test(t as usize));
+        let reaches = match &elems[i] {
+            Elem::Piece(entry) => {
+                let glue = glue.as_deref().expect("pieces have a glue NFA");
+                let good = good.get_or_insert_with(|| glue.set());
+                glue.reach(i, on, good) && *entry != INNER
+            }
+            e => (e.satisfiable() || matches!(e, Elem::Join)) && on,
+        };
+        if reaches {
             reach1.set(i);
         }
     }
@@ -249,7 +284,7 @@ fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
     let (mut lits, mut nulls, mut rest) = (Vec::new(), Vec::new(), Vec::new());
     let mut ends = Wide::zero(Wide::words(n + 1));
     for p in 0..=n {
-        for t in succ_of(edges, n, p) {
+        for t in succ_of(elems, edges, p) {
             if t == ACCEPT {
                 ends.set(p);
                 continue;
@@ -286,6 +321,7 @@ fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
         ends,
         reach1,
         len_classes: len_classes(elems),
+        glue,
     }
 }
 
@@ -346,6 +382,7 @@ impl<B: Bits> Nfa<B> {
                 Elem::Wild(w) => m.wild_consumes(w, seg),
                 Elem::G0 | Elem::G1 => absorb_ok,
                 Elem::Join => false,
+                Elem::Piece(_) => unreachable!("pieces take the sparse NFA"),
             };
             if consumes {
                 next.or_with(&self.after[s]);
@@ -503,6 +540,21 @@ impl Active {
 }
 
 impl SparseNfa {
+    fn glue(&self) -> &GlueNfa {
+        self.glue
+            .as_deref()
+            .expect("a piece comes with the glue NFA")
+    }
+
+    /// Adds node `s`'s entry state to `entries` if it is a piece.
+    fn note_piece(&self, m: &SegmentMatcher, s: u32, entries: &mut Option<Wide>) {
+        if let Elem::Piece(entry) = m.elems[s as usize] {
+            entries
+                .get_or_insert_with(|| self.glue().set())
+                .set(entry as usize);
+        }
+    }
+
     #[inline]
     fn accept(&self) -> u32 {
         self.n
@@ -562,11 +614,19 @@ impl SparseNfa {
     fn step(&self, m: &SegmentMatcher, active: &Active, seg: &[u8], next: &mut Active) {
         next.clear();
         let absorb_ok = m.dot || seg.first() != Some(&b'.');
-        let consumes = |s: u32| match &m.elems[s as usize] {
+        // The pieces' entries, matched together after the rest.
+        let mut entries = None;
+        let mut consumes = |s: u32| match &m.elems[s as usize] {
             Elem::Lit(lit) => m.lit_eq(lit, seg),
             Elem::Wild(w) => m.wild_consumes(w, seg),
             Elem::G0 | Elem::G1 => absorb_ok,
             Elem::Join => false,
+            Elem::Piece(entry) => {
+                entries
+                    .get_or_insert_with(|| self.glue().set())
+                    .set(*entry as usize);
+                false
+            }
         };
         for &item in &active.items {
             let Some(p) = item.checked_sub(self.n + 1) else {
@@ -588,6 +648,10 @@ impl SparseNfa {
                     self.fire(m, s, next);
                 }
             }
+        }
+        if let Some(entries) = entries {
+            self.glue()
+                .exits(entries, seg, m.dot, |q| self.fire(m, q as u32, next));
         }
     }
 
@@ -626,10 +690,14 @@ impl SparseNfa {
     }
 
     /// Does every path below the directory match? As `Nfa::covers_below`.
+    /// A piece takes a segment to the nodes the glue NFA reaches, so it
+    /// fires those for the lengths it takes every segment of to them
+    /// (`GlueNfa::wild_exits`), as the whole segments through it would;
+    /// that costs a pass over the glue NFA per set of states.
     fn covers_below(&self, m: &SegmentMatcher, active: &mut Active) -> bool {
         // The search by length starts where the wildcard-only one does,
         // which steps `active` on.
-        let start = (self.len_classes > 0).then(|| active.clone());
+        let start = (self.len_classes > 0 || self.glue.is_some()).then(|| active.clone());
         self.covers_wild(m, active) || start.is_some_and(|s| self.covers_by_length(m, &s))
     }
 
@@ -639,6 +707,7 @@ impl SparseNfa {
         let any_seg = |s: u32| m.elems[s as usize].any_seg();
         for _ in 0..=(self.n as usize + 1).min(MAX_COVER_SEGMENTS) {
             next.clear();
+            let mut entries = None;
             for &item in &active.items {
                 let Some(p) = item.checked_sub(self.n + 1) else {
                     if item != accept && any_seg(item) {
@@ -650,6 +719,15 @@ impl SparseNfa {
                 for &s in self.succ(p as usize, 1, 3) {
                     if any_seg(s) {
                         self.fire(m, s, &mut next);
+                    } else {
+                        self.note_piece(m, s, &mut entries);
+                    }
+                }
+            }
+            if let Some(entries) = entries {
+                for (node, lens) in self.glue().wild_exits(&entries) {
+                    if lens.from == 1 {
+                        self.fire(m, node, &mut next);
                     }
                 }
             }
@@ -665,25 +743,30 @@ impl SparseNfa {
     }
 
     /// As `Nfa::covers_by_length`; a fired set is its states,
-    /// ascending.
+    /// ascending. The classes are a set's own: lengths past what any of
+    /// its takers singles out fire alike, and a graph without pieces
+    /// has the NFA's (`len_classes`) for every set.
     fn covers_by_length(&self, m: &SegmentMatcher, active: &Active) -> bool {
-        let k = self.len_classes;
         let budget = MAX_COVER_SETS * (self.n as usize + 1);
         let (mut firings, mut work) = (0, 0);
         let mut seen: Vec<Box<[u32]>> = Vec::new();
         let mut known: HashSet<Box<[u32]>> = HashSet::new();
-        let mut tried: HashSet<Vec<u32>> = HashSet::new();
-        let mut classes: Vec<Vec<u32>> = vec![Vec::new(); k as usize + 1];
+        let mut tried: HashSet<Vec<(u32, Lens)>> = HashSet::new();
+        let mut classes: Vec<Vec<u32>> = Vec::new();
         let mut next = Active::new(self);
         let mut i = 0;
         loop {
-            let states = self.takers(m, if i == 0 { active } else { &next });
-            if tried.insert(states.clone()) {
+            let takers = self.takers(m, if i == 0 { active } else { &next });
+            let k = takers
+                .iter()
+                .fold(self.len_classes, |k, (_, l)| k.max(l.reach()));
+            if tried.insert(takers.clone()) {
                 // Every class's fired set in one pass: a state joins
                 // the classes it takes.
-                classes.iter_mut().for_each(Vec::clear);
-                for &s in &states {
-                    let mut mask = m.elems[s as usize].lens().classes(k);
+                classes.clear();
+                classes.resize(k as usize + 1, Vec::new());
+                for &(s, lens) in &takers {
+                    let mut mask = lens.classes(k);
                     while mask != 0 {
                         classes[mask.trailing_zeros() as usize].push(s);
                         mask &= mask - 1;
@@ -722,20 +805,33 @@ impl SparseNfa {
         }
     }
 
-    /// The states of `set` that take every segment of some length,
-    /// ascending: what a length class may fire. Literals take none.
-    fn takers(&self, m: &SegmentMatcher, set: &Active) -> Vec<u32> {
-        let takes = |&s: &u32| m.elems[s as usize].lens().classes(self.len_classes) != 0;
+    /// The states of `set` that take every segment of some length, and
+    /// the nodes its pieces take every segment of some length to, with
+    /// those lengths, ascending: what a length class may fire. Literals
+    /// take none.
+    fn takers(&self, m: &SegmentMatcher, set: &Active) -> Vec<(u32, Lens)> {
         let mut out = Vec::new();
+        let mut entries = None;
+        let mut add = |s: u32| {
+            let lens = m.elems[s as usize].lens();
+            if lens != Lens::default() {
+                out.push((s, lens));
+            } else {
+                self.note_piece(m, s, &mut entries);
+            }
+        };
         for &item in &set.items {
             match item.checked_sub(self.n + 1) {
-                Some(p) => out.extend(self.succ(p as usize, 1, 3).iter().filter(|s| takes(s))),
-                None if item != self.accept() && takes(&item) => out.push(item),
+                Some(p) => self.succ(p as usize, 1, 3).iter().for_each(|&s| add(s)),
+                None if item != self.accept() => add(item),
                 None => {}
             }
         }
-        out.sort_unstable();
-        out.dedup();
+        if let Some(entries) = entries {
+            out.extend(self.glue().wild_exits(&entries));
+        }
+        out.sort_unstable_by_key(|&(s, _)| s);
+        out.dedup_by_key(|&mut (s, _)| s);
         out
     }
 }

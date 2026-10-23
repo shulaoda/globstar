@@ -80,7 +80,7 @@ Thrown by both factories when a pattern fails to compile. `kind` names the failu
 ```ts
 class GlobError extends Error {
   readonly name: "GlobError";
-  readonly kind: string; // "UnterminatedClass", "BraceExpansionTooLarge", ...
+  readonly kind: string; // "UnterminatedClass", "InvalidRange", ...
   readonly at?: number; // byte offset of the offending construct
   readonly len?: number; // pattern length, for TooLong
   readonly max?: number; // the limit that was hit
@@ -98,7 +98,7 @@ try {
 }
 ```
 
-The full list of kinds, with an example for each, is in [Errors and limits](../guide/errors.md). An error from one member of a pattern list also has `index`, the member's position (a `TooComplex` for the list as a whole has none). `JSON.stringify(err)` keeps the message. The limits `MAX_PATTERN_LEN`, `MAX_BRACE_NESTING` and `MAX_EXPANSION` are exported, and a pattern list may be any iterable of strings (an array, a `Set`, …).
+The full list of kinds, with an example for each, is in [Errors and limits](../guide/errors.md). An error from one member of a pattern list also has `index`, the member's position. `JSON.stringify(err)` keeps the message. The limits `MAX_PATTERN_LEN` and `MAX_BRACE_NESTING` are exported, and a pattern list may be any iterable of strings (an array, a `Set`, …).
 
 ## Walker
 

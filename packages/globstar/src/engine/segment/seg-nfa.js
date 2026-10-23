@@ -10,10 +10,15 @@
 // they fit MAX_CLOSURE_BYTES; past that (a dense set per state is
 // quadratic in the states) it closes its set as it goes, so memory stays
 // linear in the pattern.
+//
+// The same states match the pieces of the segments a separator-crossing
+// brace cuts, glued together (`GlueNfa`).
 
-import { N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, seq } from "../../parse/ast.js";
+import { N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, lit, seq } from "../../parse/ast.js";
 import { ctz32, IS_WINDOWS_SEP } from "../../bytes.js";
-import { exact, NEVER_LEN } from "./elem.js";
+import { isAscii, utf8Latin1 } from "../../utf8.js";
+import { EL_JOIN, EL_LIT, EL_PIECE, EL_WILD, INNER, exact, NEVER_LEN } from "./elem.js";
+import { ACCEPT } from "./graph.js";
 import { wordsFor, bitTest, bitSet, bitsIsZero } from "./bits.js";
 
 // NFA state kinds. A `*` is an S_ANY whose `next` is itself, with its
@@ -25,6 +30,9 @@ const S_ANY = 2;
 const S_SPLIT = 3;
 const S_JUMP = 4;
 const S_MATCH = 5;
+// A glued piece's segment may end here, at graph node `nexts[s]` (see
+// `GlueNfa`): kept in a set as S_MATCH is.
+const S_EXIT = 6;
 
 const UNSET = -1;
 
@@ -32,14 +40,6 @@ const UNSET = -1;
 // ORing dense closures is the faster step; past it, closing the set as
 // the step goes wins and keeps memory linear.
 const MAX_CLOSURE_BYTES = 128 * 1024;
-
-// The bytes `states` NFA states take in the Rust twin (16 each), with
-// their closures while those are kept: what the compile walk charges
-// for a segment's NFA (`tableBytes` in graph.js).
-export function nfaTableBytes(states) {
-  const closures = states * Math.ceil(states / 64) * 8;
-  return states * 16 + (closures <= MAX_CLOSURE_BYTES ? closures : 0);
-}
 
 // The segment's NFA and what the graph reads off it, as `makeWild`
 // fields: one that accepts nothing gets NEVER_LEN, and it is
@@ -266,13 +266,7 @@ class SegNfaSmall {
 // marks that every segment of L units matches (1 ≤ L ≤ 31), and `from`
 // that every one of `from` units or more does (≤ 32; 0: none known), so
 // `from` 1 is "every non-empty segment" (`matchDir`'s all-below, see
-// `coversBelow` in nfa.js). The lengths each state is reached at come
-// in one pass in state order, as the Rust twin's `wild_lengths`: every
-// edge but a star's loop onto itself points to a later state, so a
-// state's are all in when it is reached. Lengths below 64 are one bit
-// each, in `lo` (0-31) and `hi` (32-63), and every length from `tail`
-// on is one too (Infinity: none known). Lengths past 63 below the tail
-// are left out, which keeps out lengths only.
+// `coversBelow` in nfa.js).
 function wildLens(b, entry, init, test) {
   const kinds = b.kinds;
   const n = kinds.length;
@@ -284,10 +278,24 @@ function wildLens(b, entry, init, test) {
   const lo = scratch ? LENS_LO.fill(0, 0, n) : new Int32Array(n);
   const hi = scratch ? LENS_HI.fill(0, 0, n) : new Int32Array(n);
   const tail = (scratch ? LENS_TAIL : new Float64Array(n)).fill(Infinity, 0, n);
-  const nexts = b.nexts;
-  const splitBs = b.splitBs;
   lo[entry] = 1;
-  for (let s = 0; s < n; s++) {
+  wildLengths(b, lo, hi, tail);
+  return lensOf(lo[n - 1], hi[n - 1], tail[n - 1]);
+}
+
+// The lengths of the segments the wildcards alone take from the states
+// `lo` holds length 0 for to each state, in one pass in state order, as
+// the Rust twin's `wild_lengths`: every edge but a star's loop onto
+// itself points to a later state, so a state's are all in when it is
+// reached. Lengths below 64 are one bit each, in `lo` (0-31) and `hi`
+// (32-63), and every length from `tail` on is one too (Infinity: none
+// known). Lengths past 63 below the tail are left out, which keeps out
+// lengths only.
+function wildLengths(nfa, lo, hi, tail) {
+  const kinds = nfa.kinds;
+  const nexts = nfa.nexts;
+  const splitBs = nfa.splitBs;
+  for (let s = 0; s < kinds.length; s++) {
     const l = lo[s];
     const h = hi[s];
     let f = tail[s];
@@ -308,7 +316,6 @@ function wildLens(b, entry, init, test) {
       addLens(lo, hi, tail, nexts[s], l << 1, (h << 1) | (l >>> 31), f + 1);
     }
   }
-  return lensOf(lo[n - 1], hi[n - 1], tail[n - 1]);
 }
 
 // State `t` is reached at the lengths `l`, `h`, `f` too.
@@ -353,27 +360,7 @@ class SegNfaWide {
     const n = b.kinds.length;
     const words = wordsFor(n);
     this.words = words;
-    // Per-state closures within MAX_CLOSURE_BYTES, else none (null).
-    let closures = null;
-    if (n * words * 4 <= MAX_CLOSURE_BYTES) {
-      closures = new Int32Array(n * words);
-      const copy = (s, from) => {
-        for (let k = 0; k < words; k++) closures[s * words + k] |= closures[from * words + k];
-      };
-      for (let s = n - 1; s >= 0; s--) {
-        const k = b.kinds[s];
-        if (k === S_SPLIT) {
-          copy(s, b.nexts[s]);
-          copy(s, b.splitBs[s]);
-        } else if (k === S_JUMP) {
-          copy(s, b.nexts[s]);
-        } else {
-          if (k === S_ANY && b.nexts[s] === s) copy(s, b.splitBs[s]);
-          closures[s * words + (s >>> 5)] |= 1 << (s & 31);
-        }
-      }
-    }
-    this.closures = closures;
+    this.closures = wideClosures(b, words);
     const entrySet = (block) => {
       const set = new Int32Array(words);
       bitSet(set, entry);
@@ -457,6 +444,228 @@ function stepClosing(nfa, active, next, c) {
     }
   }
   closeWide(nfa, next, false);
+}
+
+// `next` = what `active` reaches over code unit `c`, through the kept
+// closures.
+function stepKept(nfa, active, next, c) {
+  next.fill(0);
+  const words = active.length;
+  const kinds = nfa.kinds;
+  for (let w = 0; w < words; w++) {
+    let bits = active[w];
+    while (bits !== 0) {
+      const s = w * 32 + ctz32(bits);
+      bits &= bits - 1;
+      const k = kinds[s];
+      if (
+        k === S_BYTE
+          ? nfa.byteVals[s] === c
+          : k === S_CLASS
+            ? setHas(nfa.clsRefs[s], c)
+            : k === S_ANY
+      ) {
+        const base = nfa.nexts[s] * words;
+        for (let q = 0; q < words; q++) next[q] |= nfa.closures[base + q];
+      }
+    }
+  }
+}
+
+// Per-state closures, `words` words each, within MAX_CLOSURE_BYTES, else
+// none (null). One backward pass: every ε-edge points to a later state,
+// whose closure is done (a `*` stays in its own).
+function wideClosures(b, words) {
+  const n = b.kinds.length;
+  if (n * words * 4 > MAX_CLOSURE_BYTES) return null;
+  const closures = new Int32Array(n * words);
+  const copy = (s, from) => {
+    for (let k = 0; k < words; k++) closures[s * words + k] |= closures[from * words + k];
+  };
+  for (let s = n - 1; s >= 0; s--) {
+    const k = b.kinds[s];
+    if (k === S_SPLIT) {
+      copy(s, b.nexts[s]);
+      copy(s, b.splitBs[s]);
+    } else if (k === S_JUMP) {
+      copy(s, b.nexts[s]);
+    } else {
+      if (k === S_ANY && b.nexts[s] === s) copy(s, b.splitBs[s]);
+      closures[s * words + (s >>> 5)] |= 1 << (s & 31);
+    }
+  }
+  return closures;
+}
+
+// The pieces of every segment a separator-crossing brace cuts (see
+// graph.js), as one NFA of the same states. A piece is its nodes'
+// states, then a fan of ε-edges: one to each piece glued after it, and an
+// S_EXIT when its segment may end there. A join among pieces is the fan
+// alone. A segment is matched from the entry states of the pieces the
+// graph NFA holds, all at once, and the exits it reaches are where the
+// graph NFA goes on. Nodes are laid out in graph order, and a piece is
+// glued only to later ones, so every ε-edge still points to a later
+// state. JS twin of `GlueNfa` in seg_nfa.rs.
+export class GlueNfa {
+  // The NFA of the nodes that are glued to their predecessors (`glued`)
+  // or have a successor glued to them, each of which becomes an
+  // EL_PIECE. `pieces` holds a wildcard node's nodes.
+  constructor(elems, succs, glued, pieces, ci) {
+    const n = elems.length;
+    const gluedTo = (t) => t !== ACCEPT && glued[t] === 1;
+    const b = new SegBuilder(ci);
+    // Per graph node, the range of its states (empty outside the pieces).
+    const spanLo = new Int32Array(n);
+    const spanHi = new Int32Array(n);
+    // The fan states that wait for a later piece's first state.
+    const waiting = [];
+    for (let i = 0; i < n; i++) {
+      const succ = succs[i];
+      if (glued[i] === 0 && !succ.some(gluedTo)) continue;
+      const first = b.kinds.length;
+      const e = elems[i];
+      let nodes;
+      if (e.kind === EL_LIT) nodes = [lit(e.litStr)];
+      else if (e.kind === EL_WILD) nodes = pieces[i];
+      // A join is the fan alone.
+      else if (e.kind === EL_JOIN) nodes = [];
+      else throw new Error("a globstar is never glued");
+      const entry = b.compileNodes(nodes);
+      for (const s of waiting[i] ?? []) b.patch(s, entry);
+      const tails = b.tails;
+      b.tails = [];
+      const exit = succ.some((t) => !gluedTo(t));
+      const glues = succ.filter(gluedTo);
+      const ways = (exit ? 1 : 0) + glues.length;
+      // Split `k` takes leaf `k` or the rest, as a brace's do.
+      const fan = b.kinds.length;
+      for (let k = 1; k < ways; k++) b.alloc(S_SPLIT, 0, UNSET);
+      const leaves = [];
+      if (exit) leaves.push(b.alloc(S_EXIT, 0, i));
+      for (const t of glues) {
+        const s = b.alloc(S_JUMP, 0, UNSET);
+        (waiting[t] ??= []).push(s);
+        leaves.push(s);
+      }
+      for (let k = 0; k + 1 < ways; k++) {
+        b.nexts[fan + k] = leaves[k];
+        b.splitBs[fan + k] = k + 2 < ways ? fan + k + 1 : leaves[k + 1];
+      }
+      const fanEntry = ways > 1 ? fan : leaves[0];
+      for (const t of tails) b.patch(t, fanEntry);
+      spanLo[i] = first;
+      spanHi[i] = b.kinds.length;
+      elems[i] = { kind: EL_PIECE, litStr: null, wild: null, entry: glued[i] ? INNER : entry };
+    }
+    this.kinds = Uint8Array.from(b.kinds);
+    this.byteVals = Uint8Array.from(b.byteVals);
+    this.nexts = Int32Array.from(b.nexts);
+    this.splitBs = Int32Array.from(b.splitBs);
+    this.clsRefs = b.clsRefs.slice();
+    this.words = wordsFor(b.kinds.length);
+    this.closures = wideClosures(b, this.words);
+    this.countsBytes = b.countsBytes;
+    this.spanLo = spanLo;
+    this.spanHi = spanHi;
+    // The lengths `wildExits` finds, one set for all its calls.
+    this.lens = null;
+  }
+
+  // An empty set of its states.
+  set() {
+    return new Int32Array(this.words);
+  }
+
+  // Calls `exit` with each node whose piece ends a match of `str[s0..e0]`
+  // begun at the entry states in `active`, which it takes. A protected
+  // leading `.` (`dot` off) is taken only by name, as in the segment
+  // NFAs, and a non-ASCII segment runs on its UTF-8 bytes when a state
+  // counts them (not `byteOnly`, see `wildConsumes`).
+  exits(active, str, s0, e0, dot, byteOnly, exit) {
+    if (this.countsBytes && !byteOnly && !isAscii(str, s0, e0)) {
+      str = utf8Latin1(str.slice(s0, e0));
+      s0 = 0;
+      e0 = str.length;
+    }
+    closeWide(this, active, !dot && e0 > s0 && str.charCodeAt(s0) === 0x2e);
+    let next = this.set();
+    for (let i = s0; i < e0; i++) {
+      if (bitsIsZero(active)) return;
+      const c = str.charCodeAt(i);
+      if (this.closures === null) stepClosing(this, active, next, c);
+      else stepKept(this, active, next, c);
+      const t = active;
+      active = next;
+      next = t;
+    }
+    for (let w = 0; w < active.length; w++) {
+      for (let bits = active[w]; bits !== 0; bits &= bits - 1) {
+        const s = w * 32 + ctz32(bits);
+        if (this.kinds[s] === S_EXIT) exit(this.nexts[s]);
+      }
+    }
+  }
+
+  // What the wildcards alone take from the entry states in `entries`
+  // (dot=true), as triples in state order: each node a piece of which
+  // they end a segment at, with the lengths every segment of which they
+  // take there (`bits`, `from`), as `wildLens` finds a segment's. A
+  // segment of a length reaches the nodes it does for every segment of
+  // it, so a node stands for all the segments between these entries and
+  // it, as a whole segment does.
+  wildExits(entries) {
+    const n = this.kinds.length;
+    this.lens ??= { lo: new Int32Array(n), hi: new Int32Array(n), tail: new Float64Array(n) };
+    const { lo, hi, tail } = this.lens;
+    lo.fill(0);
+    hi.fill(0);
+    tail.fill(Infinity);
+    for (let w = 0; w < entries.length; w++) {
+      for (let bits = entries[w]; bits !== 0; bits &= bits - 1) lo[w * 32 + ctz32(bits)] |= 1;
+    }
+    wildLengths(this, lo, hi, tail);
+    const out = [];
+    for (let s = 0; s < n; s++) {
+      if (this.kinds[s] !== S_EXIT) continue;
+      const lens = lensOf(lo[s], hi[s], tail[s]);
+      if (lens.bits !== 0 || lens.from !== 0) out.push(this.nexts[s], lens.bits, lens.from);
+    }
+    return out;
+  }
+
+  // The states of `node` from which some segment reaches an exit that
+  // `good` holds for (`node`'s own when `exitOn`), added to `good`;
+  // whether its entry is one. Called for each node from the last back:
+  // every edge leads to a later state, so what a state leads to is known
+  // when it is reached.
+  reach(node, exitOn, good) {
+    const lo = this.spanLo[node];
+    const hi = this.spanHi[node];
+    const to = (s, t) => t !== UNSET && t !== s && bitTest(good, t);
+    for (let s = hi - 1; s >= lo; s--) {
+      let on;
+      switch (this.kinds[s]) {
+        case S_EXIT:
+          on = exitOn;
+          break;
+        case S_CLASS:
+          on = !setEmpty(this.clsRefs[s]) && to(s, this.nexts[s]);
+          break;
+        case S_BYTE:
+        case S_JUMP:
+          on = to(s, this.nexts[s]);
+          break;
+        case S_ANY:
+        case S_SPLIT:
+          on = to(s, this.nexts[s]) || to(s, this.splitBs[s]);
+          break;
+        default:
+          on = false;
+      }
+      if (on) bitSet(good, s);
+    }
+    return lo < hi && bitTest(good, lo);
+  }
 }
 
 class SegBuilder {

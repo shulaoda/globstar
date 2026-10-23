@@ -195,7 +195,7 @@ After preprocessing, the walker compiles two matchers (the Rust crate, which yie
 
 If the positive set is empty after preprocessing (an empty array, or one whose entries all reduce to ignore-only entries or to nothing, e.g. `glob(["!foo"])`), the walker MUST short-circuit and return an empty result without attempting any traversal. `cwd` is still checked and the `ignore` patterns still compile first, so their errors surface (§9).
 
-If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member the matcher failed in, as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`), and the underlying reason. The matcher reports that member (GLOB_SPEC §6), so nothing is compiled twice. When the members together ran past the expansion budget they share (GLOB_SPEC §6.2), the member named is the one it ran out in, and the reason says the patterns share the limit. An error no one member explains (the union's compile work, `TooComplex`) names the list, cut after three: `["a", "b", "c"] and 2 more`. When preprocessing changed the member, the reason names the text its byte offsets count in: `invalid character class range … at byte 5 … (in 'src/[z-a]', as the walker reads it)`. See §9.
+If matcher compilation fails, the walker MUST throw a `WalkError("InvalidPattern")` naming the member the matcher failed in, as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`), and the underlying reason. The matcher reports that member (GLOB_SPEC §6), so nothing is compiled twice. When preprocessing changed the member, the reason names the text its byte offsets count in: `invalid character class range … at byte 5 … (in 'src/[z-a]', as the walker reads it)`. See §9.
 
 ---
 

@@ -319,13 +319,18 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
 }
 
 // A run of `{?,}` takes as many lengths as it has braces: found in one
-// pass over its states, not one step per length. Twin of
+// pass over its states, not one step per length, both for a whole segment
+// at compile time and for a cut one at each all-below proof. Twin of
 // `wildcard_lengths_cost_one_pass` in crates/globstar/tests/glob.rs.
 {
   const start = performance.now();
   assert.equal(compileMatcher("{?,}".repeat(16_000)).match("abc"), true);
+  const cut = `{x/,y/*,zz}${"a".repeat(9_000)}/d/${"{,?}".repeat(13_000)}*{/**,*}`;
+  const m = compileMatcher(cut);
+  const dir = `x/${"a".repeat(9_000)}/d`;
+  for (let i = 0; i < 100; i++) assert.ok(DirMatch.matchesAllBelow(m.matchDir(dir)));
   const ms = performance.now() - start;
-  assert.ok(ms < 2000, `16,000 \`{?,}\` took ${ms.toFixed(0)} ms to compile`);
+  assert.ok(ms < 2000, `one-pass lengths took ${ms.toFixed(0)} ms`);
 }
 
 // Two globstars around a block: under `dot: false` the second one's dot
@@ -385,11 +390,10 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   }
 }
 
-// Keying groups by all they hold costs the walk their weight, where an
-// empty brace branch weighs one: groups that each hold a brace of 40,000
-// empty branches fail in milliseconds, in a list past the budget or met
-// again at 30 nested braces. Twin of
-// `groups_keyed_whole_count_toward_the_compile_work`.
+// Groups that each hold a brace of 40,000 empty branches, side by side or
+// met again at 30 nested braces, compile in milliseconds: no segment is
+// copied into a brace, and none of them is copied onto another, so
+// nothing multiplies. Twin of `groups_holding_huge_braces_compile_quickly`.
 {
   const core = (n, m) => {
     const classes = Array.from(
@@ -400,14 +404,20 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   };
   let nested = core(60, 40_000);
   for (let i = 0; i < 30; i++) nested = `{${nested},/z${i}}`;
-  for (const members of [
-    [`p${core(650, 40_000)}{y,z/}`, `q${core(650, 40_000)}{y,z/}`],
-    [`${nested}{y,/q}`],
+  for (const [members, hits, misses] of [
+    [
+      [`p${core(650, 40_000)}{y,z/}`, `q${core(650, 40_000)}{y,z/}`],
+      ["p/ay", "q/bz/"],
+      ["p/!y", "p/ay/", "q/bZz/"],
+    ],
+    [[`${nested}{y,/q}`], ["/ay", "/z3/q"], ["/aAy", "/z3y/q", "/a"]],
   ]) {
     const start = performance.now();
-    assert.throws(() => compileMatcher(members), { kind: "TooComplex" });
+    const union = compileMatcher(members);
     const ms = performance.now() - start;
-    assert.ok(ms < 500, `${members.length} members: ${ms.toFixed(0)} ms to fail`);
+    assert.ok(ms < 500, `${members.length} members: ${ms.toFixed(0)} ms to compile`);
+    for (const hit of hits) assert.ok(union.match(hit), hit);
+    for (const miss of misses) assert.ok(!union.match(miss), miss);
   }
 }
 
@@ -522,34 +532,50 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
   assert.ok(ms < 500, `10,000 matches took ${ms.toFixed(0)} ms`);
 }
 
-// Braces whose segments multiply would build a node per pair of them:
-// the walk gives up early. Twin of the same check in
+// Braces whose segments multiply, beside a `**` or not, copy segments
+// until the copies weigh what the pattern does, then cut them into pieces
+// glued edge to edge: they compile in milliseconds, twice the pattern
+// costing about twice. Twin of `multiplying_segments_stay_linear` in
 // tools/memory-check/tests/large_patterns.rs.
 {
   const lists = (n) =>
     `{${Array.from({ length: n }, (_, i) => `/a${i}`).join(",")}}{${Array.from({ length: n }, (_, i) => `b${i}/`).join(",")}}z`;
-  for (const pattern of [
-    `a${"{a,/}".repeat(2048)}b`,
-    "{a,b,/}".repeat(4096),
-    "{/,a,}".repeat(4096),
-    lists(2048),
-    // Segments with big tables (suffix products, NFAs): charged too.
-    "{a,b,/}".repeat(96),
-    "{a,b,c,d,e,f,g,h,/}".repeat(3421),
-  ]) {
+  const shapes = [
+    (n) => `a${"{a,/}".repeat(n)}b`,
+    (n) => "{a,b,/}".repeat(n),
+    (n) => "{/,a,}".repeat(n),
+    (n) => "{a,b,c,d,e,f,g,h,/}".repeat(n),
+    (n) => "{**,a}{/,b}".repeat(n),
+    (n) => "**{/a,b}".repeat(n),
+    (n) => "{a/**,b}".repeat(n),
+    (n) => "{x/,y}**".repeat(n),
+    (n) => "[a-z]{/,}".repeat(n),
+    (n) => "{a,}**".repeat(n),
+    (n) => `**${"{,/a}".repeat(n)}`,
+    (n) => "{a/,}".repeat(n),
+    (n) => "{**,a}/".repeat(n),
+  ];
+  const took = (pattern) => {
     const start = performance.now();
-    assert.throws(() => compileMatcher(pattern), { kind: "TooComplex" });
-    const ms = performance.now() - start;
-    assert.ok(ms < 1000, `${pattern.slice(0, 7)}: ${ms.toFixed(0)} ms to fail`);
+    compileMatcher(pattern).match("a/b");
+    return performance.now() - start;
+  };
+  for (const shape of shapes) {
+    const n = Math.floor(65_536 / shape(1).length);
+    const ms = took(shape(n));
+    assert.ok(ms < 500, `${shape(1)} x${n}: ${ms.toFixed(0)} ms`);
+  }
+  for (const pattern of [lists(2048), "{a,b,c,d,e,f,g,h,/}".repeat(3421)]) {
+    const ms = took(pattern);
+    assert.ok(ms < 1000, `${pattern.slice(0, 7)}: ${ms.toFixed(0)} ms`);
   }
 }
 
 // A long class, or a long run of `?` or of classes, or a brace of empty
-// branches, copied into every segment a brace leaves open: each copy
-// counts, a class by its ranges, a brace by its branches, so these fail
-// in milliseconds on a 64 MB heap, while a long class copied into a few
-// segments still compiles. Twin of the checks in
-// tools/memory-check/tests/large_patterns.rs.
+// branches, after a brace that ends in many segments: copied onto a few,
+// then one piece the rest glue to, so these compile in milliseconds on a
+// 64 MB heap, as a long class copied into a few segments does. Twin of
+// the checks in tools/memory-check/tests/large_patterns.rs.
 for (const [name, ms, ok] of await onWorker(
   `
   const copied = (n, open, unit, close) => {
@@ -557,10 +583,10 @@ for (const [name, ms, ok] of await onWorker(
     return head + unit.repeat(Math.floor((16384 - head.length - close.length) / unit.length)) + close;
   };
   return [
-    ["500 copies of a class", copied(500, "[a-z", "!-~", "]"), "TooComplex"],
-    ["1,024 copies of ?s", copied(1024, "", "?", ""), "TooComplex"],
-    ["512 copies of classes", copied(512, "", "[\\x01-\\x7f]", ""), "TooComplex"],
-    ["1,024 copies of a brace", copied(1024, "{", ",", "}"), "TooComplex"],
+    ["500 copies of a class", copied(500, "[a-z", "!-~", "]"), true],
+    ["1,024 copies of ?s", copied(1024, "", "?", ""), false],
+    ["512 copies of classes", copied(512, "", "[\\x01-\\x7f]", ""), false],
+    ["1,024 copies of a brace", copied(1024, "{", ",", "}"), false],
     ["16 copies of a class", copied(16, "[a-z", "\\x01-\\x7f", "]"), true],
   ].map(([name, pattern, want]) => {
     const start = performance.now();

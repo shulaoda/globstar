@@ -14,11 +14,12 @@ segment-shaped elements — a line for a pattern without a
 separator-crossing brace, a branching graph otherwise:
 
 ```
-Element := Lit(bytes) | Wild(matcher) | G0 | G1 | Join
+Element := Lit(bytes) | Wild(matcher) | G0 | G1 | Join | Piece
 ```
 
 with `G0` absorbing ≥ 0 path segments, `G1` ≥ 1, and `Join` none: it
-only stands for its successors (see below). (A `**/` absorbs
+only stands for its successors (see below). A `Piece` is part of a
+segment a brace cuts, matched with the pieces glued to it (see below). (A `**/` absorbs
 empty segments too, which is what makes the separators around it
 lenient, §9.5.) Empty path segments are first-class
 (`a//b` = `[a, "", b]`), which yields the strict-`Sep` semantics for
@@ -34,17 +35,28 @@ count once (`**/**/` ≡ `**/`), except that one whose group gathered
 tails from several branches becomes a `G0` of its own when the next is
 read: `{**,a}/` repeated k times keeps about 5k edges, not one group
 whose tails pile up into k² of them. Partial segments that differ in
-length still give a group each: `a{a,/}` repeated k times is O(k²)
-nodes. A node takes an edge from each tail of its group, and a group
+length still give a group each, and a segment a brace's edge falls
+inside is copied into each branch (`x{a/,b}y` reads the segments `xa`
+and `xby`): `a{a,/}` repeated k times would be O(k²) nodes. So the
+copies are paid from a room of one unit per unit of pattern weight
+(at least 16,384); past it the walk cuts each open segment into a
+_piece_ at the brace's edge, and the pieces after the brace are
+_glued_ to it (`x`, then `a` and `b` glued to `x`, `y` to `b`). A piece
+is never copied, so the walk makes every node, edge and token a
+bounded number of times and the graph is linear in the pattern. One
+in-segment NFA (`GlueNfa`) holds every glued piece: a piece's states,
+then a fan of ε-edges to the pieces glued after it and an exit where
+its segment may end, so a segment is matched from the entries of the
+pieces a step holds, all at once, and the exits it reaches are where
+the graph NFA goes on. A graph with pieces keeps no chains: the
+sparse NFA, which owns the glue, answers. A node takes an edge from each tail of its group, and a group
 is copied into every branch of a crossing brace, so a group of k tails
 entering a brace of m branches first gathers its tails into one `Join`
 node when k·m > k + m: the branches share its one edge instead of
 taking k each. Branches that may be empty, side by side, then keep a
 few edges per brace (`{a/,}` repeated k times is about 2k nodes and 4k
 edges, where each `a` would otherwise follow every one before it, k²/2
-edges). The walk counts its work and stops past 64 units per unit of
-pattern weight, so a shape whose segments multiply fails with
-`TooComplex` instead of growing (see Compile).
+edges).
 
 ## Matching
 
@@ -151,28 +163,26 @@ step closes its set as it goes, so memory stays linear.
 
 ## Compile
 
-One walk over the AST (a `**` followed by `/` is a pending `**/`, a
-`**` ending a brace branch reads the `/` after the brace as its own):
-groups → graph nodes → classify each segment; then the chains (paths) are enumerated and the NFA tables
+One walk over the AST: groups → graph nodes → classify each segment.
+The parser reads a `**` beside text as a star; one beside a separator,
+a brace or an edge the walk decides per group, as the brace expansions
+reach it (a group at a boundary that reads `**` holds it until the
+next token: a `/` makes it a pending `**/`, the end a bare `**`,
+anything else a star), and the empty expansions of a brace beside a
+`**` go on as a _shadow_ group while the `**` may still be a globstar
+(`{a,}**`, `**{,a}/`). Then then the chains (paths) are enumerated and the NFA tables
 laid out. No subset construction, no byte-class tables; two hash
 maps: one lets a brace branch reuse a node another branch already
 made, one finds a group by its key past the first 16 (JS scans its
 first 16 nodes before it keys them). Every pattern
-the parser accepts compiles unless its separator-crossing braces make
-its segments multiply: the walk counts its work — a unit per node and
-edge, each token it adds to a group, each group it copies or keys by
-all its nodes and each segment it closes by their size, and the tables
-a wildcard segment builds (its suffix list, its NFA's states and
-closures) by their bytes — and fails with `TooComplex` past
-max(2^20, 64 × the pattern's weight), where a literal weighs its
+the parser accepts compiles: the copy room (above) is charged the
+weight of what a crossing brace copies, where a literal weighs its
 bytes, a class one plus its ranges, a brace one plus its branches (an
-empty one weighs one) and any other token one. Ordinary patterns and big unions need two to four units
-per weight, and a walk without a crossing brace has no budget at
-all. Every node and edge is charged, so the graph a sparse step walks
-stays within the same bound; joins keep it at a few edges per node.
-The other limits
-are the parser's — 64 KiB of pattern, 32 levels
-of brace nesting, the brace-expansion budget — and the chain,
+empty one weighs one) and any other token one, and past it segments
+are cut into pieces instead. Ordinary patterns and big unions never
+reach it, so their segments stay whole, with their chains and literal
+sets. The only limits are the parser's — 64 KiB of pattern and 32
+levels of brace nesting — and the chain,
 literal-set, suffix-group, suffix-product, closure and dense-row
 thresholds pick a representation, never reject one.
 
@@ -180,18 +190,21 @@ thresholds pick a representation, never reject one.
 
 Compile is linear in the pattern: a brace-free pattern walks its nodes
 once, a separator-crossing brace adds one node per branch rather than
-a product, and the walk's work is capped as above. Every table built
+a product, and what it copies is bounded by the room, past which it
+cuts pieces. Every table built
 from the graph — chains, suffix products, in-segment closures, NFA
 rows — has a size budget past which a linear representation takes
 over, so memory is linear too. Match O(n·m) worst case, m the graph's
-nodes and edges, both within the walk's budget — the NFA over
-the graph is the non-backtracking floor that rules out ReDoS — and
-O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 65
+nodes and edges and the glued pieces' states, all linear in the
+pattern — the NFA over the graph is the non-backtracking floor that
+rules out ReDoS — and O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 65
 wildcard-only segments for the all-below proof (64 and the step that
 shows the set has settled), then, where elements split the names by
 length, at most 64 more (one per set of states a length class fires;
-512 firings, holding at most 64 states per NFA state in all), and
-4096 element compares for a chain's tail tokens; past them it gives
+512 firings, holding at most 64 states per NFA state in all; a set
+with pieces costs one pass over the glued pieces' states, which gives
+each node they end a segment at the lengths they take every segment
+of), and 4096 element compares for a chain's tail tokens; past them it gives
 the safe answer (GLOB_SPEC §15.5). The engine answers `is_match`, `match_dir`,
 and `static_prefixes` natively.
 

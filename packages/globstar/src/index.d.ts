@@ -43,10 +43,9 @@ export interface GlobstarOptions {
  * ```
  *
  * Throws a {@link GlobError} if any pattern fails to compile (a list
- * member's error carries its `index`; a `TooComplex` for the list as a
- * whole, which compiles as one, has none), and a `TypeError` if a
- * pattern is not a string or holds a lone surrogate, or the options are
- * not a plain object of known boolean flags.
+ * member's error carries its `index`), and a `TypeError` if a pattern
+ * is not a string or holds a lone surrogate, or the options are not a
+ * plain object of known boolean flags.
  */
 export function globstar(
   patterns: string | Iterable<string>,
@@ -144,10 +143,9 @@ export interface Matcher {
  * predicate. `@globstar/walk` is built on this.
  *
  * Throws a {@link GlobError} if any pattern fails to compile (a list
- * member's error carries its `index`; a `TooComplex` for the list as a
- * whole, which compiles as one, has none), and a `TypeError` if a
- * pattern is not a string or holds a lone surrogate, or the options are
- * not a plain object of known boolean flags.
+ * member's error carries its `index`), and a `TypeError` if a pattern
+ * is not a string or holds a lone surrogate, or the options are not a
+ * plain object of known boolean flags.
  */
 export function compileMatcher(
   patterns: string | Iterable<string>,
@@ -176,15 +174,13 @@ export class GlobError extends Error {
     | "TrailingBackslash"
     | "EscapedSeparator"
     | "BraceNestingTooDeep"
-    | "BraceExpansionTooLarge"
-    | "TooComplex"
     | "InvalidRange"
     | "EmptyPatternSet";
   /** Byte offset of the offending construct (kind-dependent; for "InvalidRange" the range's start). */
   readonly at?: number;
   /** Pattern length for "TooLong". */
   readonly len?: number;
-  /** The limit that was passed, for "TooLong", "TooComplex" and the brace limits. */
+  /** The limit that was passed, for "TooLong" and "BraceNestingTooDeep". */
   readonly max?: number;
   /** Range bounds for "InvalidRange". */
   readonly low?: number;
@@ -213,5 +209,3 @@ export class GlobError extends Error {
 export declare const MAX_PATTERN_LEN: 65536;
 /** How deep braces may nest (`"BraceNestingTooDeep"`). */
 export declare const MAX_BRACE_NESTING: 32;
-/** What distributing braces around `**` may copy (`"BraceExpansionTooLarge"`). */
-export declare const MAX_EXPANSION: 4096;

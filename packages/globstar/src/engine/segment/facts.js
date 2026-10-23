@@ -3,7 +3,7 @@
 // `crates/globstar/src/engine/segment/facts.rs`.
 
 import { hasEscapedSep } from "../../bytes.js";
-import { N_BRACE, N_LITERAL, N_SEPARATOR, endsWithGlobstar, seq } from "../../parse/ast.js";
+import { N_BRACE, N_LITERAL, N_SEPARATOR, endsInGlobstar, seq } from "../../parse/ast.js";
 import { nodeWeight } from "./graph.js";
 
 // Literal suffixes one of which every match ends with: the trailing
@@ -12,20 +12,21 @@ import { nodeWeight } from "./graph.js";
 // per byte, like the path strings they are compared with.
 export function suffixes(body) {
   const nodes = seq(body);
-  const suffix = trailing(nodes, nodes.length);
+  const suffix = trailing(nodes, nodes.length, false);
   if (suffix.length > 0) return [suffix];
   return suffixSet(nodes);
 }
 
-// The bytes of the literal/separator run that ends `nodes[..end]`. The
-// `/` of a `**/` is not part of it: `**/b` matches `b` alone.
-function trailing(nodes, end) {
+// The bytes of the literal/separator run that ends `nodes[..end]`, after
+// a `**` when `afterGlobstar` (a brace's branch that may follow one). The
+// `/` of a `**/` is not part of it, nor one a brace that may be empty
+// parts from a `**`: `**/b` and `**{,a}/b` match `b` alone.
+function trailing(nodes, end, afterGlobstar) {
   let acc = "";
   for (let i = end - 1; i >= 0; i--) {
     const node = nodes[i];
     if (node.tag === N_LITERAL) acc = node.str + acc;
-    else if (node.tag === N_SEPARATOR && !(i > 0 && endsWithGlobstar(nodes[i - 1])))
-      acc = "/" + acc;
+    else if (node.tag === N_SEPARATOR && !endsInGlobstar(nodes, i, afterGlobstar)) acc = "/" + acc;
     else break;
   }
   return acc;
@@ -42,12 +43,13 @@ function suffixSet(nodes) {
   const last = nodes[nodes.length - 1];
   if (last.tag !== N_BRACE || last.branches.length > MAX_SUFFIX_SET) return [];
 
-  const commonTail = trailing(nodes, nodes.length - 1);
+  const commonTail = trailing(nodes, nodes.length - 1, false);
+  const afterGlobstar = endsInGlobstar(nodes, nodes.length - 1, false);
 
   const set = [];
   for (const branch of last.branches) {
     const b = seq(branch);
-    const branchSuffix = trailing(b, b.length);
+    const branchSuffix = trailing(b, b.length, afterGlobstar);
     // Gluing the common tail to a branch that is not all-literal would
     // claim more than the branch guarantees.
     const allLiteral = b.every((n) => n.tag === N_LITERAL || n.tag === N_SEPARATOR);

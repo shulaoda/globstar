@@ -23,7 +23,7 @@ impl Glob {
 }
 ```
 
-`Glob` is `Debug + Clone + Send + Sync`; compile once and share it across threads (its `Debug` shows the engine and the negation, not the compiled tables). A union is an ordinary `Glob`, not a separate set type. `union` rejects a negated member (an odd number of leading `!`; `!!x` is just `x`) with `GlobError::NegatedInUnion`, an empty iterator with `GlobError::EmptyPatternSet`, and a member that does not compile with `GlobError::InMember`, which names it by index (a `TooComplex` is the list's own and names no member); a pattern given twice counts once.
+`Glob` is `Debug + Clone + Send + Sync`; compile once and share it across threads (its `Debug` shows the engine and the negation, not the compiled tables). A union is an ordinary `Glob`, not a separate set type. `union` rejects a negated member (an odd number of leading `!`; `!!x` is just `x`) with `GlobError::NegatedInUnion`, an empty iterator with `GlobError::EmptyPatternSet`, and a member that does not compile with `GlobError::InMember`, which names it by index; a pattern given twice counts once.
 
 ```rust
 let glob = Glob::new("src/**/*.rs")?;
@@ -112,8 +112,6 @@ pub enum GlobError {
     TrailingBackslash,
     EscapedSeparator { at: usize },
     BraceNestingTooDeep { max: usize },
-    BraceExpansionTooLarge { max: usize },
-    TooComplex { max: usize },
     InvalidRange { at: usize, low: u8, high: u8 },
     EmptyPatternSet,
     NegatedInUnion { index: usize, pattern: String },
@@ -121,7 +119,7 @@ pub enum GlobError {
 }
 ```
 
-`GlobError` implements `Display` and `std::error::Error` (`InMember`'s `source()` is the error inside; `root()` reads through it). The enum is `#[non_exhaustive]`: match it with a `_` arm. The limits are public constants in `globstar::error`: `MAX_PATTERN_LEN` (64 KiB), `MAX_BRACE_NESTING` (32) and `MAX_EXPANSION` (4096). What each variant means, with an example, is in [Errors and limits](../guide/errors.md).
+`GlobError` implements `Display` and `std::error::Error` (`InMember`'s `source()` is the error inside; `root()` reads through it). The enum is `#[non_exhaustive]`: match it with a `_` arm. The limits are public constants in `globstar::error`: `MAX_PATTERN_LEN` (64 KiB) and `MAX_BRACE_NESTING` (32). What each variant means, with an example, is in [Errors and limits](../guide/errors.md).
 
 ```rust
 match Glob::new("src/[a") {

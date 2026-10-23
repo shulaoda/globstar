@@ -17,11 +17,8 @@ use std::path::PathBuf;
 pub enum WalkError {
     /// A glob pattern (main or ignore) failed to parse/compile.
     InvalidPattern {
-        /// The pattern that failed, as written (`!src/[z-a]`). When the
-        /// list fails as a whole rather than in one member (`TooComplex`,
-        /// the bound on compile work its members share, GLOB_SPEC §6.2),
-        /// this is the whole list, formatted like `["a", "b"]` and cut
-        /// after three members. A pattern or ignore entry longer than
+        /// The pattern that failed, as written (`!src/[z-a]`); in a list,
+        /// the member that failed. A pattern or ignore entry longer than
         /// [`MAX_PATTERN_LEN`](globstar::error::MAX_PATTERN_LEN) bytes as
         /// written is refused before it is read (`TooLong`), and named by
         /// its first 64 characters and `…`.

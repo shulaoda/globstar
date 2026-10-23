@@ -62,9 +62,11 @@ const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 
 // Every path through the graph as a chain, in pattern order, the literal
 // ones together as one `SET_G` chain first; none when the others pass
-// MAX_CHAINS or the literal ones MAX_LITERALS, or a path has more than
-// two globstars (the NFA takes those).
+// MAX_CHAINS or the literal ones MAX_LITERALS, a path has more than two
+// globstars, or a brace cuts a segment (the NFA takes those).
 export function chains(graph, ci) {
+  // A segment of glued pieces is no element a chain can compare.
+  if (graph.glue !== null) return [];
   if (graph.linear) {
     const chain = chainOf(graph, null, true, ci);
     return chain === null ? [] : [chain];

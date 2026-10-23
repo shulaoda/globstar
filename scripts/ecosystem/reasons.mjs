@@ -52,14 +52,6 @@ const REJECTS = {
     title: "Braces nested past the limit",
     text: `The braces nest deeper than ${SPEC} §6.2 allows.`,
   },
-  BraceExpansionTooLarge: {
-    title: "A `**` rewrite past the limit",
-    text: `Taking the braces apart around \`**\` would copy more than ${SPEC} §6.2 allows.`,
-  },
-  TooComplex: {
-    title: "A pattern past the compile budget",
-    text: "The pattern's separator-crossing braces multiply its segments past the compile budget.",
-  },
 };
 
 const THEY_REJECT = {

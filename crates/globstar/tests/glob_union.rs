@@ -23,21 +23,19 @@ fn empty_throws() {
 }
 
 #[test]
-fn members_share_one_expansion_budget() {
-    // Each member is fine alone; ten of them would copy ten budgets' worth.
+fn members_that_compile_alone_compile_together() {
+    // No budget is shared: members of separator-crossing braces around a
+    // `**`, ten of which once copied past a shared expansion budget,
+    // compile as one and answer as their members.
     let member = "{,/}".repeat(10) + "**/f";
-    assert!(Glob::new(&member).is_ok());
     let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
-    let err = Glob::union(&members).unwrap_err();
-    // The member that ran the budget out is named.
-    assert!(
-        matches!(err, GlobError::InMember { index, .. } if index > 0),
-        "{err:?}"
-    );
-    assert!(matches!(
-        err.root(),
-        GlobError::BraceExpansionTooLarge { .. }
-    ));
+    let refs: Vec<&str> = members.iter().map(String::as_str).collect();
+    let union = Glob::union(&members).unwrap();
+    for path in ["f0", "a/f3", "/f9", "a//b/f1", "///f2", "f", "a/f10"] {
+        let want = or_oracle(&refs, path.as_bytes());
+        assert_eq!(union.is_match(path.as_bytes()), want, "{path}");
+    }
+    assert!(union.is_match(b"a/f3") && !union.is_match(b"f"));
 }
 
 #[test]
@@ -88,25 +86,19 @@ fn a_union_past_the_key_room_answers_as_its_members() {
 }
 
 #[test]
-fn members_share_one_compile_work_bound() {
-    // A list compiles as one pattern, so `TooComplex` is the list's:
-    // not wrapped in `InMember`, even when one member alone is to blame.
+fn braces_whose_segments_multiply_compile_as_one() {
+    // `{a,b,/}` repeated cuts its segments into glued pieces: alone or in
+    // a list, it compiles, and the list answers as its members.
     let heavy = "{a,b,/}".repeat(100);
-    assert!(matches!(
-        Glob::new(&heavy),
-        Err(GlobError::TooComplex { .. })
-    ));
-    assert!(matches!(
-        Glob::union(["a", heavy.as_str()]),
-        Err(GlobError::TooComplex { .. })
-    ));
-    // Members that each compile alone can fail together.
     let member = "{a,b,/}".repeat(28);
-    assert!(Glob::new(&member).is_ok());
-    assert!(matches!(
-        Glob::union([member.as_str(), &format!("x/{member}")]),
-        Err(GlobError::TooComplex { .. })
-    ));
+    let behind = format!("x/{member}");
+    for members in [vec!["a", heavy.as_str()], vec![member.as_str(), &behind]] {
+        let union = Glob::union(&members).unwrap();
+        for path in ["a", "ab/ba", "x/a/b", "x//", "/a/b/", "abc", "x/ab"] {
+            let want = or_oracle(&members, path.as_bytes());
+            assert_eq!(union.is_match(path.as_bytes()), want, "{path}");
+        }
+    }
 }
 
 #[test]

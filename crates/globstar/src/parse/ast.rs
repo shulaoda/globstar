@@ -19,9 +19,11 @@ pub enum Node {
     AnyChar,
     /// `*` — zero or more non-separator bytes.
     Star,
-    /// `**` — zero or more bytes across separators. The parser emits it
-    /// only where it owns a whole segment (§9.1), in every brace expansion;
-    /// a `**` that does not is a [`Node::Star`].
+    /// `**` — zero or more bytes across separators where a separator, or
+    /// the edge of the pattern, is on both sides (§9.1), a star elsewhere.
+    /// The parser emits a [`Node::Star`] for a `**` beside text, and this
+    /// for one beside a separator, a brace or an edge, which may be either
+    /// in different brace expansions.
     Globstar,
     /// `[...]` character class.
     Class(CharClass),
@@ -94,14 +96,38 @@ impl Node {
         }
     }
 
-    /// Does the node end in a `**` (in every expansion of a brace, in
-    /// some)? Such a `**` reads the `/` after the node as its `**/`.
+    /// Does the node end in a `**` in some expansion, with only what may
+    /// read as nothing after it? Such a `**` reads the `/` after the node
+    /// as its `**/`.
     pub(crate) fn ends_with_globstar(&self) -> bool {
         match self {
             Node::Globstar => true,
-            Node::Concat(xs) => xs.last().is_some_and(Node::ends_with_globstar),
+            Node::Concat(xs) => ends_in_globstar(xs, false),
             Node::Brace(bs) => bs.iter().any(Node::ends_with_globstar),
             _ => false,
         }
     }
+
+    /// May the node read as nothing (a brace with an empty expansion)?
+    pub(crate) fn nullable(&self) -> bool {
+        match self {
+            Node::Brace(xs) => xs.iter().any(Node::nullable),
+            Node::Concat(xs) => xs.iter().all(Node::nullable),
+            _ => false,
+        }
+    }
+}
+
+/// [`Node::ends_with_globstar`] for a sequence: `outer` when every node
+/// in it may read as nothing, so that what comes before it decides.
+pub(crate) fn ends_in_globstar(nodes: &[Node], outer: bool) -> bool {
+    for node in nodes.iter().rev() {
+        if node.ends_with_globstar() {
+            return true;
+        }
+        if !node.nullable() {
+            return false;
+        }
+    }
+    outer
 }

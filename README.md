@@ -31,9 +31,9 @@ Both `globstar` implementations compile every non-literal pattern to
 the segment-structured matcher: a graph of per-segment elements,
 matched by anchored compares along each path through the graph, or by
 an NFA over the graph when there are too many paths, a path has several
-`**`, or a path needs too many states. The only caps are the parser's limits on pattern length, brace nesting and
-the expansion around `**`, and a budget on the work a separator-crossing
-brace adds. See
+`**`, or a path needs too many states. The only caps are the parser's
+limits on pattern length and brace nesting: every pattern within them
+compiles, in time and memory linear in its length. See
 [`references/theory/02-segment-engine.md`](./references/theory/02-segment-engine.md).
 
 ## Why this exists

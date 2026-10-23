@@ -14,7 +14,7 @@ Take a pattern with a brace and replace the brace with each branch in turn. You 
 
 Each expansion is a complete pattern, and every rule on these pages applies to it on its own. That matters most for `**`: whether a `**` next to a brace is a real "any depth" wildcard is decided per expansion (see [Braces and `**`](#braces-and)).
 
-globstar does not build the list of expansions in memory. A brace with thousands of branches, or many braces in a row, still compiles fast and small. The one exception is braces whose branches cross a `/`, like `{a,/}` written many times in a row: the number of different segments can grow with the square of their count. Such a pattern fails with `TooComplex` (see [Errors and limits](./errors.md)).
+globstar does not build the list of expansions in memory. A brace with thousands of branches, or many braces in a row, still compiles fast and small, and so do braces whose branches cross a `/`, like `{a,/}` written many times in a row, though the segments they split multiply: past a point globstar stops copying those segments into each branch and matches their pieces together instead. Compile time and memory grow with the pattern's length, whatever its braces.
 
 Spec: [GLOB_SPEC §10.1, §10.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -125,32 +125,10 @@ Spec: [GLOB_SPEC §10.7](https://github.com/shulaoda/globstar/blob/main/referenc
 
 ## Limits
 
-Most brace patterns have no size limit. Three limits exist to stop a hostile or broken pattern from using too much time or memory: nesting depth, the expansion budget around `**`, and the compile-work bound on braces whose branches cross a `/` (`TooComplex`, described in [Errors and limits](./errors.md#the-four-limits)). When one is hit, compiling throws a `GlobError`, and its `max` field holds the limit.
+Brace patterns have no size limit but the pattern's length: the number of branches, of braces in a row, and of braces next to a `**` is free. One limit, nesting depth, keeps a broken pattern from nesting without end (see [Errors and limits](./errors.md#the-two-limits)). When it is hit, compiling throws a `GlobError`, and its `max` field holds the limit.
 
 ### Nesting depth: 32
 
-Braces may be nested up to 32 levels deep. One more level fails with `BraceNestingTooDeep`. Every `{` counts as it opens, even one with no comma that ends up literal. Real patterns rarely go past three or four levels.
-
-A `**` next to braces can create nesting you did not write yourself, and that nesting counts too. For example, `**` followed by `{,/a}` written 33 times fails with the same error.
-
-Spec: [GLOB_SPEC §6.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
-
-### Expansion budget: 4096
-
-The number of branches has no limit: a brace with 5,000 branches compiles fine, and so does a product of braces within one segment.
-
-A `**` next to a brace is different. To judge that `**` per expansion, globstar copies the parts of the pattern around it. It counts every copy, and when the count would pass 4096, compiling fails with `BraceExpansionTooLarge`. The count covers the whole pattern, and all patterns of one list together.
-
-| Pattern                                              | Is it copied?                                         |
-| ---------------------------------------------------- | ----------------------------------------------------- |
-| `{**,a}{/,b}` written 5 times in a row               | yes: each link copies the chain so far, so this fails |
-| `{**,dist}{/a,/b,…,.map}` with a long mixed list     | yes: the list is copied once, so a big list fails     |
-| `{**,dist}{/a,/b,…}`, every branch starting with `/` | no                                                    |
-| `**{/a,/b,…}`, every branch starting with `/`        | no                                                    |
-| `**/{a,b,…}`, a `/` between `**` and the brace       | no                                                    |
-
-::: tip Staying under the budget
-If a long list must follow a `**`, put a `/` between them (`**/{a,b,…}`), or start every branch with `/` (`{**,dist}{/a,/b,…}`). Neither form copies the list.
-:::
+Braces may be nested up to 32 levels deep. One more level fails with `BraceNestingTooDeep`. Every `{` counts as it opens, even one with no comma that ends up literal. Real patterns rarely go past three or four levels. Braces side by side do not nest: `**` followed by `{,/a}` written 33 times compiles.
 
 Spec: [GLOB_SPEC §6.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

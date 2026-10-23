@@ -359,9 +359,7 @@ function splitBangs(raw) {
 // stripped etc.) into one matcher; `null` for an empty list. A failure
 // names the member, as written, that the union failed in; when the
 // written text differs, the reason says which text its byte offsets
-// count in, and when it ran past the expansion budget the members share
-// (GLOB_SPEC §6.2), that they share it. An error no one member explains
-// (the union's compile work) names the list, cut after three.
+// count in.
 function compileUnion(patterns, opts) {
   if (patterns.length === 0) return null;
   try {
@@ -372,21 +370,9 @@ function compileUnion(patterns, opts) {
   } catch (e) {
     if (!(e instanceof GlobError)) throw e;
     // The core names the member it failed in (`index`, with offsets into
-    // that member); an error no one member explains (the union's compile
-    // work) is about the list.
-    const at = e.index ?? (patterns.length === 1 ? 0 : null);
-    if (at === null) {
-      throw new WalkError("InvalidPattern", {
-        pattern: nameList(patterns),
-        reason: e.message,
-        cause: e,
-      });
-    }
-    const { raw, body } = patterns[at];
+    // that member): a list of members that each compile compiles.
+    const { raw, body } = patterns[e.index ?? 0];
     let reason = e.message.replace(/^pattern \d+: /, "");
-    if (e.kind === "BraceExpansionTooLarge" && patterns.length > 1) {
-      reason += " (the patterns share this limit, and it ran out in this one)";
-    }
     if (raw !== body) reason += ` (in '${body}', as the walker reads it)`;
     throw new WalkError("InvalidPattern", { pattern: raw, reason, cause: e });
   }
@@ -407,13 +393,6 @@ function checkLength(raw) {
   }
   const cause = new GlobError("TooLong", { len, max: MAX_PATTERN_LEN });
   throw new WalkError("InvalidPattern", { pattern: `${head}…`, reason: cause.message, cause });
-}
-
-// A list of patterns as one name, cut after the first few.
-function nameList(patterns) {
-  const shown = patterns.slice(0, 3).map((p) => JSON.stringify(p.raw));
-  const more = patterns.length - shown.length;
-  return `[${shown.join(", ")}]` + (more > 0 ? ` and ${more} more` : "");
 }
 
 // Does an entry exist at `p`?

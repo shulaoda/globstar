@@ -4,7 +4,9 @@
 // the graph with at most one globstar or two around a block, one search
 // of a sorted set for the literal-only paths, only the chains its
 // segments pick for a union of many (`chain-index.js`), an NFA over the
-// graph for everything else.
+// graph for everything else. A segment a brace cuts is a run of glued
+// pieces, which one in-segment NFA matches together (`GlueNfa`). The
+// graph is linear in the pattern: every pattern compiles.
 
 import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
@@ -30,6 +32,7 @@ import {
   EL_WILD,
   EL_G0,
   EL_JOIN,
+  EL_PIECE,
   WK_AFFIX,
   WK_SUFFIXES,
   exact,
@@ -82,6 +85,7 @@ export class SegmentMatcher {
         return k === WK_SUFFIXES ? "W:set" : "W:nfa";
       }
       if (e.kind === EL_JOIN) return "J";
+      if (e.kind === EL_PIECE) return "P";
       return e.kind === EL_G0 ? "G0" : "G1";
     });
     // A run of one kind as `L(200)`.

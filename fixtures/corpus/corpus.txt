@@ -315,6 +315,37 @@ file{,_bak}	file_bak	match
 {src,lib}/**/*.ts	docs/main.ts	no-match
 {src,lib}/**/*.ts	src/a.js	no-match
 
+## brace.beside.globstar.no.expansion
+# Braces beside `**` are not multiplied out, so these compile: each `**`
+# is decided path by path (§10.1). `{**,a}{/,b}` × 6 has 4096 expansions;
+# the `**{,/a}` run is `**` in every one of them.
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	abababababab	match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	x/abab/	match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	x/a/a	no-match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	a/a/a/a/a/a/	match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	x/y/b/ab	match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	aab	match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	b/b/b/b/b/b	match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	abab	match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	a	no-match
+{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	x	no-match
+**{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}	x/a/a	match
+**{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}	x	match
+**{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}	a/b	match
+**{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}	b/a/c	match
+
+## brace.segments.multiply
+# `{a,b,/}` × 100 holds a name of every length up to 100 that may start
+# at every brace: it compiles to pieces glued edge to edge, not to a
+# node per pair of braces (§6). A path matches iff it is 100 bytes of
+# `a`, `b` and `/`.
+{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	match
+{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	no-match
+{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	no-match
+{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/b	match
+{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	match
+{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	no-match
+
 ## escape.metachars
 # `\\` against a `\` path is per platform (§14.2): corpus-unix.txt / corpus-windows.txt.
 \*	*	match

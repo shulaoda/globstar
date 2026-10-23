@@ -5,15 +5,15 @@
 //! compares, the literal-only paths by one search of a sorted set, and
 //! a union of many paths asks only those its path's segments pick;
 //! everything else runs an NFA whose active set grows with the
-//! pattern, so no pattern is too big for it. Only braces whose segments,
-//! or the edges between them, multiply are refused, by the compile walk
-//! (`GlobError::TooComplex`).
+//! pattern, so no pattern is too big for it. A segment a brace cuts is
+//! a run of glued pieces, which one in-segment NFA matches together.
+//! The graph is linear in the pattern: every pattern compiles.
 //!
 //! `graph` builds the graph, `chain` and `nfa` match over it,
 //! `chain_index` picks a big union's chains, `wild` (with `seg_nfa`)
-//! matches inside a segment, `facts` reads the literal facts off the
-//! AST, `bits` holds the bit sets both NFAs use; the byte comparisons
-//! are `crate::bytes`.
+//! matches inside a segment, `seg_nfa` also across glued pieces,
+//! `facts` reads the literal facts off the AST, `bits` holds the bit
+//! sets the NFAs use; the byte comparisons are `crate::bytes`.
 
 mod bits;
 mod chain;
@@ -26,7 +26,6 @@ mod wild;
 
 use crate::CompileOptions;
 use crate::dir_match::DirMatch;
-use crate::error::GlobError;
 use crate::parse::ast::Node;
 
 use crate::bytes;
@@ -45,6 +44,9 @@ type Bytes = Box<[u8]>;
 /// an in-segment NFA that accepts nothing.
 const NEVER: u32 = u32::MAX;
 
+/// The entry of an `Elem::Piece` no segment starts in.
+const INNER: u32 = u32::MAX;
+
 #[derive(Debug, Clone)]
 enum Elem {
     /// Literal segment (possibly empty; never contains a separator).
@@ -60,6 +62,10 @@ enum Elem {
     /// of a group share through it instead of an edge from each (see
     /// `graph.rs`).
     Join,
+    /// A piece of a segment a brace cuts, or a join among pieces: the
+    /// glue NFA matches it with the pieces glued to it. Holds its entry
+    /// state there when a segment may start in it, else `INNER`.
+    Piece(u32),
 }
 
 impl Elem {
@@ -86,7 +92,7 @@ impl Elem {
     #[inline]
     fn any_seg(&self) -> bool {
         match self {
-            Elem::Lit(_) | Elem::Join => false,
+            Elem::Lit(_) | Elem::Join | Elem::Piece(_) => false,
             Elem::Wild(w) => w.any_seg,
             Elem::G0 | Elem::G1 => true,
         }
@@ -97,18 +103,19 @@ impl Elem {
     #[inline]
     fn lens(&self) -> Lens {
         match self {
-            Elem::Lit(_) | Elem::Join => Lens::default(),
+            Elem::Lit(_) | Elem::Join | Elem::Piece(_) => Lens::default(),
             Elem::Wild(w) => w.lens(),
             Elem::G0 | Elem::G1 => Lens::ALL,
         }
     }
 
-    /// Can the element consume some segment?
+    /// Can the element consume some segment? (A piece's answer is the
+    /// glue NFA's, `GlueNfa::reach`.)
     #[inline]
     fn satisfiable(&self) -> bool {
         match self {
             Elem::Wild(w) => w.min_len != NEVER,
-            Elem::Join => false,
+            Elem::Join | Elem::Piece(_) => false,
             _ => true,
         }
     }
@@ -152,14 +159,14 @@ enum Pick {
 }
 
 impl SegmentMatcher {
-    pub(crate) fn build(mut body: Node, opts: CompileOptions) -> Result<Box<Self>, GlobError> {
+    pub(crate) fn build(mut body: Node, opts: CompileOptions) -> Box<Self> {
         let (dot, ci) = (opts.dot, opts.case_insensitive);
         // The facts read the pattern as written; the graph walk
         // regroups it.
         let survey = graph::survey(body.seq());
         let suffixes = facts::suffixes(&body);
         let prefixes = facts::static_prefixes(&body, survey.weight);
-        let graph = Graph::build(&mut body, survey, dot, ci)?;
+        let mut graph = Graph::build(&mut body, survey, dot, ci);
         // The test hook keeps no chain.
         let chains = if opts.force_nfa {
             Box::default()
@@ -170,14 +177,14 @@ impl SegmentMatcher {
         let union = match &chains[..] {
             [c] if matches!(c.shape, Shape::Line(_)) => None,
             _ => Some(Box::new(Union {
-                nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref()),
+                nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref(), graph.glue.take()),
                 pick: match ChainIndex::new(&chains, &graph, ci) {
                     Some(index) => Pick::Index(index),
                     None => Pick::Gates(chains.iter().map(|c| c.gate(&graph.elems, ci)).collect()),
                 },
             })),
         };
-        Ok(Box::new(SegmentMatcher {
+        Box::new(SegmentMatcher {
             suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
             suffixes,
             chains,
@@ -186,7 +193,7 @@ impl SegmentMatcher {
             prefixes,
             case_insensitive: ci,
             dot,
-        }))
+        })
     }
 
     /// Every matching path starts with one of these.
@@ -225,6 +232,7 @@ impl SegmentMatcher {
                 Elem::G0 => "G0",
                 Elem::G1 => "G1",
                 Elem::Join => "J",
+                Elem::Piece(_) => "P",
             })
             .collect();
         // A run of one kind as `L(200)`.

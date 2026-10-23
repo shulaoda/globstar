@@ -154,9 +154,13 @@ impl Graph {
     /// Every path through the graph as a `Chain`, in pattern order, the
     /// literal ones together as one `Shape::Set` chain first; none when
     /// the others pass `MAX_CHAINS`, the literal ones `MAX_LITERALS` or
-    /// their bytes, or a path has more than two globstars (the NFA
-    /// takes those).
+    /// their bytes, a path has more than two globstars, or a brace cuts
+    /// a segment (the NFA takes those).
     pub(super) fn chains(&self, ci: bool) -> Box<[Chain]> {
+        // A segment of glued pieces is no element a chain can compare.
+        if self.glue.is_some() {
+            return Box::default();
+        }
         let Some(edges) = &self.edges else {
             return self.chain_of(None, true).into_iter().collect();
         };

@@ -53,17 +53,6 @@ foo{a,b	-	err:UnterminatedBrace
 # 33 levels of brace nesting, one past the limit
 {{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	-	err:BraceNestingTooDeep
 
-## brace.expansion.too.large
-# Distributing braces around `**` would copy more than 4096 (§6.2).
-{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}{**,a}{/,b}	-	err:BraceExpansionTooLarge
-# ...or would nest braces deeper than 32 levels (§6.2).
-**{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}{,/a}	-	err:BraceNestingTooDeep
-
-## too.complex
-# Braces whose segments multiply: `{a,b,/}` × 100 would build a node
-# per pair of braces (§6).
-{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}{a,b,/}	-	err:TooComplex
-
 ## escaped.separator
 # `\/` is rejected: a `/` can never appear inside a file name on any
 # platform, so an escaped separator has no possible match (spec §4.2).

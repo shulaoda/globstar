@@ -7,6 +7,8 @@ import {
   EL_LIT,
   EL_WILD,
   EL_JOIN,
+  EL_PIECE,
+  INNER,
   NFA_SMALL,
   NFA_SPARSE,
   elemAnySeg,
@@ -17,6 +19,7 @@ import {
 } from "./elem.js";
 import { asciiLower, cmpFolded, ctz32, litEq, nextSep, popcnt32 } from "../../bytes.js";
 import { ACCEPT } from "./graph.js";
+import { bitSet } from "./bits.js";
 import { wildConsumes, wildLenBits, wildLenFrom } from "./wild.js";
 
 // The wildcard-only segments `coversBelow` feeds before it gives up: a
@@ -46,9 +49,12 @@ function layout(graph) {
   };
 }
 
-// One int32 of states up to 32, sparse beyond.
+// One int32 of states up to 32, sparse beyond, and for a graph with
+// pieces, which keeps their NFA (`graph.glue`) with it.
 export function anyNfa(graph, ci) {
-  return graph.elems.length + 1 <= 32 ? denseNfa(graph) : sparseNfa(graph, ci);
+  return graph.glue === null && graph.elems.length + 1 <= 32
+    ? denseNfa(graph)
+    : sparseNfa(graph, ci);
 }
 
 // The lengths `coversBelow` tells apart: 1 to K one by one, and every
@@ -73,12 +79,18 @@ function lenClasses(elems) {
 // wildcards alone (dot=true), bit c - 1 for class c of an NFA's K + 1
 // (`k` = K, see `lenClasses`).
 function classMask(e, k) {
-  const classes = -1 >>> (31 - k);
-  if (isGlobstar(e)) return classes;
+  if (isGlobstar(e)) return lensClasses(0, 1, k);
   if (e.kind !== EL_WILD) return 0;
-  const from = wildLenFrom(e.wild);
-  return ((wildLenBits(e.wild) >>> 1) | (from !== 0 ? -1 << (from - 1) : 0)) & classes;
+  return lensClasses(wildLenBits(e.wild), wildLenFrom(e.wild), k);
 }
+
+// The same of lengths as `wildLenBits` and `wildLenFrom` give them.
+const lensClasses = (bits, from, k) =>
+  ((bits >>> 1) | (from !== 0 ? -1 << (from - 1) : 0)) & (-1 >>> (31 - k));
+
+// The longest length they single out: 0 when they hold every length or
+// none.
+const lensReach = (bits, from) => Math.max(bits === 0 ? 0 : 31 - Math.clz32(bits), from - 1);
 
 // Int32 active set: at most 32 states. `after` holds per state the
 // closure entered after consuming a segment there (a globstar's
@@ -137,12 +149,16 @@ function denseNfa(graph) {
 // see `nfaRunSparse`.
 function sparseNfa(graph, ci) {
   const { elems, n, succs, start } = layout(graph);
+  const glue = graph.glue;
   const succOf = (p) => (p === n ? start : succs === null ? null : succs[p]);
-  // Linear graphs store no edges: position `p` is followed by `p + 1`.
+  // The successors of `p` that start a segment: linear graphs store no
+  // edges, so position `p` is followed by `p + 1`; the pieces glued to
+  // `p` are the glue NFA's.
+  const glued = (t) => elems[t].kind === EL_PIECE && elems[t].entry === INNER;
   const eachSucc = (p, f) => {
     const list = succOf(p);
     if (list === null) f(p + 1 < n ? p + 1 : ACCEPT);
-    else for (const t of list) f(t);
+    else for (const t of list) if (t === ACCEPT || !glued(t)) f(t);
   };
   // State `p` is position `p`; the accept state is `n`.
   const accept = n;
@@ -155,17 +171,25 @@ function sparseNfa(graph, ci) {
   // (A nullable successor is a `**/`, which reaches accept through one
   // segment whenever it reaches it at all, or a join, which takes none and
   // reaches it as its successors do: no set holds a join's state, only its
-  // position, see `enterSparse`.)
+  // position, see `enterSparse`. A piece reaches it iff a segment takes
+  // it to an exit that does, see `GlueNfa.reach`.)
   const base = n + 1;
   // Positions sit past the states, as the sparse active set indexes them
   // (`base + p`, see `nfaRunSparse`).
   const reach1 = new Uint8Array(2 * n + 2);
+  let good = null;
   for (let i = n - 1; i >= 0; i--) {
     let o = 0;
     eachSucc(i, (t) => {
       if (t === ACCEPT || reach1[t]) o = 1;
     });
-    reach1[i] = o && (elemSatisfiable(elems[i]) || elems[i].kind === EL_JOIN) ? 1 : 0;
+    const e = elems[i];
+    if (e.kind === EL_PIECE) {
+      good ??= glue.set();
+      reach1[i] = glue.reach(i, o === 1, good) && e.entry !== INNER ? 1 : 0;
+    } else {
+      reach1[i] = o && (elemSatisfiable(e) || e.kind === EL_JOIN) ? 1 : 0;
+    }
   }
 
   const key = (t) => (ci ? asciiLower(elems[t].litStr) : elems[t].litStr);
@@ -217,6 +241,10 @@ function sparseNfa(graph, ci) {
     accept,
     // See `lenClasses`.
     lenClasses: lenClasses(elems),
+    // The glued pieces' NFA, when the graph has pieces, and the entries
+    // of those a step meets (see `stepSparse`).
+    glue,
+    entries: null,
     // Mark arrays reused across calls (see `nfaRunSparse`).
     scratch: null,
   };
@@ -480,9 +508,16 @@ function stepSparse(m, g, active, next, str, s0, e0) {
       if (sparseConsumes(m, s, str, s0, e0, absorbOk)) fireSparse(m, g, s, next);
     }
   }
+  // The pieces' entries, matched together after the rest.
+  const entries = g.entries;
+  if (entries !== null) {
+    g.entries = null;
+    g.glue.exits(entries, str, s0, e0, m.dot, m.byteOnly, (q) => fireSparse(m, g, q, next));
+  }
 }
 
-// Does state `s` take the segment `str[s0..e0]`?
+// Does state `s` take the segment `str[s0..e0]`? A piece notes its entry
+// for the glue NFA, which takes the segment once for all of them.
 function sparseConsumes(m, s, str, s0, e0, absorbOk) {
   const e = m.elems[s];
   switch (e.kind) {
@@ -492,6 +527,11 @@ function sparseConsumes(m, s, str, s0, e0, absorbOk) {
       return wildConsumes(m, e.wild, str, s0, e0);
     case EL_JOIN:
       return false;
+    case EL_PIECE: {
+      const g = m.nfa;
+      bitSet((g.entries ??= g.glue.set()), e.entry);
+      return false;
+    }
     default:
       return absorbOk;
   }
@@ -503,10 +543,14 @@ export function sparseReach1(g, set) {
   return false;
 }
 
-// As `coversBelow`, over the set `nfaRunSparse` or `initSparse` left.
+// As `coversBelow`, over the set `nfaRunSparse` or `initSparse` left. A
+// piece takes a segment to the nodes the glue NFA reaches, so it fires
+// those for the lengths it takes every segment of to them
+// (`GlueNfa.wildExits`), as the whole segments through it would; that
+// costs a pass over the glue NFA per set of states.
 export function coversBelowSparse(m, active) {
   const g = m.nfa;
-  if (g.lenClasses === 0) return coversWildSparse(m, active, false);
+  if (g.lenClasses === 0 && g.glue === null) return coversWildSparse(m, active, false);
   // The search by length starts where the wildcard-only one does.
   return coversWildSparse(m, active, true) || coversByLengthSparse(m, active);
 }
@@ -528,6 +572,7 @@ function coversWildSparse(m, active, keep) {
   const limit = Math.min(g.n + 1, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
     clearSet(next);
+    let entries = null;
     for (let k = 0; k < active.len; k++) {
       const item = active.items[k];
       if (item < base) {
@@ -538,7 +583,15 @@ function coversWildSparse(m, active, keep) {
       const p = item - base;
       for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {
         const s = g.others[k];
-        if (anySeg(s)) fireSparse(m, g, s, next);
+        const e = m.elems[s];
+        if (elemAnySeg(e)) fireSparse(m, g, s, next);
+        else if (e.kind === EL_PIECE) bitSet((entries ??= g.glue.set()), e.entry);
+      }
+    }
+    if (entries !== null) {
+      const exits = g.glue.wildExits(entries);
+      for (let j = 0; j < exits.length; j += 3) {
+        if (exits[j + 2] === 1) fireSparse(m, g, exits[j], next);
       }
     }
     if (!sparseHas(next, g.accept)) return false;
@@ -550,40 +603,47 @@ function coversWildSparse(m, active, keep) {
   return false;
 }
 
-// As `coversByLength`; a fired set is its states, ascending.
+// As `coversByLength`; a fired set is its states, ascending. The classes
+// are a set's own: lengths past what any of its takers singles out fire
+// alike, and a graph without pieces has the NFA's (`lenClasses`) for
+// every set.
 function coversByLengthSparse(m, active) {
   const g = m.nfa;
-  const k = g.lenClasses;
   const next = sparseScratch(g).a;
   const budget = MAX_COVER_SETS * (g.n + 1);
   let firings = 0;
   let work = 0;
   const seen = new SetIndex();
   const tried = new SetIndex();
-  // Class `c` fires `sets[at[c]..at[c + 1]]`.
-  const at = new Int32Array(k + 2);
   for (let i = -1; i < seen.sets.length; i++) {
     if (i >= 0) {
       clearSet(next);
       for (const s of seen.sets[i]) fireSparse(m, g, s, next);
       if (!sparseHas(next, g.accept)) return false;
     }
-    const states = takers(m, g, i < 0 ? active : next);
-    const h = hashStates(states, 0, states.length);
-    if (tried.has(states, 0, states.length, h)) continue;
-    tried.add(states, 0, states.length, h);
+    const takes = takers(m, g, i < 0 ? active : next);
+    const h = hashStates(takes, 0, takes.length);
+    if (tried.has(takes, 0, takes.length, h)) continue;
+    tried.add(takes, 0, takes.length, h);
+    let k = g.lenClasses;
+    for (let j = 0; j < takes.length; j += 3)
+      k = Math.max(k, lensReach(takes[j + 1], takes[j + 2]));
     // Every class's fired set, a counting sort of the states by the
     // classes they take.
-    const masks = states.map((s) => classMask(m.elems[s], k));
-    at.fill(0);
+    const count = takes.length / 3;
+    const masks = new Int32Array(count);
+    for (let j = 0; j < count; j++) masks[j] = lensClasses(takes[3 * j + 1], takes[3 * j + 2], k);
+    // Class `c` fires `sets[at[c]..at[c + 1]]`.
+    const at = new Int32Array(k + 2);
     for (let mask of masks) {
       for (; mask !== 0; mask &= mask - 1) at[ctz32(mask) + 1]++;
     }
     for (let c = 0; c <= k; c++) at[c + 1] += at[c];
     const sets = new Int32Array(at[k + 1]);
     const end = at.slice(0, k + 1);
-    for (let j = 0; j < states.length; j++) {
-      for (let mask = masks[j]; mask !== 0; mask &= mask - 1) sets[end[ctz32(mask)]++] = states[j];
+    for (let j = 0; j < count; j++) {
+      for (let mask = masks[j]; mask !== 0; mask &= mask - 1)
+        sets[end[ctz32(mask)]++] = takes[3 * j];
     }
     for (let c = 0; c <= k; c++) {
       const lo = at[c];
@@ -635,13 +695,18 @@ class SetIndex {
   }
 }
 
-// The states of `set` that take every segment of some length,
-// ascending: what a length class may fire. Literals take none.
+// The states of `set` that take every segment of some length, and the
+// nodes its pieces take every segment of some length to, ascending, as
+// (state, `wildLenBits`, `wildLenFrom`) triples: what a length class may
+// fire. Literals take none.
 function takers(m, g, set) {
-  const out = [];
+  const states = [];
   const base = g.n + 1;
+  let entries = null;
   const take = (s) => {
-    if (classMask(m.elems[s], g.lenClasses) !== 0) out.push(s);
+    const e = m.elems[s];
+    if (e.kind === EL_PIECE) bitSet((entries ??= g.glue.set()), e.entry);
+    else if (classMask(e, g.lenClasses) !== 0) states.push(s);
   };
   for (let k = 0; k < set.len; k++) {
     const item = set.items[k];
@@ -652,11 +717,34 @@ function takers(m, g, set) {
       take(item);
     }
   }
-  const sorted = Int32Array.from(out).sort();
+  // Where each node the pieces lead to has its lengths.
+  const exits = entries === null ? null : g.glue.wildExits(entries);
+  const exitAt = new Map();
+  for (let j = 0; exits !== null && j < exits.length; j += 3) {
+    states.push(exits[j]);
+    exitAt.set(exits[j], j);
+  }
+  const sorted = Int32Array.from(states).sort();
+  const out = new Int32Array(3 * sorted.length);
   let n = 0;
-  for (let k = 0; k < sorted.length; k++)
-    if (k === 0 || sorted[k] !== sorted[k - 1]) sorted[n++] = sorted[k];
-  return sorted.subarray(0, n);
+  for (let k = 0; k < sorted.length; k++) {
+    const s = sorted[k];
+    if (k > 0 && s === sorted[k - 1]) continue;
+    const e = m.elems[s];
+    out[n] = s;
+    if (e.kind === EL_PIECE) {
+      const j = exitAt.get(s);
+      out[n + 1] = exits[j + 1];
+      out[n + 2] = exits[j + 2];
+    } else if (isGlobstar(e)) {
+      out[n + 2] = 1;
+    } else {
+      out[n + 1] = wildLenBits(e.wild);
+      out[n + 2] = wildLenFrom(e.wild);
+    }
+    n += 3;
+  }
+  return out.subarray(0, n);
 }
 
 function sameSet(a, b) {

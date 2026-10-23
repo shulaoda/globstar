@@ -6,10 +6,6 @@ use core::fmt;
 pub const MAX_PATTERN_LEN: usize = 64 * 1024;
 /// How deep braces may nest ([`GlobError::BraceNestingTooDeep`]).
 pub const MAX_BRACE_NESTING: usize = 32;
-/// What distributing braces around `**` may copy (§6.2), per pattern or
-/// per union: one per token, a literal or a class by its length, and one
-/// per brace branch.
-pub const MAX_EXPANSION: usize = 4096;
 
 /// Why a pattern does not compile. An `at` field is a byte offset into
 /// the UTF-8 pattern; a `max` field is the limit that was passed.
@@ -43,30 +39,9 @@ pub enum GlobError {
         /// Where the `\` is.
         at: usize,
     },
-    /// Brace nesting exceeds [`MAX_BRACE_NESTING`], in the pattern or once
-    /// braces are distributed around `**`.
+    /// Brace nesting exceeds [`MAX_BRACE_NESTING`].
     BraceNestingTooDeep {
         /// [`MAX_BRACE_NESTING`].
-        max: usize,
-    },
-    /// Distributing braces around `**` would copy more than
-    /// [`MAX_EXPANSION`].
-    BraceExpansionTooLarge {
-        /// [`MAX_EXPANSION`].
-        max: usize,
-    },
-    /// Compiling would take more than `max` steps of work: braces whose
-    /// segments multiply (`a{a,/}` repeated many times), or that copy a
-    /// long class into many segments, or whose graph would keep more
-    /// than `max` edges (`{a/,}` repeated: each segment may follow every
-    /// one before it). `max` grows with the pattern, so
-    /// every pattern of ordinary shape compiles. A list given to
-    /// `Glob::union` compiles as one, so this is the list's error (never
-    /// inside [`InMember`](Self::InMember)), and members that each
-    /// compile alone can fail together.
-    TooComplex {
-        /// The bound that was passed: the work this pattern was
-        /// allowed, or the edges its graph may keep.
         max: usize,
     },
     /// Character class range with right endpoint smaller than left.
@@ -89,8 +64,7 @@ pub enum GlobError {
         pattern: String,
     },
     /// A member of the list given to `Glob::union` does not compile:
-    /// `error` says why, with offsets into that member. A failure of the
-    /// list as a whole ([`TooComplex`](Self::TooComplex)) is not wrapped.
+    /// `error` says why, with offsets into that member.
     InMember {
         /// The member's position in the list, counting every member given.
         index: usize,
@@ -128,15 +102,6 @@ impl fmt::Display for GlobError {
                 write!(f, "escaped separator `\\/` at byte {at}")
             }
             Self::BraceNestingTooDeep { max } => write!(f, "brace nesting exceeds limit {max}"),
-            Self::BraceExpansionTooLarge { max } => {
-                write!(f, "brace expansion around `**` exceeds limit {max}")
-            }
-            Self::TooComplex { max } => {
-                write!(
-                    f,
-                    "pattern too complex: compiling it takes more than {max} steps"
-                )
-            }
             Self::InvalidRange { at, low, high } => write!(
                 f,
                 "invalid character class range `{}-{}` at byte {at}: the end is below the start",

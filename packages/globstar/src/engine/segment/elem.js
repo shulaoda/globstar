@@ -10,6 +10,13 @@ export const EL_G1 = 3;
 // Takes no segment: it stands for its successors, which the tails of a
 // group share through it instead of an edge from each (see `graph.js`).
 export const EL_JOIN = 4;
+// A piece of a segment a brace cuts, or a join among pieces: the glue NFA
+// matches it with the pieces glued to it (see `GlueNfa`). Its `entry` is
+// its entry state there when a segment may start in it, else INNER.
+export const EL_PIECE = 5;
+
+// The entry of a piece no segment starts in.
+export const INNER = -1;
 
 export const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
 // Absorbs zero segments too.
@@ -29,9 +36,10 @@ export const NFA_SPARSE = 1;
 // in-segment NFA that accepts nothing.
 export const NEVER_LEN = 0x7fffffff;
 
-// Can the element take some segment?
+// Can the element take some segment? (A piece's answer is the glue
+// NFA's, `GlueNfa.reach`.)
 export const elemSatisfiable = (e) =>
-  e.kind === EL_WILD ? e.wild.minLen !== NEVER_LEN : e.kind !== EL_JOIN;
+  e.kind === EL_WILD ? e.wild.minLen !== NEVER_LEN : e.kind !== EL_JOIN && e.kind !== EL_PIECE;
 // Takes every non-empty segment (`matchDir`'s all-below).
 export const elemAnySeg = (e) =>
   e.kind === EL_WILD ? e.wild.anySeg : e.kind === EL_G0 || e.kind === EL_G1;

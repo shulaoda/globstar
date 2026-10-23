@@ -288,38 +288,17 @@ fn walker_invalid_member_of_a_list_is_named() {
     )
     .unwrap_err();
     assert_eq!(invalid(&err).0, "a/{b");
-    // Every member compiles alone; together they pass the expansion
-    // budget (GLOB_SPEC §6.2). The error names the member it ran out in.
-    let member = "{,/}".repeat(10) + "**/f";
-    let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
-    let err = Walk::from_patterns(&members, t.root()).unwrap_err();
-    let (pattern, reason, _) = invalid(&err);
-    assert_eq!(pattern, members[1]);
-    assert!(reason.contains("the patterns share this limit"), "{reason}");
     // Found from the core's member index, not by compiling each member
     // again, so 5,000 members fail fast with a short message.
-    let members: Vec<String> = (0..5000)
+    let mut members: Vec<String> = (0..5000)
         .map(|i| format!("{}{{**,a}}/f{i}", "{**,a}{/,b}".repeat(4)))
         .collect();
+    members[4321] = "lib/[abc".into();
     let start = std::time::Instant::now();
     let err = Walk::from_patterns(&members, t.root()).unwrap_err();
     assert!(start.elapsed().as_millis() < 500, "{:?}", start.elapsed());
+    assert_eq!(invalid(&err).0, members[4321]);
     assert!(err.to_string().len() < 400, "{err}");
-    // An error no one member explains (the union's compile work) names
-    // the list, cut after three.
-    let members = [
-        "{a,/}{b,/}".repeat(300),
-        "c{a,/}".repeat(300),
-        "x".into(),
-        "y".into(),
-    ];
-    let err = Walk::from_patterns(&members, t.root()).unwrap_err();
-    let (pattern, _, source) = invalid(&err);
-    assert!(pattern.ends_with("\"x\"] and 1 more"), "{pattern}");
-    assert!(
-        matches!(source, Some(globstar::GlobError::TooComplex { .. })),
-        "{source:?}"
-    );
 }
 
 /// Serializes tests that mutate process-wide CWD so they don't race

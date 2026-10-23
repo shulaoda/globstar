@@ -6,15 +6,30 @@
 //! nothing is multiplied out. Branches that start alike share their
 //! nodes too (a node is reused when its element and predecessors
 //! already exist), which turns a union of names into a trie.
+//!
+//! A segment a separator-crossing brace's edge falls inside (`x{a/,b}y`
+//! reads the segments `xa` and `xby`) is copied into each branch, and
+//! what follows the brace onto each segment the branches leave open,
+//! while the copies weigh no more than the pattern (`COPY_PER_WEIGHT`).
+//! Past that a segment is cut into *pieces* at the edge: `x`, `a`, `b`
+//! and `y`, the pieces after `x` *glued* to it and `y` to `b`, and a
+//! piece is never copied. So the walk makes every node, edge and token
+//! a bounded number of times, whatever the braces: the graph is linear
+//! in the pattern, and every pattern the parser accepts compiles. The
+//! glued pieces are matched together by one in-segment NFA (`GlueNfa`).
+//!
+//! A `**` is a globstar where a boundary is on both sides and a star
+//! elsewhere, in each brace expansion on its own (GLOB_SPEC §9.1): the
+//! walk reads it per group, as the expansions reach it.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 use crate::bytes::has_escaped_sep;
-use crate::error::GlobError;
 use crate::parse::ast::Node;
 
 use super::chain_index::{KeyScratch, LINEAR_CHAINS, SegKeys, key_room, segment_keys};
+use super::seg_nfa::GlueNfa;
 use super::wild::{Affix, Wild, WildKind, compile_wild, concat_lits};
 use super::{Bytes, Elem, NEVER};
 
@@ -24,16 +39,8 @@ pub(super) const ACCEPT: u32 = u32::MAX;
 /// Predecessor marker for the graph start.
 const START: u32 = u32::MAX;
 
-/// The work the graph walk may take: 64 units per unit of pattern
-/// weight (`node_weight`), and never less than 2^20. A unit is a node,
-/// an edge, a copied token, or a byte of the tables a wildcard segment
-/// builds (`Wild::table_bytes`). Patterns of ordinary shape need two to
-/// four per unit; only a shape whose segments multiply (`a{a,/}`
-/// repeated, one node per pair of braces) reaches it, and it fails
-/// before it costs much.
-const BUDGET_PER_WEIGHT: usize = 64;
-
-const MIN_BUDGET: usize = 1 << 20;
+/// What a `**` read as a star adds to a segment.
+static STAR: Node = Node::Star;
 
 /// The graph as the walk leaves it: the nodes and, for a pattern with
 /// a separator-crossing brace, their edges. A linear pattern is
@@ -46,6 +53,8 @@ pub(super) struct Graph {
     /// A crossing brace's wildcard nodes and their keys, in node order:
     /// what the chain index files a union's chains by.
     pub(super) keys: Vec<(u32, SegKeys)>,
+    /// The glued pieces' NFA, when a brace cuts a segment.
+    pub(super) glue: Option<Box<GlueNfa>>,
 }
 
 /// Successor lists in CSR form, the start's last (position `n`).
@@ -64,12 +73,7 @@ impl Graph {
     /// The graph of `body`, whose `survey` the caller took. The walk
     /// regroups the pattern in place (`regroup`), so what needs it as
     /// written reads it first.
-    pub(super) fn build(
-        body: &mut Node,
-        survey: Survey,
-        dot: bool,
-        ci: bool,
-    ) -> Result<Self, GlobError> {
+    pub(super) fn build(body: &mut Node, survey: Survey, dot: bool, ci: bool) -> Self {
         let Survey {
             boundaries,
             linear,
@@ -80,7 +84,7 @@ impl Graph {
         if !linear {
             regroup(body);
         }
-        let mut b = Builder::new(boundaries, linear, dot, ci);
+        let mut b = Builder::new(boundaries, linear, weight, dot, ci);
         // Only a union of more paths than `LINEAR_CHAINS` indexes them.
         if paths > LINEAR_CHAINS {
             b.keys = Some(Box::new(KeyReading {
@@ -89,30 +93,11 @@ impl Graph {
                 scratch: KeyScratch::default(),
             }));
         }
-        // A linear walk keeps one group and takes a few units per weight,
-        // so only a separator-crossing brace can reach the budget.
-        if !linear {
-            b.budget = MIN_BUDGET.max(weight.saturating_mul(BUDGET_PER_WEIGHT));
+        let groups = b.walk(body.seq(), vec![Group::first()]);
+        for g in groups {
+            b.end(g);
         }
-        let groups = b.walk(body.seq(), false, vec![Group::first()]);
-        for mut g in groups {
-            if b.over() {
-                break;
-            }
-            b.settle(&mut g);
-            if g.state == Boundary::Open {
-                for &t in &g.tails {
-                    b.end_after(t);
-                }
-            } else {
-                let id = b.segment(&g);
-                b.end_after(id);
-            }
-        }
-        if b.over() {
-            return Err(GlobError::TooComplex { max: b.budget });
-        }
-        Ok(b.finish(weight))
+        b.finish(weight)
     }
 }
 
@@ -120,7 +105,8 @@ impl Graph {
 pub(super) struct Survey {
     /// Separators and globstars, inside braces too.
     boundaries: usize,
-    /// No brace holds a boundary: the pattern is one path.
+    /// No brace holds a boundary, nor may leave a `**` beside one: the
+    /// pattern is one path.
     linear: bool,
     /// The pattern's `node_weight`.
     pub(super) weight: usize,
@@ -137,9 +123,16 @@ pub(super) fn survey(nodes: &[Node]) -> Survey {
     let mut linear = true;
     let mut weight = 0;
     let mut paths = 1usize;
-    for node in nodes {
+    for (i, node) in nodes.iter().enumerate() {
         match node {
             Node::Brace(branches) => {
+                // A brace that may be empty beside a `**` makes it a
+                // globstar in some expansions and a star in others: two
+                // paths (`{a,}**`).
+                let next_to = |at: usize| matches!(nodes.get(at), Some(Node::Globstar));
+                if node.nullable() && (next_to(i + 1) || i.checked_sub(1).is_some_and(next_to)) {
+                    linear = false;
+                }
                 // A brace crosses iff its branches hold a boundary.
                 let before = boundaries;
                 let mut branch_paths = 0usize;
@@ -174,9 +167,9 @@ pub(super) fn survey(nodes: &[Node]) -> Survey {
     }
 }
 
-/// What a node costs the walk to copy and compile: a literal its
-/// length, a class one plus its ranges, a brace one plus its branches
-/// (an empty one too), anything else one.
+/// What a node weighs: a literal its length, a class one plus its
+/// ranges, a brace one plus its branches (an empty one too), anything
+/// else one. The size bounds that pick a representation scale with it.
 pub(super) fn node_weight(node: &Node) -> usize {
     match node {
         Node::Literal(bytes) => bytes.len(),
@@ -191,6 +184,17 @@ pub(super) fn node_weight(node: &Node) -> usize {
     }
 }
 
+/// The room for copies: a segment a crossing brace's edge falls inside
+/// is copied into its branches, and text after the brace onto each
+/// segment they leave open (`src/{a/x,b/y}.ts`), while all the copies
+/// weigh at most this much per unit of pattern weight, never less than
+/// `MIN_COPY_ROOM`. Past that the segments are cut into pieces, which
+/// copy nothing, so the graph stays linear in the pattern. Copies keep a
+/// pattern's segments whole, as written, and so its chains and literal
+/// sets; pieces are for braces whose segments multiply.
+const COPY_PER_WEIGHT: usize = 1;
+const MIN_COPY_ROOM: usize = 1 << 14;
+
 /// What the last node left behind for the next element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Boundary {
@@ -198,8 +202,9 @@ enum Boundary {
     Start,
     /// After a separator or a `**/`.
     Sep,
-    /// A bare `**` absorbs the rest of the path.
-    Open,
+    /// Inside a segment a crossing brace cut: the tails are its pieces
+    /// so far, and what follows glues to them.
+    Glue,
 }
 
 /// Paths under construction that agree on everything still to come:
@@ -213,14 +218,19 @@ struct Group<'a> {
     /// A `**/` read but not yet emitted: a bare `**` right after it
     /// absorbs it (`x/**/**` ≡ `x/**`), anything else makes it real.
     /// More of them add nothing (`**/**/` ≡ `**/`). While set, `state`
-    /// is the boundary before it and `buf` holds at most the in-segment
-    /// braces read since (`**/{a,b}x`), settled with the next node.
+    /// is the boundary before it and `buf` is empty.
     pending_globstar: bool,
-    /// A `**` ending a brace branch took the `/` after the brace as its
-    /// `**/`: that separator closes nothing here.
-    took_sep: bool,
-    /// The `node_weight` of `buf`.
-    weight: usize,
+    /// A `**` read at a boundary, `buf` empty: a globstar if a `/` or
+    /// the end of the pattern comes next, a star otherwise (§9.1). The
+    /// next token decides, in each branch it may be in.
+    double_star: bool,
+    /// Stands only for the empty expansions of the in-segment braces read
+    /// since the boundary, which leave a `**` next to it (`{a,}**`,
+    /// `**{,a}/`): the group that read the braces covers every other
+    /// reading, the `**` as a star too, so this one lives only while the
+    /// `**` may yet be a globstar, and goes on as a group of its own once
+    /// a `/` or the end makes it one.
+    shadow: bool,
 }
 
 impl Group<'_> {
@@ -230,14 +240,9 @@ impl Group<'_> {
             state: Boundary::Start,
             buf: Vec::new(),
             pending_globstar: false,
-            took_sep: false,
-            weight: 0,
+            double_star: false,
+            shadow: false,
         }
-    }
-
-    /// What copying the group costs the walk.
-    fn cost(&self) -> usize {
-        1 + self.tails.len() + self.weight
     }
 
     /// Drop repeated tails, which merges and reused nodes add; their
@@ -249,8 +254,7 @@ impl Group<'_> {
         }
     }
 
-    /// Continue as the one group after `id`, reusing the vectors. The
-    /// partial segment stays: a pending `**/` settles ahead of it.
+    /// Continue as the one group after `id`, reusing the vectors.
     fn rebase(&mut self, id: u32, state: Boundary) {
         self.tails.clear();
         self.tails.push(id);
@@ -258,10 +262,16 @@ impl Group<'_> {
         self.pending_globstar = false;
     }
 
+    /// Inside a segment: a `**` is a star here.
+    fn within(&self) -> bool {
+        self.state == Boundary::Glue || !self.buf.is_empty()
+    }
+
     fn agrees(&self, other: &Self) -> bool {
         self.state == other.state
             && self.pending_globstar == other.pending_globstar
-            && self.took_sep == other.took_sep
+            && self.double_star == other.double_star
+            && self.shadow == other.shadow
             && self.buf.len() == other.buf.len()
             && self
                 .buf
@@ -277,7 +287,8 @@ impl Group<'_> {
         h.write(&[
             self.state as u8,
             self.pending_globstar as u8,
-            self.took_sep as u8,
+            self.double_star as u8,
+            self.shadow as u8,
         ]);
         for node in &self.buf {
             std::mem::discriminant(*node).hash(&mut h);
@@ -306,10 +317,11 @@ struct KeyReading {
 
 /// Builds the graph. A pattern with a separator-crossing brace also
 /// records every node's predecessors (flat, `START` for the start,
-/// node `i` owning `preds[pred_at[i]..pred_at[i + 1]]`), the nodes the
-/// pattern may end after, and reuses a node by its (element,
-/// predecessors) hash; a linear pattern records its nodes only.
-struct Builder {
+/// node `i` owning `preds[pred_at[i]..pred_at[i + 1]]`), whether it is
+/// glued to them, a wildcard piece's nodes, the nodes the pattern may
+/// end after, and reuses a node by its (element, predecessors) hash; a
+/// linear pattern records its nodes only.
+struct Builder<'a> {
     elems: Vec<Elem>,
     /// The wildcard segments' keys and the buffers that read them, for
     /// a union the chain index may file.
@@ -317,21 +329,24 @@ struct Builder {
     linear: bool,
     preds: Vec<u32>,
     pred_at: Vec<u32>,
+    /// Per node: does it go on the segment of its predecessors? A
+    /// group's tails are all glued or none, so this holds for every edge
+    /// into the node. Kept up to the last glued node (`is_glued`): empty
+    /// while no brace cuts a segment.
+    glued: Vec<bool>,
+    /// Per node, a wildcard piece's nodes, which `GlueNfa` reads; kept
+    /// up to the last such piece, as `glued` is.
+    pieces: Vec<Vec<&'a Node>>,
     ends: Vec<u32>,
     memo: HashMap<u64, u32, BuildHasherDefault<Fnv>>,
-    /// The walk's work so far: nodes and their edges, the tokens it
-    /// added to groups by their weight, the groups it copied, closed and
-    /// hashed whole by their `cost` and weight, and the tables its
-    /// wildcard segments built. Past `budget` the walk stops and the
-    /// pattern is too complex.
-    cost: usize,
-    budget: usize,
+    /// What is left of the room for copies (`COPY_PER_WEIGHT`).
+    room: usize,
     dot: bool,
     ci: bool,
 }
 
-impl Builder {
-    fn new(boundaries: usize, linear: bool, dot: bool, ci: bool) -> Self {
+impl<'a> Builder<'a> {
+    fn new(boundaries: usize, linear: bool, weight: usize, dot: bool, ci: bool) -> Self {
         // A linear pattern stores no edges; a crossing brace has at least
         // one node per boundary, each with a predecessor and a key.
         let edges = if linear { 0 } else { boundaries + 1 };
@@ -341,22 +356,57 @@ impl Builder {
             linear,
             preds: Vec::with_capacity(edges),
             pred_at: Vec::with_capacity(edges),
+            glued: Vec::new(),
+            pieces: Vec::new(),
             ends: Vec::new(),
             memo: HashMap::with_capacity_and_hasher(edges, Default::default()),
-            cost: 0,
-            budget: usize::MAX,
+            room: COPY_PER_WEIGHT.saturating_mul(weight).max(MIN_COPY_ROOM),
             dot,
             ci,
         }
     }
 
-    fn finish(self, weight: usize) -> Graph {
+    fn finish(mut self, weight: usize) -> Graph {
         let edges = (!self.linear).then(|| self.successors());
+        // A join a cut leaves before branches that each start at a `/`,
+        // or nothing after a brace, holds no piece: nothing glues to it,
+        // so it only stands for its successors, as any join does. A
+        // successor's id is past its predecessors', so one pass back
+        // sees each join after what follows it.
+        let glue = match &edges {
+            Some(e) if !self.glued.is_empty() => {
+                let n = self.elems.len();
+                self.glued.resize(n, false);
+                for i in (0..n).rev() {
+                    if matches!(self.elems[i], Elem::Join)
+                        && self.glued[i]
+                        && !e
+                            .succ(i)
+                            .iter()
+                            .any(|&t| t != ACCEPT && self.glued[t as usize])
+                    {
+                        self.glued[i] = false;
+                    }
+                }
+                self.pieces.resize(n, Vec::new());
+                self.glued.contains(&true).then(|| {
+                    Box::new(GlueNfa::new(
+                        &mut self.elems,
+                        e,
+                        &self.glued,
+                        &self.pieces,
+                        self.ci,
+                    ))
+                })
+            }
+            _ => None,
+        };
         Graph {
             elems: self.elems,
             edges,
             weight,
             keys: self.keys.map_or_else(Vec::new, |k| k.keys),
+            glue,
         }
     }
 
@@ -398,22 +448,25 @@ impl Builder {
         Edges { offsets, targets }
     }
 
-    /// A node for `elem` after `tails`; an existing one when a branch
-    /// already made it.
-    fn emit(&mut self, elem: Elem, tails: &[u32]) -> u32 {
-        self.cost += 1 + tails.len();
+    /// A node for `elem` after `tails` (`glued` to them or not); an
+    /// existing one when a branch already made it.
+    fn emit(&mut self, elem: Elem, tails: &[u32], glued: bool) -> u32 {
         let id = self.elems.len() as u32;
         if self.linear {
             self.elems.push(elem);
             return id;
         }
-        let key = Self::key(&elem, tails);
+        let key = Self::key(&elem, tails, glued);
         if let Some(&found) = key.and_then(|k| self.memo.get(&k))
-            && self.same(found, &elem, tails)
+            && self.same(found, &elem, tails, glued)
         {
             return found;
         }
         self.elems.push(elem);
+        if glued {
+            self.glued.resize(id as usize + 1, false);
+            self.glued[id as usize] = true;
+        }
         self.pred_at.push(self.preds.len() as u32);
         self.preds.extend_from_slice(tails);
         if let Some(k) = key {
@@ -424,7 +477,7 @@ impl Builder {
 
     /// Reuse key of a literal, globstar or join node; wildcards stay
     /// apart.
-    fn key(elem: &Elem, tails: &[u32]) -> Option<u64> {
+    fn key(elem: &Elem, tails: &[u32], glued: bool) -> Option<u64> {
         let mut h = Fnv::default();
         match elem {
             Elem::Lit(lit) => {
@@ -434,18 +487,23 @@ impl Builder {
             Elem::G0 => h.write(&[1]),
             Elem::G1 => h.write(&[2]),
             Elem::Join => h.write(&[3]),
-            Elem::Wild(_) => return None,
+            Elem::Wild(_) | Elem::Piece(_) => return None,
         }
+        h.write(&[glued as u8]);
         for &t in tails {
             h.write(&t.to_le_bytes());
         }
         Some(h.finish())
     }
 
+    fn is_glued(&self, i: usize) -> bool {
+        self.glued.get(i).copied().unwrap_or(false)
+    }
+
     /// Is node `id` this element after these predecessors?
-    fn same(&self, id: u32, elem: &Elem, tails: &[u32]) -> bool {
+    fn same(&self, id: u32, elem: &Elem, tails: &[u32], glued: bool) -> bool {
         let i = id as usize;
-        if self.preds_of(i) != tails {
+        if self.is_glued(i) != glued || self.preds_of(i) != tails {
             return false;
         }
         match (&self.elems[i], elem) {
@@ -462,10 +520,6 @@ impl Builder {
         }
     }
 
-    fn over(&self) -> bool {
-        self.cost > self.budget
-    }
-
     /// A group about to be copied into each of `ways` branches: its
     /// tails become one join node when that keeps fewer edges, so the
     /// branches share an edge to it instead of one from each tail
@@ -479,58 +533,34 @@ impl Builder {
         if k * ways <= k + ways {
             return;
         }
-        let id = self.emit(Elem::Join, &g.tails);
+        let id = self.emit(Elem::Join, &g.tails, g.state == Boundary::Glue);
         g.tails.clear();
         g.tails.push(id);
     }
 
-    /// Walk a sequence of nodes; `sep_after` tells whether a `/` follows
-    /// it outside (after the brace it is a branch of).
-    fn walk<'a>(
-        &mut self,
-        nodes: &'a [Node],
-        sep_after: bool,
-        mut groups: Vec<Group<'a>>,
-    ) -> Vec<Group<'a>> {
-        let mut i = 0;
-        while i < nodes.len() {
-            if self.over() {
-                break;
-            }
-            let node = &nodes[i];
-            let sep_next = matches!(nodes.get(i + 1), Some(Node::Separator));
-            // A `/` follows: next, or after the brace this is a branch of.
-            let after = sep_next || (i + 1 == nodes.len() && sep_after);
-            // Resolution puts a bare `**` only at the end of the pattern,
-            // so no group is open here.
-            debug_assert!(groups.iter().all(|g| g.state != Boundary::Open));
-            // Nodes that may still be absorbed by a bare `**` keep the
-            // pending `**/` elements; anything else makes them real (a
-            // `/` through `close_all`, which skips the groups it is the
-            // `**/` of).
-            if !matches!(node, Node::Globstar | Node::Brace(_) | Node::Separator) {
-                for g in groups.iter_mut() {
-                    self.settle(g);
-                }
-            }
+    /// Walk a sequence of nodes.
+    fn walk(&mut self, nodes: &'a [Node], mut groups: Vec<Group<'a>>) -> Vec<Group<'a>> {
+        for node in nodes {
             match node {
                 Node::Brace(branches) if crosses(node) => {
-                    // A `**` ending a branch reads the `/` after the brace.
-                    let mut out = Merged::default();
+                    // A segment the brace's edge falls inside goes on into
+                    // every branch (`x{a/,b}`: `xa` and `xb`), or is cut
+                    // there and the branches glue to the piece before it.
+                    let held: usize = groups
+                        .iter()
+                        .flat_map(|g| g.buf.iter().copied())
+                        .map(node_weight)
+                        .sum();
+                    if !self.afford((branches.len() - 1).saturating_mul(held)) {
+                        groups = self.cut_all(groups);
+                    }
                     for g in groups.iter_mut() {
                         self.join(g, branches.len());
                     }
+                    let mut out = Merged::default();
                     for branch in branches {
-                        self.cost += groups.iter().map(Group::cost).sum::<usize>();
-                        if self.over() {
-                            break;
-                        }
-                        let copies = groups.to_vec();
-                        for g in self.walk(branch.seq(), after, copies) {
-                            if self.over() {
-                                break;
-                            }
-                            self.cost += out.add(g);
+                        for g in self.walk(branch.seq(), groups.to_vec()) {
+                            out.add(g);
                         }
                     }
                     groups = out.groups;
@@ -539,42 +569,61 @@ impl Builder {
                     }
                 }
                 Node::Separator => self.close_all(&mut groups),
-                // `**/`: zero or more whole segments, empty ones included,
-                // so the separators around it are lenient (§9.5). It is
-                // emitted later, when it is known that no bare `**`
-                // absorbs it.
-                Node::Globstar if after => {
+                Node::Globstar => {
+                    groups.retain(|g| !(g.shadow && g.double_star));
                     for g in groups.iter_mut() {
-                        // The parser never glues a `**` to text.
-                        debug_assert!(g.buf.is_empty());
-                        // Tails a pending `**/` gathered become one `G0`:
-                        // kept, they would pile up (`{**,a}/` × k: k² edges).
-                        if g.tails.len() > 1 {
-                            self.settle(g);
+                        if g.double_star || g.within() {
+                            // After text, or after a `**`: a star.
+                            self.text(g);
+                            g.buf.push(&STAR);
+                        } else {
+                            g.double_star = true;
                         }
-                        g.pending_globstar = true;
-                        g.took_sep = !sep_next;
                     }
-                    i += usize::from(sep_next);
                 }
-                // A bare `**` owns the rest of the path: pending `**/`
-                // add nothing to it (the group continues without them),
-                // and a separator before them still needs a segment to
-                // follow (`x/**/**` ≡ `x/**`), so only the pattern start
-                // gives `G0`.
-                Node::Globstar => self.globstar_all(&mut groups),
                 node => {
-                    let weight = node_weight(node);
-                    self.cost += groups.len();
-                    for g in groups.iter_mut() {
-                        g.buf.push(node);
-                        g.weight += weight;
+                    // A brace that may be empty may leave a boundary, or a
+                    // `**`, next to what follows it (`{a,}**`, `**{,a}/`):
+                    // a shadow goes on as if it were empty, and other text
+                    // ends it.
+                    let empty = node.nullable();
+                    let copies = groups.iter().filter(|g| !g.shadow).count();
+                    if copies < groups.len() && !empty {
+                        groups.retain(|g| !g.shadow);
                     }
+                    // Text goes on every segment the groups hold, or, past
+                    // the room for copies, the segments end in pieces and
+                    // the text is one piece glued to them all
+                    // (`{a/0,…,a/999}` and a long tail).
+                    if copies > 1 && !self.afford((copies - 1).saturating_mul(node_weight(node))) {
+                        groups = self.cut_all(groups);
+                    }
+                    let mut shadows = Vec::new();
+                    for g in groups.iter_mut().filter(|g| !g.shadow) {
+                        if empty && !g.within() {
+                            shadows.push(Group {
+                                shadow: true,
+                                ..g.clone()
+                            });
+                        }
+                        self.text(g);
+                        g.buf.push(node);
+                    }
+                    groups.append(&mut shadows);
                 }
             }
-            i += 1;
         }
         groups
+    }
+
+    /// Ready a group for in-segment text: a `**` before it is a star,
+    /// and a pending `**/` is real.
+    fn text(&mut self, g: &mut Group<'a>) {
+        self.settle(g);
+        if g.double_star {
+            g.double_star = false;
+            g.buf.push(&STAR);
+        }
     }
 
     /// Emit a group's pending `**/`. It is always a `G0`: it absorbs
@@ -586,83 +635,139 @@ impl Builder {
         }
         let id = match g.tails[..] {
             [t] if t != START && matches!(self.elems[t as usize], Elem::G0) => t,
-            _ => self.emit(Elem::G0, &g.tails),
+            _ => self.emit(Elem::G0, &g.tails, false),
         };
         g.rebase(id, Boundary::Sep);
     }
 
+    /// End a group's partial segment in a piece: what comes next glues
+    /// to it.
+    fn cut(&mut self, g: &mut Group<'a>) {
+        if g.buf.is_empty() {
+            return;
+        }
+        let id = self.segment(g, true);
+        g.rebase(id, Boundary::Glue);
+        g.buf.clear();
+    }
+
+    /// Cut every group (`cut`): those that end in a piece agree again.
+    fn cut_all(&mut self, groups: Vec<Group<'a>>) -> Vec<Group<'a>> {
+        let mut cut = Merged::default();
+        for mut g in groups {
+            self.cut(&mut g);
+            cut.add(g);
+        }
+        cut.groups
+    }
+
+    /// Take `units` of the room for copies, if that much is left.
+    fn afford(&mut self, units: usize) -> bool {
+        let fits = units <= self.room;
+        if fits {
+            self.room -= units;
+        }
+        fits
+    }
+
     /// Close every group's segment into one node per group; they all
-    /// continue as one group after the separator.
-    fn close_all(&mut self, groups: &mut Vec<Group<'_>>) {
-        self.join_all(groups, Boundary::Sep, |b, g| {
-            b.settle(g);
-            let id = b.segment(g);
-            g.buf.clear();
-            g.weight = 0;
-            id
-        });
-    }
-
-    /// One globstar node per group, `G0` only at the pattern start;
-    /// they continue as one open group.
-    fn globstar_all(&mut self, groups: &mut Vec<Group<'_>>) {
-        self.join_all(groups, Boundary::Open, |b, g| {
-            // The parser never glues a `**` to text.
-            debug_assert!(g.buf.is_empty());
-            let elem = if g.state == Boundary::Start {
-                Elem::G0
-            } else {
-                Elem::G1
-            };
-            b.emit(elem, &g.tails)
-        });
-    }
-
-    /// Emit one node per group through `node`, then continue as one
-    /// group at `state` (the first group's vectors carry on, in the
-    /// same list). The branches a `**` ended pass through: they took
-    /// this `/` already.
-    fn join_all<'a>(
-        &mut self,
-        groups: &mut Vec<Group<'a>>,
-        state: Boundary,
-        node: impl Fn(&mut Self, &mut Group<'a>) -> u32,
-    ) {
-        let mut joined: Option<Group<'a>> = None;
-        let mut taken = Vec::new();
-        for mut g in groups.drain(..) {
-            if self.over() {
-                break;
-            }
-            if g.took_sep {
-                g.took_sep = false;
-                taken.push(g);
+    /// continue as one group after the separator. A glued group whose
+    /// segment ended with its last piece passes its tails on. A `**`
+    /// group takes the `/` as its `**/`, emitted later, and goes on
+    /// apart, one group per boundary before it.
+    fn close_all(&mut self, groups: &mut Vec<Group<'a>>) {
+        // The first group closed is the one they all continue as, and the
+        // first `**` group after each boundary the one those continue as:
+        // the others hand them their tails. A group left without tails is
+        // gone.
+        let mut joined: Option<usize> = None;
+        let mut starred = [None; 3];
+        for i in 0..groups.len() {
+            let g = &mut groups[i];
+            if g.shadow && !g.double_star {
+                g.tails.clear();
                 continue;
             }
-            let id = node(self, &mut g);
-            match &mut joined {
-                Some(j) => j.tails.push(id),
-                None => {
-                    g.rebase(id, state);
-                    joined = Some(g);
+            let into = if g.double_star {
+                // Tails a pending `**/` gathered become one `G0`: kept,
+                // they would pile up (`{**,a}/` × k: k² edges).
+                if g.tails.len() > 1 {
+                    self.settle(g);
                 }
+                g.double_star = false;
+                g.shadow = false;
+                g.pending_globstar = true;
+                &mut starred[g.state as usize]
+            } else {
+                if g.state != Boundary::Glue || !g.buf.is_empty() {
+                    self.settle(g);
+                    let id = self.segment(g, false);
+                    g.rebase(id, Boundary::Sep);
+                }
+                g.buf.clear();
+                g.state = Boundary::Sep;
+                &mut joined
+            };
+            match *into {
+                Some(j) => {
+                    let tails = std::mem::take(&mut groups[i].tails);
+                    groups[j].tails.extend_from_slice(&tails);
+                }
+                None => *into = Some(i),
             }
         }
-        groups.extend(joined);
-        groups.append(&mut taken);
+        groups.retain(|g| !g.tails.is_empty());
+        // The joined group first, then the pending `**/`s in order.
+        if let Some(at) = groups.iter().position(|g| !g.pending_globstar) {
+            groups[..=at].rotate_right(1);
+        }
         for g in groups.iter_mut() {
             g.dedupe_tails();
         }
     }
 
-    /// The node of a group's closed segment after its tails. A crossing
-    /// brace's wildcard segments keep their keys (a union's chains are
-    /// filed by them); a wildcard node is never shared, so its id is new.
-    fn segment(&mut self, g: &Group<'_>) -> u32 {
-        self.cost += g.weight;
+    /// End a group at the end of the pattern. A bare `**` owns the rest
+    /// of the path: pending `**/` add nothing to it, and a separator
+    /// before them still needs a segment to follow (`x/**/**` ≡
+    /// `x/**`), so only the pattern start gives `G0`.
+    fn end(&mut self, mut g: Group<'a>) {
+        if g.shadow && !g.double_star {
+            return;
+        }
+        if g.double_star {
+            let elem = if g.state == Boundary::Start {
+                Elem::G0
+            } else {
+                Elem::G1
+            };
+            let id = self.emit(elem, &g.tails, false);
+            self.end_after(id);
+        } else if g.state == Boundary::Glue && g.buf.is_empty() {
+            for &t in &g.tails {
+                self.end_after(t);
+            }
+        } else {
+            self.settle(&mut g);
+            let id = self.segment(&g, false);
+            self.end_after(id);
+        }
+    }
+
+    /// The node of a group's segment, or of the piece of it read since
+    /// the last cut, after its tails; a piece when glued to them or `cut`
+    /// (what follows glues to it). A crossing brace's wildcard segments
+    /// keep their keys (a union's chains are filed by them), and its
+    /// wildcard pieces their nodes; a wildcard node is never shared, so
+    /// its id is new.
+    fn segment(&mut self, g: &Group<'a>, cut: bool) -> u32 {
         let elem = self.close(&g.buf);
         let wild = matches!(elem, Elem::Wild(_));
-        let id = self.emit(elem, &g.tails);
+        let glued = g.state == Boundary::Glue;
+        let id = self.emit(elem, &g.tails, glued);
+        if wild && (glued || cut) {
+            self.pieces.resize(id as usize + 1, Vec::new());
+            self.pieces[id as usize] = g.buf.clone();
+        }
         if wild
             && let Some(k) = &mut self.keys
             && let Some(keys) = segment_keys(&g.buf, self.ci, k.room, &mut k.scratch)
@@ -673,10 +778,8 @@ impl Builder {
         id
     }
 
-    /// The element of a closed segment. A wildcard's tables are charged
-    /// to the walk: a brace pattern whose segments multiply fails early
-    /// instead of keeping big tables in each of them.
-    fn close(&mut self, buf: &[&Node]) -> Elem {
+    /// The element of a closed segment.
+    fn close(&self, buf: &[&Node]) -> Elem {
         // An escaped `\` on Windows: no segment holds a separator, so a
         // segment with one is a silent miss (§4.2), kept as a wildcard
         // that wants more bytes than any segment has.
@@ -693,16 +796,14 @@ impl Builder {
             });
         }
         if !buf.iter().all(|node| matches!(node, Node::Literal(_))) {
-            let wild = compile_wild(buf, self.dot, self.ci);
-            self.cost += wild.table_bytes();
-            return Elem::Wild(wild);
+            return Elem::Wild(compile_wild(buf, self.dot, self.ci));
         }
         // Empty, one literal, or literals glued across a brace edge.
         Elem::Lit(concat_lits(buf))
     }
 }
 
-/// Groups joined when they agree on boundary, pending `**/` and partial
+/// Groups joined when they agree on boundary, pending `**`, and partial
 /// segment: their continuations are the same nodes. A union leaves a
 /// group per member, so past `LINEAR_GROUPS` they are found by a hash
 /// of that key, and by a hash of whole nodes once more than
@@ -718,17 +819,14 @@ struct Merged<'a> {
 const LINEAR_GROUPS: usize = 16;
 
 impl<'a> Merged<'a> {
-    /// Add a group; returns the weight it hashed whole, which the walk
-    /// is charged.
     // Kept out of the recursive walk: inlined there, it costs the
     // unions of many branches 3–5% of their compile time.
     #[inline(never)]
-    fn add(&mut self, g: Group<'a>) -> usize {
+    fn add(&mut self, g: Group<'a>) {
         let n = self.groups.len();
         if n == LINEAR_GROUPS {
             self.index_all();
         }
-        let mut hashed = if self.whole { g.weight } else { 0 };
         let mut refile = false;
         let found = if n < LINEAR_GROUPS {
             self.groups.iter().position(|o| o.agrees(&g))
@@ -751,9 +849,7 @@ impl<'a> Merged<'a> {
         if refile {
             self.whole = true;
             self.index_all();
-            hashed += self.groups.iter().map(|o| o.weight).sum::<usize>();
         }
-        hashed
     }
 
     fn key(&self, g: &Group<'_>) -> u64 {
@@ -771,8 +867,8 @@ impl<'a> Merged<'a> {
 }
 
 /// Each crossing brace's in-segment branches as one choice, in place:
-/// `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches
-/// give a group per partial segment, 2^k of them after k braces.
+/// `{a,b,/}` walks as `{{a,b},/}`, the choice one piece, not one per
+/// branch.
 fn regroup(node: &mut Node) {
     match node {
         Node::Concat(children) => children.iter_mut().for_each(regroup),

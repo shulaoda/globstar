@@ -734,7 +734,7 @@ fn gone(err: &io::Error) -> bool {
 /// The (written, normalized) patterns as one [`Glob`], or `None` for
 /// none. A failure names the member as written, with that member's error
 /// (and says which text its offsets count in, when normalizing changed
-/// it); an error no one member explains names the list, cut after three.
+/// it).
 fn compile_union(
     patterns: &[(String, String)],
     opts: CompileOptions,
@@ -747,24 +747,13 @@ fn compile_union(
     };
     glob.map(Some).map_err(|e| {
         // A union names the member it failed in, with that member's own
-        // error; an error no one member explains (the union's compile
-        // work) is about the list.
-        let (member, source) = match e {
-            GlobError::InMember { index, error } => (Some(&patterns[index]), *error),
-            e if patterns.len() == 1 => (Some(&patterns[0]), e),
-            e => (None, e),
+        // error: a list of members that each compile compiles.
+        let (index, source) = match e {
+            GlobError::InMember { index, error } => (index, *error),
+            e => (0, e),
         };
-        let Some((raw, body)) = member else {
-            return WalkError::InvalidPattern {
-                pattern: name_list(patterns),
-                reason: source.to_string(),
-                source: Some(source),
-            };
-        };
+        let (raw, body) = &patterns[index];
         let mut reason = source.to_string();
-        if matches!(source, GlobError::BraceExpansionTooLarge { .. }) && patterns.len() > 1 {
-            reason.push_str(" (the patterns share this limit, and it ran out in this one)");
-        }
         if raw != body {
             reason = format!("{reason} (in '{body}', as the walker reads it)");
         }
@@ -793,16 +782,6 @@ fn check_length(raw: &str) -> Result<(), WalkError> {
         reason: source.to_string(),
         source: Some(source),
     })
-}
-
-/// A list of patterns as one name, cut after the first few.
-fn name_list(patterns: &[(String, String)]) -> String {
-    const SHOWN: usize = 3;
-    let raws: Vec<&String> = patterns.iter().take(SHOWN).map(|(raw, _)| raw).collect();
-    match patterns.len() - raws.len() {
-        0 => format!("{raws:?}"),
-        more => format!("{raws:?} and {more} more"),
-    }
 }
 
 /// WALKER_SPEC §4.2: the `!` count and the body of a written pattern;

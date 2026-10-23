@@ -2,9 +2,6 @@
 // may nest (`BraceNestingTooDeep`).
 export const MAX_PATTERN_LEN = 64 * 1024;
 export const MAX_BRACE_NESTING = 32;
-// What distributing braces around `**` may copy (§6.2), per matcher: one
-// per token, a literal or a class by its length, and one per brace branch.
-export const MAX_EXPANSION = 4096;
 
 export class GlobError extends Error {
   constructor(kind, info) {
@@ -40,10 +37,6 @@ function formatMessage(kind, info) {
       return `escaped separator \`\\/\` at byte ${info.at}`;
     case "BraceNestingTooDeep":
       return `brace nesting exceeds limit ${info.max}`;
-    case "BraceExpansionTooLarge":
-      return `brace expansion around \`**\` exceeds limit ${info.max}`;
-    case "TooComplex":
-      return `pattern too complex: compiling it takes more than ${info.max} steps`;
     case "InvalidRange":
       return `invalid character class range \`${show(info.low)}-${show(info.high)}\` at byte ${info.at}: the end is below the start`;
     case "EmptyPatternSet":

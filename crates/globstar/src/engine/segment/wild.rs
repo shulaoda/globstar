@@ -67,23 +67,9 @@ pub(super) struct Wild {
     pub(super) any_seg: bool,
 }
 
-impl Wild {
-    /// What the kind's tables take: a suffix set's bytes and bounds, an
-    /// NFA's states and kept closures. The compile walk charges it
-    /// (`GlobError::TooComplex`), so a brace pattern whose segments
-    /// multiply cannot keep big tables in each of them.
-    pub(super) fn table_bytes(&self) -> usize {
-        match &self.kind {
-            WildKind::Affix(_) => 0,
-            WildKind::Suffixes(set) => set.suffixes.len() + set.bounds.len(),
-            WildKind::Generic(nfa) => nfa.table_bytes(),
-        }
-    }
-}
-
 /// What an element takes through its wildcards alone (dot=true), by
 /// segment length: `match_dir`'s all-below (see `nfa.rs`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub(super) struct Lens {
     /// Bit `L` for every segment of `L` bytes (1 ≤ L ≤ 31).
     pub(super) bits: u32,

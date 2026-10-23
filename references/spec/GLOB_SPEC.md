@@ -289,7 +289,7 @@ Next to a brace, whether a `**` owns a segment is judged on each expansion (§10
 
 ### 6.1 Compile-time errors
 
-Compilation MUST reject the following inputs (`TooComplex`: MAY, §6.2). It has no other failure modes: a pattern either compiles into a matcher or raises one of these.
+Compilation MUST reject the following inputs. It has no other failure modes: a pattern either compiles into a matcher or raises one of these.
 
 | Error                    | Example                    | Reason                                                             |
 | ------------------------ | -------------------------- | ------------------------------------------------------------------ |
@@ -301,8 +301,6 @@ Compilation MUST reject the following inputs (`TooComplex`: MAY, §6.2). It has 
 | `EscapedSeparator`       | `a\/b`                     | no file name holds a `/` (§4.2)                                    |
 | `InvalidRange`           | `[z-a]`                    | the end is below the start (§8.1)                                  |
 | `BraceNestingTooDeep`    | 33 nested `{`              | resource guard (§6.2)                                              |
-| `BraceExpansionTooLarge` | `{**,a}{/,b}` × 5          | resource guard for the expansion around `**` (§6.2)                |
-| `TooComplex`             | `{a,b,/}` × 100            | resource guard for compile work (§6.2)                             |
 | `EmptyPatternSet`        | `globstar([])`             | a union needs at least one pattern (§16.1)                         |
 | `NegatedInUnion`         | `Glob::union(["a", "!b"])` | Rust only: a union rejects `!` members (§16.1)                     |
 
@@ -310,15 +308,14 @@ A stray `]`, `}`, `(` or `)` is not an error; it is a literal byte (§4.1). The 
 
 ### 6.2 Limits
 
-Three bounds keep compilation linear in practice. Each is a resource guard, not a rule of the language: a pattern inside the bounds means what §7–§13 say, and one outside them is refused.
+Beside the length limit (§4.5), one bound is a resource guard, not a rule of the language: a pattern inside it means what §7–§13 say, and one outside it is refused. Nothing else is bounded: an implementation MUST compile every pattern within these limits, and SHOULD do so in time and memory linear in the pattern's length, whatever its braces.
 
-- **Nesting.** An implementation MUST accept braces nested up to 32 levels deep and MUST reject deeper nesting with `BraceNestingTooDeep`. The depth counts every `{` as it opens, including one that later turns out to be literal (§10.4). The limit also bounds the local expansion around `**` (§10.1), which can nest braces the pattern wrote side by side: `**` followed by `{,/a}` 33 times fails the same way.
-- **Expansion around `**`.** Branch counts and Cartesian breadth are not bounded, because nothing is pre-expanded (§10.5). The one bounded thing is the local expansion that judges a `**` beside a brace (§10.1). Every copy it makes is counted: one per token, a literal or class by its length, and one per brace branch. When the count would pass 4096, compilation MUST fail with `BraceExpansionTooLarge`. The count runs over the whole pattern, and over all patterns of one union together (§16.1). Two shapes reach the cap: a chain of braces that each put a `**` beside the next, since each link copies what the chain built so far (`{**,a}{/,b}` repeated five times); and a `**`-edged brace beside a long list of mixed branches, which is copied once. Branches that all start with `/` are not copied (`{**,dist}{/a,/b,…}`, `**{/a,/b,…}`), and neither is a brace that only shares a `/` with the next (`{**,a}/` repeated any number of times).
-- **Compile work.** Braces whose branches cross a `/` can make the segments of a pattern multiply: `{a,b,/}` repeated k times has about k² distinct segments. Branches that may be empty can make the links between segments multiply the same way: in `{a/,}` repeated k times each `a` may follow every one before it, about k²/2 links among k segments. An implementation MAY fail such a pattern with `TooComplex`, and MUST NOT fail one whose compile work stays linear in its length. The bound and how work is counted are implementation-defined; `max` reports the bound that was passed. (Informative: the reference implementations allow 64 units of work per unit of pattern size, where a class counts one plus its ranges and an empty brace branch one, and at least 2^20 units; a unit is a node, an edge, a token copied into a segment, a segment closed by its size, or a byte of the tables a segment builds. The segments before a brace share their links to its branches through one node that takes no segment, so `{a/,}` repeated keeps a few links per brace and compiles at any length; every node and link is a unit, which also bounds what matching a segment walks. Ordinary patterns and big unions need two to four units per unit of pattern size, so only the multiplying shapes reach the bound: about 230 bytes of the shape above, and a class of many ranges that such a brace copies into many segments.)
+- **Nesting.** An implementation MUST accept braces nested up to 32 levels deep and MUST reject deeper nesting with `BraceNestingTooDeep`. The depth counts every `{` as it opens, including one that later turns out to be literal (§10.4). Braces side by side do not nest: `**` followed by `{,/a}` 33 times compiles.
+- **Braces.** Branch counts and Cartesian breadth are not bounded, because nothing is pre-expanded (§10.5), and neither are braces beside a `**`, which is judged in each expansion without copying the pattern around it (§10.1). Braces whose branches cross a `/` can make the segments of a pattern multiply: `{a,b,/}` repeated k times has about k² distinct segments, and in `{a/,}` repeated k times each `a` may follow every one before it. Such patterns compile too. (Informative: the reference implementations copy a segment a brace's edge falls inside into the brace's branches, and what follows the brace onto each segment they leave open, while the copies weigh no more than the pattern, and at least 16,384 units, where a literal weighs its length, a class one plus its ranges and a brace one plus its branches. Past that they cut such a segment into pieces at the brace's edges, glue the pieces after a brace to those before it, and match a segment's pieces together with one in-segment NFA, which copies nothing. The segments before a brace share their links to its branches through one node that takes no segment, so `{a/,}` repeated keeps a few links per brace. Every node, link and token is then made a bounded number of times, and the graph is linear in the pattern.)
 
 ### 6.3 Reference error types
 
-`at` is a byte offset into the UTF-8 pattern (for `InvalidRange`, where the range starts). An error that one member of a pattern list raises names the member by its position in the list, counting every member given: Rust wraps it in `InMember`, JS adds `index` and keeps the member's `kind`. A `TooComplex` is raised by the list as a whole, which compiles as one pattern (§16.1), and names no member.
+`at` is a byte offset into the UTF-8 pattern (for `InvalidRange`, where the range starts). An error that one member of a pattern list raises names the member by its position in the list, counting every member given: Rust wraps it in `InMember`, JS adds `index` and keeps the member's `kind`.
 
 ```rust
 // Rust
@@ -330,8 +327,6 @@ pub enum GlobError {
     TrailingBackslash,
     EscapedSeparator { at: usize },
     BraceNestingTooDeep { max: usize },
-    BraceExpansionTooLarge { max: usize },
-    TooComplex { max: usize },
     InvalidRange { at: usize, low: u8, high: u8 },
     EmptyPatternSet,
     NegatedInUnion { index: usize, pattern: String }, // Rust only (§16.1)
@@ -345,7 +340,7 @@ class GlobError extends Error {
   readonly kind:
     | "Empty" | "TooLong" | "UnterminatedClass" | "UnterminatedBrace"
     | "TrailingBackslash" | "EscapedSeparator" | "BraceNestingTooDeep"
-    | "BraceExpansionTooLarge" | "TooComplex" | "InvalidRange" | "EmptyPatternSet";
+    | "InvalidRange" | "EmptyPatternSet";
   readonly at?: number; readonly len?: number; readonly max?: number;
   readonly low?: number; readonly high?: number;
   readonly index?: number; // a list member's error: the member's position
@@ -569,7 +564,7 @@ Two exceptions keep the equation from over-applying:
 
 The equation works on tokens, not bytes. A branch is spliced in as a unit and tokens never fuse across the splice: `*{,a}*` is `L(* ε *)` ∪ `L(* a *)`, and the two stars of the empty expansion stay two stars (which collapse to one, §5.2). They do not become a `**` the author never wrote.
 
-> **Implementation note.** The equation defines meaning only; §10.5 still forbids pre-expanding braces, and an implementation need only be equivalent. The reference implementations decide a `**` beside plain tokens while parsing. A `**` whose neighbor is a brace edge that can be a separator, or empty, is handled by distributing that brace over it (`**{/a,b}` → `{**/a,**b}`, `{a/,b}**` → `{a/**,b**}`); two braces meeting at a `**` edge (`{**,a}{/,b}`) merge into one. Only the branches the `**` can affect are taken apart, and branches that put a `/` toward the `**` share that one `/` (`**{/a,/b}` → `**/{a,b}`). This local expansion is what the nesting and expansion limits of §6.2 bound.
+> **Implementation note.** The equation defines meaning only; §10.5 still forbids pre-expanding braces, and an implementation need only be equivalent. The reference implementations read a `**` beside text as a star while parsing. A `**` beside a separator, a brace or an edge of the pattern is decided as the matcher is built, along each brace expansion that reaches it, without copying the pattern: in `**{/a,b}` the branch `/a` makes it a globstar and `b` a star, and in `{a,}**` the empty branch leaves a globstar the branch `a` makes a star. A `**/**` that is two globstars in every expansion is folded into one while parsing (§9.6).
 
 ### 10.2 Forms
 
@@ -596,11 +591,11 @@ A separator stays structural; it never becomes literal content. `x{a/b}y` is the
 
 ### 10.5 No pre-expansion
 
-An implementation MUST NOT expand braces into N separate patterns at parse time; braces are built into the matcher. Memory and match cost therefore do not blow up on `{a,b}{c,d}{e,f}…`. Braces whose branches cross a `/` are the exception: they can make the segments of a pattern multiply, and compilation may then fail with `TooComplex` (§6.2).
+An implementation MUST NOT expand braces into N separate patterns at parse time; braces are built into the matcher. Memory and match cost therefore do not blow up on `{a,b}{c,d}{e,f}…`, nor on braces whose branches cross a `/` and make the segments of a pattern multiply (§6.2).
 
 ### 10.6 Bounds
 
-An unclosed brace (`{a,b`) is `UnterminatedBrace`. Nesting is bounded at 32 levels and the local expansion around `**` at 4096 copies, shared across the members of a union; both are stated in §6.2.
+An unclosed brace (`{a,b`) is `UnterminatedBrace`. Nesting is bounded at 32 levels (§6.2); nothing else about braces is.
 
 ### 10.7 Braces with other constructs
 
@@ -867,7 +862,7 @@ function compileMatcher(patterns: string | Iterable<string>, opts?: GlobstarOpti
 union.is_match(path) ≡ ∃ g ∈ members.  g.is_match(path)
 ```
 
-A union answers the boolean questions only (`is_match`, `match_dir`, `static_prefixes`); which member matched is not part of the API. An empty list is `EmptyPatternSet` (§6). A pattern given twice counts once. All members share one expansion budget and, compiled as one pattern, one bound on compile work (§6.2): members that each compile alone can fail together with `TooComplex`. An error one member raises names the member; `TooComplex` names none (§6.3).
+A union answers the boolean questions only (`is_match`, `match_dir`, `static_prefixes`); which member matched is not part of the API. An empty list is `EmptyPatternSet` (§6). A pattern given twice counts once. The members share no budget: a list of members that each compile compiles (§6.2). An error one member raises names the member (§6.3).
 
 Negated members differ by language. Rust rejects them (`NegatedInUnion`, §6). JS accepts them, and each contributes its complement to the OR: `["src/**", "!**/*.test.ts"]` matches `lib/a.ts`, because the second member does. A `!` member never subtracts from the others; include/exclude filtering belongs to the walker (WALKER_SPEC.md §4).
 

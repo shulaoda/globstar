@@ -174,8 +174,6 @@ A brace means "any one of these branches" (see [Brace expansion](./braces.md)). 
 | `{a/,b}**`       | `b/x`       | ❌     |
 | `{a/**,x}c`      | `a/z/c`     | ❌     |
 
-Writing out the choices can copy parts of the pattern, so globstar limits how much copying a `**` next to a brace may cause. See [Brace expansion](./braces.md) for the limit.
-
 Spec: [GLOB_SPEC §10.1, §9.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
 ### `**` inside a brace with no comma

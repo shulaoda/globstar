@@ -3,7 +3,7 @@
 
 use std::sync::atomic::Ordering::Relaxed;
 
-use globstar::{Glob, GlobError};
+use globstar::Glob;
 
 #[allow(dead_code)]
 #[path = "../src/counter.rs"]
@@ -254,7 +254,7 @@ fn large_patterns_stay_small() {
         assert!(peak <= max_peak, "{name}: peaks at {peak} bytes");
         assert_eq!(glob.is_match(path.as_bytes()), matches, "{name}");
     }
-    too_complex_patterns_fail_early();
+    multiplying_segments_stay_linear();
     one_more_state_costs_little();
 }
 
@@ -289,7 +289,7 @@ fn even_steps(name: &str, shape: fn(usize) -> String, from: usize, to: usize) {
 }
 
 /// `{a/0,…,a/(n-1)}`, then `open`, `unit` repeated and `close`: 16 KB
-/// whose tail every one of the brace's `n` segments copies.
+/// whose tail follows every one of the brace's `n` segments.
 fn copied(n: usize, open: &str, unit: &str, close: &str) -> String {
     let heads: Vec<String> = (0..n).map(|i| format!("a/{i}")).collect();
     let head = format!("{{{}}}{open}", heads.join(","));
@@ -297,37 +297,56 @@ fn copied(n: usize, open: &str, unit: &str, close: &str) -> String {
     format!("{head}{}{close}", unit.repeat(units))
 }
 
-// Braces whose segments multiply would build a node per pair of them;
-// the walk gives up early, with little memory spent.
-fn too_complex_patterns_fail_early() {
+// Braces whose segments multiply, beside a `**` or not, copy segments
+// until the copies weigh what the pattern does, then cut them into pieces
+// glued edge to edge: what they keep and peak at grows with the pattern,
+// twice the pattern costing at most a little more than twice.
+fn multiplying_segments_stay_linear() {
     let lists = |n: usize| {
         let a: Vec<String> = (0..n).map(|i| format!("/a{i}")).collect();
         let b: Vec<String> = (0..n).map(|i| format!("b{i}/")).collect();
         format!("{{{}}}{{{}}}z", a.join(","), b.join(","))
     };
+    let shapes: [fn(usize) -> String; 13] = [
+        |n| format!("a{}b", "{a,/}".repeat(n)),
+        |n| "{a,b,/}".repeat(n),
+        |n| "{/,a,}".repeat(n),
+        |n| "{a,b,c,d,e,f,g,h,/}".repeat(n),
+        |n| "{**,a}{/,b}".repeat(n),
+        |n| "**{/a,b}".repeat(n),
+        |n| "{a/**,b}".repeat(n),
+        |n| "{x/,y}**".repeat(n),
+        |n| "[a-z]{/,}".repeat(n),
+        |n| "{a,}**".repeat(n),
+        |n| format!("**{}", "{,/a}".repeat(n)),
+        |n| "{a/,}".repeat(n),
+        |n| "{**,a}/".repeat(n),
+    ];
+    for shape in shapes {
+        let n = 16_384 / shape(1).len();
+        let (small, _, _) = cost(&[shape(n / 2)]);
+        let (kept, peak, _) = cost(&[shape(n)]);
+        let name = &shape(1);
+        assert!(
+            kept <= 5 * small / 2,
+            "{name}: keeps {small} bytes, then {kept}"
+        );
+        assert!(peak <= 8 * MB, "{name}: peaks at {peak} bytes");
+    }
     for pattern in [
-        format!("a{}b", "{a,/}".repeat(2048)),
-        "{a,b,/}".repeat(4096),
-        "{/,a,}".repeat(4096),
         lists(2048),
-        // Segments with big tables (suffix products, NFAs): charged
-        // too, so neither shape keeps them up to the budget.
-        "{a,b,/}".repeat(96),
         "{a,b,c,d,e,f,g,h,/}".repeat(3421),
         // A long class, or a long run of `?` or of classes, or a brace of
-        // empty branches, copied into every segment a brace leaves open:
-        // each copy counts, a class by its ranges, a brace by its branches.
+        // empty branches, after a brace that ends in many segments: copied
+        // onto a few, then one piece the rest glue to.
         // Twin of the check in packages/globstar/tests/large.mjs.
         copied(500, "[a-z", "!-~", "]"),
         copied(1024, "", "?", ""),
         copied(512, "", "[\x01-\x7f]", ""),
         copied(1024, "{", ",", "}"),
     ] {
-        let base = LIVE.load(Relaxed);
-        PEAK.store(base, Relaxed);
-        let err = Glob::new(&pattern).unwrap_err();
-        assert!(matches!(err, GlobError::TooComplex { .. }), "{err:?}");
-        let peak = PEAK.load(Relaxed) - base;
+        let (kept, peak, _) = cost(std::slice::from_ref(&pattern));
+        assert!(kept <= 8 * MB, "{}: keeps {kept} bytes", &pattern[..16]);
         assert!(peak <= 16 * MB, "{}: peaks at {peak} bytes", &pattern[..16]);
     }
 }

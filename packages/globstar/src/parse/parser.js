@@ -13,8 +13,7 @@ import {
   brace,
   concat,
 } from "./ast.js";
-import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION } from "../error.js";
-import { resolveGlobstars } from "./globstar.js";
+import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING } from "../error.js";
 import { utf8Latin1, utf8Length } from "../utf8.js";
 
 const BACKSLASH = 0x5c;
@@ -34,12 +33,9 @@ const DASH = 0x2d;
 const SPECIAL = new Uint8Array(256);
 for (const b of [BACKSLASH, SLASH, QUESTION, STAR, LBRACK, LBRACE, COMMA, RBRACE]) SPECIAL[b] = 1;
 
-// `budget` is the expansion budget (§6.2): the patterns of one matcher share
-// it, so together they may copy `MAX_EXPANSION`, not each.
-//
 // The pattern is read as its UTF-8 bytes, one char per byte (see
 // `utf8Latin1`), and a literal keeps its bytes as such a string.
-export function parse(input, budget = { left: MAX_EXPANSION }) {
+export function parse(input) {
   // UTF-8 is never shorter than the UTF-16 string, so a string past the
   // limit is refused before it is copied.
   if (input.length > MAX_PATTERN_LEN) {
@@ -57,10 +53,8 @@ export function parse(input, budget = { left: MAX_EXPANSION }) {
   // `!` and `!!` negate nothing (§6.1).
   if (negations === bytes.length) throw new GlobError("Empty");
 
-  // `pending`: a `**` was left to `resolveGlobstars` (see `doubleStar`).
-  const state = { input: bytes, pos: negations, pending: false };
-  let body = parseSequence(state, 0);
-  if (state.pending) body = resolveGlobstars(body, budget);
+  const state = { input: bytes, pos: negations };
+  const body = parseSequence(state, 0);
   // `ascii`: no byte past ASCII anywhere, so none in a literal or a class.
   return { body, isNegated: (negations & 1) === 1, ascii: bytes === input };
 }
@@ -113,7 +107,8 @@ function parseSequence(state, depth) {
           state.pos++;
         }
         // A run of exactly two is a `**`; any other run is a star.
-        nodes.push(run === 2 ? doubleStar(state, nodes, inBrace) : STAR_NODE);
+        if (run === 2) doubleStar(state, nodes, inBrace);
+        else nodes.push(STAR_NODE);
         break;
       }
       case LBRACK:
@@ -157,27 +152,36 @@ function parseSequence(state, depth) {
   return concat(nodes);
 }
 
-// A `**` is a globstar with a separator, or the end of the pattern, on both
-// sides, and a star beside any other token (§9.1). Beside a brace, or at the
-// edge of a branch, what it meets depends on the branch, so such a `**` is
-// left to `resolveGlobstars`; so is one after `**/`, which `resolveGlobstars`
-// folds into it (§9.6).
+// A `**` is a globstar with a separator, or the edge of the pattern, on both
+// sides, and a star beside any other token (§9.1): read beside text, it is a
+// star. Beside a brace, or at the edge of a branch, what it meets depends on
+// the expansion, and the graph walk decides it in each. A `**/**` that is two
+// globstars in every expansion is one (§9.6).
 function doubleStar(state, nodes, inBrace) {
-  const last = nodes.length > 0 ? nodes[nodes.length - 1] : undefined;
-  let before;
-  if (last === undefined) before = inBrace ? undefined : true;
-  else if (last.tag === N_BRACE) before = undefined;
-  else before = last.tag === N_SEPARATOR;
-  const next = state.pos < state.input.length ? state.input.charCodeAt(state.pos) : undefined;
-  let after;
-  if (next === undefined || next === SLASH) after = true;
-  else if (next === LBRACE || (inBrace && (next === COMMA || next === RBRACE))) after = undefined;
-  else after = false;
-  if (before === false || after === false) return STAR_NODE;
-  const folds =
-    nodes.length >= 2 && last.tag === N_SEPARATOR && nodes[nodes.length - 2].tag === N_GLOBSTAR;
-  if (before === undefined || after === undefined || folds) state.pending = true;
-  return GLOBSTAR_NODE;
+  const n = nodes.length;
+  const last = n > 0 ? nodes[n - 1].tag : -1;
+  const textBefore = last !== -1 && last !== N_SEPARATOR && last !== N_BRACE;
+  // Past the end `charCodeAt` is NaN.
+  const next = state.input.charCodeAt(state.pos);
+  const end = Number.isNaN(next) || next === SLASH;
+  const textAfter = !end && next !== LBRACE && !(inBrace && (next === COMMA || next === RBRACE));
+  if (textBefore || textAfter) {
+    nodes.push(STAR_NODE);
+    return;
+  }
+  // Is a separator surely right before `nodes[at]`?
+  const surelySepBefore = (at) => (at === 0 ? !inBrace : nodes[at - 1].tag === N_SEPARATOR);
+  if (
+    end &&
+    n >= 2 &&
+    last === N_SEPARATOR &&
+    nodes[n - 2].tag === N_GLOBSTAR &&
+    surelySepBefore(n - 2)
+  ) {
+    nodes.pop();
+    return;
+  }
+  nodes.push(GLOBSTAR_NODE);
 }
 
 function parseClass(state) {

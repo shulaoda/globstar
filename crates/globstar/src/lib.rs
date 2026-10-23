@@ -157,7 +157,7 @@ impl Glob {
     /// Compile a pattern with explicit [`CompileOptions`].
     pub fn new_with(pattern: &str, opts: CompileOptions) -> Result<Self, GlobError> {
         let ast = parse::parse(pattern.as_bytes())?;
-        Self::from_body(ast.body, ast.negated, opts)
+        Ok(Self::from_body(ast.body, ast.negated, opts))
     }
 
     /// Compile the boolean-OR union of several patterns into one `Glob`
@@ -168,11 +168,7 @@ impl Glob {
     /// fails with [`GlobError::EmptyPatternSet`], and a member that does
     /// not compile with [`GlobError::InMember`], which names it by index
     /// ([`GlobError::root`] gives the error inside). A pattern given
-    /// twice counts once. The members share one expansion budget
-    /// ([`GlobError::BraceExpansionTooLarge`]) and, compiled as one,
-    /// one bound on compile work: a [`GlobError::TooComplex`] is the
-    /// list's, not wrapped in `InMember`, and members that each compile
-    /// alone can fail together.
+    /// twice counts once. A list of members that each compile compiles.
     pub fn union<I, S>(patterns: I) -> Result<Self, GlobError>
     where
         I: IntoIterator<Item = S>,
@@ -188,22 +184,19 @@ impl Glob {
         S: AsRef<str>,
     {
         // The same pattern twice adds nothing to the union: it is parsed
-        // once and counts once against the expansion budget. Members that
-        // only differ in spelling fold into one when factored.
+        // once. Members that only differ in spelling fold into one when
+        // factored.
         let patterns: Vec<S> = patterns.into_iter().collect();
         let mut seen = (patterns.len() > 1).then(|| HashSet::with_capacity(patterns.len()));
         let mut bodies: Vec<Node> = Vec::with_capacity(patterns.len());
-        let mut budget = error::MAX_EXPANSION;
         for (index, pattern) in patterns.iter().enumerate() {
             let pattern = pattern.as_ref();
             if seen.as_mut().is_some_and(|seen| !seen.insert(pattern)) {
                 continue;
             }
-            let parsed = parse::parse_within(pattern.as_bytes(), &mut budget).map_err(|e| {
-                GlobError::InMember {
-                    index,
-                    error: Box::new(e),
-                }
+            let parsed = parse::parse(pattern.as_bytes()).map_err(|e| GlobError::InMember {
+                index,
+                error: Box::new(e),
             })?;
             if parsed.negated {
                 return Err(GlobError::NegatedInUnion {
@@ -218,15 +211,15 @@ impl Glob {
             1 => bodies.pop().unwrap(),
             _ => factor_branches(bodies),
         };
-        Self::from_body(body, false, opts)
+        Ok(Self::from_body(body, false, opts))
     }
 
-    fn from_body(body: Node, negated: bool, opts: CompileOptions) -> Result<Self, GlobError> {
+    fn from_body(body: Node, negated: bool, opts: CompileOptions) -> Self {
         let engine = match body.to_literal_bytes() {
             Some(lit) => Engine::Literal(LiteralMatcher::new(lit.into(), opts.case_insensitive)),
-            None => Engine::Segment(SegmentMatcher::build(body, opts)?),
+            None => Engine::Segment(SegmentMatcher::build(body, opts)),
         };
-        Ok(Self { engine, negated })
+        Self { engine, negated }
     }
 
     /// Whole-path match against raw path bytes. The path is matched as

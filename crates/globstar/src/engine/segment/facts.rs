@@ -2,7 +2,7 @@
 //! prefilter and the static prefixes a walker seeds from.
 
 use crate::bytes::has_escaped_sep;
-use crate::parse::ast::Node;
+use crate::parse::ast::{Node, ends_in_globstar};
 
 use super::Bytes;
 use super::graph::node_weight;
@@ -16,7 +16,7 @@ const MAX_SUFFIX_SET: usize = 16;
 /// in a brace, one per branch. Empty when nothing is guaranteed.
 pub(super) fn suffixes(body: &Node) -> Box<[Bytes]> {
     let nodes = body.seq();
-    let run = trailing(nodes);
+    let run = trailing(nodes, false);
     if run.is_empty() {
         return suffix_set(nodes);
     }
@@ -25,17 +25,16 @@ pub(super) fn suffixes(body: &Node) -> Box<[Bytes]> {
     Box::new([acc.into_boxed_slice()])
 }
 
-/// The literal/separator run that ends `nodes`. The `/` of a `**/` is
-/// not part of it: `**/b` matches `b` alone.
-fn trailing(nodes: &[Node]) -> &[Node] {
+/// The literal/separator run that ends `nodes`, after a `**` when
+/// `after_globstar` (a brace's branch that may follow one). The `/` of a
+/// `**/` is not part of it, nor one a brace that may be empty parts from
+/// a `**`: `**/b` and `**{,a}/b` match `b` alone.
+fn trailing(nodes: &[Node], after_globstar: bool) -> &[Node] {
     let mut from = nodes.len();
     while from > 0 {
         match &nodes[from - 1] {
             Node::Literal(_) => {}
-            Node::Separator
-                if !nodes[..from - 1]
-                    .last()
-                    .is_some_and(Node::ends_with_globstar) => {}
+            Node::Separator if !ends_in_globstar(&nodes[..from - 1], after_globstar) => {}
             _ => break,
         }
         from -= 1;
@@ -59,8 +58,10 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
         Some(Node::Brace(branches)) if branches.len() <= MAX_SUFFIX_SET => branches,
         _ => return Box::default(),
     };
+    let before = &nodes[..nodes.len() - 1];
     let mut common = Vec::new();
-    push_run(trailing(&nodes[..nodes.len() - 1]), &mut common);
+    push_run(trailing(before, false), &mut common);
+    let after_globstar = ends_in_globstar(before, false);
     let mut set = Vec::with_capacity(branches.len());
     let mut acc = Vec::new();
     for branch in branches {
@@ -74,7 +75,7 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
         {
             acc.extend_from_slice(&common);
         }
-        push_run(trailing(branch.seq()), &mut acc);
+        push_run(trailing(branch.seq(), after_globstar), &mut acc);
         if acc.is_empty() {
             return Box::default();
         }

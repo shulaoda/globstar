@@ -3,7 +3,7 @@ import { LiteralMatcher } from "./engine/literal.js";
 import { SegmentMatcher } from "./engine/segment/index.js";
 import { nodeToLiteral } from "./parse/ast.js";
 import { factorBranches } from "./union.js";
-import { GlobError, MAX_EXPANSION } from "./error.js";
+import { GlobError } from "./error.js";
 import { DirMatch } from "./dir-match.js";
 
 export function globstar(patterns, options) {
@@ -23,9 +23,7 @@ export function compileMatcher(patterns, options) {
 
   const positiveAsts = [];
   const negativeAsts = [];
-  const budget = { left: MAX_EXPANSION };
-  // The same pattern twice adds nothing to the union: it is parsed once
-  // and counts once against the expansion budget.
+  // The same pattern twice adds nothing to the union: it is parsed once.
   const seen = given.length > 1 ? new Set() : null;
   for (let i = 0; i < given.length; i++) {
     const pattern = given[i];
@@ -46,7 +44,7 @@ export function compileMatcher(patterns, options) {
     }
     let ast;
     try {
-      ast = parse(pattern, budget);
+      ast = parse(pattern);
     } catch (e) {
       if (isList && e instanceof GlobError) throw inMember(e, i);
       throw e;

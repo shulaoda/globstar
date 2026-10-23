@@ -26,20 +26,18 @@ Spec: [GLOB_SPEC §6](https://github.com/shulaoda/globstar/blob/main/references/
 
 The JS `GlobError` has a `.kind` string. The Rust `GlobError` is an enum with a variant of the same name. Some kinds carry extra fields: in JS they are properties on the error object, in Rust they are fields of the variant.
 
-| Kind                     | When it happens                                                                              | Example pattern                     | Extra fields        |
-| ------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------- |
-| `Empty`                  | The pattern is empty, or has nothing after its leading `!`s.                                 | `""`, `!`, `!!`                     | –                   |
-| `TooLong`                | The pattern is longer than 65,536 bytes.                                                     | `"a".repeat(65537)`                 | `len`, `max`        |
-| `UnterminatedClass`      | A `[` has no `]` before the next `/` or the end. `[]`, `[!]` and `[/]` are cases of this.    | `src/[a-z.ts`, `[]`, `[/]`          | `at`                |
-| `UnterminatedBrace`      | A `{` has no matching `}`.                                                                   | `src/{a,b.ts`                       | `at`                |
-| `TrailingBackslash`      | The pattern ends with a single `\`.                                                          | `foo\`                              | –                   |
-| `EscapedSeparator`       | The pattern contains `\/`. No file name can hold a `/`, so it could never match.             | `a\/b`                              | `at`                |
-| `BraceNestingTooDeep`    | Braces are nested more than 32 levels deep. Every `{` counts, even one that ends up literal. | `{a,` × 33, then `b`, then `}` × 33 | `max`               |
-| `BraceExpansionTooLarge` | Braces next to `**` would need more than 4096 copies to expand.                              | `{**,a}{/,b}` repeated 5 times      | `max`               |
-| `TooComplex`             | Braces that cross a `/` make too many segments to compile and match.                         | `{a,b,/}` repeated 100 times        | `max`               |
-| `InvalidRange`           | A class range ends below where it starts.                                                    | `[z-a]`, `[a-A]`                    | `at`, `low`, `high` |
-| `EmptyPatternSet`        | A pattern list is empty.                                                                     | `compileMatcher([])`                | –                   |
-| `NegatedInUnion`         | Rust only: a negated pattern (an odd number of leading `!`) was given to `Glob::union`.      | `Glob::union(["src/**", "!*.log"])` | `index`, `pattern`  |
+| Kind                  | When it happens                                                                              | Example pattern                     | Extra fields        |
+| --------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------- |
+| `Empty`               | The pattern is empty, or has nothing after its leading `!`s.                                 | `""`, `!`, `!!`                     | –                   |
+| `TooLong`             | The pattern is longer than 65,536 bytes.                                                     | `"a".repeat(65537)`                 | `len`, `max`        |
+| `UnterminatedClass`   | A `[` has no `]` before the next `/` or the end. `[]`, `[!]` and `[/]` are cases of this.    | `src/[a-z.ts`, `[]`, `[/]`          | `at`                |
+| `UnterminatedBrace`   | A `{` has no matching `}`.                                                                   | `src/{a,b.ts`                       | `at`                |
+| `TrailingBackslash`   | The pattern ends with a single `\`.                                                          | `foo\`                              | –                   |
+| `EscapedSeparator`    | The pattern contains `\/`. No file name can hold a `/`, so it could never match.             | `a\/b`                              | `at`                |
+| `BraceNestingTooDeep` | Braces are nested more than 32 levels deep. Every `{` counts, even one that ends up literal. | `{a,` × 33, then `b`, then `}` × 33 | `max`               |
+| `InvalidRange`        | A class range ends below where it starts.                                                    | `[z-a]`, `[a-A]`                    | `at`, `low`, `high` |
+| `EmptyPatternSet`     | A pattern list is empty.                                                                     | `compileMatcher([])`                | –                   |
+| `NegatedInUnion`      | Rust only: a negated pattern (an odd number of leading `!`) was given to `Glob::union`.      | `Glob::union(["src/**", "!*.log"])` | `index`, `pattern`  |
 
 What the fields hold:
 
@@ -48,29 +46,27 @@ What the fields hold:
 - `len` is the pattern length in bytes, and `max` is the limit that was passed.
 - `index` and `pattern` (Rust only) tell you which list member was negated.
 
-When a pattern **list** fails because one member does not compile, the error says which member, counting every member given: in JS the error keeps its `kind` and gains `index`, and its message starts with `pattern 2: `; in Rust it is `GlobError::InMember { index, error }`, and `err.root()` is the error inside. Offsets count in that member. A list that fails as a whole (`TooComplex`) has no index.
+When a pattern **list** fails because one member does not compile, the error says which member, counting every member given: in JS the error keeps its `kind` and gains `index`, and its message starts with `pattern 2: `; in Rust it is `GlobError::InMember { index, error }`, and `err.root()` is the error inside. Offsets count in that member.
 
 `[a-A]` fails even with `caseInsensitive: true`. Case folding only changes how bytes compare when matching; it never changes what counts as a valid pattern. See [How a path is matched](./matching.md#caseinsensitive).
 
 Spec: [GLOB_SPEC §6, §6.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
-## The four limits
+## The two limits
 
 The limits stop a hostile or broken pattern from using huge amounts of memory or time. Normal patterns never get close.
 
-| Limit           | Value                         | Rust constant       | Error                    |
-| --------------- | ----------------------------- | ------------------- | ------------------------ |
-| Pattern length  | 65,536 bytes                  | `MAX_PATTERN_LEN`   | `TooLong`                |
-| Brace nesting   | 32 levels                     | `MAX_BRACE_NESTING` | `BraceNestingTooDeep`    |
-| Brace expansion | 4096 copies                   | `MAX_EXPANSION`     | `BraceExpansionTooLarge` |
-| Compile work    | grows with the pattern's size | –                   | `TooComplex`             |
+| Limit          | Value        | Rust constant       | Error                 |
+| -------------- | ------------ | ------------------- | --------------------- |
+| Pattern length | 65,536 bytes | `MAX_PATTERN_LEN`   | `TooLong`             |
+| Brace nesting  | 32 levels    | `MAX_BRACE_NESTING` | `BraceNestingTooDeep` |
 
 - **Pattern length** counts UTF-8 bytes, not characters. A pattern of 32,768 `é` (65,536 bytes) compiles; one more `é` is too long. The walkers count a pattern or `ignore` entry as it is written, before they take off a leading `/` or `!`, so `/` repeated 100,000 times and then `x` is too long there too; the error shows the first 64 characters of such a pattern.
-- **Brace nesting** counts how many braces are open inside each other, including a `{` with no comma that ends up literal. It also counts nesting that appears when globstar spreads braces around a `**`: `**` followed by `{,/a}` 33 times fails, even though no brace is written inside another one.
-- **Compile work** only matters for braces whose branches cross a `/`, like `{a,/}` or `{a/,}`. Each such brace can split a segment in two, and when many of them sit side by side, the number of different segments grows with the square of their count: `{a,b,/}` repeated 100 times has thousands. globstar counts the work as it compiles, the tables each segment builds included, and stops early, so a pattern like that fails in milliseconds with little memory. A long class, literal or brace after such a brace is copied into every segment the brace leaves open, and each copy counts. Branches that may be empty do not: in `{a/,}` repeated any number of times, each `a` can follow every `a` before it, but they reach it through one shared link, so the pattern compiles and matches in time that grows with its length. The work limit grows with the pattern: 64 units of work for each byte or token (a class counts one plus its ranges, so `[a-z0-9_]` counts 4, and an empty brace branch counts one), and never less than about a million. Normal patterns, and lists of tens of thousands of patterns, use two to four units per byte. A list is compiled as one, so its limit grows with the whole list; several such patterns in one list can still fail together where each alone compiles. `err.max` holds the work limit that was passed.
-- **Brace expansion** only applies to braces that sit next to a `**`. globstar never expands other braces, so a brace with hundreds of plain branches is fine. The count is shared by **all patterns in one list**: `{**,a}{/,b}` repeated 4 times compiles alone, and four different patterns like it in one list fail together (the same pattern given four times counts once). [Brace expansion](./braces.md#expansion-budget-4096) shows which shapes are copied.
+- **Brace nesting** counts how many braces are open inside each other, including a `{` with no comma that ends up literal. Braces side by side do not nest: `**` followed by `{,/a}` 33 times compiles.
 
-The limits are exported: in Rust as `globstar::error::{MAX_PATTERN_LEN, MAX_BRACE_NESTING, MAX_EXPANSION}`, in JS as `MAX_PATTERN_LEN`, `MAX_BRACE_NESTING` and `MAX_EXPANSION` from `@globstar/core`. The compile-work limit depends on the pattern, so read `err.max` on the error.
+Nothing else is bounded. Within these two limits every pattern compiles, and its compile time and memory grow with its length, whatever its braces: braces next to a `**` are not expanded, and braces whose branches cross a `/`, like `{a,b,/}` repeated 100 times, split segments that globstar matches piece by piece instead of copying. A list compiles as one pattern, so a list of members that each compile compiles.
+
+The limits are exported: in Rust as `globstar::error::{MAX_PATTERN_LEN, MAX_BRACE_NESTING}`, in JS as `MAX_PATTERN_LEN` and `MAX_BRACE_NESTING` from `@globstar/core`.
 
 Spec: [GLOB_SPEC §6.2, §6](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 

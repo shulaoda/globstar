@@ -1,6 +1,6 @@
 # Multi-pattern matchers
 
-Most callers have a list of patterns, not one. An array compiles into a single matcher that answers with boolean OR: a path matches when any member matches. This page covers what the union means, how negated members behave in each language, how directory verdicts combine, and the one budget the members share.
+Most callers have a list of patterns, not one. An array compiles into a single matcher that answers with boolean OR: a path matches when any member matches. This page covers what the union means, how negated members behave in each language, and how directory verdicts combine.
 
 ## One matcher, OR semantics
 
@@ -83,14 +83,10 @@ compileMatcher(["src/**/*.ts", "docs/**/*.md"]).staticPrefixes(); // src, docs
 compileMatcher(["src/**/*.ts", "**/*.md"]).staticPrefixes(); // "" (the root)
 ```
 
-## The shared expansion budget
-
-Braces next to `**` are taken apart at compile time, and the copies that makes are charged to one budget of 4096 units per compile: a single pattern, or a whole list together. So a long list of brace-heavy patterns can fail with `BraceExpansionTooLarge` where each member alone would compile. The compile-work limit (`TooComplex`) also covers the whole list (in JS, its positive members together), and it grows with the list's size; only braces whose branches cross a `/` and multiply ever reach it. Details are in [Brace expansion](./braces.md) and [Errors and limits](./errors.md).
-
 ## Errors
 
 - An empty list fails with `EmptyPatternSet` in both languages.
-- Any member that fails to compile fails the whole union: Rust wraps the member's error in `InMember { index, error }`, JS adds `index` to it. A `TooComplex` is the list's own error and names no member.
+- Any member that fails to compile fails the whole union: Rust wraps the member's error in `InMember { index, error }`, JS adds `index` to it. A list of members that each compile compiles: the members share no budget.
 - Rust: a `!`-member fails with `NegatedInUnion`, which carries the member's index and text.
 
 Spec: [GLOB_SPEC §6, §16](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
