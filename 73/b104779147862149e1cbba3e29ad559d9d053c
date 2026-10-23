@@ -1,0 +1,111 @@
+README.md
+  s_43b9a5518ea7f8::t_24eb8e3129bebc 34-36
+crates/globstar-walk/src/error.rs
+  s_43b9a5518ea7f8::t_7e5e9cbaafe3f0 20-21
+crates/globstar-walk/src/lib.rs
+  s_43b9a5518ea7f8::t_7c6bff1a57ebf5 737,750-753,755
+crates/globstar-walk/tests/walk.rs
+  s_43b9a5518ea7f8::t_773205a215c0a4 293,296,300
+crates/globstar/src/engine/segment/chain.rs
+  s_43b9a5518ea7f8::t_136e9cf7d0bca5 157-158,160-163
+crates/globstar/src/engine/segment/facts.rs
+  s_43b9a5518ea7f8::t_e78045ab6b447d 5,19,28-32,37,61,63-64,78
+crates/globstar/src/engine/segment/graph.rs
+  s_43b9a5518ea7f8::t_70dcf2a5e486dc 9-23,32,42-43,56-57,76,87,96-98,100,108-109,126,129-135,170-172,187-197,205-207,221,223-233,243-244,257,265-269,273-274,290-291,320-324,332-339,342-343,348-349,359-360,363,369,371-403,409,451-453,459,461,466-469,480,490,492,499-502,504,506,536,541-543,546-556,560,562-563,572-573,575-580,585-609,612,619-628,638,643-672,674-688,691-695,697-716,719-723,729-762,765-770,781-782,799,806,825,870-871
+crates/globstar/src/engine/segment/mod.rs
+  s_43b9a5518ea7f8::t_575fe97d545b37 8-10,14-16,47-49,65-68,95,106,112-113,118,162,169,180,187,196,235
+crates/globstar/src/engine/segment/nfa.rs
+  s_43b9a5518ea7f8::t_de08d8fbf07e04 13-15,73-74,104-111,113-115,122,156-164,170-172,209,221,247-252,263-264,266,268-277,287,324,385,543-557,617-619,624-629,652-655,693-696,700,710,722-730,746-748,754-755,759-763,766-769,808-812,814-822,825-826,830-834
+crates/globstar/src/engine/segment/seg_nfa.rs
+  s_43b9a5518ea7f8::t_1cf7ee90dfbc7f 16,18,223-225,413,451-455,512-720,744
+crates/globstar/src/engine/segment/wild.rs
+  s_43b9a5518ea7f8::t_eb6605426661aa 72
+crates/globstar/src/error.rs
+  s_43b9a5518ea7f8::t_4c74822f772542 42,67
+crates/globstar/src/lib.rs
+  s_43b9a5518ea7f8::t_23bbc488f12945 160,171,187-188,197-199,214,217,220,222
+crates/globstar/src/parse/ast.rs
+  s_43b9a5518ea7f8::t_17c93772413e50 22-26,99-101,105,110-132
+crates/globstar/src/parse/mod.rs
+  s_43b9a5518ea7f8::t_c315785a1a45f0 1,30,99-100,102-103,143-157,159-165,167-173,175
+crates/globstar/tests/glob.rs
+  s_43b9a5518ea7f8::t_8c38b27c8af8e0 3,214-216,219-228,420-423,425,436-449,452,459-464
+crates/globstar/tests/glob_union.rs
+  s_43b9a5518ea7f8::t_fd594c584c2559 26-29,32-38,89-91,94-101
+docs/api/javascript.md
+  s_43b9a5518ea7f8::t_18693635f6eb39 83,101
+docs/api/rust.md
+  s_43b9a5518ea7f8::t_3b8be6b7381199 26,122
+docs/guide/braces.md
+  s_43b9a5518ea7f8::t_eac8990b8fdbcd 17,128,132
+docs/guide/errors.md
+  s_43b9a5518ea7f8::t_a68b03d0bf4286 29-40,49,55,59-62,65,67-69
+docs/guide/multi-pattern.md
+  s_43b9a5518ea7f8::t_50b54885ba978e 3,89
+fixtures/compiler-stages.tsv
+  s_43b9a5518ea7f8::t_c3082b68f383e3 10-13
+fixtures/corpus/corpus.txt
+  s_43b9a5518ea7f8::t_8dc8e7ae0b2663 318-348
+fixtures/engine-shapes.tsv
+  s_43b9a5518ea7f8::t_f850862bf4e6b4 25,28,35
+packages/globstar-walk/src/index.d.ts
+  s_43b9a5518ea7f8::t_097d052884bcfd 106
+packages/globstar-walk/src/walk.js
+  s_43b9a5518ea7f8::t_c8345885cb446f 362,373-374
+packages/globstar-walk/tests/walk.mjs
+  s_43b9a5518ea7f8::t_86e7444327ce53 326,330
+packages/globstar/src/engine/segment/chain.js
+  s_43b9a5518ea7f8::t_836d2d34078dbf 65-66,68-69
+packages/globstar/src/engine/segment/elem.js
+  s_43b9a5518ea7f8::t_91e41f234031ef 13-19,39-40,42
+packages/globstar/src/engine/segment/facts.js
+  s_43b9a5518ea7f8::t_f9f001034d0979 6,15,20-24,29,46-47,52
+packages/globstar/src/engine/segment/graph.js
+  s_43b9a5518ea7f8::t_a3e69ef2a480f3 8-22,26,33,38-39,51-53,65-66,102-105,107,111-112,115-151,153,156-158,172-182,185-200,202,204-206,208-209,253,264-265,268-270,272,279,304-306,346,349,357-358,361-368,378-418,425,430-433,438-440,443-446,448-450,454,467-478,481-483,487,490-495,497,499,506,509-518,523,529-532,534-544,546-552,555,558-565,575,578-583,586-600,603-612,614,616-617,620-642,644-649,652-675,677-681,691,700
+packages/globstar/src/engine/segment/index.js
+  s_43b9a5518ea7f8::t_92af74ae284204 7-9,35,88
+packages/globstar/src/engine/segment/nfa.js
+  s_43b9a5518ea7f8::t_f16ca3daa1d473 10-11,22,52-53,55-57,82,84,87-94,152,154-157,161,174-175,180,186-192,244-247,511-516,519-520,530-534,546-550,553,575,586-594,606-609,624-630,633-637,644-646,698-701,703,705,707-709,720-728,730-747
+packages/globstar/src/engine/segment/seg-nfa.js
+  s_43b9a5518ea7f8::t_e36206bcb401d7 13-15,17,19-21,33-35,269,282-298,363,449-670
+packages/globstar/src/glob.js
+  s_43b9a5518ea7f8::t_a265adf263b8ba 6,26,47
+packages/globstar/src/index.d.ts
+  s_43b9a5518ea7f8::t_da928e511c4203 46-48,146-148,183
+packages/globstar/src/index.js
+  s_43b9a5518ea7f8::t_5b08a097e7f946 11
+packages/globstar/src/parse/ast.js
+  s_43b9a5518ea7f8::t_ff600431b629df 2-7,57-59,62,65-80
+packages/globstar/src/parse/parser.js
+  s_43b9a5518ea7f8::t_a425f8d61dea7f 16,38,56-57,110-111,155-159,161-184
+packages/globstar/tests/compiler-stages.mjs
+  s_43b9a5518ea7f8::t_730316156c784c 174,191-193,196-224,233
+packages/globstar/tests/large.mjs
+  s_43b9a5518ea7f8::t_49628a5c10b308 322-323,328-331,333,393-396,407-413,416,418-420,535-538,543-558,560-570,575-578,586-589
+references/spec/GLOB_SPEC.md
+  s_43b9a5518ea7f8::t_dcb8aaee134409 292,311,313-314,318,343,567,594,598,865
+references/spec/WALKER_SPEC.md
+  s_43b9a5518ea7f8::t_ead45cc61e7b9d 198
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_3e7b3926771baa 17,21-22,38-52,59,166-173,178-179,181-185,193-194,198-200,204-207
+references/theory/04-walker-and-pruning.md
+  s_43b9a5518ea7f8::t_9e740a31bf4cc7 209-211
+tools/memory-check/tests/large_patterns.rs
+  s_43b9a5518ea7f8::t_bc21b480cf4907 6,257,292,300-304,310-335,340-341,348-349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "73b104779147862149e1cbba3e29ad559d9d053c",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
