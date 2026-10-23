@@ -476,22 +476,25 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
 }
 
 // Branches that may be empty, side by side, let each segment follow
-// every one before it. Past 16 edges per unit of pattern (never fewer
-// than 4,096) the pattern fails fast, so no segment walks a successor
-// list as long as the pattern, and what compiles matches a long path in
-// milliseconds. Twin of `edges_that_multiply_fail_fast`.
+// every one before it. The ones before it share a join node, so the graph
+// keeps an edge or two per unit of pattern: it compiles fast, and no
+// segment walks a successor list as long as the pattern. Twin of
+// `edges_that_multiply_stay_linear`.
 {
-  const path = "/a".repeat(2000) + "/x";
-  const m = compileMatcher("{,/**/a}".repeat(64) + "/x");
-  let start = performance.now();
-  assert.ok(m.match(path));
-  let ms = performance.now() - start;
-  assert.ok(ms < 500, `{,/**/a} x64 on 2,000 segments: ${ms.toFixed(0)} ms`);
-  for (const unit of ["{,/**/a}", "{a/,}"]) {
+  for (const [pattern, path] of [
+    ["{,/**/a}".repeat(800) + "/x", "/a".repeat(2000) + "/x"],
+    ["{a/,}".repeat(800) + "x", "a/".repeat(800) + "x"],
+  ]) {
+    const unit = pattern.slice(0, pattern.indexOf("}") + 1);
+    let start = performance.now();
+    const m = compileMatcher(pattern);
+    let ms = performance.now() - start;
+    assert.ok(ms < 200, `${unit} x800: ${ms.toFixed(0)} ms to compile`);
     start = performance.now();
-    assert.throws(() => compileMatcher(unit.repeat(800) + "/x"), { kind: "TooComplex" });
+    assert.ok(m.match(path), unit);
+    assert.ok(DirMatch.mayMatchBelow(m.matchDir(path.slice(0, path.lastIndexOf("/")))), unit);
     ms = performance.now() - start;
-    assert.ok(ms < 200, `${unit} x800: ${ms.toFixed(0)} ms to fail`);
+    assert.ok(ms < 500, `${unit} x800 on a long path: ${ms.toFixed(0)} ms`);
   }
 }
 
@@ -520,7 +523,6 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
     "{a,b,/}".repeat(4096),
     "{/,a,}".repeat(4096),
     lists(2048),
-    "{a/,}".repeat(8192),
     // Segments with big tables (suffix products, NFAs): charged too.
     "{a,b,/}".repeat(96),
     "{a,b,c,d,e,f,g,h,/}".repeat(3421),

@@ -163,6 +163,16 @@ fn large_patterns_stay_small() {
             MB,
             16 * MB,
         ),
+        // Side by side, the branches before each share a join node: a
+        // few edges per brace.
+        (
+            "{a/,} x8192",
+            vec!["{a/,}".repeat(8192) + "x"],
+            "a/a/x",
+            true,
+            2 * MB,
+            16 * MB,
+        ),
         (
             "60,000 branches",
             vec![format!("x{{?{}}}", ",".repeat(60_000))],
@@ -300,7 +310,6 @@ fn too_complex_patterns_fail_early() {
         "{a,b,/}".repeat(4096),
         "{/,a,}".repeat(4096),
         lists(2048),
-        "{a/,}".repeat(8192),
         // Segments with big tables (suffix products, NFAs): charged
         // too, so neither shape keeps them up to the budget.
         "{a,b,/}".repeat(96),

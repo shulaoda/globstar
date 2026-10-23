@@ -140,7 +140,8 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
 
     // The closure some targets give, from the last position back:
     // successors always lie ahead, so each is complete when needed,
-    // and a nullable successor contributes its own successors.
+    // and a nullable successor contributes its own successors. A join
+    // is only those: it never takes a segment, so no set holds it.
     let closure_of = |targets: &mut dyn Iterator<Item = u32>, after: &[B]| {
         let mut c = B::zero(words);
         for t in targets {
@@ -152,7 +153,9 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
             if elems[t].nullable() {
                 c.or_with(&after[t]);
             }
-            c.set(t);
+            if !matches!(elems[t], Elem::Join) {
+                c.set(t);
+            }
         }
         c
     };
@@ -188,10 +191,12 @@ fn sparse_nfa(elems: &[Elem], ci: bool, edges: Option<&Edges>) -> SparseNfa {
     // can consume one and what it enters reaches accept: from the last
     // position back, as successors always lie ahead.
     // (A nullable successor is a `**/`, which reaches accept through
-    // one segment whenever it reaches it at all.)
+    // one segment whenever it reaches it at all, or a join, which takes
+    // none and reaches it as its successors do: no set holds a join's
+    // state, only its position, see `enter`.)
     let mut reach1 = Wide::zero(Wide::words(2 * n + 2));
     for i in (0..n).rev() {
-        if elems[i].satisfiable()
+        if (elems[i].satisfiable() || matches!(elems[i], Elem::Join))
             && succ_of(edges, n, i).any(|t| t == ACCEPT || reach1.test(t as usize))
         {
             reach1.set(i);
@@ -298,6 +303,7 @@ impl<B: Bits> Nfa<B> {
                 Elem::Lit(lit) => m.lit_eq(lit, seg),
                 Elem::Wild(w) => m.wild_consumes(w, seg),
                 Elem::G0 | Elem::G1 => absorb_ok,
+                Elem::Join => false,
             };
             if consumes {
                 next.or_with(&self.after[s]);
@@ -449,6 +455,7 @@ impl SparseNfa {
             Elem::Lit(lit) => m.lit_eq(lit, seg),
             Elem::Wild(w) => m.wild_consumes(w, seg),
             Elem::G0 | Elem::G1 => absorb_ok,
+            Elem::Join => false,
         };
         for &item in &active.items {
             let Some(p) = item.checked_sub(self.n + 1) else {

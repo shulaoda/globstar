@@ -101,7 +101,7 @@ fn members_share_one_compile_work_bound() {
         Err(GlobError::TooComplex { .. })
     ));
     // Members that each compile alone can fail together.
-    let member = "{a,b,/}".repeat(24);
+    let member = "{a,b,/}".repeat(28);
     assert!(Glob::new(&member).is_ok());
     assert!(matches!(
         Glob::union([member.as_str(), &format!("x/{member}")]),

@@ -14,10 +14,11 @@ segment-shaped elements — a line for a pattern without a
 separator-crossing brace, a branching graph otherwise:
 
 ```
-Element := Lit(bytes) | Wild(matcher) | G0 | G1
+Element := Lit(bytes) | Wild(matcher) | G0 | G1 | Join
 ```
 
-with `G0` absorbing ≥ 0 path segments and `G1` ≥ 1. (A `**/` absorbs
+with `G0` absorbing ≥ 0 path segments, `G1` ≥ 1, and `Join` none: it
+only stands for its successors (see below). (A `**/` absorbs
 empty segments too, which is what makes the separators around it
 lenient, §9.5.) Empty path segments are first-class
 (`a//b` = `[a, "", b]`), which yields the strict-`Sep` semantics for
@@ -34,11 +35,15 @@ tails from several branches becomes a `G0` of its own when the next is
 read: `{**,a}/` repeated k times keeps about 5k edges, not one group
 whose tails pile up into k² of them. Partial segments that differ in
 length still give a group each: `a{a,/}` repeated k times is O(k²)
-nodes. And a node takes an edge from each tail of its group, so
-branches that may be empty, side by side, give O(k²) edges among O(k)
-nodes (`{a/,}` repeated: each `a` follows every one before it). The
-walk counts its work and its edges and stops past 64 units, or 16
-edges, per unit of pattern weight, so such a shape fails with
+nodes. A node takes an edge from each tail of its group, and a group
+is copied into every branch of a crossing brace, so a group of k tails
+entering a brace of m branches first gathers its tails into one `Join`
+node when k·m > k + m: the branches share its one edge instead of
+taking k each. Branches that may be empty, side by side, then keep a
+few edges per brace (`{a/,}` repeated k times is about 2k nodes and 4k
+edges, where each `a` would otherwise follow every one before it, k²/2
+edges). The walk counts its work and stops past 64 units per unit of
+pattern weight, so a shape whose segments multiply fails with
 `TooComplex` instead of growing (see Compile).
 
 ## Matching
@@ -114,7 +119,9 @@ globstar) builds the NFA.
   the active set lists states and whole positions ("every successor
   of p entered"), so a step costs what it tests (one
   binary search for a position's literals) and the tables are linear
-  in the graph. `match_dir`'s prefix bit is `active ∩ reach1`, where
+  in the graph. No set holds a `Join`: entering one enters its
+  successors, as a `G0` does without staying, and a chain leaves it
+  out. `match_dir`'s prefix bit is `active ∩ reach1`, where
   `reach1[s]` ⇔ some ≥ 1-segment continuation from s reaches accept
   (suffix satisfiability, precomputed). O(n · active), active ≤ 3 in
   practice for one pattern. A union member with two globstars around a
@@ -161,11 +168,9 @@ max(2^20, 64 × the pattern's weight), where a literal weighs its
 bytes, a class one plus its ranges, a brace one plus its branches (an
 empty one weighs one) and any other token one. Ordinary patterns and big unions need two to four units
 per weight, and a walk without a crossing brace has no budget at
-all. It also fails once the graph would keep more than max(4096, 16 ×
-the weight) edges: a sparse step walks the successors of what is
-active, so this holds a segment's cost to the pattern's size, where
-ordinary patterns keep at most two edges per weight and two wide
-braces side by side well under sixteen. The other limits
+all. Every node and edge is charged, so the graph a sparse step walks
+stays within the same bound; joins keep it at a few edges per node.
+The other limits
 are the parser's — 64 KiB of pattern, 32 levels
 of brace nesting, the brace-expansion budget — and the chain,
 literal-set, suffix-group, suffix-product, closure and dense-row
@@ -179,7 +184,7 @@ a product, and the walk's work is capped as above. Every table built
 from the graph — chains, suffix products, in-segment closures, NFA
 rows — has a size budget past which a linear representation takes
 over, so memory is linear too. Match O(n·m) worst case, m the graph's
-nodes and edges, both within max(4096, 16 × the weight) — the NFA over
+nodes and edges, both within the walk's budget — the NFA over
 the graph is the non-backtracking floor that rules out ReDoS — and
 O(n) for a chain with ≤ 1 globstar. `match_dir` adds at most 65
 wildcard-only segments for the all-below proof (64 and the step that

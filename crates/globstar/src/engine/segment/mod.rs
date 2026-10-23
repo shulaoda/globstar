@@ -56,6 +56,10 @@ enum Elem {
     /// Globstar absorbing ≥ 1 segment (trailing `/**`: `a/**`
     /// matches `a/` but not `a`).
     G1,
+    /// Takes no segment: it stands for its successors, which the tails
+    /// of a group share through it instead of an edge from each (see
+    /// `graph.rs`).
+    Join,
 }
 
 impl Elem {
@@ -75,23 +79,27 @@ impl Elem {
     /// Absorbs zero segments too.
     #[inline]
     fn nullable(&self) -> bool {
-        matches!(self, Elem::G0)
+        matches!(self, Elem::G0 | Elem::Join)
     }
 
     /// Takes every non-empty segment (`match_dir`'s all-below).
     #[inline]
     fn any_seg(&self) -> bool {
         match self {
-            Elem::Lit(_) => false,
+            Elem::Lit(_) | Elem::Join => false,
             Elem::Wild(w) => w.any_seg,
-            _ => true,
+            Elem::G0 | Elem::G1 => true,
         }
     }
 
     /// Can the element consume some segment?
     #[inline]
     fn satisfiable(&self) -> bool {
-        !matches!(self, Elem::Wild(w) if w.min_len == NEVER)
+        match self {
+            Elem::Wild(w) => w.min_len != NEVER,
+            Elem::Join => false,
+            _ => true,
+        }
     }
 }
 
@@ -205,6 +213,7 @@ impl SegmentMatcher {
                 },
                 Elem::G0 => "G0",
                 Elem::G1 => "G1",
+                Elem::Join => "J",
             })
             .collect();
         // A run of one kind as `L(200)`.

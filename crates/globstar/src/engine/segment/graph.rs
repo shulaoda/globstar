@@ -35,17 +35,6 @@ const BUDGET_PER_WEIGHT: usize = 64;
 
 const MIN_BUDGET: usize = 1 << 20;
 
-/// The edges the graph may keep: 16 per unit of pattern weight, and
-/// never fewer than 4096. A sparse NFA step walks the successors of
-/// what is active, so this keeps a segment's cost linear in the
-/// pattern. Ordinary patterns keep one or two per unit, and two wide
-/// braces side by side stay far below it; branches that may be empty,
-/// side by side (`{a/,}` repeated), give a node an edge from each one
-/// before it, and fail.
-const EDGES_PER_WEIGHT: usize = 16;
-
-const MIN_EDGES: usize = 4096;
-
 /// The graph as the walk leaves it: the nodes and, for a pattern with
 /// a separator-crossing brace, their edges. A linear pattern is
 /// one path, emitted in order; its edges are implied and never stored.
@@ -104,7 +93,6 @@ impl Graph {
         // so only a separator-crossing brace can reach the budget.
         if !linear {
             b.budget = MIN_BUDGET.max(weight.saturating_mul(BUDGET_PER_WEIGHT));
-            b.max_edges = MIN_EDGES.max(weight.saturating_mul(EDGES_PER_WEIGHT));
         }
         let groups = b.walk(body.seq(), false, vec![Group::first()]);
         for mut g in groups {
@@ -122,12 +110,7 @@ impl Graph {
             }
         }
         if b.over() {
-            let max = if b.cost > b.budget {
-                b.budget
-            } else {
-                b.max_edges
-            };
-            return Err(GlobError::TooComplex { max });
+            return Err(GlobError::TooComplex { max: b.budget });
         }
         Ok(b.finish(weight))
     }
@@ -343,8 +326,6 @@ struct Builder {
     /// pattern is too complex.
     cost: usize,
     budget: usize,
-    /// Past this many stored edges (`ends` too) the walk stops as well.
-    max_edges: usize,
     dot: bool,
     ci: bool,
 }
@@ -364,7 +345,6 @@ impl Builder {
             memo: HashMap::with_capacity_and_hasher(edges, Default::default()),
             cost: 0,
             budget: usize::MAX,
-            max_edges: usize::MAX,
             dot,
             ci,
         }
@@ -442,7 +422,8 @@ impl Builder {
         id
     }
 
-    /// Reuse key of a literal or globstar node; wildcards stay apart.
+    /// Reuse key of a literal, globstar or join node; wildcards stay
+    /// apart.
     fn key(elem: &Elem, tails: &[u32]) -> Option<u64> {
         let mut h = Fnv::default();
         match elem {
@@ -452,6 +433,7 @@ impl Builder {
             }
             Elem::G0 => h.write(&[1]),
             Elem::G1 => h.write(&[2]),
+            Elem::Join => h.write(&[3]),
             Elem::Wild(_) => return None,
         }
         for &t in tails {
@@ -468,7 +450,7 @@ impl Builder {
         }
         match (&self.elems[i], elem) {
             (Elem::Lit(a), Elem::Lit(b)) => a == b,
-            (Elem::G0, Elem::G0) | (Elem::G1, Elem::G1) => true,
+            (Elem::G0, Elem::G0) | (Elem::G1, Elem::G1) | (Elem::Join, Elem::Join) => true,
             _ => false,
         }
     }
@@ -481,7 +463,25 @@ impl Builder {
     }
 
     fn over(&self) -> bool {
-        self.cost > self.budget || self.preds.len() + self.ends.len() > self.max_edges
+        self.cost > self.budget
+    }
+
+    /// A group about to be copied into each of `ways` branches: its
+    /// tails become one join node when that keeps fewer edges, so the
+    /// branches share an edge to it instead of one from each tail
+    /// (`{a/,}` × k would give k² edges).
+    fn join(&mut self, g: &mut Group, ways: usize) {
+        if g.tails.len() < 2 {
+            return;
+        }
+        g.dedupe_tails();
+        let k = g.tails.len();
+        if k * ways <= k + ways {
+            return;
+        }
+        let id = self.emit(Elem::Join, &g.tails);
+        g.tails.clear();
+        g.tails.push(id);
     }
 
     /// Walk a sequence of nodes; `sep_after` tells whether a `/` follows
@@ -517,6 +517,9 @@ impl Builder {
                 Node::Brace(branches) if crosses(node) => {
                     // A `**` ending a branch reads the `/` after the brace.
                     let mut out = Merged::default();
+                    for g in groups.iter_mut() {
+                        self.join(g, branches.len());
+                    }
                     for branch in branches {
                         self.cost += groups.iter().map(Group::cost).sum::<usize>();
                         if self.over() {
@@ -582,7 +585,7 @@ impl Builder {
             return;
         }
         let id = match g.tails[..] {
-            [t] if t != START && self.elems[t as usize].nullable() => t,
+            [t] if t != START && matches!(self.elems[t as usize], Elem::G0) => t,
             _ => self.emit(Elem::G0, &g.tails),
         };
         g.rebase(id, Boundary::Sep);

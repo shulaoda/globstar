@@ -7,10 +7,12 @@ import {
   EL_LIT,
   EL_WILD,
   EL_G0,
+  EL_JOIN,
   WK_AFFIX,
   WK_SUFFIXES,
   elemAnySeg,
   elemSatisfiable,
+  exact,
   isGlobstar,
 } from "./elem.js";
 import {
@@ -89,12 +91,14 @@ export function chains(graph, ci) {
     const id = succs[top][next[top]++];
     if (id === ACCEPT) {
       // A path of literal nodes joins the set as the characters it
-      // matches; any other is a chain.
-      if (path.every((i) => graph.elems[i].kind === EL_LIT)) {
-        const joined = path.map((i) => graph.elems[i].litStr).join("/");
+      // matches; any other is a chain. Joins take no segment: they are
+      // left out (and the chain copied to its length, see `exact`).
+      const nodes = path.filter((i) => graph.elems[i].kind !== EL_JOIN);
+      if (nodes.every((i) => graph.elems[i].kind === EL_LIT)) {
+        const joined = nodes.map((i) => graph.elems[i].litStr).join("/");
         lits.push(ci ? asciiLower(joined) : joined);
         litChars += joined.length;
-      } else paths.push(path.slice());
+      } else paths.push(exact(nodes));
       if (
         paths.length > MAX_CHAINS ||
         lits.length > MAX_LITERALS ||

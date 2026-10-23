@@ -100,23 +100,28 @@ fn side_by_side_globstar_braces_stay_linear() {
 }
 
 // Branches that may be empty, side by side, let each segment follow
-// every one before it. Past 16 edges per unit of pattern (never fewer
-// than 4,096) the pattern fails fast, so no segment walks a successor
-// list as long as the pattern, and what compiles matches a long path in
-// milliseconds. Twin of the check in large.mjs.
+// every one before it. The ones before it share a join node, so the graph
+// keeps an edge or two per unit of pattern: it compiles fast, and no
+// segment walks a successor list as long as the pattern. Twin of the
+// check in large.mjs.
 #[test]
-fn edges_that_multiply_fail_fast() {
-    let path = "/a".repeat(2000) + "/x";
-    let g = Glob::new(&("{,/**/a}".repeat(64) + "/x")).unwrap();
-    let start = std::time::Instant::now();
-    assert!(g.is_match(path.as_bytes()));
-    assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
-    for unit in ["{,/**/a}", "{a/,}"] {
+fn edges_that_multiply_stay_linear() {
+    for (pattern, path) in [
+        ("{,/**/a}".repeat(800) + "/x", "/a".repeat(2000) + "/x"),
+        ("{a/,}".repeat(800) + "x", "a/".repeat(800) + "x"),
+    ] {
         let start = std::time::Instant::now();
-        let err = Glob::new(&(unit.repeat(800) + "/x")).unwrap_err();
-        let took = start.elapsed();
-        assert!(matches!(err, GlobError::TooComplex { .. }), "{err:?}");
-        assert!(took.as_secs() < 1, "{unit}: {took:?}");
+        let g = Glob::new(&pattern).unwrap();
+        assert!(start.elapsed().as_secs() < 1, "{:?}", start.elapsed());
+        let start = std::time::Instant::now();
+        assert!(g.is_match(path.as_bytes()), "{}", &pattern[..8]);
+        let dir = &path[..path.rfind('/').unwrap()];
+        assert!(
+            g.match_dir(dir.as_bytes()).may_match_below(),
+            "{}",
+            &pattern[..8]
+        );
+        assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
     }
 }
 

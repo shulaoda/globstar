@@ -6,6 +6,7 @@
 import {
   EL_LIT,
   EL_WILD,
+  EL_JOIN,
   NFA_SMALL,
   NFA_SPARSE,
   elemAnySeg,
@@ -54,9 +55,11 @@ function denseNfa(graph) {
   let reach1 = 0;
   // The closure a target adds, from the last position back: successors
   // always lie ahead, so each is complete when needed, and a nullable
-  // successor contributes its own successors.
+  // successor contributes its own successors. A join is only those: it
+  // never takes a segment, so no set holds it.
   const addTarget = (c, t) => {
     if (t === ACCEPT) return c | (1 << accept);
+    if (elems[t].kind === EL_JOIN) return c | after[t];
     if (nullable(elems[t])) c |= after[t];
     return c | (1 << t);
   };
@@ -101,7 +104,9 @@ function sparseNfa(graph, ci) {
   // The flags are bytes (1 or 0) and the offsets int32: a plain array
   // takes 8 bytes per entry, booleans included.
   // (A nullable successor is a `**/`, which reaches accept through one
-  // segment whenever it reaches it at all.)
+  // segment whenever it reaches it at all, or a join, which takes none and
+  // reaches it as its successors do: no set holds a join's state, only its
+  // position, see `enterSparse`.)
   const base = n + 1;
   // Positions sit past the states, as the sparse active set indexes them
   // (`base + p`, see `nfaRunSparse`).
@@ -111,7 +116,7 @@ function sparseNfa(graph, ci) {
     eachSucc(i, (t) => {
       if (t === ACCEPT || reach1[t]) o = 1;
     });
-    reach1[i] = o && elemSatisfiable(elems[i]) ? 1 : 0;
+    reach1[i] = o && (elemSatisfiable(elems[i]) || elems[i].kind === EL_JOIN) ? 1 : 0;
   }
 
   const key = (t) => (ci ? asciiLower(elems[t].litStr) : elems[t].litStr);
@@ -376,6 +381,8 @@ function sparseConsumes(m, s, str, s0, e0, absorbOk) {
       return litEq(e.litStr, str, s0, e0, m.ci);
     case EL_WILD:
       return wildConsumes(m, e.wild, str, s0, e0);
+    case EL_JOIN:
+      return false;
     default:
       return absorbOk;
   }

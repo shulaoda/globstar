@@ -195,7 +195,7 @@ console.log("✓ matcher options are checked");
   const whole = thrown(() => compileMatcher(["a", heavy]));
   assert.equal(whole.kind, "TooComplex");
   assert.equal(whole.index, undefined);
-  const each = "{a,b,/}".repeat(24);
+  const each = "{a,b,/}".repeat(28);
   compileMatcher(each);
   assert.equal(thrown(() => compileMatcher([each, `x/${each}`])).kind, "TooComplex");
   const range = thrown(() => compileMatcher("src/[abcz-a].ts"));

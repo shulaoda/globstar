@@ -29,6 +29,7 @@ import {
   EL_LIT,
   EL_WILD,
   EL_G0,
+  EL_JOIN,
   WK_AFFIX,
   WK_SUFFIXES,
   exact,
@@ -80,6 +81,7 @@ export class SegmentMatcher {
         if (k === WK_AFFIX) return "W:affix";
         return k === WK_SUFFIXES ? "W:set" : "W:nfa";
       }
+      if (e.kind === EL_JOIN) return "J";
       return e.kind === EL_G0 ? "G0" : "G1";
     });
     // A run of one kind as `L(200)`.

@@ -7,10 +7,13 @@ export const EL_LIT = 0;
 export const EL_WILD = 1;
 export const EL_G0 = 2;
 export const EL_G1 = 3;
+// Takes no segment: it stands for its successors, which the tails of a
+// group share through it instead of an edge from each (see `graph.js`).
+export const EL_JOIN = 4;
 
 export const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
 // Absorbs zero segments too.
-export const nullable = (e) => e.kind === EL_G0;
+export const nullable = (e) => e.kind === EL_G0 || e.kind === EL_JOIN;
 
 // In-segment wildcard kinds.
 export const WK_AFFIX = 0;
@@ -27,10 +30,11 @@ export const NFA_SPARSE = 1;
 export const NEVER_LEN = 0x7fffffff;
 
 // Can the element take some segment?
-export const elemSatisfiable = (e) => e.kind !== EL_WILD || e.wild.minLen !== NEVER_LEN;
+export const elemSatisfiable = (e) =>
+  e.kind === EL_WILD ? e.wild.minLen !== NEVER_LEN : e.kind !== EL_JOIN;
 // Takes every non-empty segment (`matchDir`'s all-below).
 export const elemAnySeg = (e) =>
-  e.kind === EL_LIT ? false : e.kind === EL_WILD ? e.wild.anySeg : true;
+  e.kind === EL_WILD ? e.wild.anySeg : e.kind === EL_G0 || e.kind === EL_G1;
 
 // `a` copied to its length. V8 grows an array that `push` fills by half
 // again plus 16 slots and never gives the room back; a matcher keeps its

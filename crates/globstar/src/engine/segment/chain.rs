@@ -178,14 +178,20 @@ impl Graph {
             };
             *next += 1;
             if id == ACCEPT {
-                let literal = path
+                // Joins take no segment: they are left out.
+                let nodes: Vec<u32> = path
+                    .iter()
+                    .copied()
+                    .filter(|&i| !matches!(self.elems[i as usize], Elem::Join))
+                    .collect();
+                let literal = nodes
                     .iter()
                     .all(|&i| matches!(self.elems[i as usize], Elem::Lit(_)));
                 if literal {
-                    self.literal_path(&path, &mut lits);
+                    self.literal_path(&nodes, &mut lits);
                     lit_bounds.push(lits.len() as u32);
                 } else {
-                    paths.push(path.clone());
+                    paths.push(nodes);
                 }
                 if paths.len() > MAX_CHAINS
                     || lit_bounds.len() > MAX_LITERALS + 1
@@ -595,7 +601,7 @@ impl SegmentMatcher {
             if let Some(taken) = self.block_from(elems, g1 + 1..g2, path, pos..end, mid_end) {
                 // Nothing before the block holds a dot segment (the loop
                 // stops at the first); the second globstar checks after.
-                let left = pos > mid_start || elems.at(g1).nullable();
+                let left = pos > mid_start || matches!(elems.at(g1), Elem::G0);
                 let from = taken + 1;
                 if left {
                     if dot_at < from {
@@ -660,7 +666,7 @@ impl SegmentMatcher {
         dot_at: Option<usize>,
     ) -> bool {
         if split == from {
-            return kind.nullable();
+            return matches!(kind, Elem::G0);
         }
         // Up to the separator before the tail, or the end.
         let to = split - 1;

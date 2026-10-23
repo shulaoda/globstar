@@ -18,7 +18,17 @@ import {
 } from "../../parse/ast.js";
 import { hasEscapedSep } from "../../bytes.js";
 import { flat } from "../../utf8.js";
-import { EL_LIT, EL_WILD, EL_G0, EL_G1, WK_AFFIX, WK_GENERIC, NEVER_LEN, exact } from "./elem.js";
+import {
+  EL_LIT,
+  EL_WILD,
+  EL_G0,
+  EL_G1,
+  EL_JOIN,
+  WK_AFFIX,
+  WK_GENERIC,
+  NEVER_LEN,
+  exact,
+} from "./elem.js";
 import { nfaTableBytes } from "./seg-nfa.js";
 import { compileWild, concatLits, makeWild } from "./wild.js";
 import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain-index.js";
@@ -41,6 +51,7 @@ function makeElem(kind, litStr, wild) {
 // shares one.
 const G0_ELEM = makeElem(EL_G0, null, null);
 const G1_ELEM = makeElem(EL_G1, null, null);
+const JOIN_ELEM = makeElem(EL_JOIN, null, null);
 
 // Each crossing brace's in-segment branches as one choice, in place:
 // `{a,b,/}` walks as `{{a,b},/}`. Forked one by one, such branches give a
@@ -85,13 +96,11 @@ export function buildGraph(body, dot, ci) {
   // only a separator-crossing brace can reach the budget.
   let weight = 0;
   let budget = Infinity;
-  let maxEdges = Infinity;
   if (!linear) {
     for (const n of nodes) weight += nodeWeight(n);
     budget = Math.max(MIN_BUDGET, weight * BUDGET_PER_WEIGHT);
-    maxEdges = Math.max(MIN_EDGES, weight * EDGES_PER_WEIGHT);
   }
-  const b = new Builder(dot, ci, linear, budget, maxEdges);
+  const b = new Builder(dot, ci, linear, budget);
   // Only a union of more paths than LINEAR_CHAINS indexes them.
   if (!linear && pathBound(nodes) > LINEAR_CHAINS) {
     b.keys = [];
@@ -110,7 +119,7 @@ export function buildGraph(body, dot, ci) {
     }
   }
   if (b.over()) {
-    throw new GlobError("TooComplex", { max: b.cost > b.budget ? b.budget : b.maxEdges });
+    throw new GlobError("TooComplex", { max: b.budget });
   }
   // `weight`: the pattern's `nodeWeight`, read when the literal paths
   // are kept (a linear pattern keeps none, and reads 0); `keys`: what
@@ -140,15 +149,6 @@ function pathBound(nodes) {
 // much.
 const BUDGET_PER_WEIGHT = 64;
 const MIN_BUDGET = 1 << 20;
-
-// The edges the graph may keep: 16 per unit of pattern weight, and never
-// fewer than 4096. A sparse NFA step walks the successors of what is
-// active, so this keeps a segment's cost linear in the pattern. Ordinary
-// patterns keep one or two per unit, and two wide braces side by side
-// stay far below it; branches that may be empty, side by side (`{a/,}`
-// repeated), give a node an edge from each one before it, and fail.
-const EDGES_PER_WEIGHT = 16;
-const MIN_EDGES = 4096;
 
 // What the wild's tables take, in the bytes the Rust tables take, so
 // both runtimes refuse the same patterns: a set's suffixes and their
@@ -337,16 +337,16 @@ const LINEAR_NODES = 16;
 const memoKey = (kind, lit, at) => `${kind}:${lit ?? ""}|${at}`;
 
 class Builder {
-  constructor(dot, ci, linear, budget, maxEdges) {
+  constructor(dot, ci, linear, budget) {
     // Elements in emission order and (unless linear) each node's
     // successors in a parallel array.
     this.elems = [];
     this.succs = [];
     this.start = [];
     this.linear = linear;
-    // Literal and globstar nodes, reused when a branch makes the same
-    // (element, predecessors) again: a scanned list while short, then
-    // also an index by key.
+    // Literal, globstar and join nodes, reused when a branch makes the
+    // same (element, predecessors) again: a scanned list while short,
+    // then also an index by key.
     this.memo = [];
     this.memoIndex = null;
     // The walk's work so far: nodes and their edges, the tokens it added
@@ -356,9 +356,6 @@ class Builder {
     // complex.
     this.cost = 0;
     this.budget = budget;
-    // Past `maxEdges` stored edges (to ACCEPT too) the walk stops as well.
-    this.edges = 0;
-    this.maxEdges = maxEdges;
     this.dot = dot;
     this.ci = ci;
     // The wildcard segments' keys by node, for a union the chain index
@@ -406,13 +403,12 @@ class Builder {
 
   link(tail, id) {
     if (this.linear) return;
-    this.edges++;
     if (tail === START) this.start.push(id);
     else this.succs[tail].push(id);
   }
 
   over() {
-    return this.cost > this.budget || this.edges > this.maxEdges;
+    return this.cost > this.budget;
   }
 
   // Walk a sequence of nodes; `sepAfter` tells whether a `/` follows it
@@ -440,6 +436,7 @@ class Builder {
           }
           // A `**` ending a branch reads the `/` after the brace.
           const out = { groups: [], index: null, whole: false };
+          for (const g of groups) this.join(g, node.branches.length);
           for (const branch of node.branches) {
             for (const g of groups) this.cost += groupCost(g);
             if (this.over()) break;
@@ -491,6 +488,20 @@ class Builder {
       g.buf.push(node);
       g.weight += weight;
     }
+  }
+
+  // A group about to be copied into each of `ways` branches: its tails
+  // become one join node when that keeps fewer edges, so the branches
+  // share an edge to it instead of one from each tail (`{a/,}` × k would
+  // give k² edges).
+  join(g, ways) {
+    if (g.tails.length < 2) return;
+    dedupeTails(g);
+    const k = g.tails.length;
+    if (k * ways <= k + ways) return;
+    const id = this.emit(JOIN_ELEM, g.tails);
+    g.tails.length = 0;
+    g.tails.push(id);
   }
 
   // Emit a group's pending `**/`. It is always a G0: it absorbs empty
