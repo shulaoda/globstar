@@ -785,19 +785,33 @@ fn name_list(patterns: &[(String, String)]) -> String {
 
 /// WALKER_SPEC §4.2: the `!` count and the body of a written pattern;
 /// `None` when it selects or ignores nothing (`.`, `//`, `!.`).
-/// Normalization runs before the split (§4.3 first, so `/!x` ≡ `!x`)
-/// and again after each `!` run, which can expose a `/` and then
-/// another run: `!/!x` ≡ `!!x`, the body `x` with two `!`.
+/// Normalization runs once, before the split (§4.3 first, so `/!x` ≡
+/// `!x`). Cutting a `!` run can leave only its own segment empty or
+/// `.`; that segment goes, with its `/`, and a run after it counts too:
+/// `!/!x` ≡ `!!x`, the body `x` with two `!`.
 fn split_bangs(raw: &str) -> Option<(usize, String)> {
     let mut body = normalize_pattern(raw)?;
+    let mut rest = body.as_str();
     let mut bangs = 0;
     loop {
-        let run = body.bytes().take_while(|&b| b == b'!').count();
+        let run = rest.bytes().take_while(|&b| b == b'!').count();
         if run == 0 {
+            let cut = body.len() - rest.len();
+            body.drain(..cut);
             return Some((bangs, body));
         }
         bangs += run;
-        body = normalize_pattern(&body[run..])?;
+        rest = &rest[run..];
+        if rest.is_empty() {
+            return Some((bangs, String::new()));
+        }
+        let left = rest.strip_prefix('.').unwrap_or(rest);
+        if left.is_empty() || left.starts_with('/') {
+            rest = left.strip_prefix('/').unwrap_or(left);
+            if rest.is_empty() {
+                return None;
+            }
+        }
     }
 }
 

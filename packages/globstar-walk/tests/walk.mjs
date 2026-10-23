@@ -228,6 +228,22 @@ await check("bangs exposed by normalization count too", async () => {
   await expectBoth(root, ["!/!x"], {}, ["x"], "!/!x");
   await expectBoth(root, ["**", "!!/!x"], {}, ["d/z", "y"], "!!/!x");
   await expectBoth(root, ["**", "!/!/!x"], {}, ["d/z", "y"], "!/!/!x");
+  // A run that leaves `.` hides nothing either; `!.`, `!/` and `!!/.`
+  // select nothing.
+  await expectBoth(root, ["!./!x"], {}, ["x"], "!./!x");
+  await expectBoth(root, ["**", "!./!./!x"], {}, ["d/z", "y"], "!./!./!x");
+  await expectBoth(root, ["x", "!.", "!/", "!!/."], {}, ["x"], "!. !/ !!/.");
+});
+
+await check("bangs split in one pass", async () => {
+  // A 64 KB `!/!/…x` took seconds when each `!` run normalized the rest
+  // of the pattern again. Twin of `walker_splits_bangs_in_one_pass`.
+  const root = tmpTree("bangpass", ["x"]);
+  for (const p of ["!/".repeat(32000) + "x", "!./".repeat(21000) + "x"]) {
+    const start = performance.now();
+    assert.deepEqual(rel(root, globSync(p, { cwd: root })), ["x"]);
+    assert.ok(performance.now() - start < 500, `${p.length} B took too long to split`);
+  }
 });
 
 await check("an ignore entry that starts with `!` is refused", async () => {

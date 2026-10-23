@@ -926,6 +926,23 @@ fn walker_bangs_exposed_by_normalization_count_too() {
     assert_eq!(t.walk(&["!/!x"]), set(&["x"]));
     assert_eq!(t.walk(&["**", "!!/!x"]), set(&["y", "d", "d/z"]));
     assert_eq!(t.walk(&["**", "!/!/!x"]), set(&["y", "d", "d/z"]));
+    // A run that leaves `.` hides nothing either; `!.`, `!/` and
+    // `!!/.` select nothing.
+    assert_eq!(t.walk(&["!./!x"]), set(&["x"]));
+    assert_eq!(t.walk(&["**", "!./!./!x"]), set(&["y", "d", "d/z"]));
+    assert_eq!(t.walk(&["x", "!.", "!/", "!!/."]), set(&["x"]));
+}
+
+#[test]
+fn walker_splits_bangs_in_one_pass() {
+    // A 64 KB `!/!/…x` took seconds when each `!` run normalized the
+    // rest of the pattern again. Twin of the check in walk.mjs.
+    let t = TmpTree::new("bang_pass", &["x"]);
+    for p in ["!/".repeat(32_000) + "x", "!./".repeat(21_000) + "x"] {
+        let start = std::time::Instant::now();
+        assert_eq!(t.walk(&[p.as_str()]), set(&["x"]));
+        assert!(start.elapsed().as_millis() < 500, "{:?}", start.elapsed());
+    }
 }
 
 #[test]

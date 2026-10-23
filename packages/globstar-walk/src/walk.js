@@ -330,19 +330,27 @@ function normalizePattern(raw) {
 
 // WALKER_SPEC §4.2: the `!` count and the body of a written pattern;
 // `null` when it selects or ignores nothing (`.`, `//`, `!.`).
-// Normalization runs before the split (§4.3 first, so `/!x` ≡ `!x`) and
-// again after each `!` run, which can expose a `/` and then another
-// run: `!/!x` ≡ `!!x`, the body `x` with two `!`.
+// Normalization runs once, before the split (§4.3 first, so `/!x` ≡
+// `!x`). Cutting a `!` run can leave only its own segment empty or `.`;
+// that segment goes, with its `/`, and a run after it counts too:
+// `!/!x` ≡ `!!x`, the body `x` with two `!`.
 function splitBangs(raw) {
+  let rest = normalizePattern(raw);
+  if (rest === null) return null;
   let bangs = 0;
-  for (let body = normalizePattern(raw); body !== null; ) {
+  for (;;) {
     let run = 0;
-    while (run < body.length && body.charCodeAt(run) === 0x21 /* ! */) run++;
-    if (run === 0) return { bangs, body };
+    while (run < rest.length && rest.charCodeAt(run) === 0x21 /* ! */) run++;
+    if (run === 0) return { bangs, body: rest };
     bangs += run;
-    body = normalizePattern(body.slice(run));
+    rest = rest.slice(run);
+    if (rest === "") return { bangs, body: "" };
+    const left = rest.startsWith(".") ? rest.slice(1) : rest;
+    if (left === "" || left.startsWith("/")) {
+      rest = left.slice(1);
+      if (rest === "") return null;
+    }
   }
-  return null;
 }
 
 // Compiles `{ raw, body }` pairs (`body` normalized: leading `/`
