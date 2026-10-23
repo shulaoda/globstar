@@ -318,6 +318,16 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 1000, `60,000 branches took ${ms.toFixed(0)} ms to compile`);
 }
 
+// A run of `{?,}` takes as many lengths as it has braces: found in one
+// pass over its states, not one step per length. Twin of
+// `wildcard_lengths_cost_one_pass` in crates/globstar/tests/glob.rs.
+{
+  const start = performance.now();
+  assert.equal(compileMatcher("{?,}".repeat(16_000)).match("abc"), true);
+  const ms = performance.now() - start;
+  assert.ok(ms < 2000, `16,000 \`{?,}\` took ${ms.toFixed(0)} ms to compile`);
+}
+
 // Two globstars around a block: under `dot: false` the second one's dot
 // check reads the middle once, not once per place the block is tried.
 // Twin of `a_block_between_globstars_reads_the_middle_once`.

@@ -14,7 +14,7 @@
 import { N_ANYCHAR, N_BRACE, N_CLASS, N_LITERAL, N_STAR, seq } from "../../parse/ast.js";
 import { ctz32, IS_WINDOWS_SEP } from "../../bytes.js";
 import { exact, NEVER_LEN } from "./elem.js";
-import { wordsFor, bitTest, bitSet, bitsIsZero, bitsEqual } from "./bits.js";
+import { wordsFor, bitTest, bitSet, bitsIsZero } from "./bits.js";
 
 // NFA state kinds. A `*` is an S_ANY whose `next` is itself, with its
 // way out in `splitBs`: the hot loop treats it like `?` (a separate kind
@@ -53,7 +53,7 @@ export function compileSegNfa(nodes, dot, ci) {
   const small = b.kinds.length <= 32;
   const nfa = small ? new SegNfaSmall(b, entry, dot) : new SegNfaWide(b, entry, dot);
   const test = small ? (a, s) => (a & (1 << s)) !== 0 : bitTest;
-  const lens = small ? lensSmall(nfa) : lensWide(nfa);
+  const lens = wildLens(b, entry, nfa.init, test);
   nfa.lenBits = lens.bits;
   nfa.lenFrom = lens.from;
   return {
@@ -224,7 +224,7 @@ class SegNfaSmall {
     this.initDotBlocked = dot ? this.init : closeSmall(b, 1 << entry, true);
     this.acceptMask = 1 << (n - 1);
     this.countsBytes = b.countsBytes;
-    // What its wildcards alone take, by length (see `lensSmall`).
+    // What its wildcards alone take, by length (see `wildLens`).
     this.lenBits = 0;
     this.lenFrom = 0;
   }
@@ -262,51 +262,83 @@ class SegNfaSmall {
   }
 }
 
-// What the wildcards alone accept, by segment length: the entry set
-// stepped through them one unit at a time. Bit L of `bits` marks that
-// every segment of L units matches (1 ≤ L ≤ 31), and `from` that every
-// one of `from` units or more does (≤ 32; 0: none known), so `from` 1
-// is "every non-empty segment" (`matchDir`'s all-below, see
-// `coversBelow` in nfa.js). Every loop is a star's one-unit self-loop,
-// so the set settles within the number of states.
-function lensSmall(nfa) {
-  const kinds = nfa.kinds;
-  const lens = { bits: 0, from: 0, run: 0 };
-  let active = nfa.init;
-  for (let len = 1; len <= kinds.length + 1; len++) {
-    let next = 0;
-    let bits = active;
-    while (bits !== 0) {
-      const s = ctz32(bits);
-      bits &= bits - 1;
-      if (kinds[s] === S_ANY) next |= nfa.closures[nfa.nexts[s]];
+// What the wildcards alone accept, by segment length: bit L of `bits`
+// marks that every segment of L units matches (1 ≤ L ≤ 31), and `from`
+// that every one of `from` units or more does (≤ 32; 0: none known), so
+// `from` 1 is "every non-empty segment" (`matchDir`'s all-below, see
+// `coversBelow` in nfa.js). The lengths each state is reached at come
+// in one pass in state order, as the Rust twin's `wild_lengths`: every
+// edge but a star's loop onto itself points to a later state, so a
+// state's are all in when it is reached. Lengths below 64 are one bit
+// each, in `lo` (0-31) and `hi` (32-63), and every length from `tail`
+// on is one too (Infinity: none known). Lengths past 63 below the tail
+// are left out, which keeps out lengths only.
+function wildLens(b, entry, init, test) {
+  const kinds = b.kinds;
+  const n = kinds.length;
+  // Most segments start with a literal or a class: no length.
+  let any = false;
+  for (let s = 0; s < n && !any; s++) any = kinds[s] === S_ANY && test(init, s);
+  if (!any) return { bits: 0, from: 0 };
+  const scratch = n <= LENS_SCRATCH;
+  const lo = scratch ? LENS_LO.fill(0, 0, n) : new Int32Array(n);
+  const hi = scratch ? LENS_HI.fill(0, 0, n) : new Int32Array(n);
+  const tail = (scratch ? LENS_TAIL : new Float64Array(n)).fill(Infinity, 0, n);
+  const nexts = b.nexts;
+  const splitBs = b.splitBs;
+  lo[entry] = 1;
+  for (let s = 0; s < n; s++) {
+    const l = lo[s];
+    const h = hi[s];
+    let f = tail[s];
+    if (l === 0 && h === 0 && f === Infinity) continue;
+    const k = kinds[s];
+    if (k === S_SPLIT) {
+      addLens(lo, hi, tail, nexts[s], l, h, f);
+      addLens(lo, hi, tail, splitBs[s], l, h, f);
+    } else if (k === S_JUMP) {
+      addLens(lo, hi, tail, nexts[s], l, h, f);
+    } else if (k === S_ANY && nexts[s] === s) {
+      // A `*` stays, then leaves: every length from the least on.
+      const least = l !== 0 ? ctz32(l) : h !== 0 ? 32 + ctz32(h) : f;
+      if (least < f) f = tail[s] = least;
+      addLens(lo, hi, tail, splitBs[s], l, h, f);
+    } else if (k === S_ANY) {
+      // One wildcard more.
+      addLens(lo, hi, tail, nexts[s], l << 1, (h << 1) | (l >>> 31), f + 1);
     }
-    const more = addLen(lens, len, (next & nfa.acceptMask) !== 0);
-    if (next === active) return settle(lens);
-    if (next === 0 || !more) break;
-    active = next;
   }
-  return lens;
+  return lensOf(lo[n - 1], hi[n - 1], tail[n - 1]);
 }
 
-// Length `len` matched (`ok`) or not. Is a longer one still worth the
-// step? Past 31 units only a run of matching lengths that started by
-// 32 is.
-function addLen(lens, len, ok) {
-  if (!ok) lens.run = 0;
-  else if (lens.run === 0) lens.run = len;
-  if (ok && len < 32) lens.bits |= 1 << len;
-  return len < 32 || (lens.run !== 0 && lens.run <= 32);
+// State `t` is reached at the lengths `l`, `h`, `f` too.
+function addLens(lo, hi, tail, t, l, h, f) {
+  if (t === UNSET) return;
+  lo[t] |= l;
+  hi[t] |= h;
+  if (f < tail[t]) tail[t] = f;
 }
 
-// The set settled: every longer length matches as the last one did, so
-// the run of matching lengths it ends never ends. `bits` keeps only the
-// lengths below it.
-function settle(lens) {
-  if (lens.run === 0 || lens.run > 32) return lens;
-  lens.from = lens.run;
-  if (lens.from < 32) lens.bits &= ~(-1 << lens.from);
-  return lens;
+// The lengths of up to 64 states, one set for all builds: a typed
+// array costs more to make than such a pass.
+const LENS_SCRATCH = 64;
+const LENS_LO = new Int32Array(LENS_SCRATCH);
+const LENS_HI = new Int32Array(LENS_SCRATCH);
+const LENS_TAIL = new Float64Array(LENS_SCRATCH);
+
+// The non-empty lengths as `bits` and `from`: where the run of every
+// longer length starts, when that is by 32. The run is told only when
+// the tail is by 64; one past that is left out.
+function lensOf(lo, hi, tail) {
+  if (tail < 32) {
+    lo |= -1 << tail;
+    hi = -1;
+  } else if (tail < 64) hi |= -1 << (tail - 32);
+  lo &= ~1;
+  // Where the run through 63 starts (64: none does).
+  const run = 64 - (hi === -1 ? 32 + Math.clz32(~lo) : Math.clz32(~hi));
+  const from = tail <= 64 && run <= 32 ? run : 0;
+  return { bits: from >= 1 && from < 32 ? lo & ~(-1 << from) : lo, from };
 }
 
 // The same automaton over Int32Array words: more than 32 states. The
@@ -352,7 +384,7 @@ class SegNfaWide {
     this.initDotBlocked = dot ? this.init : entrySet(true);
     this.accept = n - 1;
     this.countsBytes = b.countsBytes;
-    // What its wildcards alone take, by length (see `lensSmall`).
+    // What its wildcards alone take, by length (see `wildLens`).
     this.lenBits = 0;
     this.lenFrom = 0;
   }
@@ -403,9 +435,9 @@ class SegNfaWide {
   }
 }
 
-// `next` = what `active` reaches over code unit `c` (-1: one only a
-// wildcard takes), without kept closures: the consumers move, then
-// closeWide adds what their targets reach.
+// `next` = what `active` reaches over code unit `c`, without kept
+// closures: the consumers move, then closeWide adds what their targets
+// reach.
 function stepClosing(nfa, active, next, c) {
   next.fill(0);
   const kinds = nfa.kinds;
@@ -418,30 +450,13 @@ function stepClosing(nfa, active, next, c) {
       if (
         k === S_ANY ||
         (k === S_BYTE && nfa.byteVals[s] === c) ||
-        (k === S_CLASS && c !== -1 && setHas(nfa.clsRefs[s], c))
+        (k === S_CLASS && setHas(nfa.clsRefs[s], c))
       ) {
         bitSet(next, nfa.nexts[s]);
       }
     }
   }
   closeWide(nfa, next, false);
-}
-
-function lensWide(nfa) {
-  const kinds = nfa.kinds;
-  const lens = { bits: 0, from: 0, run: 0 };
-  let active = nfa.init.slice();
-  let next = new Int32Array(nfa.words);
-  for (let len = 1; len <= kinds.length + 1; len++) {
-    stepClosing(nfa, active, next, -1);
-    const more = addLen(lens, len, bitTest(next, nfa.accept));
-    if (bitsEqual(next, active)) return settle(lens);
-    if (bitsIsZero(next) || !more) break;
-    const t = active;
-    active = next;
-    next = t;
-  }
-  return lens;
 }
 
 class SegBuilder {

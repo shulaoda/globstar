@@ -250,7 +250,7 @@ impl<B: Bits> SegNfaImpl<B> {
                 if active.is_zero() {
                     return false;
                 }
-                self.step_closing(&active, &mut next, Some(c));
+                self.step_closing(&active, &mut next, c);
                 std::mem::swap(&mut active, &mut next);
             }
             return active.test(self.accept);
@@ -281,62 +281,130 @@ impl<B: Bits> SegNfaImpl<B> {
         active.test(self.accept)
     }
 
-    /// `next` = what `active` reaches over byte `c` (`None`: a byte only
-    /// a wildcard takes), without the kept closures: the consumers move,
-    /// then `close` adds what their targets reach.
-    fn step_closing(&self, active: &B, next: &mut B, c: Option<u8>) {
+    /// `next` = what `active` reaches over byte `c`, without the kept
+    /// closures: the consumers move, then `close` adds what their
+    /// targets reach.
+    fn step_closing(&self, active: &B, next: &mut B, c: u8) {
         next.clear();
         active.for_each(|s| match &self.states[s] {
-            SegState::Byte(b, nx) if c == Some(*b) => next.set(*nx as usize),
-            SegState::Class(cls, nx) if c.is_some_and(|c| cls.has(c)) => next.set(*nx as usize),
+            SegState::Byte(b, nx) if *b == c => next.set(*nx as usize),
+            SegState::Class(cls, nx) if cls.has(c) => next.set(*nx as usize),
             SegState::Any(nx, _) => next.set(*nx as usize),
             _ => {}
         });
         close(&self.states, next, false);
     }
 
-    /// What the wildcards alone accept, by segment length (see
-    /// `Lens`): the entry set stepped through them one byte at a time.
-    /// Every loop is a star's one-byte self-loop, so the set settles
-    /// within `states.len()` steps; past 31 bytes only a run of
-    /// matching lengths that started by 32 is worth the steps.
+    /// What the wildcards alone accept, by segment length (see `Lens`).
     fn step_lens(&self) -> Lens {
-        let mut lens = Lens::default();
-        // Where the run of matching lengths up to this one started (0:
-        // this one did not match).
-        let mut run = 0;
-        let mut active = self.init.clone();
-        let mut next = B::zero(self.words);
-        for len in 1..=self.states.len() as u32 + 1 {
-            self.step_closing(&active, &mut next, None);
-            let ok = next.test(self.accept);
-            if !ok {
-                run = 0;
-            } else if run == 0 {
-                run = len;
-            }
-            if ok && len < 32 {
-                lens.bits |= 1 << len;
-            }
-            let open = (1..=32).contains(&run);
-            if next == active {
-                // Settled: every longer length matches as this one did,
-                // so the run never ends. `bits` keeps the lengths below.
-                if open {
-                    lens.from = run;
-                    if run < 32 {
-                        lens.bits &= (1 << run) - 1;
-                    }
-                }
-                return lens;
-            }
-            if next.is_zero() || (len >= 32 && !open) {
-                break;
-            }
-            std::mem::swap(&mut active, &mut next);
+        // Most segments start with a literal or a class: no length.
+        let mut any = false;
+        self.init
+            .for_each(|s| any |= matches!(self.states[s], SegState::Any(..)));
+        if !any {
+            return Lens::default();
         }
-        lens
+        wild_lengths(&self.states, &self.init)[self.accept].lens()
     }
+}
+
+/// The lengths of the segments the wildcards alone take to a state:
+/// each length below 64 one bit, and `tail`, from which on every length
+/// is (`u32::MAX`: none known). Lengths past 63 below the tail are left
+/// out, which keeps out lengths only.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Lengths {
+    low: u64,
+    tail: u32,
+}
+
+impl Lengths {
+    const NONE: Lengths = Lengths {
+        low: 0,
+        tail: u32::MAX,
+    };
+
+    fn add(&mut self, other: Lengths) {
+        self.low |= other.low;
+        self.tail = self.tail.min(other.tail);
+    }
+
+    /// One wildcard more.
+    fn shift(self) -> Lengths {
+        Lengths {
+            low: self.low << 1,
+            tail: self.tail.saturating_add(1),
+        }
+    }
+
+    /// As many more as a star takes: every length from the least on.
+    fn star(self) -> Lengths {
+        let least = if self.low == 0 {
+            self.tail
+        } else {
+            self.low.trailing_zeros()
+        };
+        Lengths {
+            low: self.low,
+            tail: self.tail.min(least),
+        }
+    }
+
+    /// The non-empty ones as a `Lens`: lengths 1 to 31, and where the
+    /// run of every longer length starts, when that is by 32. The run
+    /// is told only when the tail is by 64; one past that is left out.
+    fn lens(self) -> Lens {
+        let mut low = self.low;
+        if self.tail < 64 {
+            low |= u64::MAX << self.tail;
+        }
+        low &= !1;
+        // Where the run through 63 starts (64: none does).
+        let run = 64 - low.leading_ones();
+        let from = if self.tail <= 64 && run <= 32 { run } else { 0 };
+        let bits = low as u32;
+        Lens {
+            bits: if (1..32).contains(&from) {
+                bits & ((1 << from) - 1)
+            } else {
+                bits
+            },
+            from,
+        }
+    }
+}
+
+/// The lengths of the segments the wildcards alone take from the states
+/// in `entry` to each state, in one pass in state order: every edge but
+/// a star's loop onto itself points to a later state, so a state's are
+/// all in when it is reached.
+fn wild_lengths<B: Bits>(states: &[SegState], entry: &B) -> Vec<Lengths> {
+    let mut at = vec![Lengths::NONE; states.len()];
+    entry.for_each(|s| at[s].low |= 1);
+    for s in 0..states.len() {
+        let mut here = at[s];
+        if here == Lengths::NONE {
+            continue;
+        }
+        let (a, b, by) = match states[s] {
+            SegState::Split(a, b) => (a, b, here),
+            SegState::Jump(t) => (t, UNSET, here),
+            // A `*` stays, then leaves.
+            SegState::Any(nx, exit) if nx as usize == s => {
+                here = here.star();
+                at[s] = here;
+                (exit, UNSET, here)
+            }
+            SegState::Any(nx, _) => (nx, UNSET, here.shift()),
+            _ => continue,
+        };
+        for t in [a, b] {
+            if t != UNSET {
+                at[t as usize].add(by);
+            }
+        }
+    }
+    at
 }
 
 /// Can the entry reach `Match` through consumers some byte fires? Every
@@ -573,8 +641,36 @@ impl SegBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::ByteSet;
+    use super::{ByteSet, Lens, SegNfa};
     use crate::parse::ast::Node;
+
+    // What the wildcards alone take, found in one pass over the states,
+    // is what stepping them a byte at a time finds.
+    #[test]
+    fn wildcard_lengths_are_found_in_one_pass() {
+        let lens = |pattern: &str| {
+            let ast = crate::parse::parse(pattern.as_bytes()).unwrap();
+            let nodes: Vec<&Node> = match &ast.body {
+                Node::Concat(nodes) => nodes.iter().collect(),
+                node => vec![node],
+            };
+            SegNfa::wild(&nodes, true, false).lens()
+        };
+        let of = |bits, from| Lens { bits, from };
+        let run = |unit: &str, n: usize| unit.repeat(n);
+        assert_eq!(lens(&run("{?,}", 100)), of(!1, 0));
+        assert_eq!(lens(&(run("{,?}", 100) + "*")), Lens::ALL);
+        assert_eq!(lens(&(run("?", 32) + "*")), of(0, 32));
+        assert_eq!(lens(&(run("?", 33) + "*")), of(0, 0));
+        assert_eq!(lens("{??,?}{??,?}"), of(0b11100, 0));
+        assert_eq!(lens("{?,???*}"), of(0b10, 3));
+        assert_eq!(lens("{?,???*}a"), of(0, 0));
+        // A run that a star's lengths join below 64 goes on for good;
+        // one they join past 63 is not told.
+        let joined = |stars: usize| format!("{{{},{}*}}", run("{?,}", 80), run("?", stars));
+        assert_eq!(lens(&joined(60)), Lens::ALL);
+        assert_eq!(lens(&joined(70)), of(!1, 0));
+    }
 
     // The table takes exactly the bytes the class's ranges define, for
     // every byte, negated or not, with ranges and repeats.

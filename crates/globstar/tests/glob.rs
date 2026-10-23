@@ -209,6 +209,15 @@ fn the_all_below_search_by_length_stays_cheap() {
 }
 
 #[test]
+fn wildcard_lengths_cost_one_pass() {
+    // A run of `{?,}` takes as many lengths as it has braces: found in
+    // one pass over its states, not one step per length.
+    let start = std::time::Instant::now();
+    assert!(Glob::new(&"{?,}".repeat(16_000)).unwrap().is_match(b"abc"));
+    assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
+}
+
+#[test]
 fn the_length_limit_is_exact() {
     // 65,536 bytes compile; one more is TooLong, in bytes, not chars.
     use globstar::error::MAX_PATTERN_LEN;

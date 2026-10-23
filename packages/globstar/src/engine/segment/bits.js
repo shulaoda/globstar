@@ -14,8 +14,3 @@ export function bitsIsZero(a) {
   for (let w = 0; w < a.length; w++) if (a[w] !== 0) return false;
   return true;
 }
-
-export function bitsEqual(a, b) {
-  for (let w = 0; w < a.length; w++) if (a[w] !== b[w]) return false;
-  return true;
-}

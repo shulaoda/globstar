@@ -99,7 +99,7 @@ export function compileWild(nodes, dot, ci) {
 }
 
 // What `w` takes through its wildcards alone (dot=true), by segment
-// length, as `lenBits` and `lenFrom` hold for an NFA (see `lensSmall`
+// length, as `lenBits` and `lenFrom` hold for an NFA (see `wildLens`
 // in seg-nfa.js): bit L for every segment of L units (1 ≤ L ≤ 31), and
 // every length from `wildLenFrom` on (0: none). Only `?`s and `*`s with
 // nothing literal around them (a suffix that may be empty) take every

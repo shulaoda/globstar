@@ -83,7 +83,7 @@ impl Wild {
 
 /// What an element takes through its wildcards alone (dot=true), by
 /// segment length: `match_dir`'s all-below (see `nfa.rs`).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct Lens {
     /// Bit `L` for every segment of `L` bytes (1 ≤ L ≤ 31).
     pub(super) bits: u32,
