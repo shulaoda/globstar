@@ -1,0 +1,31 @@
+crates/globstar/src/engine/segment/seg_nfa.rs
+  s_43b9a5518ea7f8::t_58904f6085e442 253,284-287,290-291,298,300-396,398-403,407,644,647-674
+crates/globstar/src/engine/segment/wild.rs
+  s_43b9a5518ea7f8::t_54ba950a3c17f6 86
+crates/globstar/tests/glob.rs
+  s_43b9a5518ea7f8::t_fe1dce6d5e8e00 211-219
+packages/globstar/src/engine/segment/seg-nfa.js
+  s_43b9a5518ea7f8::t_82e6dacf93b461 17,56,227,265-308,311,314-319,322-341,387,438-440,453
+packages/globstar/src/engine/segment/wild.js
+  s_43b9a5518ea7f8::t_1dcc6d6ca0b7d9 102
+packages/globstar/tests/large.mjs
+  s_43b9a5518ea7f8::t_6941ceffaaf469 321-330
+references/theory/04-walker-and-pruning.md
+  s_43b9a5518ea7f8::t_12a45a427c1782 193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "81b348baf60435cab563a18fa697727d47fe3a20",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
