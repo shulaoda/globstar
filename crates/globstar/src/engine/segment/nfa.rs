@@ -44,13 +44,13 @@ pub(super) struct Nfa<B: Bits> {
     fire: Box<[B]>,
 }
 
-/// The same automaton past `MAX_ROW_BYTES` of rows, or with a literal
-/// fan-out past `MAX_DENSE_LITS`, stepped sparsely. A position keeps its
-/// successors, not a closure row, and the active set holds
-/// states and whole positions: "every successor of `p` is entered" is
-/// one entry, whose literals are found by one binary search. A step
-/// costs what it tests, and the tables grow with the graph, not its
-/// square.
+/// The same automaton past `MAX_ROW_BYTES` of rows, with a literal
+/// fan-out past `MAX_DENSE_LITS`, or over a graph with pieces, stepped
+/// sparsely. A position keeps its successors, not a closure row, and the
+/// active set holds states and whole positions: "every successor of `p`
+/// is entered" is one entry, whose literals are found by one binary
+/// search. A step costs what it tests, and the tables grow with the
+/// graph, not its square.
 #[derive(Debug, Clone)]
 pub(super) struct SparseNfa {
     /// Positions, one per node (state `i` is position `i` is node `i`);

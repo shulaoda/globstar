@@ -662,7 +662,7 @@ impl GlueNfa {
     }
 
     /// The states of `node` from which some segment reaches an exit
-    /// that `exits_on` holds for (`node`'s own when `exit_on`), added to
+    /// that `good` holds for (`node`'s own when `exit_on`), added to
     /// `good`; whether its entry is one. Called for each node from the
     /// last back: every edge leads to a later state, so what a state
     /// leads to is known when it is reached.

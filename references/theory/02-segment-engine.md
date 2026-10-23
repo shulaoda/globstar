@@ -170,7 +170,7 @@ reach it (a group at a boundary that reads `**` holds it until the
 next token: a `/` makes it a pending `**/`, the end a bare `**`,
 anything else a star), and the empty expansions of a brace beside a
 `**` go on as a _shadow_ group while the `**` may still be a globstar
-(`{a,}**`, `**{,a}/`). Then then the chains (paths) are enumerated and the NFA tables
+(`{a,}**`, `**{,a}/`). Then the chains (paths) are enumerated and the NFA tables
 laid out. No subset construction, no byte-class tables; two hash
 maps: one lets a brace branch reuse a node another branch already
 made, one finds a group by its key past the first 16 (JS scans its

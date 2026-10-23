@@ -79,11 +79,12 @@ The implementation accordingly stores only suffix facts.
 
 ## 4. Separator-aware comparison
 
-The end-anchored comparison must respect the platform separator set `Sep` (`references/spec/GLOB_SPEC.md` §14.2): on Windows, a pattern suffix `/` should match a path-side `\`. The `ends_with` in `accept` (Rust `SegmentMatcher::ends_with`, JS `endsWithSepAware`) therefore matches a byte `b` against the suffix byte `s` as
+The end-anchored comparison must respect the platform separator set `Sep` (`references/spec/GLOB_SPEC.md` §14.2): on Windows, a pattern suffix `/` should match a path-side `\`. The `ends_with` in `accept` (Rust `bytes::ends_with_pattern`, JS `endsWithPattern`) therefore matches a byte `b` against the suffix byte `s` as
 
 ```
-b matches s   ⇔   (s ∈ Sep ⇒ b ∈ Sep) ∧
-                  (s ∉ Sep ⇒ b == s under case-folding flag)
+b matches s   ⇔   b ∈ Sep                            if s = '/'
+                  false                              if s ∈ Sep, s ≠ '/' (an escaped `\` on Windows)
+                  b == s under case-folding flag     otherwise
 ```
 
 Without this rule, `*/main.ts` (suffix `/main.ts`) would incorrectly reject `src\main.ts` on Windows.
@@ -222,12 +223,13 @@ Rust, `crates/globstar/src/engine/segment/`:
 - `facts.rs::suffixes(body)` — entry; returns the suffix list (`Box<[Bytes]>`), empty when there is no prefilter. Runs `trailing`, falls back to `suffix_set` if the single suffix is empty.
 - `facts.rs::trailing` / `facts.rs::suffix_set` — internal helpers; `MAX_SUFFIX_SET = 16`.
 - `segment/mod.rs::SegmentMatcher::prefilter(path)` — separator-aware end-anchored comparison (single suffix or set), the first step of `is_match`.
+- `bytes.rs::ends_with_pattern` (in `crates/globstar/src/`) — the separator-aware `ends_with`.
 
 JS, `packages/globstar/src/engine/segment/`:
 
 - `facts.js::suffixes(body)` — entry; returns a string array (one char per byte), empty when there is no prefilter.
 - `facts.js::trailing` / `facts.js::suffixSet` — internal helpers; `MAX_SUFFIX_SET = 16`.
-- `facts.js::endsWithSepAware` — the separator-aware `ends_with`.
+- `bytes.js::endsWithPattern` (in `packages/globstar/src/`) — the separator-aware `ends_with`.
 - `index.js::SegmentMatcher._prefilter(str)` — the check, the first step of `_isMatch`.
 
 ## 9. References
