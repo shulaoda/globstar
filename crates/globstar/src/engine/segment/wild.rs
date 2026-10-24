@@ -29,7 +29,7 @@ pub(super) struct Wild {
 }
 
 /// What an element takes through its wildcards alone (dot=true), by
-/// segment length: `match_dir`'s all-below (see `nfa.rs`).
+/// segment length: `match_dir`'s all-below (see `graph_nfa.rs`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub(super) struct Lens {
     /// Bit `L` for every segment of `L` bytes (1 ≤ L ≤ 31).
@@ -44,7 +44,7 @@ impl Lens {
 
     /// The length classes of an NFA's `k + 1` it holds every segment
     /// of, bit `c - 1` for class `c`: lengths 1 to `k` one by one, and
-    /// every longer one as `k + 1` (see `len_classes` in `nfa.rs`).
+    /// every longer one as `k + 1` (see `len_classes` in `graph_nfa.rs`).
     #[inline]
     pub(super) fn classes(self, k: u32) -> u32 {
         let from = if self.from == 0 {

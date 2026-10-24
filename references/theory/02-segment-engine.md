@@ -50,7 +50,7 @@ Compiling is one pass per layer, each linear in the pattern:
 5. **Picker**: how a union tries its chains — each after its gate
    (`chain.rs`) or only those the chain index picks
    (`chain_index.rs`) (§5).
-6. **Graph NFA** (`nfa.rs`): built unless one line serves alone (§6).
+6. **Graph NFA** (`graph_nfa.rs`): built unless one line serves alone (§6).
 
 What a call runs then depends only on what the compile kept:
 
@@ -423,7 +423,7 @@ search of their keys: a typed table costs V8 more to allocate (about
 | `engine/segment/graph.rs`       | `engine/segment/graph.js`       | the graph walk (§3)                                 |
 | `engine/segment/chain.rs`       | `engine/segment/chain.js`       | chains, gates, `match_dir` off a lone line (§4, §5) |
 | `engine/segment/chain_index.rs` | `engine/segment/chain-index.js` | the chain index (§5)                                |
-| `engine/segment/nfa.rs`         | `engine/segment/nfa.js`         | the graph NFA and the all-below search (§6)         |
+| `engine/segment/graph_nfa.rs`   | `engine/segment/graph-nfa.js`   | the graph NFA and the all-below search (§6)         |
 | `engine/segment/wild.rs`        | `engine/segment/wild.js`        | affixes, suffix sets, `Lens` (§7)                   |
 | `engine/segment/seg_nfa.rs`     | `engine/segment/seg-nfa.js`     | the in-segment NFA and the glue NFA (§7.2–7.4)      |
 | `engine/segment/facts.rs`       | `engine/segment/facts.js`       | suffix prefilter (§03), static prefixes (§04)       |

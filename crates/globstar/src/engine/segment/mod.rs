@@ -10,12 +10,13 @@
 //! The graph is linear in the pattern: every pattern compiles.
 //!
 //! `elem` holds the graph's elements, `graph` builds the graph,
-//! `chain` and `nfa` match over it, `chain_index` picks a big union's
-//! chains, `wild` (with `seg_nfa`) matches inside a segment, `seg_nfa`
-//! also across glued pieces, `facts` reads the literal facts off the
-//! AST, `bits` holds the bit sets (the NFAs', the byte sketches); the
-//! byte comparisons are `crate::bytes`. The layers, the thresholds that
-//! pick them and what each buys: `references/theory/02-segment-engine.md`.
+//! `chain` and `graph_nfa` match over it, `chain_index` picks a big
+//! union's chains, `wild` (with `seg_nfa`) matches inside a segment,
+//! `seg_nfa` also across glued pieces, `facts` reads the literal facts
+//! off the AST, `bits` holds the bit sets (the NFAs', the byte
+//! sketches); the byte comparisons are `crate::bytes`. The layers, the
+//! thresholds that pick them and what each buys:
+//! `references/theory/02-segment-engine.md`.
 
 mod bits;
 mod chain;
@@ -23,7 +24,7 @@ mod chain_index;
 mod elem;
 mod facts;
 mod graph;
-mod nfa;
+mod graph_nfa;
 mod seg_nfa;
 mod wild;
 
@@ -37,7 +38,7 @@ use chain::{Chain, Gate, Shape};
 use chain_index::ChainIndex;
 use elem::Elem;
 use graph::Graph;
-use nfa::{AnyNfa, any_nfa};
+use graph_nfa::{AnyNfa, any_nfa};
 use wild::WildKind;
 
 /// A byte string the matcher keeps: literals, affixes, suffixes,

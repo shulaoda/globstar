@@ -24,7 +24,7 @@ import {
   sparseReach1,
   coversBelow,
   coversBelowSparse,
-} from "./nfa.js";
+} from "./graph-nfa.js";
 import { computeStaticPrefixes, suffixes } from "./facts.js";
 import { R_FIRST, R_INNER, R_LAST, chainIndex, probe, probeInfix } from "./chain-index.js";
 import {

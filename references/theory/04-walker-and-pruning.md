@@ -366,11 +366,11 @@ Under `dot: true` the walker also asks `ignore.match_dir(d)` for each directory 
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `static_prefixes`                                                                   | `engine/segment/facts.rs`                                                |
 | `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                  |
-| `Nfa::match_dir`, `Nfa::covers_below`, `SegmentMatcher::chain_dir`                  | `engine/segment/nfa.rs`, `engine/segment/chain.rs`                       |
+| `Nfa::match_dir`, `Nfa::covers_below`, `SegmentMatcher::chain_dir`                  | `engine/segment/graph_nfa.rs`, `engine/segment/chain.rs`                 |
 | `DirMatch`, `DirMatch::matches`, `DirMatch::may_match_below`, `DirMatch::matches_all_below` | `dir_match.rs`                                                           |
 | Walker glue (JS)                                                                    | `packages/globstar-walk/src/walk.js::initFromPrefixes`, `processDirents` |
 
 ## 7. References
 
-- Hopcroft, J. E., Motwani, R., Ullman, J. D. _Introduction to Automata Theory, Languages, and Computation_. Reverse reachability and quotient automata are textbook material; the `reach1` mask (`engine/segment/nfa.rs`) is a direct application.
+- Hopcroft, J. E., Motwani, R., Ullman, J. D. _Introduction to Automata Theory, Languages, and Computation_. Reverse reachability and quotient automata are textbook material; the `reach1` mask (`engine/segment/graph_nfa.rs`) is a direct application.
 - The six-valued `DirMatch` is this project's own. `globset` has no directory query; `ignore`'s `Match` (none / ignore / whitelist) speaks only of the path itself; `walkdir`'s `filter_entry` takes a plain `bool` from its caller. The literature for prefix-based pruning of regular-expression search lives in index-pattern work (e.g. _Cox, R., Russ Cox's regular expression notes_) and incremental DFA matching.

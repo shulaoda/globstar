@@ -1,7 +1,7 @@
 // The NFA over the graph: one state per position, stepped once per path
 // segment. One int32 of states up to 32, a sparse step beyond; it runs
 // when the chains cannot serve, and answers `matchDir` where it is kept.
-// JS twin of `crates/globstar/src/engine/segment/nfa.rs`.
+// JS twin of `crates/globstar/src/engine/segment/graph_nfa.rs`.
 
 import {
   EL_LIT,
