@@ -1,5 +1,4 @@
 import {
-  N_CONCAT,
   N_LITERAL,
   N_SEPARATOR,
   N_GLOBSTAR,
@@ -12,6 +11,7 @@ import {
   klass,
   brace,
   concat,
+  seq,
 } from "./ast.js";
 import { GlobError, MAX_PATTERN_LEN, MAX_BRACE_NESTING } from "../error.js";
 import { utf8Latin1, utf8Length } from "../utf8.js";
@@ -42,7 +42,6 @@ export function parse(input) {
     throw new GlobError("TooLong", { len: utf8Length(input), max: MAX_PATTERN_LEN });
   }
   const bytes = utf8Latin1(input);
-  if (bytes.length === 0) throw new GlobError("Empty");
   if (bytes.length > MAX_PATTERN_LEN) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
   }
@@ -50,7 +49,7 @@ export function parse(input) {
   // Past the end `charCodeAt` is NaN, which ends the run.
   let negations = 0;
   while (bytes.charCodeAt(negations) === BANG) negations++;
-  // `!` and `!!` negate nothing (§6.1).
+  // Nothing is empty, and so are `!` and `!!`: they negate nothing (§6.1).
   if (negations === bytes.length) throw new GlobError("Empty");
 
   const state = { input: bytes, pos: negations };
@@ -125,7 +124,7 @@ function parseSequence(state, depth) {
         // One branch is no brace (§10.4): its text, braces included.
         text += "{";
         const single = branches[0];
-        for (const node of single.tag === N_CONCAT ? single.children : [single]) {
+        for (const node of seq(single)) {
           if (node.tag === N_LITERAL) text += node.str;
           else {
             flush();
@@ -201,9 +200,9 @@ function parseClass(state) {
   // range: `[]-a]` is `]..=a`.
   let first = true;
   while (true) {
-    if (state.pos >= input.length) throw new GlobError("UnterminatedClass", { at: startPos });
-    const b = input.charCodeAt(state.pos);
-    if (b === RBRACK && !first) {
+    // Past the end `charCodeAt` is NaN, and `parseClassByte` finds the
+    // class unterminated.
+    if (input.charCodeAt(state.pos) === RBRACK && !first) {
       state.pos++;
       return klass(negated, ranges);
     }

@@ -1,5 +1,3 @@
-//! Text → the AST of one pattern: the parser, with `ast` as its output.
-
 pub mod ast;
 
 use crate::error::*;
@@ -7,9 +5,6 @@ use crate::error::*;
 use ast::*;
 
 pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
-    if input.is_empty() {
-        return Err(GlobError::Empty);
-    }
     if input.len() > MAX_PATTERN_LEN {
         return Err(GlobError::TooLong {
             len: input.len(),
@@ -18,7 +13,7 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
     }
 
     let negations = input.iter().take_while(|&&b| b == b'!').count();
-    // `!` and `!!` negate nothing (§6.1).
+    // Nothing is empty, and so are `!` and `!!`: they negate nothing (§6.1).
     if negations == input.len() {
         return Err(GlobError::Empty);
     }
@@ -42,10 +37,6 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
     fn peek(&self) -> Option<u8> {
         self.input.get(self.pos).copied()
-    }
-
-    fn peek_at(&self, offset: usize) -> Option<u8> {
-        self.input.get(self.pos + offset).copied()
     }
 
     /// The sequence up to the end, or (`depth` > 0, inside that many
@@ -191,18 +182,15 @@ impl<'a> Parser<'a> {
         // a range: `[]-a]` is `]..=a`.
         let mut first = true;
         loop {
-            let b = match self.peek() {
-                Some(b) => b,
-                None => return Err(GlobError::UnterminatedClass { at: start_pos }),
-            };
-            if b == b']' && !first {
+            // At the end `parse_class_byte` finds the class unterminated.
+            if self.peek() == Some(b']') && !first {
                 self.pos += 1;
                 return Ok(CharClass { negated, ranges });
             }
             first = false;
             let range_at = self.pos;
             let low = self.parse_class_byte(start_pos)?;
-            if self.peek() == Some(b'-') && self.peek_at(1) != Some(b']') {
+            if self.peek() == Some(b'-') && self.input.get(self.pos + 1) != Some(&b']') {
                 self.pos += 1; // consume `-`
                 let high = self.parse_class_byte(start_pos)?;
                 if high < low {
