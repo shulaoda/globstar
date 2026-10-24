@@ -28,11 +28,11 @@ use super::wild::WildKind;
 /// NFA over the whole graph runs.
 const MAX_CHAINS: usize = 64;
 
-/// The literal-only paths kept as one set (a union of file names), and
-/// the bytes it may take, or four times the pattern's weight (a long
-/// literal behind crossing braces is copied once per path); past
-/// either the NFA over the whole graph runs.
-const MAX_LITERALS: usize = 4096;
+/// The literal-only paths kept as one set (a union of file names): the
+/// bytes it may take, one more per path, or four times the pattern's
+/// weight (a long literal behind crossing braces is copied once per
+/// path); past that the NFA over the whole graph runs. A set is searched
+/// once, however many paths it holds.
 const MAX_LITERAL_BYTES: usize = 64 * 1024;
 
 /// The element compares `chain_dir` spends on tail tokens; past them it
@@ -155,9 +155,9 @@ const NO_HEAD: u8 = 0;
 impl Graph {
     /// Every path through the graph as a `Chain`, in pattern order, the
     /// literal ones together as one `Shape::Set` chain first; none when
-    /// the others pass `MAX_CHAINS`, the literal ones `MAX_LITERALS` or
-    /// their bytes, a path has more than two globstars, or a brace cuts
-    /// a segment (the NFA takes those).
+    /// the others pass `MAX_CHAINS`, the literal ones `MAX_LITERAL_BYTES`,
+    /// a path has more than two globstars, or a brace cuts a segment
+    /// (the NFA takes those).
     pub(super) fn chains(&self, ci: bool) -> Box<[Chain]> {
         // A segment of glued pieces is no element a chain can compare.
         if self.glue.is_some() {
@@ -200,8 +200,7 @@ impl Graph {
                     paths.push(nodes);
                 }
                 if paths.len() > MAX_CHAINS
-                    || lit_bounds.len() > MAX_LITERALS + 1
-                    || lits.len() > MAX_LITERAL_BYTES.max(4 * self.weight)
+                    || lits.len() + lit_bounds.len() > MAX_LITERAL_BYTES.max(4 * self.weight)
                 {
                     return Box::default();
                 }

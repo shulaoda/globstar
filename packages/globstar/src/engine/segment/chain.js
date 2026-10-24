@@ -36,11 +36,11 @@ import { wildConsumes } from "./wild.js";
 // over the whole graph runs.
 const MAX_CHAINS = 64;
 
-// The literal-only paths kept as one set (a union of file names), and
-// the characters it may take, or four times the pattern's weight (a
-// long literal behind crossing braces is copied once per path); past
-// either the NFA over the whole graph runs.
-const MAX_LITERALS = 4096;
+// The literal-only paths kept as one set (a union of file names): the
+// characters it may take, one more per path, or four times the
+// pattern's weight (a long literal behind crossing braces is copied once
+// per path); past that the NFA over the whole graph runs. A set is
+// searched once, however many paths it holds.
 const MAX_LITERAL_BYTES = 64 * 1024;
 
 // `chain.globstar` when the chain has none, or is the literal paths'
@@ -62,8 +62,8 @@ const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 
 // Every path through the graph as a chain, in pattern order, the literal
 // ones together as one `SET_G` chain first; none when the others pass
-// MAX_CHAINS or the literal ones MAX_LITERALS, a path has more than two
-// globstars, or a brace cuts a segment (the NFA takes those).
+// MAX_CHAINS or the literal ones MAX_LITERAL_BYTES, a path has more than
+// two globstars, or a brace cuts a segment (the NFA takes those).
 export function chains(graph, ci) {
   // A segment of glued pieces is no element a chain can compare.
   if (graph.glue !== null) return [];
@@ -103,8 +103,7 @@ export function chains(graph, ci) {
       } else paths.push(exact(nodes));
       if (
         paths.length > MAX_CHAINS ||
-        lits.length > MAX_LITERALS ||
-        litChars > Math.max(MAX_LITERAL_BYTES, 4 * graph.weight)
+        litChars + lits.length > Math.max(MAX_LITERAL_BYTES, 4 * graph.weight)
       ) {
         return [];
       }

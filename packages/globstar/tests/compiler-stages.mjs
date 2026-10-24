@@ -143,6 +143,21 @@ const ciSet = buildEngine(
 assert.ok(ciSet.shape().includes("literals 2"), ciSet.shape());
 console.log("✓ members spelled differently fold into one");
 
+// Only a literal set's bytes are bounded, not how many paths it holds.
+// Twin of `a_union_of_many_file_names_keeps_its_literal_set` in
+// crates/globstar/tests/glob_union.rs.
+{
+  const files = Array.from({ length: 10_000 }, (_, i) => `src/m${i % 100}/f${i}.ts`);
+  const engine = buildEngine(
+    files.map((p) => parse(p)),
+    { dot: true, caseInsensitive: false },
+  );
+  assert.ok(engine.shape().includes("| literals 10000 |"), engine.shape());
+  const m = compileMatcher(files);
+  assert.ok(m.match("src/m7/f9907.ts") && !m.match("src/m7/f9908.ts"));
+}
+console.log("✓ a union of many file names keeps its literal set");
+
 // Options: booleans only, own keys only, no unknown keys, the engine
 // hook one of its two values; `undefined` keeps the default. `"false"`
 // is not a boolean and throws.

@@ -62,9 +62,9 @@ What a call runs then depends only on what the compile kept:
 
 The graph keeps no chains — and the NFA answers `is_match` too — when
 a brace cut a segment into pieces, when there are more than 64
-wildcard paths or 4,096 literal ones (or their bytes pass 64 KiB and
-four times the pattern's weight), or when a path has more than two
-globstars, or two with nothing between them.
+wildcard paths, when the literal ones take more bytes (one more per
+path) than 64 KiB and four times the pattern's weight, or when a path
+has more than two globstars, or two with nothing between them.
 
 ## 3. The graph
 
@@ -168,8 +168,8 @@ middle. A union member of this shape costs what it would alone.
 ### 4.3 The literal set
 
 The literal paths — a union of file names — are kept apart as one
-sorted set of whole paths, searched once by binary search, up to
-4,096 of them.
+sorted set of whole paths, searched once by binary search, however
+many there are: only their bytes are bounded.
 
 ### 4.4 `match_dir` off a lone line
 
@@ -350,25 +350,25 @@ Every threshold picks a representation; none rejects a pattern. The
 only limits are the parser's: 64 KiB of pattern and 32 levels of brace
 nesting.
 
-| Threshold                         | Value                                     | Past it                                  |
-| --------------------------------- | ----------------------------------------- | ---------------------------------------- |
-| copy room (`graph.rs`)            | 1 per weight, ≥ 16,384                    | segments are cut into glued pieces       |
-| wildcard chains (`MAX_CHAINS`)    | 64                                        | no chains: the NFA answers               |
-| literal paths (`MAX_LITERALS`)    | 4,096, bytes ≤ max(64 KiB, 4·weight)      | no chains: the NFA answers               |
-| gated chains (`LINEAR_CHAINS`)    | 10                                        | the chain index picks                    |
-| index keys (`key_room`)           | 1 per weight, ≥ 4,096                     | a segment gives none; a union is scanned |
-| tail compares (`MAX_TAIL_CHECKS`) | 4,096                                     | `chain_dir` gives the safe answer        |
-| `Small` NFA                       | 64 states (JS 32)                         | `Wide` (Rust) or `Sparse`                |
-| `Wide` NFA (Rust)                 | 4 KiB of rows, 48 literals per position   | `Sparse`                                 |
-| suffix product                    | 1,024 suffixes, 64 KiB or 4·nodes         | `Generic`                                |
-| suffix scan                       | 4 suffixes                                | grouped by last byte                     |
-| piece scan                        | 32 positions                              | shift-and                                |
-| kept closures                     | 128 KiB                                   | the step closes its set                  |
-| in-segment `u64`                  | 64 states (JS 32)                         | a word slice                             |
-| wildcard-only cover steps         | 64                                        | all-below: `false`                       |
-| cover sets, firings               | 64 sets, 512 firings, 64 states per state | all-below: `false`                       |
-| union merge reads                 | 16 per node, ≥ 4,096                      | the members stay apart                   |
-| suffix prefilter set (`facts.rs`) | 16 branches                               | no prefilter                             |
+| Threshold                           | Value                                     | Past it                                  |
+| ----------------------------------- | ----------------------------------------- | ---------------------------------------- |
+| copy room (`graph.rs`)              | 1 per weight, ≥ 16,384                    | segments are cut into glued pieces       |
+| wildcard chains (`MAX_CHAINS`)      | 64                                        | no chains: the NFA answers               |
+| literal paths (`MAX_LITERAL_BYTES`) | bytes + paths ≤ max(64 KiB, 4·weight)     | no chains: the NFA answers               |
+| gated chains (`LINEAR_CHAINS`)      | 10                                        | the chain index picks                    |
+| index keys (`key_room`)             | 1 per weight, ≥ 4,096                     | a segment gives none; a union is scanned |
+| tail compares (`MAX_TAIL_CHECKS`)   | 4,096                                     | `chain_dir` gives the safe answer        |
+| `Small` NFA                         | 64 states (JS 32)                         | `Wide` (Rust) or `Sparse`                |
+| `Wide` NFA (Rust)                   | 4 KiB of rows, 48 literals per position   | `Sparse`                                 |
+| suffix product                      | 1,024 suffixes, 64 KiB or 4·nodes         | `Generic`                                |
+| suffix scan                         | 4 suffixes                                | grouped by last byte                     |
+| piece scan                          | 32 positions                              | shift-and                                |
+| kept closures                       | 128 KiB                                   | the step closes its set                  |
+| in-segment `u64`                    | 64 states (JS 32)                         | a word slice                             |
+| wildcard-only cover steps           | 64                                        | all-below: `false`                       |
+| cover sets, firings                 | 64 sets, 512 firings, 64 states per state | all-below: `false`                       |
+| union merge reads                   | 16 per node, ≥ 4,096                      | the members stay apart                   |
+| suffix prefilter set (`facts.rs`)   | 16 branches                               | no prefilter                             |
 
 ## 10. What each layer buys
 

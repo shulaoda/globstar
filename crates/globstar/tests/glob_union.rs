@@ -55,6 +55,21 @@ fn a_union_at_the_chain_cap_tries_every_chain() {
 }
 
 #[test]
+fn a_union_of_many_file_names_keeps_its_literal_set() {
+    // Only the set's bytes are bounded, not how many paths it holds.
+    let members: Vec<String> = (0..10_000)
+        .map(|i| format!("src/m{}/f{i}.ts", i % 100))
+        .collect();
+    let union = Glob::union(&members).unwrap();
+    assert!(
+        union.shape().contains("| literals 10000 |"),
+        "{}",
+        union.shape()
+    );
+    assert!(union.is_match(b"src/m7/f9907.ts") && !union.is_match(b"src/m7/f9908.ts"));
+}
+
+#[test]
 fn a_union_past_the_key_room_answers_as_its_members() {
     // One member gives more keys than the room (26 per class branch): its
     // chain is found by its head, the others by their keys.
