@@ -53,15 +53,15 @@ const PROBE_ORDER = ["globstar", "globset", "fast-glob", "wax"];
 const CONFIG = {
   picomatch: {
     options: { strictSlashes: true },
-    text: "`strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3)",
+    text: "`strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §14.2)",
   },
   micromatch: {
     options: { strictSlashes: true },
-    text: "`strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3)",
+    text: "`strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §14.2)",
   },
   minimatch: {
     options: { preserveMultipleSlashes: true, optimizationLevel: 0 },
-    text: "`preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §12.3); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1)",
+    text: "`preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §14.2); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1)",
   },
   globset: {
     options: {},

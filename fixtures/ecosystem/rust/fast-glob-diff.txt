@@ -8,7 +8,7 @@
 
 ## fast-glob.diff.we-reject-UnterminatedBrace
 # A `{` that never closes (7 rows)
-# An unclosed `{` is a parse error (GLOB_SPEC §6.4); the library keeps the
+# An unclosed `{` is a parse error (GLOB_SPEC §6.1); the library keeps the
 # brace as literal text.
 # fast-glob: no-match  [tests/test.rs:1728]  (and 1 more path)
 {a,b	a	err:UnterminatedBrace

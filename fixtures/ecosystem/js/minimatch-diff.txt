@@ -3,7 +3,7 @@
 #   minimatch 10.2.6 (the Bash 1.14.7 glob-test list and its additions)
 # Answers: minimatch 10.2.6 and globstar 0.0.4, run on every case.
 # Rows without a flag run with dot=false, the library's default.
-# minimatch runs with `preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §12.3); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1).
+# minimatch runs with `preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §14.2); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1).
 # Rows where globstar and minimatch differ, by reason; each row asserts globstar's answer and
 # the comment above it gives minimatch's. Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS].
 # 1208 rows: 1037 agree (0 as a refusal), 23 disagree, 148 globstar refuses, 0 minimatch refuses.
@@ -39,7 +39,7 @@ a/[2015-03-10T00:23:08.647Z\]/z	a/b/.x/c	err:InvalidRange	dot=false
 
 ## minimatch.diff.we-reject-UnterminatedBrace
 # A `{` that never closes (30 rows)
-# An unclosed `{` is a parse error (GLOB_SPEC §6.4); the library keeps the
+# An unclosed `{` is a parse error (GLOB_SPEC §6.1); the library keeps the
 # brace as literal text.
 # minimatch: no-match  [test/patterns.js#16]  (and 14 more paths)
 /^root:/{s/^[^:]*:[^:]*:([^:]*).*$/\1/	a	err:UnterminatedBrace	dot=false
@@ -102,7 +102,7 @@ a/.*/b	a/../b	match	dot=false
 ## minimatch.diff.trailing-slash
 # A trailing `/` (4 rows)
 # A trailing `/` ends in an empty name: `a/*` matches `a/`, `a` does not match
-# `a/` (GLOB_SPEC §9.5, §12.3). The library ignores a trailing `/`, or needs
+# `a/` (GLOB_SPEC §9.5, §14.2). The library ignores a trailing `/`, or needs
 # one on both sides.
 # minimatch: no-match  [test/patterns.js#118]
 .x/**/*	.x/	match	dot=false

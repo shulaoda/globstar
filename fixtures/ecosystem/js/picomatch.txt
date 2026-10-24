@@ -3,7 +3,7 @@
 #   picomatch 4.0.7 (what tinyglobby matches with)
 # Answers: picomatch 4.0.7 and globstar 0.0.4, run on every case.
 # Rows without a flag run with dot=false, the library's default.
-# picomatch runs with `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3).
+# picomatch runs with `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §14.2).
 # Rows where globstar and picomatch agree (both answers, or both refusing the pattern).
 # Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]; see fixtures/corpus/README.md.
 # 4216 rows: 3891 agree (1 as a refusal), 318 disagree, 7 globstar refuses, 0 picomatch refuses.

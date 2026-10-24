@@ -30,9 +30,9 @@ tests the other behavior and is not.
 
 | Library | Runs with |
 | --- | --- |
-| picomatch | `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3) |
-| micromatch | `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3) |
-| minimatch | `preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §12.3); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1) |
+| picomatch | `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §14.2) |
+| micromatch | `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §14.2) |
+| minimatch | `preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §14.2); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1) |
 | globset | `literal_separator(true)`: `*` stops at `/` (GLOB_SPEC §9.1); `backslash_escape(true)`: `\` escapes (§4); `empty_alternates(true)`: an empty branch is a branch (§6.1) |
 | fast-glob | no options |
 | wax | no options |

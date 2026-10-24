@@ -3,7 +3,7 @@
 #   minimatch 10.2.6 (the Bash 1.14.7 glob-test list and its additions)
 # Answers: minimatch 10.2.6 and globstar 0.0.4, run on every case.
 # Rows without a flag run with dot=false, the library's default.
-# minimatch runs with `preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §12.3); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1).
+# minimatch runs with `preserveMultipleSlashes: true`: `//` is two boundaries (GLOB_SPEC §14.2); `optimizationLevel: 0`: `.` and `..` are plain names (§3.1).
 # Rows where globstar and minimatch agree (both answers, or both refusing the pattern).
 # Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]; see fixtures/corpus/README.md.
 # 1208 rows: 1037 agree (0 as a refusal), 23 disagree, 148 globstar refuses, 0 minimatch refuses.

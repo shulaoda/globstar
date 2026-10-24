@@ -19,7 +19,7 @@ const REJECTS = {
   UnterminatedBrace: {
     title: "A `{` that never closes",
     text:
-      `An unclosed \`{\` is a parse error (${SPEC} §6.4); the library keeps the brace as ` +
+      `An unclosed \`{\` is a parse error (${SPEC} §6.1); the library keeps the brace as ` +
       "literal text.",
   },
   InvalidRange: {
@@ -197,7 +197,7 @@ const DISAGREE = [
     title: "Two separators in a row",
     when: (p, path) => p.includes("//") || path.includes("//"),
     text:
-      `\`//\` is two boundaries with an empty name between them (${SPEC} §12.3); a pattern \`/\` ` +
+      `\`//\` is two boundaries with an empty name between them (${SPEC} §14.2); a pattern \`/\` ` +
       "matches one separator. The library folds repeated separators.",
   },
   {
@@ -206,7 +206,7 @@ const DISAGREE = [
     when: (p, path) => path.endsWith("/") || p.endsWith("/"),
     text:
       `A trailing \`/\` ends in an empty name: \`a/*\` matches \`a/\`, \`a\` does not match \`a/\` ` +
-      `(${SPEC} §9.5, §12.3). The library ignores a trailing \`/\`, or needs one on both sides.`,
+      `(${SPEC} §9.5, §14.2). The library ignores a trailing \`/\`, or needs one on both sides.`,
   },
   {
     id: "dotfile",

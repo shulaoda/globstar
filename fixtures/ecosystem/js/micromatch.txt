@@ -3,7 +3,7 @@
 #   micromatch 4.0.8 (picomatch 2 inside; what fast-glob (npm) and globby match with)
 # Answers: micromatch 4.0.8 and globstar 0.0.4, run on every case.
 # Rows without a flag run with dot=false, the library's default.
-# micromatch runs with `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §12.3).
+# micromatch runs with `strictSlashes: true`: a trailing `/` is a boundary and `a/**` does not match `a` (GLOB_SPEC §9.5, §14.2).
 # Rows where globstar and micromatch agree (both answers, or both refusing the pattern).
 # Format: PATTERN<TAB>PATH<TAB>EXPECTED[<TAB>FLAGS]; see fixtures/corpus/README.md.
 # 2406 rows: 2146 agree (5 as a refusal), 178 disagree, 82 globstar refuses, 0 micromatch refuses.
