@@ -1,0 +1,23 @@
+crates/globstar/tests/glob.rs
+  s_43b9a5518ea7f8::t_045c35c042311b 110,203
+packages/globstar/tests/dir-match.mjs
+  s_43b9a5518ea7f8::t_2af5420c6f1c72 88
+packages/globstar/tests/large.mjs
+  s_43b9a5518ea7f8::t_4307342fee261a 505
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3001868073a173fa4e06b4e25dadd4421006d844",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
