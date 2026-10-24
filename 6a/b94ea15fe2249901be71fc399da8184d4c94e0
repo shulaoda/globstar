@@ -1,0 +1,43 @@
+BENCHMARKS.md
+  s_43b9a5518ea7f8::t_9a1a45051c9995 3,137-143,149-155,161-167,173-179,190,199-210,216-227,233-244,250-261,273-278,284-289
+crates/globstar/src/engine/segment/chain.rs
+  s_43b9a5518ea7f8::t_9fa6521979fbd2 305,424
+crates/globstar/src/engine/segment/mod.rs
+  s_43b9a5518ea7f8::t_2ce32408aca61e 14-17,28,155
+crates/globstar/src/engine/segment/pieces.rs
+  s_43b9a5518ea7f8::t_ecadf79e8b2765 1-415
+crates/globstar/src/engine/segment/seg_nfa.rs
+  s_43b9a5518ea7f8::t_5977c94b0a07b6 134-135,142,179,183
+crates/globstar/src/engine/segment/wild.rs
+  s_43b9a5518ea7f8::t_75f4a4e9d471d8 9,74,105-110,285,287,411-417
+fixtures/engine-shapes.tsv
+  s_43b9a5518ea7f8::t_bb03f1a8e771c2 15,45-46,48
+packages/globstar/src/engine/segment/elem.js
+  s_43b9a5518ea7f8::t_a0fa4621b5d6db 29
+packages/globstar/src/engine/segment/index.js
+  s_43b9a5518ea7f8::t_c4354749b0652e 39,88
+packages/globstar/src/engine/segment/pieces.js
+  s_43b9a5518ea7f8::t_67ea697d9f0606 1-235
+packages/globstar/src/engine/segment/seg-nfa.js
+  s_43b9a5518ea7f8::t_a0f524539d9197 60,75,98-99
+packages/globstar/src/engine/segment/wild.js
+  s_43b9a5518ea7f8::t_62721c0e33d81e 8-9,39-40,62,64-68,114,120,194-195,237-249,251
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_17baf5c39f7521 47,258-259,275-291,309,314-315,319,365,390,431-432,447-448
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6ab94ea15fe2249901be71fc399da8184d4c94e0",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
