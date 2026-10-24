@@ -15,10 +15,11 @@ use std::cmp::Ordering;
 use crate::bytes::{cmp_folded, fold, is_sep, seg_end, seg_start};
 use crate::dir_match::DirMatch;
 
+use super::SegmentMatcher;
 use super::chain_index::{ChainIndex, Role};
+use super::elem::Elem;
 use super::graph::{ACCEPT, Graph};
 use super::wild::{ByteSketch, WildKind};
-use super::{Elem, SegmentMatcher};
 
 // ── the chains ──────────────────────────────────────────────────────────
 

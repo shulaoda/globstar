@@ -10,8 +10,8 @@
 use crate::bytes::{fold, seg_end, seg_start};
 use crate::parse::ast::Node;
 
-use super::Elem;
 use super::chain::{Chain, Shape};
+use super::elem::Elem;
 use super::graph::Graph;
 
 /// A union of at most this many chains (the literal set aside) tries

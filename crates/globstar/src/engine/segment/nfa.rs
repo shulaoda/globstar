@@ -8,11 +8,12 @@ use std::collections::HashSet;
 use crate::bytes::{cmp_folded, seg_end};
 use crate::dir_match::DirMatch;
 
+use super::SegmentMatcher;
 use super::bits::{Bits, Wide};
+use super::elem::{Elem, INNER};
 use super::graph::{ACCEPT, Edges};
 use super::seg_nfa::GlueNfa;
 use super::wild::Lens;
-use super::{Elem, INNER, SegmentMatcher};
 
 /// The wildcard-only segments `covers_below` feeds before it gives up:
 /// a pattern needs about one more than its longest run of them, and

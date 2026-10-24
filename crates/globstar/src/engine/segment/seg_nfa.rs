@@ -13,9 +13,9 @@
 use crate::parse::ast::{CharClass, Node};
 
 use super::bits::{Bits, Wide};
+use super::elem::{Elem, INNER, NEVER};
 use super::graph::{ACCEPT, Edges};
 use super::wild::{Lens, Wild, WildKind};
-use super::{Elem, INNER, NEVER};
 
 const UNSET: u32 = u32::MAX;
 

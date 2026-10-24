@@ -28,10 +28,11 @@ use std::hash::{BuildHasherDefault, Hash, Hasher};
 use crate::bytes::has_escaped_sep;
 use crate::parse::ast::Node;
 
+use super::Bytes;
 use super::chain_index::{KeyScratch, LINEAR_CHAINS, SegKeys, key_room, segment_keys};
+use super::elem::{Elem, NEVER};
 use super::seg_nfa::GlueNfa;
 use super::wild::{Affix, Wild, WildKind, compile_wild, concat_lits};
-use super::{Bytes, Elem, NEVER};
 
 /// Successor marker for "the pattern ends here".
 pub(super) const ACCEPT: u32 = u32::MAX;

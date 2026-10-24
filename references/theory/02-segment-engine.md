@@ -419,6 +419,7 @@ search of their keys: a typed table costs V8 more to allocate (about
 | Rust (`crates/globstar/src/`)   | JS (`packages/globstar/src/`)   | Role                                                |
 | ------------------------------- | ------------------------------- | --------------------------------------------------- |
 | `engine/segment/mod.rs`         | `engine/segment/index.js`       | the matcher: build, what a call runs (§2)           |
+| `engine/segment/elem.rs`        | `engine/segment/elem.js`        | the elements (§1)                                   |
 | `engine/segment/graph.rs`       | `engine/segment/graph.js`       | the graph walk (§3)                                 |
 | `engine/segment/chain.rs`       | `engine/segment/chain.js`       | chains, gates, `match_dir` off a lone line (§4, §5) |
 | `engine/segment/chain_index.rs` | `engine/segment/chain-index.js` | the chain index (§5)                                |

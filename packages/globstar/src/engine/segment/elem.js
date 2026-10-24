@@ -1,6 +1,6 @@
 // The segment graph's vocabulary, shared by the compiler, the matcher
-// and the executor. JS twin of the enums in
-// `crates/globstar/src/engine/segment/{mod,wild,nfa}.rs`.
+// and the executor. JS twin of `crates/globstar/src/engine/segment/
+// elem.rs` and of the kinds in `{wild,nfa}.rs`.
 
 // Element kinds.
 export const EL_LIT = 0;
