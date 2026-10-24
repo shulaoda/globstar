@@ -26,6 +26,7 @@ export const nullable = (e) => e.kind === EL_G0 || e.kind === EL_JOIN;
 export const WK_AFFIX = 0;
 export const WK_SUFFIXES = 1;
 export const WK_GENERIC = 2;
+export const WK_PIECES = 3;
 
 // Graph NFA kinds: dense int32 rows, sparse.
 export const NFA_SMALL = 0;

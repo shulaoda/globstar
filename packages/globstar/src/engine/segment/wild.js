@@ -5,7 +5,8 @@
 import { N_ANYCHAR, N_BRACE, N_LITERAL, N_STAR, seq } from "../../parse/ast.js";
 import { affixEq } from "../../bytes.js";
 import { flat, isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
-import { WK_AFFIX, WK_SUFFIXES, WK_GENERIC, exact } from "./elem.js";
+import { WK_AFFIX, WK_SUFFIXES, WK_GENERIC, WK_PIECES, exact } from "./elem.js";
+import { compilePieces } from "./pieces.js";
 import { compileSegNfa } from "./seg-nfa.js";
 
 // ── compiling ───────────────────────────────────────────────────────
@@ -35,7 +36,8 @@ export function makeWild(kind, fields) {
     variable: fields.variable ?? true,
     dotProtect: fields.dotProtect ?? false,
     anychars: fields.anychars ?? 0,
-    nfa: fields.nfa ?? null,
+    // The pieces (WK_PIECES) or the in-segment NFA (WK_GENERIC).
+    matcher: fields.matcher ?? null,
     // Its wildcards alone match every non-empty segment (`*`, `?*`,
     // `{a,*}`); drives `matchDir`'s all-below bit.
     anySeg: fields.anySeg ?? false,
@@ -57,9 +59,13 @@ export function compileWild(nodes, dot, ci) {
   }
   // A literal product after the wildcards (one empty suffix when nothing
   // follows them) keeps the segment anchored at both ends; anything else
-  // runs the NFA.
+  // is pieces, or with a brace runs the NFA.
   const suffixes = suffixProduct(nodes, idx);
-  if (suffixes === null) return makeWild(WK_GENERIC, compileSegNfa(nodes, dot, ci));
+  if (suffixes === null) {
+    const pieces = compilePieces(nodes, dot, ci);
+    if (pieces !== null) return makeWild(WK_PIECES, pieces);
+    return makeWild(WK_GENERIC, compileSegNfa(nodes, dot, ci));
+  }
   const fields = {
     prefixStr: prefix,
     minLen: prefix.length + anychars,
@@ -105,13 +111,13 @@ export function compileWild(nodes, dot, ci) {
 // nothing literal around them (a suffix that may be empty) take every
 // segment of a length.
 export function wildLenBits(w) {
-  if (w.kind === WK_GENERIC) return w.nfa.lenBits;
+  if (w.kind === WK_GENERIC) return w.matcher.lenBits;
   if (w.variable || !bare(w) || w.minLen < 1 || w.minLen > 31) return 0;
   return 1 << w.minLen;
 }
 
 export function wildLenFrom(w) {
-  if (w.kind === WK_GENERIC) return w.nfa.lenFrom;
+  if (w.kind === WK_GENERIC) return w.matcher.lenFrom;
   if (!w.variable || !bare(w)) return 0;
   const from = Math.max(w.minLen, 1);
   return from <= 32 ? from : 0;
@@ -185,8 +191,8 @@ function suffixProduct(nodes, from) {
 
 // On a path string (not `m.byteOnly`: the pattern is ASCII) the
 // literal parts compare as they are; `?` counts UTF-8 bytes, so the
-// length rules read the segment's UTF-8 length, and an in-segment NFA
-// that counts runs on the segment's bytes.
+// length rules read the segment's UTF-8 length, and pieces or an
+// in-segment NFA that count run on the segment's bytes.
 export function wildConsumes(m, w, str, s, t) {
   if (w.dotProtect && t > s && str.charCodeAt(s) === 0x2e) return false;
   const ci = m.ci;
@@ -228,8 +234,21 @@ export function wildConsumes(m, w, str, s, t) {
       }
       return false;
     }
+    case WK_PIECES: {
+      let at = str;
+      let from = s;
+      let to = t;
+      if (w.matcher.countsBytes && !m.byteOnly && !isAscii(str, s, t)) {
+        at = utf8Latin1(str.slice(s, t));
+        from = 0;
+        to = at.length;
+      }
+      const n = to - from;
+      if (n < w.minLen || (!w.variable && n !== w.minLen)) return false;
+      return w.matcher.matches(at, from, to, ci);
+    }
     default: {
-      const nfa = w.nfa;
+      const nfa = w.matcher;
       if (nfa.countsBytes && !m.byteOnly && !isAscii(str, s, t)) {
         const b = utf8Latin1(str.slice(s, t));
         return nfa.matches(b, 0, b.length);

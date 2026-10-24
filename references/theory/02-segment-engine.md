@@ -44,7 +44,7 @@ Compiling is one pass per layer, each linear in the pattern:
 3. **Graph walk** (`graph.rs`): the AST to the element graph (§3).
    Each closed segment is compiled to its element (`wild.rs`, §7); the
    segments a brace cuts into pieces become one `GlueNfa`
-   (`seg_nfa.rs`, §7.4).
+   (`seg_nfa.rs`, §7.5).
 4. **Chains** (`chain.rs`): the paths through the graph, while they
    are few and simple (§4).
 5. **Picker**: how a union tries its chains — each after its gate
@@ -255,7 +255,8 @@ first kind that holds it:
 | ---------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `Affix`    | literal, a run of `*`/`?`, literal (or any part empty): `*.ts`, `a?b`                               | length bounds and two anchored compares                         |
 | `Suffixes` | literal, a run of `*`/`?`, then an all-literal alternation: `*.{ts,tsx}`, a factored union of names | the prefix, then the suffixes that end as the segment does      |
-| `Generic`  | anything else: classes, braces with wildcards, several runs                                         | a bit-parallel Thompson NFA over the segment's nodes (`SegNfa`) |
+| `Pieces`   | literals, `?`s and classes between `*`s, no brace: `a*b*c`, `n*d[k-m]e?txt`                         | the pieces the `*`s cut, each at its leftmost place             |
+| `Generic`  | anything else: a brace around wildcards or classes, a product past its cap                          | a bit-parallel Thompson NFA over the segment's nodes (`SegNfa`) |
 
 A segment holding an escaped `\` on Windows takes no path segment
 (GLOB_SPEC §4.2): it is kept as an `Affix` that wants more bytes than
@@ -271,7 +272,23 @@ last byte, so a segment is compared only with the few that end as it
 does, in pattern order; four or fewer are scanned after a sketch of
 their last bytes.
 
-### 7.2 The in-segment NFA
+### 7.2 Pieces
+
+A brace-free segment is the pieces its `*`s cut, each of a fixed
+length, a byte, `?` or class per position (a class named once, however
+often it stands). The first piece is compared at the segment's start,
+the last at its end, last position first, and each one between is
+found at its leftmost place after the one before: that leaves the most
+room to the rest, so no match is missed, and the search never goes
+back. A piece of up to 32 positions is tried at each place in turn; a
+longer one is found by shift-and, its tables a mask per class of bytes
+the piece's positions take alike (at most 256, mostly a few), so a
+segment costs O(n·m/64) at worst (JS: 32-bit words). What the graph
+reads off it is what the NFA's would be: `NEVER` when a class takes no
+byte, and dot-protected unless it starts with a literal `.` or a
+positive class listing it.
+
+### 7.3 The in-segment NFA
 
 One state per node: a literal byte, a class (a 256-bit set, negation
 and separators applied), an any-byte state — a `?` moves on, a `*` is
@@ -289,16 +306,17 @@ segment drops `*`, `?` and negated classes and passes no `*`. When no
 state of that closure takes a `.`, the whole segment is
 dot-protected: a dot-led segment is refused before the NFA runs.
 
-### 7.3 What wildcards alone take
+### 7.4 What wildcards alone take
 
 For `match_dir`'s all-below, each element knows the lengths whose
 every segment its wildcards alone take (`Lens`: bits for 1 to 31, and
 every length from some L ≤ 32 on). An affix or a suffix set reads them
-off its shape; the in-segment NFA finds them in one pass over its
+off its shape, pieces have none (a literal or class stands in each);
+the in-segment NFA finds them in one pass over its
 states in order, since every edge but a star's loop points to a later
 state. `any_seg` is the case "every non-empty segment".
 
-### 7.4 Glued pieces
+### 7.5 Glued pieces
 
 One more NFA of the same states holds every glued piece of the graph
 (`GlueNfa`): a piece's states, then a fan of ε-edges to the pieces
@@ -344,6 +362,7 @@ nesting.
 | `Wide` NFA (Rust)                 | 4 KiB of rows, 48 literals per position   | `Sparse`                                 |
 | suffix product                    | 1,024 suffixes, 64 KiB or 4·nodes         | `Generic`                                |
 | suffix scan                       | 4 suffixes                                | grouped by last byte                     |
+| piece scan                        | 32 positions                              | shift-and                                |
 | kept closures                     | 128 KiB                                   | the step closes its set                  |
 | in-segment `u64`                  | 64 states (JS 32)                         | a word slice                             |
 | wildcard-only cover steps         | 64                                        | all-below: `false`                       |
@@ -368,7 +387,7 @@ ratios are off / on, on the rows the change moves most.
 | `match_dir` off a lone line (§4.4) | an NFA for single patterns too    | `match_dir` 2.0–2.8×, memory 1.17–1.47×, build 1.04–1.27×                                       |
 | dense graph NFAs (§6)              | `Sparse` for every graph          | union `match_dir` 1.3× (global-586) to 6.3× (mixed-roots)                                       |
 | suffix sets (§7.1)                 | `Generic` for every alternation   | `*.{ts,tsx,js,jsx}` 2.0×; global-586 `is_match` 42×, memory 3.7×                                |
-| kept closures (§7.2)               | the closing step                  | class-anychar `is_match` 1.8×                                                                   |
+| kept closures (§7.3)               | the closing step                  | class-anychar `is_match` 1.8× (an NFA then; pieces since, §7.2)                                 |
 
 Every one of them pays for itself somewhere, by at least a quarter.
 
@@ -409,8 +428,8 @@ string↔byte equivalence is fuzzed by
 
 Where the twins differ, it is in representation only: JS bit sets are
 int32 words, so its small graph NFA and small in-segment NFA hold 32
-states; it has no `Wide` graph NFA (a graph past 32 states is sparse);
-and it finds a suffix group, however few the suffixes, by a binary
+states and its shift-and 32 positions a word; it has no `Wide` graph
+NFA (a graph past 32 states is sparse); and it finds a suffix group, however few the suffixes, by a binary
 search of their keys: a typed table costs V8 more to allocate (about
 200 ns) than the search saves.
 
@@ -425,7 +444,8 @@ search of their keys: a typed table costs V8 more to allocate (about
 | `engine/segment/chain_index.rs` | `engine/segment/chain-index.js` | the chain index (§5)                                |
 | `engine/segment/graph_nfa.rs`   | `engine/segment/graph-nfa.js`   | the graph NFA and the all-below search (§6)         |
 | `engine/segment/wild.rs`        | `engine/segment/wild.js`        | affixes, suffix sets, `Lens` (§7)                   |
-| `engine/segment/seg_nfa.rs`     | `engine/segment/seg-nfa.js`     | the in-segment NFA and the glue NFA (§7.2–7.4)      |
+| `engine/segment/pieces.rs`      | `engine/segment/pieces.js`      | pieces (§7.2)                                       |
+| `engine/segment/seg_nfa.rs`     | `engine/segment/seg-nfa.js`     | the in-segment NFA and the glue NFA (§7.3–7.5)      |
 | `engine/segment/facts.rs`       | `engine/segment/facts.js`       | suffix prefilter (§03), static prefixes (§04)       |
 | `engine/segment/bits.rs`        | `engine/segment/bits.js`        | bit sets; in Rust, the byte sketch too              |
 | `union.rs`                      | `union.js`                      | factoring a union's members (§8)                    |

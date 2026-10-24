@@ -6,6 +6,7 @@ use crate::bytes::{affix_eq, fold};
 use crate::parse::ast::Node;
 
 use super::bits::ByteSketch;
+use super::pieces::Pieces;
 use super::seg_nfa::SegNfa;
 use super::{Bytes, SegmentMatcher};
 
@@ -70,6 +71,7 @@ impl Wild {
         let bare = match &self.kind {
             WildKind::Affix(affix) => affix.bytes.is_empty(),
             WildKind::Suffixes(set) => set.prefix.is_empty() && set.empty,
+            WildKind::Pieces(_) => false,
             WildKind::Generic(nfa) => return nfa.lens(),
         };
         if !bare {
@@ -100,7 +102,12 @@ pub(super) enum WildKind {
     /// `lit (*|?)+ {lit,…}` (`*.{ts,tsx}`, a factored union of names):
     /// the prefix, then one suffix out of a set.
     Suffixes(Box<SuffixSet>),
-    /// Everything else: a mini Thompson NFA over the in-segment nodes.
+    /// Literals, `?`s and classes between `*`s, no brace
+    /// (`a*b*c`, `n*d[k-m]e?txt`): the pieces the `*`s cut, each at its
+    /// leftmost place.
+    Pieces(Box<Pieces>),
+    /// Everything else (a brace around wildcards, classes or a product
+    /// past its cap): a mini Thompson NFA over the in-segment nodes.
     Generic(Box<SegNfa>),
 }
 
@@ -275,9 +282,9 @@ pub(super) fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
     }
     // A literal product after the wildcards (one empty suffix when
     // nothing follows them) keeps the segment anchored at both ends;
-    // anything else runs the NFA.
+    // anything else is pieces, or with a brace runs the NFA.
     let Some(mut suffixes) = suffix_product(&nodes[idx..]) else {
-        return SegNfa::wild(nodes, dot, ci);
+        return Pieces::wild(nodes, dot, ci).unwrap_or_else(|| SegNfa::wild(nodes, dot, ci));
     };
     let dot_protect = !dot && prefix.is_empty() && (has_star || anychars > 0);
     // `*` or `?*` with nothing literal around it, up to a suffix that
@@ -400,6 +407,13 @@ impl SegmentMatcher {
                 }
                 (set.empty && (w.variable || room == 0))
                     || set.ends(seg, room, w.variable, self.case_insensitive)
+            }
+            WildKind::Pieces(pieces) => {
+                let need = w.min_len as usize;
+                if len < need || (!w.variable && len != need) {
+                    return false;
+                }
+                pieces.matches(seg, self.case_insensitive)
             }
             WildKind::Generic(nfa) => nfa.matches(seg),
         }

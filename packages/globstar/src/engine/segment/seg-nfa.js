@@ -57,7 +57,7 @@ export function compileSegNfa(nodes, dot, ci) {
   nfa.lenBits = lens.bits;
   nfa.lenFrom = lens.from;
   return {
-    nfa,
+    matcher: nfa,
     minLen: satisfiable(b, entry) ? 0 : NEVER_LEN,
     dotProtect: !dot && wildLed(b, nfa.initDotBlocked, test),
     // Does it accept every non-empty segment through its wildcards
@@ -72,7 +72,7 @@ export function compileSegNfa(nodes, dot, ci) {
 // protection, where a negated class counts as a wildcard.
 // Case-insensitively (`ci`) a listed ASCII letter lists its other case
 // too, before the negation (§13).
-function byteSet(cls, ci) {
+export function byteSet(cls, ci) {
   const bits = [0, 0, 0, 0, 0, 0, 0, 0];
   // A word at a time: a class costs its ranges, not the bytes they span.
   for (const { lo, hi } of cls.ranges) {
@@ -95,8 +95,8 @@ function byteSet(cls, ci) {
   return { neg: cls.neg, bits };
 }
 
-const setHas = (set, c) => ((set.bits[c >> 5] >>> (c & 31)) & 1) === 1;
-const setEmpty = (set) => set.bits.every((w) => w === 0);
+export const setHas = (set, c) => ((set.bits[c >> 5] >>> (c & 31)) & 1) === 1;
+export const setEmpty = (set) => set.bits.every((w) => w === 0);
 
 // A letter as the class of both its cases, or null. (Its own function:
 // `litState` stays small enough to inline into the build loop.)

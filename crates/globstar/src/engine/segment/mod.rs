@@ -11,10 +11,10 @@
 //!
 //! `elem` holds the graph's elements, `graph` builds the graph,
 //! `chain` and `graph_nfa` match over it, `chain_index` picks a big
-//! union's chains, `wild` (with `seg_nfa`) matches inside a segment,
-//! `seg_nfa` also across glued pieces, `facts` reads the literal facts
-//! off the AST, `bits` holds the bit sets (the NFAs', the byte
-//! sketches); the byte comparisons are `crate::bytes`. The layers, the
+//! union's chains, `wild` (with `pieces` and `seg_nfa`) matches inside
+//! a segment, `seg_nfa` also across glued pieces, `facts` reads the
+//! literal facts off the AST, `bits` holds the bit sets (the NFAs', the
+//! byte sketches); the byte comparisons are `crate::bytes`. The layers, the
 //! thresholds that pick them and what each buys:
 //! `references/theory/02-segment-engine.md`.
 
@@ -25,6 +25,7 @@ mod elem;
 mod facts;
 mod graph;
 mod graph_nfa;
+mod pieces;
 mod seg_nfa;
 mod wild;
 
@@ -151,6 +152,7 @@ impl SegmentMatcher {
                 Elem::Wild(w) => match w.kind {
                     WildKind::Affix(_) => "W:affix",
                     WildKind::Suffixes(_) => "W:set",
+                    WildKind::Pieces(_) => "W:pieces",
                     WildKind::Generic(_) => "W:nfa",
                 },
                 Elem::G0 => "G0",

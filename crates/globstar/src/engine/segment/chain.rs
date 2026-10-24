@@ -302,7 +302,7 @@ impl Chain {
                     ByteSketch::of_last_bytes(std::iter::once(affix.parts().1), ci)
                 }
                 WildKind::Suffixes(set) => set.last,
-                WildKind::Generic(_) => ByteSketch::ALL,
+                WildKind::Pieces(_) | WildKind::Generic(_) => ByteSketch::ALL,
             },
             _ => ByteSketch::ALL,
         };
@@ -421,7 +421,7 @@ impl SegmentMatcher {
                         && self.affix_eq(prefix, &path[start..start + prefix.len()])
                 }
             },
-            WildKind::Suffixes(_) | WildKind::Generic(_) => true,
+            WildKind::Suffixes(_) | WildKind::Pieces(_) | WildKind::Generic(_) => true,
         }
     }
 

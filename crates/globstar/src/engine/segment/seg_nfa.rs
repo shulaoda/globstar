@@ -131,15 +131,15 @@ impl SegNfa {
 /// the class lists. `negated` stays for dot protection, where a negated
 /// class counts as a wildcard.
 #[derive(Debug, Clone)]
-struct ByteSet {
-    bits: [u64; 4],
+pub(super) struct ByteSet {
+    pub(super) bits: [u64; 4],
     negated: bool,
 }
 
 impl ByteSet {
     /// Case-insensitively (`ci`) a listed ASCII letter lists its other
     /// case too, before the negation (§13).
-    fn of(cls: &CharClass, ci: bool) -> Self {
+    pub(super) fn of(cls: &CharClass, ci: bool) -> Self {
         let mut set = ByteSet {
             bits: [0; 4],
             negated: cls.negated,
@@ -176,11 +176,11 @@ impl ByteSet {
     }
 
     #[inline]
-    fn has(&self, b: u8) -> bool {
+    pub(super) fn has(&self, b: u8) -> bool {
         self.bits[usize::from(b >> 6)] >> (b & 63) & 1 != 0
     }
 
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.bits == [0; 4]
     }
 }

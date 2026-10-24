@@ -36,6 +36,7 @@ import {
   EL_JOIN,
   EL_PIECE,
   WK_AFFIX,
+  WK_PIECES,
   WK_SUFFIXES,
   exact,
 } from "./elem.js";
@@ -84,6 +85,7 @@ export class SegmentMatcher {
       if (e.kind === EL_WILD) {
         const k = e.wild.kind;
         if (k === WK_AFFIX) return "W:affix";
+        if (k === WK_PIECES) return "W:pieces";
         return k === WK_SUFFIXES ? "W:set" : "W:nfa";
       }
       if (e.kind === EL_JOIN) return "J";
