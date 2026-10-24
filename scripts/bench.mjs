@@ -2,9 +2,9 @@
 // One-click benchmark runner.
 //
 // Compares globstar (default public API) against the dominant
-// ecosystem libraries in four tables (build / build + first non-match /
-// match / memory) for both single-pattern and multi-pattern matchers,
-// plus end-to-end walker timings. Rust + JS columns are merged into
+// ecosystem libraries in five tables (build / build + first non-match /
+// match / memory / peak memory) for both single-pattern and
+// multi-pattern matchers, plus end-to-end walker timings. Rust + JS columns are merged into
 // single tables so rows can be read across runtimes.
 //
 //   node scripts/bench.mjs              # full run (~5 min on Apple Silicon)
@@ -200,31 +200,26 @@ if (!SKIP_RUST) {
       "--quick",
     ]),
   );
-  rust.singleMem = parseTable(
-    // Through cargo, so a CARGO_TARGET_DIR build is the one that runs.
-    step("rust single memory", "cargo", [
-      "run",
-      "--release",
-      "--quiet",
-      "-p",
-      "memory-check",
-      "--bin",
-      "matcher-single-memory",
-    ]),
-    "Pattern",
-  );
-  rust.multiMem = parseTable(
-    step("rust multi memory", "cargo", [
-      "run",
-      "--release",
-      "--quiet",
-      "-p",
-      "memory-check",
-      "--bin",
-      "matcher-multi-memory",
-    ]),
-    "Pattern set",
-  );
+  // Through cargo, so a CARGO_TARGET_DIR build is the one that runs.
+  const memory = (name, bin, hint, ...flags) =>
+    parseTable(
+      step(name, "cargo", [
+        "run",
+        "--release",
+        "--quiet",
+        "-p",
+        "memory-check",
+        "--bin",
+        bin,
+        "--",
+        ...flags,
+      ]),
+      hint,
+    );
+  rust.singleMem = memory("rust single memory", "matcher-single-memory", "Pattern");
+  rust.singlePeak = memory("rust single peak", "matcher-single-memory", "Pattern", "--peak");
+  rust.multiMem = memory("rust multi memory", "matcher-multi-memory", "Pattern set");
+  rust.multiPeak = memory("rust multi peak", "matcher-multi-memory", "Pattern set", "--peak");
 }
 
 if (!SKIP_JS) {
@@ -241,6 +236,23 @@ if (!SKIP_JS) {
   ]);
   js.matcherMulti = parseMitata(jsMultiRaw);
   js.multiMem = parseTable(jsMultiRaw, "Pattern set");
+
+  // Peak memory in a process of its own, whose young generation holds a
+  // whole build so that no GC runs inside one: the timings above run
+  // with V8's defaults.
+  const peak = (name, bench, hint) =>
+    parseTable(
+      step(name, "node", [
+        "--expose-gc",
+        "--min-semi-space-size=64",
+        "--max-semi-space-size=64",
+        bench,
+        "--peak",
+      ]),
+      hint,
+    );
+  js.singlePeak = peak("js single peak", "packages/bench/benches/matcher_single.js", "Pattern  ");
+  js.multiPeak = peak("js multi peak", "packages/bench/benches/matcher_multi.js", "Pattern set");
 
   js.walker = parseMitata(
     step("js walker", "node", ["--expose-gc", "packages/bench/benches/walker.js"]),
@@ -293,18 +305,19 @@ function combinedTable(rowLabelHeader, rowLabels, sources) {
 
 const empty = {};
 
-// The four matcher tables of one runtime: `data` is its criterion or
-// mitata parse, `mem` its memory table, `key(phase, label)` the group
-// key of a row, `cols` the library columns (`match` adds fast_glob on
-// the Rust side). Rust criterion times the whole path batch per iter;
+// The five matcher tables of one runtime: `data` is its criterion or
+// mitata parse, `mem` and `peak` its memory tables, `key(phase, label)`
+// the group key of a row, `cols` the library columns (`match` adds
+// fast_glob on the Rust side). Rust criterion times the whole path batch per iter;
 // `divideBy` brings it onto the per-call basis mitata reports.
-function matcherTables(data, mem, key, cols, { match = cols, divideBy } = {}) {
+function matcherTables(data, mem, peak, key, cols, { match = cols, divideBy } = {}) {
   const src = (d, rowKey, libCols, cellOpts) => ({ data: d ?? empty, rowKey, libCols, cellOpts });
   return {
     build: src(data, (l) => key("build", l), cols),
     compile: src(data, (l) => key("compile", l), cols),
     match: src(data, (l) => key("match", l), match, divideBy && { divideBy }),
     mem: src(mem, (l) => l, cols, { isMem: true }),
+    peak: src(peak, (l) => l, cols, { isMem: true }),
   };
 }
 const libCols = (runtime, names) => names.map((n) => [`${n} (${runtime})`, n]);
@@ -315,10 +328,24 @@ const rustKey = (phase, l) => `${phase}_${l}`;
 const jsKey = (phase, l) => `${phase}: ${l}`;
 const rustOpts = { match: RUST_MATCH_COLS, divideBy: PATHS.length };
 
-const rustSingle = matcherTables(rust.matcherSingle, rust.singleMem, rustKey, RUST_COLS, rustOpts);
-const jsSingle = matcherTables(js.matcherSingle, js.singleMem, jsKey, JS_COLS);
-const rustMulti = matcherTables(rust.matcherMulti, rust.multiMem, rustKey, RUST_COLS, rustOpts);
-const jsMulti = matcherTables(js.matcherMulti, js.multiMem, jsKey, JS_COLS);
+const rustSingle = matcherTables(
+  rust.matcherSingle,
+  rust.singleMem,
+  rust.singlePeak,
+  rustKey,
+  RUST_COLS,
+  rustOpts,
+);
+const jsSingle = matcherTables(js.matcherSingle, js.singleMem, js.singlePeak, jsKey, JS_COLS);
+const rustMulti = matcherTables(
+  rust.matcherMulti,
+  rust.multiMem,
+  rust.multiPeak,
+  rustKey,
+  RUST_COLS,
+  rustOpts,
+);
+const jsMulti = matcherTables(js.matcherMulti, js.multiMem, js.multiPeak, jsKey, JS_COLS);
 
 const rustWalker = {
   data: rust.walker ?? empty,
@@ -351,16 +378,16 @@ Generated by \`node scripts/bench.mjs\` on ${new Date().toISOString().slice(0, 1
   spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" }).stdout?.trim() ?? "?"
 }.
 
-Build, build + first non-match, match and memory tables for both single-
-and multi-pattern matchers, plus end-to-end walker timings. Rust and JS
-columns share each table — every row exercises the **same pattern and
-match input on both runtimes**. Numbers are means: criterion's
-estimate from a \`--quick\` run (Rust) and mitata's \`avg\` (JS). No
-spread is shown, so a gap of a few percent between two runs is noise;
-use them for relative comparison, not absolute SLOs. The Rust binaries
-are built with every function 64-byte aligned and every jump target
-32-byte aligned, so code placement does not move the shortest rows
-between builds.
+Build, build + first non-match, match, memory and peak memory tables
+for both single- and multi-pattern matchers, plus end-to-end walker
+timings. Rust and JS columns share each table — every row exercises the
+**same pattern and match input on both runtimes**. Numbers are means:
+criterion's estimate from a \`--quick\` run (Rust) and mitata's
+\`avg\` (JS). No spread is shown, so a gap of a few percent between two
+runs is noise; use them for relative comparison, not absolute SLOs. The
+Rust binaries are built with every function 64-byte aligned and every
+jump target 32-byte aligned, so code placement does not move the
+shortest rows between builds.
 
 > **Same answers.** Every library runs with \`dot: true\` (globstar's
 > default), and each bench checks before timing that all of them give
@@ -383,6 +410,17 @@ between builds.
 > shape per trial (fewer for a wide union, so the regex libraries'
 > RegExps fit V8's code space); Rust from the allocator's count around
 > the build and those matches.
+
+> **Peak memory cells** count the most one build holds at once, from
+> its start through its matches of every bench path, scratch included.
+> Rust: the allocator's high-water mark (a \`realloc\` counts as its
+> change in size). JS: the heap's growth across the build and those
+> matches, in a process whose young generation holds a whole build so
+> that no GC runs in between (checked; a trial a GC cut into runs
+> again). With nothing given back, every byte allocated counts, garbage
+> too: the most the heap reaches before a GC, an upper bound on what is
+> live at once, where Rust's is exact. Each cell is the median of 9
+> builds, the JS ones once the code is warm.
 
 > **Match cell semantics.** Rust criterion times the full ${PATHS.length}-path
 > batch per iter; JS mitata times one match call per iter. The
@@ -475,6 +513,10 @@ ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.match, jsSingle.match])}
 ### Memory (KB / matcher)
 
 ${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.mem, jsSingle.mem])}
+
+### Peak memory (KB / build)
+
+${combinedTable("Pattern", SINGLE_PATTERNS, [rustSingle.peak, jsSingle.peak])}
 `);
 
 sections.push(`## Multi-pattern matcher
@@ -494,6 +536,10 @@ ${combinedTable("Set", MULTI_SETS, [rustMulti.match, jsMulti.match])}
 ### Memory (KB / matcher)
 
 ${combinedTable("Set", MULTI_SETS, [rustMulti.mem, jsMulti.mem])}
+
+### Peak memory (KB / build)
+
+${combinedTable("Set", MULTI_SETS, [rustMulti.peak, jsMulti.peak])}
 `);
 
 sections.push(`## Walker (end-to-end)

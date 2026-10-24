@@ -21,30 +21,46 @@ unsafe impl GlobalAlloc for Counter {
         LIVE.fetch_sub(layout.size(), Relaxed);
         unsafe { System.dealloc(ptr, layout) }
     }
+    // The change in size, as the program holds one block throughout (a
+    // shrink wraps, which subtracts).
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let grow = new_size.wrapping_sub(layout.size());
+        let live = LIVE.fetch_add(grow, Relaxed).wrapping_add(grow);
+        PEAK.fetch_max(live, Relaxed);
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
 }
 
 #[global_allocator]
 static A: Counter = Counter;
 
-/// What a matcher keeps once it has matched each of `paths`: its own
-/// size and the heap it holds, as the median of `trials` builds (which
-/// dampens the allocator's noise around a boundary allocation).
-pub fn kept<T>(
+/// What a matcher keeps once it has matched each of `paths`, and the
+/// most it held at once from the start of its build through those
+/// matches: its own size and the heap, each the median of `trials`
+/// builds (which dampens the allocator's noise around a boundary
+/// allocation).
+pub fn kept_and_peak<T>(
     trials: usize,
     paths: &[&str],
     build: impl Fn() -> T,
     is_match: impl Fn(&T, &str) -> bool,
-) -> usize {
-    let mut samples: Vec<usize> = (0..trials)
+) -> (usize, usize) {
+    let (mut kept, mut peak): (Vec<usize>, Vec<usize>) = (0..trials)
         .map(|_| {
             let before = LIVE.load(Relaxed);
+            PEAK.store(before, Relaxed);
             let m = build();
             for path in paths {
                 black_box(is_match(&m, path));
             }
-            size_of_val(&m) + LIVE.load(Relaxed).saturating_sub(before)
+            let size = size_of_val(&m);
+            (
+                size + LIVE.load(Relaxed).saturating_sub(before),
+                size + PEAK.load(Relaxed) - before,
+            )
         })
-        .collect();
-    samples.sort_unstable();
-    samples[samples.len() / 2]
+        .unzip();
+    kept.sort_unstable();
+    peak.sort_unstable();
+    (kept[trials / 2], peak[trials / 2])
 }

@@ -3,6 +3,7 @@
 // `matcher_multi.js` call with their libraries.
 
 import { readFileSync } from "node:fs";
+import { GCProfiler } from "node:v8";
 import { bench, run, group, summary, do_not_optimize } from "mitata";
 
 // The data lines of a fixture: not blank, not a `#` comment.
@@ -90,7 +91,8 @@ export function assertAgree(libs, inputs, paths) {
 // The bench: every library's answers checked against the first's, then
 // mitata groups per row for the build, the build and first non-match,
 // and the match of a prebuilt matcher, then the memory table `bench.mjs`
-// parses (`header` is its hint). `rows` are `[label, input]`;
+// parses (`header` is its hint); with `--peak`, the peak memory table
+// alone (see `trialPeak`). `rows` are `[label, input]`;
 // `freshen(input)` gives an input not built before, of the same shape.
 export async function matcherBench(header, rows, libs, freshen) {
   if (!global.gc) {
@@ -100,6 +102,24 @@ export async function matcherBench(header, rows, libs, freshen) {
   const inputs = rows.map(([, input]) => input);
   assertAgree(libs, inputs, PATHS);
   assertMisses(libs, inputs, MISS);
+
+  if (process.argv.includes("--peak")) {
+    console.log(`===== PEAK MEMORY (median of ${PEAK_TRIALS}, B/build) =====\n`);
+    // An empty build's peak: what the trial's own reading allocates.
+    const bias = peakOf(
+      () => null,
+      () => false,
+      null,
+      (x) => x,
+    );
+    memoryTable(
+      header,
+      rows,
+      libs,
+      (build, call, input) => peakOf(build, call, input, freshen) - bias,
+    );
+    return;
+  }
 
   // A matcher for an input not seen before: the build alone, then the
   // build and its first call, a non-match, which is what a new pattern
@@ -141,6 +161,14 @@ export async function matcherBench(header, rows, libs, freshen) {
   await run({ format: "mitata" });
 
   console.log(`\n===== PHASE 3: MEMORY (median of ${TRIALS}, B/matcher) =====\n`);
+  memoryTable(header, rows, libs, (build, call, input) =>
+    medianOf(TRIALS, () => trialMem(build, call, input, freshen)),
+  );
+}
+
+// One line per row and a cell per library, `cell(build, call, input)`
+// bytes, in the form `bench.mjs` parses.
+function memoryTable(header, rows, libs, cell) {
   const widths = [22, 12, 16, 12, 12, 12];
   const head = [header, ...libs.map(([n]) => n)]
     .map((s, i) => s.padEnd(widths[i] || 12))
@@ -150,9 +178,7 @@ export async function matcherBench(header, rows, libs, freshen) {
   for (const [label, input] of rows) {
     const cells = [label.padEnd(widths[0])];
     libs.forEach(([, build, call], i) => {
-      const xs = [];
-      for (let t = 0; t < TRIALS; t++) xs.push(trialMem(build, call, input, freshen));
-      cells.push(`${Math.round(median(xs))} B`.padStart(widths[i + 1] || 12));
+      cells.push(`${Math.round(cell(build, call, input))} B`.padStart(widths[i + 1] || 12));
     });
     console.log(cells.join(" | "));
   }
@@ -165,14 +191,15 @@ export async function matcherBench(header, rows, libs, freshen) {
 const N_TRIAL = 1000;
 const MEMBERS_PER_TRIAL = 50_000;
 const TRIALS = 5;
+const PEAK_TRIALS = 9;
 
 function gcSweep() {
   for (let i = 0; i < 3; i++) global.gc();
 }
+const heap = (m) => m.heapUsed + m.arrayBuffers;
 function snapHeap() {
   gcSweep();
-  const m = process.memoryUsage();
-  return m.heapUsed + m.arrayBuffers;
+  return heap(process.memoryUsage());
 }
 // What N_TRIAL matchers for distinct inputs keep once each has matched
 // every bench path.
@@ -191,6 +218,34 @@ function trialMem(build, call, input, freshen) {
   if (arr[0] === undefined) console.log("!");
   return Math.max(0, (after - before) / n);
 }
-function median(xs) {
-  return xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+// The most the heap holds for one build for an input not seen before
+// and its matches of every bench path: its growth across them, with no
+// GC in between to give any back, so every byte they allocate counts,
+// garbage too. A try a GC cut into runs again; `bench.mjs` runs this in
+// a process whose young generation holds a whole build.
+function trialPeak(build, call, input, freshen) {
+  for (let tries = 0; tries < 10; tries++) {
+    const fresh = freshen(input);
+    gcSweep();
+    const gcs = new GCProfiler();
+    gcs.start();
+    const before = process.memoryUsage();
+    const m = build(fresh);
+    for (let i = 0; i < PATHS.length; i++) call(m, PATHS[i]);
+    const after = process.memoryUsage();
+    if (gcs.stop().statistics.length === 0) return heap(after) - heap(before);
+  }
+  throw new Error("a GC ran in every try: raise --min-semi-space-size");
+}
+// A peak cell: once the build, its calls and the trial are warm (a cold
+// one allocates as it tiers up), the median of PEAK_TRIALS trials.
+function peakOf(build, call, input, freshen) {
+  for (let i = 0; i < 100; i++) call(build(freshen(input)), PATHS[0]);
+  const trial = () => trialPeak(build, call, input, freshen);
+  for (let i = 0; i < 5; i++) trial();
+  return medianOf(PEAK_TRIALS, trial);
+}
+function medianOf(n, sample) {
+  const xs = Array.from({ length: n }, sample).sort((a, b) => a - b);
+  return xs[Math.floor(n / 2)];
 }
