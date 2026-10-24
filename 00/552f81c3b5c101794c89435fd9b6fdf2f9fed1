@@ -1,0 +1,27 @@
+crates/globstar/src/engine/segment/chain.rs
+  s_43b9a5518ea7f8::t_deac13dad4a44b 31-35,158-160,203
+crates/globstar/tests/glob_union.rs
+  s_43b9a5518ea7f8::t_76a5588cc37944 57-71
+packages/globstar/src/engine/segment/chain.js
+  s_43b9a5518ea7f8::t_ece46348317057 39-43,65-66,106
+packages/globstar/tests/compiler-stages.mjs
+  s_43b9a5518ea7f8::t_ccc6abc278f7e3 146-160
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_2a66ae8a420321 65-67,171-172,353-371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "00552f81c3b5c101794c89435fd9b6fdf2f9fed1",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
