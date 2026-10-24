@@ -1,10 +1,12 @@
-# 02. The Segment Engine
+# 03. The Segment Engine
 
 Source: `crates/globstar/src/engine/segment/` (Rust) and `packages/globstar/src/engine/segment/` (JS). The JS implementation is a twin of the Rust one: the same layers in the same files, the same thresholds and the same answers. §12 lists the points where they differ.
 
 ## 1. The model
 
-Every construct of the dialect except `**` is confined to one segment (GLOB_SPEC §2.3): `*`, `?` and `[...]` cannot cross a separator, and dot protection is decided at segment starts. A `**` consumes whole segments: a leading `**/`, a middle `/**/`, a trailing `/**`, or the whole pattern. A pattern is therefore a graph of segment-shaped elements, and a path is matched one segment per element.
+Every construct of the dialect denotes a union, a concatenation or a closure of byte sets (GLOB_SPEC §7–§10), so the language of a pattern is regular, and membership is decided by a nondeterministic automaton without backtracking. The engine builds that automaton over segments rather than bytes.
+
+Every construct except `**` is confined to one segment (GLOB_SPEC §2.3): `*`, `?` and `[...]` cannot cross a separator, and dot protection is decided at segment starts. A `**` consumes whole segments: a leading `**/`, a middle `/**/`, a trailing `/**`, or the whole pattern. A pattern is therefore a graph of segment-shaped elements, and a path is matched one segment per element.
 
 | Element        | Consumes                                                 | Source                                        |
 | -------------- | -------------------------------------------------------- | --------------------------------------------- |
@@ -23,8 +25,8 @@ A pattern without a brace whose branches cross a separator is one path through t
 
 Compilation is one pass per layer, each linear in the pattern:
 
-1. **Parse** (`parse/`): the AST. The members of a union are first factored into one body (`union.rs`, §8).
-2. **Literal ends** (`literal_ends.rs`): the suffix prefilter (note 03) and the static prefixes (note 04), read from the AST as written.
+1. **Parse** (note 01): the AST, a union's members factored into one body.
+2. **Literal ends** (`literal_ends.rs`): the suffix prefilter (§13) and the static prefixes (§14), read from the AST as written.
 3. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (`seg_nfa.rs`, §7.5).
 4. **Chains** (`chain.rs`): the paths through the graph, while they are few and simple (§4).
 5. **Picker**: how a union tries its chains, each after its gate (`chain.rs`) or only those the chain index selects (`chain_index.rs`) (§5).
@@ -52,7 +54,7 @@ A brace that crosses no separator stays inside its segment and belongs to the in
 
 ### 3.2 Globstars
 
-The parser reads a `**` beside text as a star. One beside a separator, a brace or an edge of the pattern is decided per group as the brace expansions reach it (GLOB_SPEC §9.1): a group at a boundary that reads `**` holds it until the next token; a `/` makes it a pending `**/`, the end of the pattern a bare `**`, and anything else a star. Pending `**/`s count once (`**/**/` ≡ `**/`), except that one whose group gathered tails from several branches becomes a `G0` of its own when the next token is read, so that `{**,a}/` repeated `k` times keeps about `5k` edges rather than `k²`. The empty expansions of a brace beside a `**` continue as a *shadow* group while the `**` may still be a globstar (`{a,}**`, `**{,a}/`), and end once text makes it a star.
+The parser reads a `**` beside text as a star (note 01, §2.1). One beside a separator, a brace or an edge of the pattern is decided per group as the brace expansions reach it (GLOB_SPEC §9.1): a group at a boundary that reads `**` holds it until the next token; a `/` makes it a pending `**/`, the end of the pattern a bare `**`, and anything else a star. Pending `**/`s count once (`**/**/` ≡ `**/`), except that one whose group gathered tails from several branches becomes a `G0` of its own when the next token is read, so that `{**,a}/` repeated `k` times keeps about `5k` edges rather than `k²`. The empty expansions of a brace beside a `**` continue as a *shadow* group while the `**` may still be a globstar (`{a,}**`, `**{,a}/`), and end once text makes it a star.
 
 ### 3.3 Joins
 
@@ -87,7 +89,7 @@ One line with at most one globstar answers `match_dir` by the same anchored comp
 
 ## 5. Selecting a union's chains
 
-Every call passes the suffix prefilter (note 03) first. The literal set is then searched, and the chains are tried in pattern order by one of two pickers:
+Every call passes the suffix prefilter (§13) first. The literal set is then searched, and the chains are tried in pattern order by one of two pickers:
 
 - **Gates**, for at most 10 wildcard chains (`LINEAR_CHAINS`), and for up to 64 when the index cannot file them. Each chain is tried after two tests read from its ends: the path's last byte against a sketch of the bytes the chain may end with, and its first byte against a literal head's; then the last segment against the chain's last literal or affix (`ends_like`).
 - **The chain index**, for more. Each chain is filed under the literal strings one of its anchored segments must have: its last element's segment (a name, `.DS_Store`; the end of an extension, `*.log`; the start of a prefix, `._*`; a literal it holds, `*.so.*`, by its first 16 bytes), else its first element's, else the first of its block. The strings are read from the segment's nodes while the graph is built, with small classes and braces expanded (`[Dd]ebug`, `*.py[cod]`). The literal set is filed under its paths' first segments. A key is its length and its outer four bytes, a lookup one hash probe, and a 64-bit sketch of the outer bytes skips the lookups that cannot hit. A path looks up its last segment, then its first, then the others, and walks each chain selected, without the gates; a chain no key files is tried on every call. The walk decides; the index only chooses which chains to ask, so a 600-member ignore list costs a few lookups and one or two walks. The keys are bounded by one per unit of pattern weight, and at least 4,096: a segment whose keys exceed what is left has none, and a union whose chains would file more entries than that is scanned with gates instead.
@@ -106,7 +108,7 @@ The NFA over the graph has one state per node and an accepting state, and it ste
 
 The sparse NFA keeps, per position, its successors in three parts, the literal ones sorted by literal, the nullable ones, the rest, and its active set lists states and whole positions ("every successor of `p` is entered"), so a step costs what it tests (one binary search for a position's literals) and the tables are linear in the graph. Entering a join enters its successors, as a `G0` does without staying.
 
-The prefix bit of `match_dir` is `active ∩ reach1`, where `reach1[s]` holds when some continuation of at least one segment from `s` reaches accept. The all-below bit steps the active set over wildcard-only segments until it settles (note 04, §2.5), and gives up past its cap with the safe answer (GLOB_SPEC §15.5).
+The prefix bit of `match_dir` is `active ∩ reach1`, where `reach1[s]` holds when some continuation of at least one segment from `s` reaches accept. The all-below bit steps the active set over wildcard-only segments until it settles (§15.4), and gives up past its cap with the safe answer (GLOB_SPEC §15.5).
 
 ## 7. In-segment matchers
 
@@ -145,7 +147,7 @@ One more NFA of the same states holds every glued piece of the graph (`GlueNfa`)
 
 ## 8. Unions
 
-`Glob::union` factors its members into one body before the walk (`union.rs`): the tokens all members start or end with are lifted out of the brace, then the bytes their first or last literals share (only behind a lifted token, so that the static prefixes are kept). Members that differ only in the literal ending one segment are merged into one member with a brace there: `**/node_modules/**` and `**/.git/**` become `**/{node_modules,.git}/**`, `**/*.log` and `**/*.tmp` become `**/*{.log,.tmp}`, and `src/**/*.ts` and `tests/**/*.ts` become `{src,tests}/**/*.ts`. `N` chains that each compare a name become one that compares a suffix set (§7.1). Merging may read 16 nodes per node of the members, and at least 4,096; a union that would read more is not merged.
+A union's members are factored into one body before the walk (note 01, §5): the tokens all members start or end with are lifted out of the brace, then the bytes their first or last literals share, and members that differ only in the literal ending one segment are merged into one member with a brace there. `N` chains that each compare a name thus become one that compares a suffix set (§7.1), and a union of file names becomes a trie of literal nodes and one literal set (§4.3).
 
 ## 9. Thresholds
 
@@ -200,17 +202,140 @@ The JS implementation runs the same algorithm on JS strings (`charCodeAt`, `star
 
 Where the twins differ, they differ in representation only: JS bit sets are int32 words, so its small graph NFA and small in-segment NFA hold 32 states; it has no `Wide` graph NFA (a graph past 32 states is sparse); and it finds a suffix group, however few the suffixes, by a binary search of their keys, since a typed table costs V8 more to allocate (about 200 ns) than the search saves.
 
-## 13. Source map
+## 13. The suffix prefilter
+
+A *prefilter* for a language `L` is a predicate `A` with `A(w) = 0 ⇒ w ∉ L`; it may accept a `w ∉ L`, and it is cheaper than membership in `L`. The engine's prefilter is a literal suffix every match carries, compared at the end of the path before anything else runs.
+
+### 13.1 Extraction
+
+`literal_ends.rs::trailing` reads the pattern's nodes right to left: a literal contributes its bytes, a separator a `/` unless it is the `/` of a `**/`, and any other node stops the reading. The bytes, reversed, are the suffix; stopping at the first other node is required, since a wildcard or a `**` can produce any bytes. The `/` after a `**` belongs to that `**/`, which absorbs zero segments as well, so the suffix of `a/**/b` is `b` and `**/b` keeps matching `b`.
+
+When the suffix is ε and the pattern ends with a brace of at most 16 branches (`MAX_SUFFIX_SET`), `suffix_set` derives one suffix per branch: the suffix of the nodes before the brace, appended to the branch's own suffix when the branch is all literal, and the branch's own suffix alone otherwise; a branch that gives ε gives up the set. `**/*.{ts,tsx,js}` has the set `{".ts", ".tsx", ".js"}`. A brace of more than 16 branches gets no prefilter; its literal branches are grouped by the suffix set of §7.1.
+
+### 13.2 Comparison
+
+`bytes::ends_with_pattern` compares the suffix with the end of the path, last byte first, under the byte rule of the literal engine (note 02, §2): a suffix `/` matches any byte of `Seps`, a separator byte in the suffix matches nothing, and letters fold under `case_insensitive`. Without the first rule, `*/main.ts` would reject `src\main.ts` on Windows.
+
+### 13.3 Soundness
+
+**Proposition 1.** For every pattern `P` and `w ∈ Σ*`, if the prefilter rejects `w` then `w ∉ L(P)`.
+
+*Proof.* Both extraction procedures yield a set `S` such that every `w ∈ L(P)` ends with some `s ∈ S` under the byte rule. The prefilter accepts `w` exactly when `w` ends with some element of `S`. If it rejects `w`, then `w` ends with no element of `S`, so `w ∉ L(P)`. ∎
+
+The prefilter is not applied to `match_dir`: a directory path does not in general end with the pattern's suffix, which lies in the file segment, so the test would reject directories with matches below them.
+
+### 13.4 Suffix rather than prefix
+
+The engine reads from the left, so a prefix mismatch is found at the first differing segment or byte, and a prefix test would repeat that work. A suffix mismatch is found last: the NFA sees the end last, and a chain finds its tail after its head. An end-anchored test at the matcher's entry rejects a mismatched tail in `O(|suffix|)` without entering the engine. This is the common case on a walk, where most paths share the pattern's literal head and differ in the extension.
+
+## 14. Static prefixes
+
+### 14.1 Definition
+
+For a pattern `P` with brace expansions `E(P)` (GLOB_SPEC §10.1), let `head(e)` be the longest literal prefix of the expansion `e` that ends at a segment boundary: every `w ∈ L(e)` starts with it, and either `head(e) = ε`, or every such `w` equals `head(e)` or continues after it with a separator. The static prefixes of `P` are the minimal elements of `{ head(e) : e ∈ E(P) }` under "is a segment-prefix of", an antichain. The separator after a head is not kept, a fully literal pattern is its own prefix, and the expansions of a union are its members'. The heads are bytes in the pattern's spelling: `/` for every separator, and the pattern's case.
+
+### 14.2 Extraction
+
+`literal_ends.rs::static_prefixes` reads the AST left to right, collecting bytes from literals and `/` from separators. A brace in the head is read branch by branch, each followed by what follows the brace, as a continuation rather than a copy. At the first other node (a wildcard, a `**`) the bytes are cut back to the last separator before it; a brace that the budget or the depth limit stops, and whose branches all start with a separator, ends a whole segment instead. Trailing separators are dropped. Each path through the braces of the head records one head.
+
+Re-reading the continuation once per branch is the only part that can cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal re-reads it once per branch. Each byte read and each branch taken therefore costs one unit of a budget of `4096 + 2 · weight(P)`, and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment, a shorter prefix that is still sound. Recording a head costs every byte read to reach it, and these could still sum to the square of the budget; past 64 budgets of such bytes the reading starts again as if at the depth limit, and the result is the one head before the first brace, which every expansion shares.
+
+With several heads, `dedupe` sorts them by length and bytes and drops every head a shorter kept one covers (`src` covers `src/a`); the empty head covers all.
+
+```
+src/main.rs        →  { "src/main.rs" }
+src/*.ts           →  { "src" }
+**/*.ts            →  { "" }
+{src,test}/*.rs    →  { "src", "test" }
+{src,src/a}/*.rs   →  { "src" }
+{a/**,b}/c         →  { "a", "b/c" }
+a{b,c}d/x          →  { "abd/x", "acd/x" }
+```
+
+### 14.3 Soundness
+
+**Proposition 2.** For every `w ∈ L(P)` there is a static prefix `s` such that `w` starts with `s` at a segment boundary.
+
+*Proof.* Every `w ∈ L(P)` lies in `L(e)` for some expansion `e`, and the reading follows the branches of `e` through the braces of the head. The bytes it keeps come only from literal and separator nodes before the first other node, cut back to a segment boundary, so every `w ∈ L(e)` starts with them. A head cut short by the budget is a segment-prefix of `head(e)` and starts every such `w` as well, and `dedupe` drops a head only when a shorter kept head covers it. ∎
+
+## 15. The directory predicate
+
+### 15.1 Definition
+
+GLOB_SPEC §15.2 and §15.5 define, for a pattern `P` and a directory `d`, the three facts `exact(P, d) = d ∈ L(P)`, `prefix(P, d) = below(d) ∩ L(P) ≠ ∅` and `all_below(P, d)`, and the result as their combination:
+
+```
+combine(true,  _,     true)  = DescendAllAndMatch
+combine(false, _,     true)  = DescendAll
+combine(true,  true,  false) = DescendAndMatch
+combine(true,  false, false) = Match
+combine(false, true,  false) = Descend
+combine(false, false, false) = Pruned
+```
+
+`prefix` is over-approximated and `all_below` under-approximated, each on the consumer's safe side. At the root the engine reports `prefix` as true for every pattern. `Pruned` is the only result that lets a walker skip the directory; the two `DescendAll…` results let a consumer that excludes files by pattern skip the directory whole.
+
+### 15.2 Realization
+
+A matcher with one chain and at most one globstar answers from the chain (§4.4). Every other matcher splits `d` at separators and runs its NFA over the graph (§6); the active set is then classified with the accepting bit and the precomputed `reach1` mask:
+
+```
+S       ← the state set after the segments of d
+exact   ← S holds an accepting state
+prefix  ← d = "" or S intersects reach1
+all     ← dot and prefix and covers_below(S)
+result  ← combine(exact, prefix, all)
+```
+
+The chain path and the one-word NFA allocate nothing per call. Past that, Rust allocates the NFA's sets per call and JS keeps them on the matcher.
+
+### 15.3 Negated patterns
+
+A negated pattern returns `DescendAndMatch` when the directory matches and `Descend` otherwise (GLOB_SPEC §15.4): its language is the complement of another, and the deeper paths, unseen, cannot be excluded from that complement. The JS matcher accepts negated union members (note 01, §5.1); with one present, `exact` is the union's own answer, `prefix` is true, and the positive members alone decide `all_below`, so no directory is pruned. The walkers route `!`-prefixed patterns into their ignore sets (note 04, §2), so their matchers hold positive patterns only.
+
+### 15.4 All-below
+
+The engine decides `all_below` by simulation. A *wildcard-only* byte is one that `?`, `*` and `**` consume and that every literal and class rejects; a wildcard-only path is built from such bytes and separators. From the state set that `d` leaves, the simulation feeds wildcard-only segments and requires an accepting state after each:
+
+```
+S ← the state set after the segments of d
+repeat
+    S ← step S over a wildcard-only segment
+        (a globstar absorbs it; a Wild consumes it iff its wildcards alone
+         accept every non-empty segment; a Lit never does)
+    if S holds no accepting state:  return false
+    if S did not change:            return true
+```
+
+Tokens move right along a sequence or stay on a globstar, so the loop ends within the number of states; it is capped at 65 steps (GLOB_SPEC §15.5). The bit per `Wild` is the `any_seg` of §7.4. A segment that a brace cut into glued pieces (§3.4) is no element of its own: the pieces a set holds enter the glue NFA at once, and the pass of §7.5 tells each exit whether the wildcards alone accept every name there; the loop fires those nodes, and the answer is the one the copied segments would give. On a lone chain the simulation has a closed form (§4.4): the globstar is alive after `d`, every tail element has the bit, and every shorter tail token is alive as well, within the budget of 4,096 element comparisons.
+
+Under `dot = false` the answer is `false` without simulation: `**` does not match a dot-led name, so some `d/.x` escapes.
+
+One case is not provable: branches that split the names by length, `?/**/?` with `**/??*`, accept every name together, but the rule asks each `Wild` to accept every length on its own and answers `false`. Union members that merge into one segment (`**/?` with `**/??*` factors to `**/?{,?*}`) are one `Wild` and are proven; factoring merges members and not the braces a pattern writes, so `{**/?,**/??*}` keeps two branches and is not.
+
+### 15.5 Soundness
+
+**Proposition 3 (no false pruning).** For every `P`, `d` and `w ∈ Σ*`, `match_dir(P, d) = Pruned` implies `d ∉ L(P)` and `d · "/" · w ∉ L(P)`.
+
+*Proof.* `Pruned` is returned only when `exact` and `prefix` are both false. `exact = false` excludes `d`. `prefix = false` means that no active state can consume a separator and a continuation, possibly empty, to an accepting state. Neither `d` nor any path below it is accepted. ∎
+
+**Proposition 4 (no false cover).** For every `P`, `d` and `s ∈ R`, `match_dir(P, d) ∈ { DescendAll, DescendAllAndMatch }` implies `d · "/" · s ∈ L(P)`.
+
+*Proof.* Take any `s ∈ R` and the wildcard-only path `s'` of the same shape: the same number of segments, of the same lengths. Every transition a wildcard-only byte fires, a non-separator byte of `s` fires as well (`dot = true`, so no wildcard is dot-protected), and separators fire the same transitions in both. By induction the state set after `s` contains the state set after `s'`. The simulation visited `s'`, since it covers every shape, and found an accepting state there. ∎
+
+Proposition 3 is what a walker relies on when it skips a directory; Proposition 4 is what a consumer that excludes files relies on when it skips one whole.
+
+## 16. Source map
 
 | Rust (`crates/globstar/src/`)    | JS (`packages/globstar/src/`)    | Role                                                         |
 | -------------------------------- | -------------------------------- | ------------------------------------------------------------ |
-| `engine/segment/mod.rs`          | `engine/segment/index.js`        | the matcher: build, what a call runs (§2)                    |
+| `engine/segment/mod.rs`          | `engine/segment/index.js`        | the matcher: build, what a call runs (§2), the prefilter test (§13), `match_dir` (§15) |
 | `engine/segment/graph.rs`        | `engine/segment/graph.js`        | the elements (§1), the graph walk (§3)                       |
 | `engine/segment/chain.rs`        | `engine/segment/chain.js`        | chains, gates, `match_dir` from a lone line (§4, §5)         |
 | `engine/segment/chain_index.rs`  | `engine/segment/chain-index.js`  | the chain index (§5)                                         |
-| `engine/segment/graph_nfa.rs`    | `engine/segment/graph-nfa.js`    | the graph NFA and the all-below search (§6)                  |
+| `engine/segment/graph_nfa.rs`    | `engine/segment/graph-nfa.js`    | the graph NFA and the all-below search (§6, §15.4)           |
 | `engine/segment/wild.rs`         | `engine/segment/wild.js`         | affixes, suffix sets, pieces (§7)                            |
 | `engine/segment/seg_nfa.rs`      | `engine/segment/seg-nfa.js`      | the in-segment NFA and the glue NFA (§7.3–§7.5)              |
-| `engine/segment/literal_ends.rs` | `engine/segment/literal-ends.js` | the suffix prefilter (note 03), the static prefixes (note 04) |
+| `engine/segment/literal_ends.rs` | `engine/segment/literal-ends.js` | the suffix prefilter (§13), the static prefixes (§14)        |
 | `engine/segment/bits.rs`         | `engine/segment/bits.js`         | bit sets, byte sets of classes; in Rust, the byte sketch     |
-| `union.rs`                       | `union.js`                       | factoring a union's members (§8)                             |
+| `dir_match.rs`                   | `dir-match.js`                   | the six results and their three facts (§15.1)                |

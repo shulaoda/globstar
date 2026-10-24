@@ -8,7 +8,7 @@
 // pieces, which one in-segment NFA matches together (`GlueNfa`). The
 // graph is linear in the pattern: every pattern compiles. The layers,
 // the thresholds that pick them and what each buys:
-// `references/theory/02-segment-engine.md`.
+// `references/theory/03-segment-engine.md`.
 
 import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";

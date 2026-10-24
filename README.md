@@ -34,7 +34,7 @@ an NFA over the graph when there are too many paths, a path has several
 `**`, or a path needs too many states. The only caps are the parser's
 limits on pattern length and brace nesting: every pattern within them
 compiles, in time and memory linear in its length. See
-[`references/theory/02-segment-engine.md`](./references/theory/02-segment-engine.md).
+[`references/theory/03-segment-engine.md`](./references/theory/03-segment-engine.md).
 
 ## Why this exists
 

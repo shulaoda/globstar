@@ -23,7 +23,7 @@
 //! walk reads it per group, as the expansions reach it.
 //!
 //! The graph's elements (`Elem`) come first: what each node takes of a
-//! path segment (§1 of `references/theory/02-segment-engine.md`).
+//! path segment (§1 of `references/theory/03-segment-engine.md`).
 //! JS twin: `packages/globstar/src/engine/segment/graph.js`.
 
 use std::collections::HashMap;

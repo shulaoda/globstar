@@ -1,28 +1,31 @@
 # Theory Notes
 
-These notes give the formal foundations of the implementation under `crates/globstar/src/engine/` and its JS twin under `packages/globstar/src/engine/`. The specifications in `references/spec/` state what the implementations must do; the notes state how they do it and why the methods are correct. They describe the current code only.
+These notes describe the implementation under `crates/globstar/src/`, `crates/globstar-walk/src/` and their JS twins under `packages/globstar/src/` and `packages/globstar-walk/src/`. The specifications in `references/spec/` state what the implementations must do; the notes state how each component does it, why the method is correct, and what it costs. One note per component, in the order a pattern passes through them.
 
 ## Reading order
 
-1. [01-glob-as-regular-language.md](01-glob-as-regular-language.md). The language of GLOB_SPEC.md is regular. The note gives the translation of each construct into the closure operations, the treatment of the leading `!` as predicate inversion, and the reason extglob negation is excluded.
-2. [02-segment-engine.md](02-segment-engine.md). The engine: a pattern as a graph of per-segment elements, the layers that match it, the thresholds that choose between them, their measured cost, and the JS execution over strings.
-3. [03-literal-prefilter.md](03-literal-prefilter.md). The suffix prefilter that rejects a path before the engine runs, and its soundness.
-4. [04-walker-and-pruning.md](04-walker-and-pruning.md). Static prefixes and the directory predicate `match_dir`, which together let a walker skip directories, and the soundness of both.
+1. [01-parser-and-unions.md](01-parser-and-unions.md). The parser, the AST, the choice of engine, and how the members of a union are factored into one pattern.
+2. [02-literal-engine.md](02-literal-engine.md). The engine for a pattern without wildcards.
+3. [03-segment-engine.md](03-segment-engine.md). The engine for every other pattern: the graph of segment elements, the chains, the chain index, the NFAs, the in-segment matchers, the suffix prefilter, the static prefixes and the directory predicate.
+4. [04-walker.md](04-walker.md). The two walkers: preprocessing, seeding, the per-entry rule, scheduling, errors and symbolic links.
 
 ## Source map
 
-| Source                           | Note    | Role                                                  |
-| -------------------------------- | ------- | ----------------------------------------------------- |
-| `engine/literal.rs`              |         | byte-equality matcher for pure-literal patterns       |
-| `engine/segment/`                | 02      | the segment engine, for every other pattern           |
-| `engine/segment/literal_ends.rs` | 03, 04  | the suffix prefilter and the static prefixes          |
+| Source                                          | Note | Role                                               |
+| ----------------------------------------------- | ---- | -------------------------------------------------- |
+| `globstar/src/parse/`, `union.rs`, `lib.rs`     | 01   | parsing, factoring, engine selection               |
+| `globstar/src/engine/literal.rs`                | 02   | the literal engine                                 |
+| `globstar/src/engine/segment/`                  | 03   | the segment engine                                 |
+| `globstar/src/dir_match.rs`                     | 03   | the six directory results                          |
+| `globstar-walk/src/`, `globstar-walk/src/walk.js` | 04 | the walkers                                        |
+
+Each Rust file has a JS twin of the same name under `packages/`; the notes name the Rust file and mention the JS one where the two differ.
 
 ## Notation
 
 - Σ is the alphabet, the set of bytes `{0, …, 255}`. Σ* is the set of finite byte strings and ε the empty string.
-- `u · v` is the concatenation of `u` and `v`; `L₁ · L₂ = { u · v : u ∈ L₁, v ∈ L₂ }`.
+- `u · v` is the concatenation of `u` and `v`.
 - For a pattern `P`, `L(P) ⊆ Σ*` is its language as GLOB_SPEC §2.4 defines it.
-- An NFA is a tuple `(Q, Σ, δ, q₀, F)`: states, alphabet, transition relation, initial state, accepting states.
 - `Seps ⊆ Σ` is the separator set of GLOB_SPEC §2.2.
 
 Source code is cited by file path and identifier, as `segment/graph.rs::Graph::build`.

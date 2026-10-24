@@ -16,7 +16,7 @@
 //! `literal_ends` reads the literal suffixes and prefixes off the AST,
 //! and `bits` holds the bit sets (the NFAs', the byte sketches); the
 //! byte comparisons are `crate::bytes`. The layers, the thresholds that
-//! pick them and what each buys: `references/theory/02-segment-engine.md`.
+//! pick them and what each buys: `references/theory/03-segment-engine.md`.
 
 mod bits;
 mod chain;
