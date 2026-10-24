@@ -1,0 +1,39 @@
+BENCHMARKS.md
+  s_43b9a5518ea7f8::t_e361ae3b787d97 3,137-143,149-155,161-167,173-179,199-210,216-227,233-244,250-261,270-278,284-289
+crates/globstar/src/engine/segment/chain.rs
+  s_43b9a5518ea7f8::t_93c5f8853d871a 27-32,161-164,174,205,208
+crates/globstar/src/engine/segment/chain_index.rs
+  s_43b9a5518ea7f8::t_a20f9adc3e8420 13,36-37,40-42,57-60,66-67,75-76,84-85,105-106,336-339,342-344,353,358-361,369,375,379,383,430,438-448,465,472-473,475-482,487-499,502-503,506-507,520-522,525-528,540-543,547-551,557-559,564-617,620,622,633,637-639,641,643,648-653,660-661,669-680
+crates/globstar/src/engine/segment/mod.rs
+  s_43b9a5518ea7f8::t_5e084d730a083b 38,96,101-107,113
+crates/globstar/tests/glob_union.rs
+  s_43b9a5518ea7f8::t_c9df4641e554f9 42,44,57-96
+packages/globstar/src/engine/segment/chain-index.js
+  s_43b9a5518ea7f8::t_dca9cbb0d15abc 13,36,39-41,65-68,70-71,76-77,81,87-93,244-247,254-258,262,267,270,273-280,310-311,318-330,342,351-352,356,359-366,372,375-380,388-404,435-436,449-491,496-500,545-552
+packages/globstar/src/engine/segment/chain.js
+  s_43b9a5518ea7f8::t_91acd44b128de6 35-40,68-70,82,108-111,113
+packages/globstar/src/engine/segment/index.js
+  s_43b9a5518ea7f8::t_250c3b0c2301af 17,29-37,61-66,79,155-160,247-290
+packages/globstar/tests/compiler-stages.mjs
+  s_43b9a5518ea7f8::t_d81fff72cb2d6c 161-203
+packages/globstar/tests/large.mjs
+  s_43b9a5518ea7f8::t_9fc2cf6573315e 130-131
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_8af412c6da5328 65-69,195-199,219-230,367-386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "84fe3a55b884cc24070a431e2d9b37cf68e4759f",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
