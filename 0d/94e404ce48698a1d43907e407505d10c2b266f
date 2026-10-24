@@ -1,0 +1,21 @@
+packages/globstar/src/engine/segment/seg-nfa.js
+  s_43b9a5518ea7f8::t_694122458da697 269
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_504d5098709080 391-407
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0d94e404ce48698a1d43907e407505d10c2b266f",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
