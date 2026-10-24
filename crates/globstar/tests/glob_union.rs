@@ -39,9 +39,9 @@ fn members_that_compile_alone_compile_together() {
 }
 
 #[test]
-fn a_union_at_the_chain_cap_tries_every_chain() {
+fn a_union_past_a_words_chains_names_each_by_id() {
     // 64 wildcard chains and the literal set: one chain more than a word
-    // has bits, so the chain index stands aside and the scan serves.
+    // has bits, so the chain index picks them by id, not by bit.
     let mut members: Vec<String> = (0..64).map(|i| format!("d{i}/**/*.x{i}")).collect();
     members.extend(["a/b.txt".into(), "c.txt".into()]);
     let union = Glob::union(&members).unwrap();
@@ -52,6 +52,46 @@ fn a_union_at_the_chain_cap_tries_every_chain() {
     }
     assert!(union.is_match(b"a/b.txt") && union.is_match(b"c.txt"));
     assert!(!union.is_match(b"d1/q/f.x2"));
+}
+
+#[test]
+fn a_union_of_many_wildcard_members_keeps_its_chains_while_indexed() {
+    // Past 64 chains the index alone picks them, and only while no call
+    // walks more than 64 by one key or without any, and their nodes stay
+    // within four times the pattern's weight (2^30 paths are never
+    // listed); else the NFA serves.
+    let keyed: Vec<String> = (0..5000).map(|i| format!("d{i}/*/n{i}.js")).collect();
+    let keyless: Vec<String> = (0..100).map(|i| format!("*{i}*/**")).collect();
+    let crowded: Vec<String> = (0..100).map(|i| format!("d{i}/q{i}/n.js")).collect();
+    let product = vec!["{a/x,b/y}/".repeat(30) + "*.x"];
+    let (deep, shallow) = ("a/x/".repeat(30) + "f.x", "b/y/".repeat(29) + "f.x");
+    for (members, chains) in [
+        (&keyed, "| chains 5000 |"),
+        (&keyless, "| chains 0 |"),
+        (&crowded, "| chains 0 |"),
+        (&product, "| chains 0 |"),
+    ] {
+        let union = Glob::union(members).unwrap();
+        assert!(union.shape().contains(chains), "{}", union.shape());
+        let nfa = Glob::union_with(members, CompileOptions::default().force_nfa(true)).unwrap();
+        for path in [
+            "d7/x/n7.js",
+            "d4999/q/n4999.js",
+            "d7/x/n8.js",
+            "d7/n7.js",
+            "a17b/c",
+            "x17/",
+            "d7/q7/n.js",
+            "d7/q8/n.js",
+            &deep,
+            &shallow,
+        ] {
+            let want = nfa.is_match(path.as_bytes());
+            assert_eq!(union.is_match(path.as_bytes()), want, "{path}");
+        }
+    }
+    let union = Glob::union(&keyed).unwrap();
+    assert!(union.is_match(b"d4999/q/n4999.js") && !union.is_match(b"d7/x/n8.js"));
 }
 
 #[test]

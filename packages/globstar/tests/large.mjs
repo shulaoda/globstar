@@ -127,8 +127,8 @@ console.log("✓ long heads before many branches stay small");
 }
 
 // 64 wildcard chains and the literal set: one chain more than two words
-// have bits, so the chain index stands aside and the scan serves. Twin
-// of `a_union_at_the_chain_cap_tries_every_chain` in
+// have bits, so the chain index picks them by id, not by bit. Twin of
+// `a_union_past_a_words_chains_names_each_by_id` in
 // crates/globstar/tests/glob_union.rs.
 {
   const members = Array.from({ length: 64 }, (_, i) => `d${i}/**/*.x${i}`);

@@ -10,6 +10,7 @@
 
 import { N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";
 import { EL_LIT, EL_WILD } from "./elem.js";
+import { MAX_CHAINS } from "./chain.js";
 import { fold } from "../../bytes.js";
 
 // A union of at most this many chains (the literal set aside) tries
@@ -32,7 +33,11 @@ export function keyRoom(weight) {
 
 // A key compares this many outer characters of a segment at most (the
 // last of a suffix, the first of a prefix): the walk checks the rest.
+// Past 64 chains an exact key compares the whole segment, by its hash.
 const KEY_BYTES = 4;
+
+// The base of a key's `whole`, a polynomial in it over the characters.
+const BASE = 0x01000193;
 
 // An infix is at most this many first characters of a literal: the
 // search for it costs at most that many compares per character of a
@@ -57,24 +62,35 @@ export const R_INNER = 2;
 // to 8).
 const LOOKUPS = 1 + 2 * KEY_BYTES;
 
-// A string by its length and outer characters, folded when
-// case-insensitive: `back` holds its last KEY_BYTES (the last lowest),
-// `front` its first (the first lowest).
+// A string by its length and characters, folded when case-insensitive:
+// `back` holds its last KEY_BYTES (the last lowest), `front` its first
+// (the first lowest), `whole` all of them (`wholeOf`), and `pow` is
+// BASE to its length, to join it to another.
 function keyOf(str, ci) {
+  let pow = 1;
+  for (let i = 0; i < str.length; i++) pow = Math.imul(pow, BASE);
   return {
     len: str.length,
     back: packBack(str, 0, str.length, ci),
     front: packFront(str, 0, str.length, ci),
+    whole: wholeOf(str, 0, str.length, ci),
+    pow: pow >>> 0,
   };
 }
 
-const EMPTY_KEY = { len: 0, back: 0, front: 0 };
+const EMPTY_KEY = { len: 0, back: 0, front: 0, whole: 0, pow: 1 };
 
 // `a` then `b`.
 function then(a, b) {
   const back = b.len >= KEY_BYTES ? b.back : (b.back | (a.back << (8 * b.len))) >>> 0;
   const front = a.len >= KEY_BYTES ? a.front : (a.front | (b.front << (8 * a.len))) >>> 0;
-  return { len: a.len + b.len, back, front };
+  return {
+    len: a.len + b.len,
+    back,
+    front,
+    whole: (Math.imul(a.whole, b.pow) + b.whole) >>> 0,
+    pow: Math.imul(a.pow, b.pow) >>> 0,
+  };
 }
 
 // What a segment's keys take of the key room.
@@ -225,29 +241,43 @@ function anchors(chain) {
 }
 
 // The index of a union's chains over `graph`, null when they are few or
-// their entries pass the key room. The graph's keys are the wildcard
-// elements', by node (holes for the others); a literal element's key is
-// itself.
+// their entries pass the key room, and past 64 when a call may walk
+// more than MAX_CHAINS of them by one key or without any. The graph's
+// keys are the wildcard elements', by node (holes for the others); a
+// literal element's key is itself.
 export function chainIndex(chains, graph, ci) {
   if (chains.length === 0) return null;
   const { elems, keys } = graph;
   // The literal paths' set, when there is one, is the first chain.
   const set = chains[0].literals !== undefined;
   const from = set ? 1 : 0;
-  // A chain is a bit of two words: 64 wildcard chains and the set are
-  // one too many, and stay a scan.
-  if (chains.length - from <= LINEAR_CHAINS || chains.length > 64) return null;
+  if (chains.length - from <= LINEAR_CHAINS) return null;
+  // The low bits of a slot that name its chain: 6 for a union of at
+  // most 64, whose picks are bits of two words, more for a bigger one.
+  const idBits = Math.max(6, 32 - Math.clz32(chains.length - 1));
+  const many = idBits > 6;
   const ix = {
     slots: null,
     bits: 0,
+    idBits,
     lookups: [0, 0, 0],
     sketchLo: new Int32Array(3 * LOOKUPS),
     sketchHi: new Int32Array(3 * LOOKUPS),
     infix: [],
+    // The chains no key files: chains 0–31, 32–63, or past 64 a list.
     restLo: 0,
     restHi: 0,
+    rest: [],
     // What one probe picks: chains 0–31, 32–63.
     picked: new Int32Array(2),
+    // Past 64, the chains a call picks, in the order picked: how many,
+    // and how many of them it has walked; and the call that last listed
+    // each chain (`epoch`), so a chain is listed once a call.
+    list: many ? new Int32Array(chains.length) : null,
+    listed: 0,
+    tried: 0,
+    stamp: many ? new Int32Array(chains.length) : null,
+    epoch: 0,
   };
   const entries = [];
   if (set) {
@@ -277,13 +307,27 @@ export function chainIndex(chains, graph, ci) {
       if (filed) break;
     }
     if (!filed) {
-      if (c < 32) ix.restLo |= 1 << c;
+      if (many) ix.rest.push(c);
+      else if (c < 32) ix.restLo |= 1 << c;
       else ix.restHi |= 1 << (c - 32);
     }
     if (entries.length > keyRoom(graph.weight)) return null;
   }
   // Each key and chain once.
   entries.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  // Past a word's bits a call walks what one key picks, and those no
+  // key files or a literal search picks, each up to what a scan would
+  // try.
+  if (many) {
+    if (ix.rest.length + ix.infix.length > MAX_CHAINS) return null;
+    let group = 0;
+    for (let i = 0; i < entries.length; i++) {
+      const [key, c] = entries[i];
+      if (i > 0 && entries[i - 1][0] === key) {
+        if (entries[i - 1][1] !== c && ++group > MAX_CHAINS) return null;
+      } else group = 1;
+    }
+  }
   let bits = 1;
   while (1 << bits < 2 * entries.length) bits++;
   ix.bits = bits;
@@ -295,7 +339,7 @@ export function chainIndex(chains, graph, ci) {
     const h = hashKey(Math.floor(key / 2 ** 32), key >>> 0);
     let at = h >>> (32 - bits);
     while (slots[at] !== 0) at = (at + 1) & last;
-    slots[at] = ((tagOf(h) << 6) | c) >>> 0;
+    slots[at] = ((tagOf(h, idBits) << idBits) | c) >>> 0;
   }
   ix.slots = slots;
   return ix;
@@ -304,30 +348,36 @@ export function chainIndex(chains, graph, ci) {
 // File chain `c` under `key` for `role`.
 function file(ix, role, kind, key, c, entries) {
   const short = Math.min(key.len, KEY_BYTES);
+  // The lookup, the length it holds, the outer characters the sketch
+  // reads, what it compares.
   let lookup = 0;
   let len = 0;
   let outer = key.back;
-  let compared = short;
+  let cmp = 0;
   if (kind === K_EXACT) {
     len = key.len;
-    compared = key.len;
-  } else if (kind === K_PREFIX) {
-    lookup = KEY_BYTES + short;
-    outer = key.front;
-  } else lookup = short;
+    cmp = ix.stamp !== null ? key.whole : (key.back & mask(key.len)) >>> 0;
+  } else {
+    if (kind === K_PREFIX) {
+      lookup = KEY_BYTES + short;
+      outer = key.front;
+    } else lookup = short;
+    cmp = (outer & mask(short)) >>> 0;
+  }
   ix.lookups[role] |= 1 << lookup;
   const bit = outer & 63;
   const at = role * LOOKUPS + lookup;
   if (bit < 32) ix.sketchLo[at] |= 1 << bit;
   else ix.sketchHi[at] |= 1 << (bit - 32);
-  // An exact key's length past 255 runs into the lookup's bits, where it
-  // can meet only a suffix or prefix key: a chain more, which its walk
-  // turns down.
-  entries.push([((lookup << 8) | len) * 2 ** 32 + ((outer & mask(compared)) >>> 0), c]);
+  entries.push([lookupHi(role, lookup, len) * 2 ** 32 + cmp, c]);
 }
 
-// A key's hash, from its high bits (the lookup and an exact key's
-// length) and its outer characters; the slot is its top bits.
+// A key's high bits: its role, its lookup, the length an exact key holds
+// (past 255 as 255).
+const lookupHi = (role, lookup, len) => (role << 16) | (lookup << 8) | Math.min(len, 255);
+
+// A key's hash, from its high bits (`lookupHi`) and what it compares;
+// the slot is its top bits.
 function hashKey(hi, lo) {
   let h = Math.imul(lo ^ Math.imul(hi, 0x9e3779b1), 0x85ebca6b);
   h ^= h >>> 13;
@@ -335,10 +385,23 @@ function hashKey(hi, lo) {
   return h ^ (h >>> 16);
 }
 
-// The tag a slot keeps of a key: 26 bits of another mix of its hash,
-// the top one set, so a slot is never 0.
-function tagOf(h) {
-  return ((Math.imul(h, 0x2c1b3c6d) >>> 6) & 0x1ffffff) | 0x2000000;
+// The tag a slot keeps of a key: the bits of another mix of its hash
+// above the chain's `idBits`, the top one set, so a slot is never 0.
+function tagOf(h, idBits) {
+  const top = 1 << (31 - idBits);
+  return ((Math.imul(h, 0x2c1b3c6d) >>> idBits) & (top - 1)) | top;
+}
+
+// Mark chain `c` picked: a bit of `ix.picked`, or past 64 on the call's
+// list, once a call.
+function mark(ix, c) {
+  if (ix.stamp === null) {
+    if (c < 32) ix.picked[0] |= 1 << c;
+    else ix.picked[1] |= 1 << (c - 32);
+  } else if (ix.stamp[c] !== ix.epoch) {
+    ix.stamp[c] = ix.epoch;
+    ix.list[ix.listed++] = c;
+  }
 }
 
 // Mark in `ix.picked` the chains `str[s, t)` picks for keys of `role`.
@@ -369,8 +432,8 @@ export function probe(ix, role, str, s, t, ci) {
     const at = role * LOOKUPS + lookup;
     const sketch = bit < 32 ? ix.sketchLo[at] >>> bit : ix.sketchHi[at] >>> (bit - 32);
     if ((sketch & 1) === 0) continue;
-    const h = hashKey((lookup << 8) | len, (outer & mask(compared)) >>> 0);
-    const tag = tagOf(h);
+    const h = hashKey(lookupHi(role, lookup, len), (outer & mask(compared)) >>> 0);
+    const tag = tagOf(h, 6);
     let i = h >>> (32 - ix.bits);
     for (let slot = slots[i]; slot !== 0; slot = slots[i]) {
       if (slot >>> 6 === tag) {
@@ -383,15 +446,56 @@ export function probe(ix, role, str, s, t, ci) {
   }
 }
 
-// Mark in `ix.picked` the chains whose literal `str[s, t)` holds.
-export function probeInfix(ix, str, s, t, ci) {
-  const picked = ix.picked;
-  for (const [c, lit] of ix.infix) {
-    if (holds(str, s, t, lit, ci)) {
-      if (c < 32) picked[0] |= 1 << c;
-      else picked[1] |= 1 << (c - 32);
+// `probe` past 64 chains: each chain the call's list takes once
+// (`ix.stamp`), and an exact key compares the whole segment, as names
+// that differ only inside (`n17.js`, `n27.js`) would crowd one key. A
+// function of its own, so that `probe` stays as lean as one word of
+// bits allows.
+export function probeMany(ix, role, str, s, t, ci) {
+  const n = t - s;
+  let todo = ix.lookups[role];
+  const back = packBack(str, s, t, ci);
+  const front = todo >>> (KEY_BYTES + 1) !== 0 ? packFront(str, s, t, ci) : 0;
+  const slots = ix.slots;
+  const last = slots.length - 1;
+  const idBits = ix.idBits;
+  const ids = (1 << idBits) - 1;
+  const { stamp, epoch, list } = ix;
+  while (todo !== 0) {
+    const lookup = 31 - Math.clz32(todo & -todo);
+    todo &= todo - 1;
+    let compared = lookup;
+    let outer = back;
+    if (lookup === 0) compared = n;
+    else if (lookup > KEY_BYTES) {
+      compared = lookup - KEY_BYTES;
+      outer = front;
+    }
+    if (compared > n) continue;
+    const bit = outer & 63;
+    const at = role * LOOKUPS + lookup;
+    const sketch = bit < 32 ? ix.sketchLo[at] >>> bit : ix.sketchHi[at] >>> (bit - 32);
+    if ((sketch & 1) === 0) continue;
+    const h =
+      lookup === 0
+        ? hashKey(lookupHi(role, 0, n), wholeOf(str, s, t, ci))
+        : hashKey(lookupHi(role, lookup, 0), (outer & mask(compared)) >>> 0);
+    const tag = tagOf(h, idBits);
+    let i = h >>> (32 - ix.bits);
+    for (let slot = slots[i]; slot !== 0; slot = slots[i]) {
+      const c = slot & ids;
+      if (slot >>> idBits === tag && stamp[c] !== epoch) {
+        stamp[c] = epoch;
+        list[ix.listed++] = c;
+      }
+      i = (i + 1) & last;
     }
   }
+}
+
+// Mark the chains whose literal `str[s, t)` holds.
+export function probeInfix(ix, str, s, t, ci) {
+  for (const [c, lit] of ix.infix) if (holds(str, s, t, lit, ci)) mark(ix, c);
 }
 
 function holds(str, s, t, lit, ci) {
@@ -436,6 +540,14 @@ function packFront(str, s, t, ci) {
     for (let i = 0; s + i < t; i++) w |= (str.charCodeAt(s + i) & 0xff) << (8 * i);
   }
   return ci ? foldWord(w) : w >>> 0;
+}
+
+// The characters of `str[s, t)`, folded, as a polynomial in BASE (the
+// last its constant term): what an exact key compares.
+function wholeOf(str, s, t, ci) {
+  let h = 0;
+  for (let i = s; i < t; i++) h = (Math.imul(h, BASE) + fold(str.charCodeAt(i) & 0xff, ci)) | 0;
+  return h >>> 0;
 }
 
 // The four bytes of a word, folded.

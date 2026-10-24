@@ -35,7 +35,7 @@ use crate::parse::ast::Node;
 
 use crate::bytes;
 use bits::ByteSketch;
-use chain::{Chain, Gate, Shape};
+use chain::{Chain, Gate, MAX_CHAINS, Shape};
 use chain_index::ChainIndex;
 use elem::Elem;
 use graph::Graph;
@@ -93,17 +93,24 @@ impl SegmentMatcher {
         let prefixes = facts::static_prefixes(&body, survey.weight);
         let mut graph = Graph::build(&mut body, survey, dot, ci);
         // The test hook keeps no chain.
-        let chains = if opts.force_nfa {
+        let mut chains = if opts.force_nfa {
             Box::default()
         } else {
             graph.chains(ci)
         };
+        let index = ChainIndex::new(&chains, &graph, ci);
+        // Past `MAX_CHAINS` only the index keeps a call's walks few;
+        // without one the NFA serves.
+        let set = matches!(chains.first().map(|c| &c.shape), Some(Shape::Set(_)));
+        if index.is_none() && chains.len() - usize::from(set) > MAX_CHAINS {
+            chains = Box::default();
+        }
         // A lone line serves `match_dir` too; anything else needs the NFA.
         let union = match &chains[..] {
             [c] if matches!(c.shape, Shape::Line(_)) => None,
             _ => Some(Box::new(Union {
                 nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref(), graph.glue.take()),
-                pick: match ChainIndex::new(&chains, &graph, ci) {
+                pick: match index {
                     Some(index) => Pick::Index(index),
                     None => Pick::Gates(chains.iter().map(|c| c.gate(&graph.elems, ci)).collect()),
                 },

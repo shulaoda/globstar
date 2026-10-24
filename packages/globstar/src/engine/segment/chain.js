@@ -32,9 +32,12 @@ import { wildConsumes } from "./wild.js";
 
 // ── the chains ──────────────────────────────────────────────────────────
 
-// Paths with a wildcard `isMatch` tries one by one; past that the NFA
-// over the whole graph runs.
-const MAX_CHAINS = 64;
+// Paths with a wildcard `isMatch` tries one by one after their quick
+// looks. More are kept while their nodes take at most four times the
+// pattern's weight (a node behind crossing braces is copied once per
+// path), for the chain index alone to pick from; past that, or without
+// an index, the NFA over the whole graph runs.
+export const MAX_CHAINS = 64;
 
 // The literal-only paths kept as one set (a union of file names): the
 // characters it may take, one more per path, or four times the
@@ -62,8 +65,9 @@ const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 
 // Every path through the graph as a chain, in pattern order, the literal
 // ones together as one `SET_G` chain first; none when the others pass
-// MAX_CHAINS or the literal ones MAX_LITERAL_BYTES, a path has more than
-// two globstars, or a brace cuts a segment (the NFA takes those).
+// MAX_CHAINS and their nodes four times the weight, the literal ones
+// MAX_LITERAL_BYTES, a path has more than two globstars, or a brace cuts
+// a segment (the NFA takes those).
 export function chains(graph, ci) {
   // A segment of glued pieces is no element a chain can compare.
   if (graph.glue !== null) return [];
@@ -75,6 +79,7 @@ export function chains(graph, ci) {
   // on it (the start's below them) and the successor it tries next. A
   // path is copied only when it reaches the end.
   const paths = [];
+  let pathNodes = 0;
   // The literal paths, as the characters each matches, keyed as a path
   // is searched (`hasLiteral`).
   const lits = [];
@@ -100,9 +105,12 @@ export function chains(graph, ci) {
         const joined = nodes.map((i) => graph.elems[i].litStr).join("/");
         lits.push(ci ? asciiLower(joined) : joined);
         litChars += joined.length;
-      } else paths.push(exact(nodes));
+      } else {
+        pathNodes += nodes.length;
+        paths.push(exact(nodes));
+      }
       if (
-        paths.length > MAX_CHAINS ||
+        (paths.length > MAX_CHAINS && pathNodes > 4 * graph.weight) ||
         litChars + lits.length > Math.max(MAX_LITERAL_BYTES, 4 * graph.weight)
       ) {
         return [];

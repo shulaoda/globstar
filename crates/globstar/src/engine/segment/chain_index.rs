@@ -10,7 +10,7 @@
 use crate::bytes::{fold, seg_end, seg_start};
 use crate::parse::ast::Node;
 
-use super::chain::{Chain, Shape};
+use super::chain::{Chain, MAX_CHAINS, Shape};
 use super::elem::Elem;
 use super::graph::Graph;
 
@@ -33,8 +33,12 @@ pub(super) fn key_room(weight: usize) -> usize {
 }
 
 /// A key compares this many outer bytes of a segment at most (the last
-/// of a suffix, the first of a prefix): the walk checks the rest.
+/// of a suffix, the first of a prefix): the walk checks the rest. Past
+/// 64 chains an exact key compares the whole segment, by its hash.
 const KEY_BYTES: usize = 4;
+
+/// The base of `Key::whole`, a polynomial in it over the bytes.
+const BASE: u32 = 0x0100_0193;
 
 /// An infix is at most this many first bytes of a literal: the search
 /// for it costs at most that many compares per byte of a path's last
@@ -50,14 +54,17 @@ pub(super) enum Kind {
     Prefix,
 }
 
-/// A string by its length and outer bytes, folded when
-/// case-insensitive: `back` holds its last `KEY_BYTES` (the last
-/// lowest), `front` its first (the first lowest).
+/// A string by its length and bytes, folded when case-insensitive:
+/// `back` holds its last `KEY_BYTES` (the last lowest), `front` its
+/// first (the first lowest), `whole` all of them (`whole_of`), and
+/// `pow` is `BASE` to its length, to join it to another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Key {
     len: usize,
     back: u32,
     front: u32,
+    whole: u32,
+    pow: u32,
 }
 
 impl Key {
@@ -65,6 +72,8 @@ impl Key {
         len: 0,
         back: 0,
         front: 0,
+        whole: 0,
+        pow: 1,
     };
 
     fn of(bytes: &[u8], ci: bool) -> Key {
@@ -72,6 +81,8 @@ impl Key {
             len: bytes.len(),
             back: pack(bytes.iter().rev().copied(), ci),
             front: pack(bytes.iter().copied(), ci),
+            whole: whole_of(bytes, ci),
+            pow: BASE.wrapping_pow(bytes.len() as u32),
         }
     }
 
@@ -91,6 +102,8 @@ impl Key {
             len: self.len + next.len,
             back,
             front,
+            whole: self.whole.wrapping_mul(next.pow).wrapping_add(next.whole),
+            pow: self.pow.wrapping_mul(next.pow),
         }
     }
 }
@@ -320,12 +333,15 @@ const LOOKUPS: usize = 1 + 2 * KEY_BYTES;
 #[derive(Debug, Clone)]
 pub(super) struct ChainIndex {
     /// Open addressing by `hash`, at most one entry in two slots: per
-    /// entry a tag of its key's hash and the chain (6 bits), `0` where
-    /// there is none. A key is the lookup, an exact key's length and the
-    /// outer bytes compared; two keys sharing a tag pick a chain more,
-    /// which its walk turns down.
+    /// entry a tag of its key's hash above the chain (`id_bits`), `0`
+    /// where there is none. A key is the role and the lookup, an exact
+    /// key's length and what it compares (`lookup_key`); two keys sharing
+    /// a tag pick a chain more, which its walk turns down.
     slots: Box<[u32]>,
     shift: u32,
+    /// The low bits of a slot that name its chain: 6 for a union of at
+    /// most 64, whose picks are bits of a word, more for a bigger one.
+    id_bits: u32,
     /// Per role, the lookups that find something (a bit each), and per
     /// lookup a sketch of the outer bytes filed (`b % 64`): a segment
     /// whose outer byte misses it skips the lookup.
@@ -334,13 +350,15 @@ pub(super) struct ChainIndex {
     /// The chains a literal anywhere in their last segment picks.
     infix: Box<[(u32, Box<[u8]>)]>,
     /// The chains no key files: tried on every call, last.
-    rest: u64,
+    rest: Box<[u32]>,
 }
 
 impl ChainIndex {
     /// The index of a union's chains over `graph`, `None` when they are
-    /// few or their entries pass the key room. The graph's keys are the
-    /// wildcard elements'; a literal element's key is itself.
+    /// few or their entries pass the key room, and past 64 when a call
+    /// may walk more than `MAX_CHAINS` of them by one key or without
+    /// any. The graph's keys are the wildcard elements'; a literal
+    /// element's key is itself.
     pub(super) fn new(chains: &[Chain], graph: &Graph, ci: bool) -> Option<Box<Self>> {
         let (elems, keys) = (&graph.elems, &graph.keys);
         let set = match &chains.first()?.shape {
@@ -348,21 +366,21 @@ impl ChainIndex {
             _ => None,
         };
         let from = usize::from(set.is_some());
-        // A chain is a bit of a word: 64 wildcard chains and the set are
-        // one too many, and stay a scan.
-        if chains.len() - from <= LINEAR_CHAINS || chains.len() > 64 {
+        if chains.len() - from <= LINEAR_CHAINS {
             return None;
         }
         let mut index = ChainIndex {
             slots: Box::default(),
             shift: 0,
+            id_bits: (usize::BITS - (chains.len() - 1).leading_zeros()).max(6),
             lookups: [0; 3],
             sketch: [[0; LOOKUPS]; 3],
             infix: Box::default(),
-            rest: 0,
+            rest: Box::default(),
         };
         let mut entries = Vec::new();
         let mut infix = Vec::new();
+        let mut rest = Vec::new();
         // The literal paths, by their first segments.
         if let Some(set) = set {
             for path in set.iter() {
@@ -409,7 +427,7 @@ impl ChainIndex {
                 }
             }
             if !filed {
-                index.rest |= 1 << c;
+                rest.push(c as u32);
             }
             if entries.len() > key_room(graph.weight) {
                 return None;
@@ -417,6 +435,17 @@ impl ChainIndex {
         }
         entries.sort_unstable();
         entries.dedup();
+        // Past a word's bits a call walks what one key picks, and those
+        // no key files or a literal search picks, each up to what a scan
+        // would try.
+        if index.id_bits > 6
+            && (rest.len() + infix.len() > MAX_CHAINS
+                || entries
+                    .chunk_by(|a, b| a.0 == b.0)
+                    .any(|g| g.len() > MAX_CHAINS))
+        {
+            return None;
+        }
         let bits = (2 * entries.len())
             .next_power_of_two()
             .trailing_zeros()
@@ -433,28 +462,49 @@ impl ChainIndex {
         }
         index.slots = slots.into_boxed_slice();
         index.infix = infix.into_boxed_slice();
+        index.rest = rest.into_boxed_slice();
         Some(Box::new(index))
     }
 
     /// File chain `c` under `key` for `role`.
     fn file(&mut self, role: Role, kind: Kind, key: Key, c: usize, entries: &mut Vec<(u64, u32)>) {
         let short = key.len.min(KEY_BYTES);
+        // The lookup, the length it holds, the outer bytes the sketch
+        // reads, what it compares.
         let (lookup, len, outer, compared) = match kind {
-            Kind::Exact => (0, key.len, key.back, key.len),
-            Kind::Suffix => (short, 0, key.back, short),
-            Kind::Prefix => (KEY_BYTES + short, 0, key.front, short),
+            Kind::Exact => (
+                0,
+                key.len,
+                key.back,
+                self.exact(key.back, key.len, || key.whole),
+            ),
+            Kind::Suffix => (short, 0, key.back, key.back & mask(short)),
+            Kind::Prefix => (KEY_BYTES + short, 0, key.front, key.front & mask(short)),
         };
         let r = role as usize;
         self.lookups[r] |= 1 << lookup;
         self.sketch[r][lookup] |= 1 << (outer & 63);
-        entries.push((lookup_key(lookup, len, outer & mask(compared)), c as u32));
+        entries.push((lookup_key(role, lookup, len, compared), c as u32));
     }
 
-    /// A key's first slot, and its tag: 26 bits of its hash the slot
-    /// does not use, the top one set, above the chain's 6.
+    /// What an exact key of `len` bytes ending in `back` compares: those
+    /// bytes, or past 64 chains the whole string (`whole`), as names that
+    /// differ only inside (`n17.js`, `n27.js`) would crowd one key.
+    #[inline]
+    fn exact(&self, back: u32, len: usize, whole: impl FnOnce() -> u32) -> u32 {
+        if self.id_bits > 6 {
+            whole()
+        } else {
+            back & mask(len)
+        }
+    }
+
+    /// A key's first slot, and its tag: the bits of its hash the slot
+    /// does not use, as many as the chain leaves, the top one set.
     fn hash(&self, key: u64) -> (usize, u32) {
         let h = key.wrapping_mul(0x9e37_79b9_7f4a_7c15);
-        ((h >> self.shift) as usize, ((h >> 8) as u32 | 1 << 25) << 6)
+        let tag = ((h >> 8) as u32 | 1 << (31 - self.id_bits)) << self.id_bits;
+        ((h >> self.shift) as usize, tag)
     }
 
     /// Does a chain the path picks match it (`matches` decides for each)?
@@ -467,11 +517,15 @@ impl ChainIndex {
         ci: bool,
         mut matches: impl FnMut(usize) -> bool,
     ) -> bool {
+        if self.id_bits > 6 {
+            return self.any_of_many(path, ci, matches);
+        }
         // The chains tried so far: a chain two steps pick runs once.
         let mut tried = 0u64;
-        macro_rules! try_chains {
-            ($chains:expr) => {
-                let mut todo = $chains;
+        macro_rules! try_picked {
+            ($picked:expr) => {
+                let mut todo = $picked & !tried;
+                tried |= todo;
                 while todo != 0 {
                     let c = todo.trailing_zeros() as usize;
                     todo &= todo - 1;
@@ -481,44 +535,91 @@ impl ChainIndex {
                 }
             };
         }
-        macro_rules! try_picked {
-            ($picked:expr) => {
-                let todo = $picked & !tried;
-                tried |= todo;
-                try_chains!(todo);
-            };
-        }
         let last_start = seg_start(path, path.len());
         let last = &path[last_start..];
-        let mut picked = self.probe(Role::Last, last, ci);
-        for (c, lit) in &self.infix {
-            if last
-                .windows(lit.len())
-                .any(|w| w.iter().zip(lit).all(|(&a, &b)| fold(a, ci) == b))
-            {
-                picked |= 1 << c;
-            }
+        let mut picked = 0u64;
+        self.probe(Role::Last, last, ci, |c| picked |= 1 << c);
+        for c in self.infix_picks(last, ci) {
+            picked |= 1 << c;
         }
         try_picked!(picked);
         if self.lookups[Role::First as usize] != 0 {
-            try_picked!(self.probe(Role::First, &path[..seg_end(path, 0)], ci));
+            let mut picked = 0u64;
+            self.probe(Role::First, &path[..seg_end(path, 0)], ci, |c| {
+                picked |= 1 << c
+            });
+            try_picked!(picked);
         }
         if self.lookups[Role::Inner as usize] != 0 {
             let mut start = 0;
             while start < last_start {
                 let end = seg_end(path, start);
-                try_picked!(self.probe(Role::Inner, &path[start..end], ci));
+                let mut picked = 0u64;
+                self.probe(Role::Inner, &path[start..end], ci, |c| picked |= 1 << c);
+                try_picked!(picked);
                 start = end + 1;
             }
         }
         // No key picks these, so no step tried them.
-        try_chains!(self.rest);
-        false
+        self.rest.iter().any(|&c| matches(c as usize))
     }
 
-    /// The chains `seg` picks for keys of `role`, a bit each.
+    /// `any` past 64 chains: the chains a step picks gathered, then
+    /// tried once each, in chain order. A chain is filed for one role,
+    /// which its key holds, so another step picks it only by a shared
+    /// tag, and walks it again.
+    fn any_of_many(&self, path: &[u8], ci: bool, mut matches: impl FnMut(usize) -> bool) -> bool {
+        let mut try_picked = |picked: &mut Vec<u32>| {
+            picked.sort_unstable();
+            picked.dedup();
+            let hit = picked.iter().any(|&c| matches(c as usize));
+            picked.clear();
+            hit
+        };
+        let mut picked = Vec::new();
+        let last_start = seg_start(path, path.len());
+        let last = &path[last_start..];
+        self.probe(Role::Last, last, ci, |c| picked.push(c));
+        picked.extend(self.infix_picks(last, ci));
+        if try_picked(&mut picked) {
+            return true;
+        }
+        if self.lookups[Role::First as usize] != 0 {
+            self.probe(Role::First, &path[..seg_end(path, 0)], ci, |c| {
+                picked.push(c)
+            });
+            if try_picked(&mut picked) {
+                return true;
+            }
+        }
+        // The inner segments' picks at once: a chain many of them pick
+        // is walked once.
+        if self.lookups[Role::Inner as usize] != 0 {
+            let mut start = 0;
+            while start < last_start {
+                let end = seg_end(path, start);
+                self.probe(Role::Inner, &path[start..end], ci, |c| picked.push(c));
+                start = end + 1;
+            }
+        }
+        picked.extend_from_slice(&self.rest);
+        try_picked(&mut picked)
+    }
+
+    /// The chains whose literal the last segment holds.
+    fn infix_picks<'a>(&'a self, last: &'a [u8], ci: bool) -> impl Iterator<Item = u32> + 'a {
+        self.infix
+            .iter()
+            .filter(move |(_, lit)| {
+                last.windows(lit.len())
+                    .any(|w| w.iter().zip(lit).all(|(&a, &b)| fold(a, ci) == b))
+            })
+            .map(|&(c, _)| c)
+    }
+
+    /// Hand `pick` the chains `seg` picks for keys of `role`.
     #[inline]
-    fn probe(&self, role: Role, seg: &[u8], ci: bool) -> u64 {
+    fn probe(&self, role: Role, seg: &[u8], ci: bool, mut pick: impl FnMut(u32)) {
         let r = role as usize;
         let n = seg.len();
         let mut todo = self.lookups[r];
@@ -529,44 +630,54 @@ impl ChainIndex {
         } else {
             0
         };
-        let mut picked = 0;
+        let ids = (1 << self.id_bits) - 1;
         while todo != 0 {
             let lookup = todo.trailing_zeros() as usize;
             todo &= todo - 1;
-            // The length the key holds, the bytes it compares, its end.
-            let (len, compared, outer) = if lookup == 0 {
-                (n, n, back)
+            // The bytes the key compares, and its end.
+            let (compared, outer) = if lookup == 0 {
+                (n, back)
             } else if lookup <= KEY_BYTES {
-                (0, lookup, back)
+                (lookup, back)
             } else {
-                (0, lookup - KEY_BYTES, front)
+                (lookup - KEY_BYTES, front)
             };
             if compared > n || self.sketch[r][lookup] & 1 << (outer & 63) == 0 {
                 continue;
             }
-            let (mut at, tag) = self.hash(lookup_key(lookup, len, outer & mask(compared)));
+            let key = if lookup == 0 {
+                lookup_key(role, 0, n, self.exact(back, n, || whole_of(seg, ci)))
+            } else {
+                lookup_key(role, lookup, 0, outer & mask(compared))
+            };
+            let (mut at, tag) = self.hash(key);
             let last = self.slots.len() - 1;
             loop {
                 let slot = self.slots[at];
                 if slot == 0 {
                     break;
                 }
-                if slot & !63 == tag {
-                    picked |= 1 << (slot & 63);
+                if slot & !ids == tag {
+                    pick(slot & ids);
                 }
                 at = (at + 1) & last;
             }
         }
-        picked
     }
 }
 
-/// A lookup, the length an exact key holds and the outer bytes compared,
-/// in one word. A length past 255 runs into the lookup's bits, where it
-/// can meet only a suffix or prefix key: a chain more, which its walk
-/// turns down.
-fn lookup_key(lookup: usize, len: usize, outer: u32) -> u64 {
-    (lookup as u64) << 40 | (len as u64) << 32 | u64::from(outer)
+/// A role, a lookup, the length an exact key holds (past 255 as 255)
+/// and what it compares, in one word.
+fn lookup_key(role: Role, lookup: usize, len: usize, compared: u32) -> u64 {
+    (role as u64) << 48 | (lookup as u64) << 40 | (len.min(255) as u64) << 32 | u64::from(compared)
+}
+
+/// The bytes, folded, as a polynomial in `BASE` (the last byte its
+/// constant term): what an exact key compares.
+fn whole_of(bytes: &[u8], ci: bool) -> u32 {
+    bytes.iter().fold(0, |h: u32, &b| {
+        h.wrapping_mul(BASE).wrapping_add(u32::from(fold(b, ci)))
+    })
 }
 
 /// The first `KEY_BYTES` of `bytes`, folded, the first lowest.

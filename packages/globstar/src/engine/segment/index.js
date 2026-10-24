@@ -14,7 +14,7 @@ import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../../b
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph } from "./graph.js";
-import { SET_G, chains, chainMatches, chainDir, hasLiteral } from "./chain.js";
+import { MAX_CHAINS, SET_G, chains, chainMatches, chainDir, hasLiteral } from "./chain.js";
 import {
   anyNfa,
   nfaRun,
@@ -26,7 +26,15 @@ import {
   coversBelowSparse,
 } from "./graph-nfa.js";
 import { computeStaticPrefixes, suffixes } from "./facts.js";
-import { R_FIRST, R_INNER, R_LAST, chainIndex, probe, probeInfix } from "./chain-index.js";
+import {
+  R_FIRST,
+  R_INNER,
+  R_LAST,
+  chainIndex,
+  probe,
+  probeMany,
+  probeInfix,
+} from "./chain-index.js";
 import {
   NFA_SMALL,
   NFA_SPARSE,
@@ -50,7 +58,12 @@ export class SegmentMatcher {
     const prefixes = computeStaticPrefixes(body);
     const suf = suffixes(body);
     const graph = buildGraph(body, dot, ci);
-    const chainList = opts.forceNfa ? [] : chains(graph, ci);
+    let chainList = opts.forceNfa ? [] : chains(graph, ci);
+    const index = chainIndex(chainList, graph, ci);
+    // Past MAX_CHAINS only the index keeps a call's walks few; without
+    // one the NFA serves.
+    const set = chainList.length > 0 && chainList[0].globstar === SET_G;
+    if (index === null && chainList.length - (set ? 1 : 0) > MAX_CHAINS) chainList = [];
     // A lone line (one chain through at most one globstar) serves
     // `matchDir` too.
     const line = chainList.length === 1 && chainList[0].globstar !== SET_G && chainList[0].g2 < 0;
@@ -63,7 +76,7 @@ export class SegmentMatcher {
     // serves `matchDir` (and `isMatch` when the chains cannot), and,
     // for many chains, their index.
     this.nfa = line ? null : anyNfa(graph, ci);
-    this.index = line ? null : chainIndex(chainList, graph, ci);
+    this.index = index;
     // The chains the current indexed call tried: 0–31, 32–63.
     this.triedLo = 0;
     this.triedHi = 0;
@@ -139,7 +152,12 @@ export class SegmentMatcher {
   // own method, so `_isMatch` stays small for the one-chain and NFA
   // matchers.
   _anyChainMatches(chainList, str) {
-    if (this.index !== null) return this._indexedChainMatches(str);
+    // Past 64 chains the index has its own walk: in one method with the
+    // walk up to 64, it kept `_tryPicked` from being inlined there.
+    const ix = this.index;
+    if (ix !== null) {
+      return ix.stamp === null ? this._indexedChainMatches(str) : this._manyChainMatches(str);
+    }
     // The literal paths' set, when there is one, comes first.
     let from = 0;
     if (chainList[0].globstar === SET_G) {
@@ -222,6 +240,50 @@ export class SegmentMatcher {
       const c = 31 - Math.clz32(hi & -hi);
       hi &= hi - 1;
       if (chainMatches(this, this.chains[c + 32], str)) return true;
+    }
+    return false;
+  }
+
+  // `_indexedChainMatches` past 64 chains: the chains each step lists,
+  // once a call (`probeMany`), the inner segments' at once, then those
+  // without a key.
+  _manyChainMatches(str) {
+    const ix = this.index;
+    const ci = this.ci;
+    const len = str.length;
+    const lastStart = lastSepBefore(str, len) + 1;
+    // A new call: what the calls before listed is stale.
+    if (++ix.epoch === 0x7fffffff) {
+      ix.stamp.fill(0);
+      ix.epoch = 1;
+    }
+    ix.listed = 0;
+    ix.tried = 0;
+    probeMany(ix, R_LAST, str, lastStart, len, ci);
+    if (ix.infix.length > 0) probeInfix(ix, str, lastStart, len, ci);
+    if (this._tryListed(str)) return true;
+    const firstEnd = lastStart === 0 ? len : nextSep(str, 0);
+    if (ix.lookups[R_FIRST] !== 0) {
+      probeMany(ix, R_FIRST, str, 0, firstEnd, ci);
+      if (this._tryListed(str)) return true;
+    }
+    if (ix.lookups[R_INNER] !== 0) {
+      for (let s = 0, end = firstEnd; s < lastStart; s = end + 1, end = nextSep(str, s)) {
+        probeMany(ix, R_INNER, str, s, end, ci);
+      }
+    }
+    const rest = ix.rest;
+    for (let i = 0; i < rest.length; i++) {
+      if (ix.stamp[rest[i]] !== ix.epoch) ix.list[ix.listed++] = rest[i];
+    }
+    return this._tryListed(str);
+  }
+
+  // Walk the chains listed since the last walk.
+  _tryListed(str) {
+    const ix = this.index;
+    while (ix.tried < ix.listed) {
+      if (chainMatches(this, this.chains[ix.list[ix.tried++]], str)) return true;
     }
     return false;
   }

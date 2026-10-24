@@ -24,9 +24,12 @@ use super::wild::WildKind;
 
 // ── the chains ──────────────────────────────────────────────────────────
 
-/// Paths with a wildcard `is_match` tries one by one; past that the
-/// NFA over the whole graph runs.
-const MAX_CHAINS: usize = 64;
+/// Paths with a wildcard `is_match` tries one by one after their
+/// gates. More are kept while their nodes take at most four times the
+/// pattern's weight (a node behind crossing braces is copied once per
+/// path), for the chain index alone to pick from; past that, or without
+/// an index, the NFA over the whole graph runs.
+pub(super) const MAX_CHAINS: usize = 64;
 
 /// The literal-only paths kept as one set (a union of file names): the
 /// bytes it may take, one more per path, or four times the pattern's
@@ -155,9 +158,10 @@ const NO_HEAD: u8 = 0;
 impl Graph {
     /// Every path through the graph as a `Chain`, in pattern order, the
     /// literal ones together as one `Shape::Set` chain first; none when
-    /// the others pass `MAX_CHAINS`, the literal ones `MAX_LITERAL_BYTES`,
-    /// a path has more than two globstars, or a brace cuts a segment
-    /// (the NFA takes those).
+    /// the others pass `MAX_CHAINS` and their nodes four times the
+    /// weight, the literal ones `MAX_LITERAL_BYTES`, a path has more
+    /// than two globstars, or a brace cuts a segment (the NFA takes
+    /// those).
     pub(super) fn chains(&self, ci: bool) -> Box<[Chain]> {
         // A segment of glued pieces is no element a chain can compare.
         if self.glue.is_some() {
@@ -167,6 +171,7 @@ impl Graph {
             return self.chain_of(None, true).into_iter().collect();
         };
         let mut paths: Vec<Vec<u32>> = Vec::new();
+        let mut path_nodes = 0;
         // The literal paths' bytes, end to end, and where each starts
         // and the last ends.
         let mut lits: Vec<u8> = Vec::new();
@@ -197,9 +202,10 @@ impl Graph {
                     self.literal_path(&nodes, &mut lits);
                     lit_bounds.push(lits.len() as u32);
                 } else {
+                    path_nodes += nodes.len();
                     paths.push(nodes);
                 }
-                if paths.len() > MAX_CHAINS
+                if paths.len() > MAX_CHAINS && path_nodes > 4 * self.weight
                     || lits.len() + lit_bounds.len() > MAX_LITERAL_BYTES.max(4 * self.weight)
                 {
                     return Box::default();

@@ -158,6 +158,49 @@ console.log("✓ members spelled differently fold into one");
 }
 console.log("✓ a union of many file names keeps its literal set");
 
+// Past 64 chains the index alone picks them, and only while no call
+// walks more than 64 by one key or without any, and their nodes stay
+// within four times the pattern's weight (2^30 paths are never listed);
+// else the NFA serves. Twin of
+// `a_union_of_many_wildcard_members_keeps_its_chains_while_indexed` in
+// crates/globstar/tests/glob_union.rs.
+{
+  const keyed = Array.from({ length: 5000 }, (_, i) => `d${i}/*/n${i}.js`);
+  const keyless = Array.from({ length: 100 }, (_, i) => `*${i}*/**`);
+  const crowded = Array.from({ length: 100 }, (_, i) => `d${i}/q${i}/n.js`);
+  const product = ["{a/x,b/y}/".repeat(30) + "*.x"];
+  const paths = [
+    "d7/x/n7.js",
+    "d4999/q/n4999.js",
+    "d7/x/n8.js",
+    "d7/n7.js",
+    "a17b/c",
+    "x17/",
+    "d7/q7/n.js",
+    "d7/q8/n.js",
+    "a/x/".repeat(30) + "f.x",
+    "b/y/".repeat(29) + "f.x",
+  ];
+  for (const [members, chains] of [
+    [keyed, "| chains 5000 |"],
+    [keyless, "| chains 0 |"],
+    [crowded, "| chains 0 |"],
+    [product, "| chains 0 |"],
+  ]) {
+    const engine = buildEngine(
+      members.map((p) => parse(p)),
+      { dot: false, caseInsensitive: false },
+    );
+    assert.ok(engine.shape().includes(chains), engine.shape());
+    const union = compileMatcher(members);
+    const nfa = compileMatcher(members, { __engine: "nfa" });
+    for (const path of paths) assert.equal(union.match(path), nfa.match(path), path);
+  }
+  const union = compileMatcher(keyed);
+  assert.ok(union.match("d4999/q/n4999.js") && !union.match("d7/x/n8.js"));
+}
+console.log("✓ a union of many wildcard members keeps its chains while indexed");
+
 // Options: booleans only, own keys only, no unknown keys, the engine
 // hook one of its two values; `undefined` keeps the default. `"false"`
 // is not a boolean and throws.
