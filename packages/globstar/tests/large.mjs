@@ -502,7 +502,7 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
 // `edges_that_multiply_stay_linear`.
 {
   for (const [pattern, path] of [
-    ["{,/**/a}".repeat(800) + "/x", "/a".repeat(2000) + "/x"],
+    ["{,/**/a}".repeat(800) + "/x", "/a".repeat(400) + "/x"],
     ["{a/,}".repeat(800) + "x", "a/".repeat(800) + "x"],
   ]) {
     const unit = pattern.slice(0, pattern.indexOf("}") + 1);

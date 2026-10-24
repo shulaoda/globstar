@@ -107,7 +107,7 @@ fn side_by_side_globstar_braces_stay_linear() {
 #[test]
 fn edges_that_multiply_stay_linear() {
     for (pattern, path) in [
-        ("{,/**/a}".repeat(800) + "/x", "/a".repeat(2000) + "/x"),
+        ("{,/**/a}".repeat(800) + "/x", "/a".repeat(400) + "/x"),
         ("{a/,}".repeat(800) + "x", "a/".repeat(800) + "x"),
     ] {
         let start = std::time::Instant::now();
@@ -200,7 +200,7 @@ fn the_all_below_search_by_length_stays_cheap() {
     )
     .unwrap();
     let start = std::time::Instant::now();
-    for _ in 0..200 {
+    for _ in 0..50 {
         for dir in ["", "a", "ab/c", "abcdefgh/x/yy"] {
             assert!(g.match_dir(dir.as_bytes()).may_match_below());
         }

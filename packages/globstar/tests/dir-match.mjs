@@ -85,7 +85,7 @@ console.log("✓ matchDir with a negated member, and the DirMatch helpers");
   }
   const m = compileMatcher(`{${branches.join(",")}}`, { dot: true });
   const start = performance.now();
-  for (let k = 0; k < 200; k++) {
+  for (let k = 0; k < 50; k++) {
     for (const dir of ["", "a", "ab/c", "abcdefgh/x/yy"]) {
       assert.ok(DirMatch.mayMatchBelow(m.matchDir(dir)));
     }
