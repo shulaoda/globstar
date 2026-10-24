@@ -292,13 +292,11 @@ often it stands). The first piece is compared at the segment's start,
 the last at its end, last position first, and each one between is
 found at its leftmost place after the one before: that leaves the most
 room to the rest, so no match is missed, and the search never goes
-back. A piece of up to 32 positions is tried at each place in turn; a
-longer one is found by shift-and, its tables a mask per class of bytes
-the piece's positions take alike (at most 256, mostly a few), so a
-segment costs O(n·m/64) at worst (JS: 32-bit words). What the graph
-reads off it is what the NFA's would be: `NEVER` when a class takes no
-byte, and dot-protected unless it starts with a literal `.` or a
-positive class listing it.
+back. Each piece is tried at each place in turn, so a segment costs
+O(n·m) at worst, as the in-segment NFA does. What the graph reads off
+it is what the NFA's would be: `NEVER` when a class takes no byte, and
+dot-protected unless it starts with a literal `.` or a positive class
+listing it.
 
 ### 7.3 The in-segment NFA
 
@@ -375,7 +373,6 @@ nesting.
 | `Wide` NFA (Rust)                        | 4 KiB of rows, 48 literals per position   | `Sparse`                                     |
 | suffix product                           | 1,024 suffixes, 64 KiB or 4·nodes         | `Generic`                                    |
 | suffix scan                              | 4 suffixes                                | grouped by last byte                         |
-| piece scan                               | 32 positions                              | shift-and                                    |
 | kept closures                            | 128 KiB                                   | the step closes its set                      |
 | in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
 | wildcard-only cover steps                | 64                                        | all-below: `false`                           |
@@ -440,7 +437,7 @@ string↔byte equivalence is fuzzed by
 
 Where the twins differ, it is in representation only: JS bit sets are
 int32 words, so its small graph NFA and small in-segment NFA hold 32
-states and its shift-and 32 positions a word; it has no `Wide` graph
+states; it has no `Wide` graph
 NFA (a graph past 32 states is sparse); and it finds a suffix group, however few the suffixes, by a binary
 search of their keys: a typed table costs V8 more to allocate (about
 200 ns) than the search saves.

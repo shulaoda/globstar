@@ -370,13 +370,10 @@ impl SegmentMatcher {
 // segment of literals, `?`s and classes between `*`s (`a*b?[c-e]*f`)
 // is the pieces its `*`s cut, each of a fixed length. The first is
 // matched at the segment's start, the last at its end, and each one
-// between at its leftmost place after the one before: that leaves the
-// most room to the rest, so no match is missed and no place is tried
-// twice. A piece up to `MAX_SCAN` positions is tried at each place in
-// turn; a longer one is found by shift-and, a word operation per 64
-// positions a byte, so a segment costs O(n·m/64) at worst.
-
-const MAX_SCAN: usize = 32;
+// between at its leftmost place after the one before, tried at each
+// place in turn: that leaves the most room to the rest, so no match is
+// missed and no place is tried twice. A segment costs O(n·m) at worst,
+// as the in-segment NFA does.
 
 #[derive(Debug, Clone)]
 pub(super) struct Pieces {
@@ -387,9 +384,6 @@ pub(super) struct Pieces {
     ends: Box<[u32]>,
     /// The classes the positions name, each once.
     classes: Box<[ByteSet]>,
-    /// The shift-and tables of the pieces between the first and the
-    /// last longer than `MAX_SCAN`, in order.
-    long: Box<[ShiftAnd]>,
 }
 
 /// What a position takes: a byte (ASCII-lowercased when
@@ -470,24 +464,16 @@ impl Pieces {
         } else {
             at.len() as u32
         };
-        let mut pieces = Pieces {
-            at: at.into_boxed_slice(),
-            ends: ends.into_boxed_slice(),
-            classes: classes.into_boxed_slice(),
-            long: Box::default(),
-        };
-        let last = pieces.ends.len() - 1;
-        pieces.long = (1..last)
-            .map(|k| pieces.piece(k))
-            .filter(|p| p.len() > MAX_SCAN)
-            .map(|p| ShiftAnd::new(p, &pieces.classes, ci))
-            .collect();
         Some(Wild {
             min_len,
-            variable: last > 0,
+            variable: ends.len() > 1,
             dot_protect: !dot && !can_lit_dot,
             any_seg: false,
-            kind: WildKind::Pieces(Box::new(pieces)),
+            kind: WildKind::Pieces(Box::new(Pieces {
+                at: at.into_boxed_slice(),
+                ends: ends.into_boxed_slice(),
+                classes: classes.into_boxed_slice(),
+            })),
         })
     }
 
@@ -513,15 +499,8 @@ impl Pieces {
             return false;
         }
         let mut from = first.len();
-        let mut long = self.long.iter();
         for k in 1..last {
-            let piece = self.piece(k);
-            let found = if piece.len() > MAX_SCAN {
-                long.next().unwrap().find(seg, from, to)
-            } else {
-                self.scan(piece, seg, from, to, ci)
-            };
-            match found {
+            match self.scan(self.piece(k), seg, from, to, ci) {
                 Some(end) => from = end,
                 None => return false,
             }
@@ -549,105 +528,9 @@ impl Pieces {
     }
 }
 
-/// A long piece's shift-and tables: bit `i` of a byte's mask is set when
-/// the piece's position `i` takes the byte. Bytes every position takes
-/// or refuses alike share a mask, so there are at most 256 and mostly a
-/// few.
-#[derive(Debug, Clone)]
-struct ShiftAnd {
-    /// Each byte's mask, by index into `masks`.
-    mask_of: Box<[u8; 256]>,
-    /// The masks, `words` words each.
-    masks: Box<[u64]>,
-    words: usize,
-    /// The piece's last position, as a bit of the last word.
-    top: u64,
-}
-
-impl ShiftAnd {
-    fn new(piece: &[Pos], classes: &[ByteSet], ci: bool) -> Self {
-        // The bytes in parts, split by each position that takes some of
-        // a part: a byte or a class once, and `?` takes them all.
-        let mut part = [0u8; 256];
-        let mut parts = 1;
-        let mut seen = vec![false; 256 + classes.len()];
-        for &p in piece {
-            let key = match p {
-                Pos::Byte(x) => usize::from(x),
-                Pos::Class(k) => 256 + usize::from(k),
-                Pos::Any => continue,
-            };
-            if std::mem::replace(&mut seen[key], true) || parts == 256 {
-                continue;
-            }
-            let mut split = [u16::MAX; 512];
-            let mut count = 0;
-            for b in 0..=255u8 {
-                let key =
-                    usize::from(part[usize::from(b)]) * 2 + usize::from(p.takes(b, classes, ci));
-                if split[key] == u16::MAX {
-                    split[key] = count;
-                    count += 1;
-                }
-                part[usize::from(b)] = split[key] as u8;
-            }
-            parts = usize::from(count);
-        }
-        // A byte that stands for each part.
-        let mut stands = [0u8; 256];
-        for b in 0..=255u8 {
-            stands[usize::from(part[usize::from(b)])] = b;
-        }
-        let words = piece.len().div_ceil(64);
-        let mut masks = vec![0u64; parts * words];
-        for (i, &p) in piece.iter().enumerate() {
-            let (w, bit) = (i / 64, 1u64 << (i % 64));
-            match p {
-                // Case-insensitively both cases are in one part: every
-                // position takes both or neither.
-                Pos::Byte(x) => masks[usize::from(part[usize::from(x)]) * words + w] |= bit,
-                _ => {
-                    for (q, &b) in stands[..parts].iter().enumerate() {
-                        if p.takes(b, classes, ci) {
-                            masks[q * words + w] |= bit;
-                        }
-                    }
-                }
-            }
-        }
-        ShiftAnd {
-            mask_of: Box::new(part),
-            masks: masks.into_boxed_slice(),
-            words,
-            top: 1 << ((piece.len() - 1) % 64),
-        }
-    }
-
-    /// Where the leftmost place of the piece within `seg[from..to]` ends.
-    fn find(&self, seg: &[u8], from: usize, to: usize) -> Option<usize> {
-        let words = self.words;
-        // Bit `i`: the piece's first `i + 1` positions take the bytes up
-        // to here.
-        let mut d = vec![0u64; words];
-        for (j, &b) in seg[from..to].iter().enumerate() {
-            let at = usize::from(self.mask_of[usize::from(b)]) * words;
-            let mut carry = 1;
-            for (x, &m) in d.iter_mut().zip(&self.masks[at..at + words]) {
-                let next = (*x << 1 | carry) & m;
-                carry = *x >> 63;
-                *x = next;
-            }
-            if d[words - 1] & self.top != 0 {
-                return Some(from + j + 1);
-            }
-        }
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Pieces, Pos, ShiftAnd, Wild, WildKind};
+    use super::{Pieces, Wild, WildKind};
     use crate::engine::segment::seg_nfa::SegNfa;
     use crate::parse::ast::Node;
 
@@ -725,44 +608,6 @@ mod tests {
                     );
                 }
             }
-        }
-    }
-
-    // Shift-and finds the place trying each in turn does.
-    #[test]
-    fn shift_and_finds_the_leftmost_place() {
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-        let mut rnd = |n: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % n) as usize
-        };
-        for _ in 0..2000 {
-            let len = 1 + rnd(150);
-            let pattern: String = (0..len)
-                .map(|_| ["a", "b", "?", "[ab]", "[!b]", "A"][rnd(6)])
-                .collect();
-            let ci = rnd(2) == 0;
-            let ast = crate::parse::parse(format!("*{pattern}*").as_bytes()).unwrap();
-            let Some(Wild {
-                kind: WildKind::Pieces(p),
-                ..
-            }) = Pieces::wild(&nodes(&ast.body), true, ci)
-            else {
-                panic!("*{pattern}* has no pieces");
-            };
-            let piece: Vec<Pos> = p.piece(1).to_vec();
-            let search = ShiftAnd::new(&piece, &p.classes, ci);
-            let seg: Vec<u8> = (0..rnd(400)).map(|_| b"abAB"[rnd(4)]).collect();
-            let from = rnd(seg.len() as u64 + 1);
-            let to = from + rnd((seg.len() - from) as u64 + 1);
-            assert_eq!(
-                search.find(&seg, from, to),
-                p.scan(&piece, &seg, from, to, ci),
-                "*{pattern}* ci={ci} on {:?}[{from}..{to}]",
-                String::from_utf8_lossy(&seg)
-            );
         }
     }
 }

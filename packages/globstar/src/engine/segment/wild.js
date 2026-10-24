@@ -251,19 +251,13 @@ export function wildConsumes(m, w, str, s, t) {
 // ── pieces ──────────────────────────────────────────────────────────
 
 // Brace-free in-segment matcher — the `WK_PIECES` wild backend: a
-// segment of literals, `?`s and classes between `*`s (`a*b?[c-e]*f`) is the pieces
-// its `*`s cut, each of a fixed length. The first is matched at the
-// segment's start, the last at its end, and each one between at its
-// leftmost place after the one before: that leaves the most room to the
-// rest, so no match is missed and no place is tried twice. A piece up to
-// MAX_SCAN positions is tried at each place in turn; a longer one is
-// found by shift-and, a word operation per 32 positions a unit, so a
-// segment costs O(n·m/32) at worst.
-
-// A piece up to this many positions is tried at each place in turn, at
-// most this many unit tests a place; a longer one is searched by
-// shift-and.
-const MAX_SCAN = 32;
+// segment of literals, `?`s and classes between `*`s (`a*b?[c-e]*f`) is
+// the pieces its `*`s cut, each of a fixed length. The first is matched
+// at the segment's start, the last at its end, and each one between at
+// its leftmost place after the one before, tried at each place in turn:
+// that leaves the most room to the rest, so no match is missed and no
+// place is tried twice. A segment costs O(n·m) at worst, as the
+// in-segment NFA does.
 
 // What a position takes, one code each: a byte (0-255, ASCII-lowercased
 // when case-insensitive), any byte (ANY, `?`), or class `k` of the
@@ -324,7 +318,7 @@ function compilePieces(nodes, dot, ci) {
       ? first.str.charCodeAt(0) === 0x2e
       : first.tag === N_CLASS && !first.neg && setHas(classes[at[0] - CLASS], 0x2e);
   return {
-    matcher: new Pieces(at, ends, classes, countsBytes, ci),
+    matcher: new Pieces(at, ends, classes, countsBytes),
     minLen: classes.some(setEmpty) ? NEVER_LEN : at.length,
     variable: ends.length > 1,
     dotProtect: !dot && !canLitDot,
@@ -343,22 +337,13 @@ function takes(code, c, classes, ci) {
 }
 
 class Pieces {
-  constructor(at, ends, classes, countsBytes, ci) {
+  constructor(at, ends, classes, countsBytes) {
     // Every piece's positions, piece after piece; piece `k` ends at
     // `ends[k]`, and starts where the one before ends (the first at 0).
     this.at = exact(at);
     this.ends = exact(ends);
     this.classes = exact(classes);
     this.countsBytes = countsBytes;
-    // The shift-and tables of the pieces between the first and the last
-    // longer than MAX_SCAN, in order.
-    const long = [];
-    for (let k = 1; k + 1 < ends.length; k++) {
-      if (ends[k] - ends[k - 1] > MAX_SCAN) {
-        long.push(new ShiftAnd(at, ends[k - 1], ends[k], classes, ci));
-      }
-    }
-    this.long = long;
   }
 
   // Does `str[s, t)` match, its length checked against the pieces' (at
@@ -374,14 +359,8 @@ class Pieces {
       return false;
     }
     let from = s + ends[0];
-    let long = 0;
     for (let k = 1; k < last; k++) {
-      const lo = ends[k - 1];
-      const hi = ends[k];
-      const end =
-        hi - lo > MAX_SCAN
-          ? this.long[long++].find(str, from, to)
-          : this.scan(lo, hi, str, from, to, ci);
+      const end = this.scan(ends[k - 1], ends[k], str, from, to, ci);
       if (end < 0) return false;
       from = end;
     }
@@ -403,82 +382,6 @@ class Pieces {
   scan(lo, hi, str, from, to, ci) {
     const m = hi - lo;
     for (let k = from; k + m <= to; k++) if (this.fits(lo, hi, str, k, ci)) return k + m;
-    return -1;
-  }
-}
-
-// A long piece's shift-and tables: bit `i` of a byte's mask is set when
-// the piece's position `i` takes the byte. Bytes every position takes or
-// refuses alike share a mask, so there are at most 256 and mostly a few.
-class ShiftAnd {
-  constructor(at, lo, hi, classes, ci) {
-    // The bytes in parts, split by each position that takes some of a
-    // part: a byte or a class once, and `?` takes them all.
-    const part = new Uint8Array(256);
-    let parts = 1;
-    const seen = new Set();
-    const split = new Int16Array(512);
-    for (let i = lo; i < hi; i++) {
-      const code = at[i];
-      if (code === ANY || seen.has(code) || parts === 256) continue;
-      seen.add(code);
-      split.fill(-1);
-      let count = 0;
-      for (let b = 0; b < 256; b++) {
-        const key = part[b] * 2 + (takes(code, b, classes, ci) ? 1 : 0);
-        if (split[key] === -1) split[key] = count++;
-        part[b] = split[key];
-      }
-      parts = count;
-    }
-    // A byte that stands for each part.
-    const stands = new Uint8Array(256);
-    for (let b = 0; b < 256; b++) stands[part[b]] = b;
-    const m = hi - lo;
-    const words = (m + 31) >>> 5;
-    const masks = new Int32Array(parts * words);
-    for (let i = 0; i < m; i++) {
-      const code = at[lo + i];
-      const w = i >>> 5;
-      const bit = 1 << (i & 31);
-      // Case-insensitively both cases are in one part: every position
-      // takes both or neither.
-      if (code < ANY) masks[part[code] * words + w] |= bit;
-      else {
-        for (let q = 0; q < parts; q++) {
-          if (takes(code, stands[q], classes, ci)) masks[q * words + w] |= bit;
-        }
-      }
-    }
-    // Each byte's mask, by index into `masks`, `words` words each.
-    this.maskOf = part;
-    this.masks = masks;
-    this.words = words;
-    // The piece's last position, as a bit of the last word.
-    this.top = 1 << ((m - 1) & 31);
-  }
-
-  // Where the leftmost place of the piece within `str[from, to)` ends
-  // (-1: none).
-  find(str, from, to) {
-    const words = this.words;
-    const masks = this.masks;
-    // Bit `i`: the piece's first `i + 1` positions take the units up to
-    // here.
-    const d = new Int32Array(words);
-    for (let j = from; j < to; j++) {
-      const c = str.charCodeAt(j);
-      // A unit past Latin-1 is in a string matched as it is, whose
-      // pieces take no byte past 0x7f: as 0xff, it is taken by none.
-      const row = this.maskOf[c <= 0xff ? c : 0xff] * words;
-      let carry = 1;
-      for (let w = 0; w < words; w++) {
-        const x = d[w];
-        d[w] = ((x << 1) | carry) & masks[row + w];
-        carry = x >>> 31;
-      }
-      if ((d[words - 1] & this.top) !== 0) return j + 1;
-    }
     return -1;
   }
 }
