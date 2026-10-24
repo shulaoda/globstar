@@ -1,31 +1,20 @@
 #!/usr/bin/env node
-// Cross-runtime DIFFERENTIAL FUZZER — JS globstar vs Rust globstar.
-//
-// The fixed corpora (fixtures/corpus/, fixtures/ecosystem/) prove the two
-// runtimes agree on the rows they hold. They say nothing about the
-// infinite space of inputs nobody wrote down. This fuzzer closes that gap:
-// it generates random dialect-edge (pattern, path, flags) tuples, runs the
-// JS matcher, then feeds the SAME inputs to the Rust `difftest` harness over
-// one stdin stream and asserts every result token agrees. A divergence is a
-// real JS↔Rust drift bug, reproducible from its seed.
+// JS↔Rust differential fuzzer: random (pattern, path, flags) cases run
+// through the JS matcher and, over one stdin stream, through the Rust
+// `difftest` harness (the `fuzz` profile: release speed with
+// `debug_assert!` and overflow checks on); every token must agree. A
+// divergence reproduces from its seed. About 5% of the cases are long.
 //
 //   node scripts/fuzz.mjs                         # 50k mixed cases, seed 1
 //   node scripts/fuzz.mjs --seed 99 --count 200000
-//   node scripts/fuzz.mjs --mode m                # only is_match (incl. negation)
-//   node scripts/fuzz.mjs --mode n                # only is_match on the NFA (chains bypassed)
-//   node scripts/fuzz.mjs --mode d                # only match_dir (6-valued, incl. negation)
-//   node scripts/fuzz.mjs --mode u                # only multi-pattern union
-//   node scripts/fuzz.mjs --mode un               # only union is_match on the NFA
-//   node scripts/fuzz.mjs --mode ud               # only union match_dir
-//   node scripts/fuzz.mjs --mode s                # only static_prefixes
-//   node scripts/fuzz.mjs --seeds 1-20 --count 50000   # sweep seeds (nightly)
-//
-// Wire format and escaping mirror tools/difftest/src/main.rs exactly. The
-// Rust side runs the `fuzz` profile: release speed with `debug_assert!`
-// and overflow checks on.
-//
-// About 5% of the cases are long (four times the tokens), for the cost
-// guards and the large-graph paths.
+//   node scripts/fuzz.mjs --mode m                # is_match (negation included)
+//   node scripts/fuzz.mjs --mode n                # is_match on the NFA (no chains)
+//   node scripts/fuzz.mjs --mode d                # match_dir (negation included)
+//   node scripts/fuzz.mjs --mode u                # union is_match
+//   node scripts/fuzz.mjs --mode un               # union is_match on the NFA
+//   node scripts/fuzz.mjs --mode ud               # union match_dir
+//   node scripts/fuzz.mjs --mode s                # static_prefixes
+//   node scripts/fuzz.mjs --seeds 1-20 --count 50000   # a seed sweep (nightly)
 
 import { spawnSync } from "node:child_process";
 import { dirname } from "node:path";
@@ -36,7 +25,6 @@ import { GlobError } from "../packages/globstar/src/error.js";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 process.chdir(ROOT);
 
-// ── CLI ──────────────────────────────────────────────────────────────
 function argVal(name, def) {
   const i = process.argv.indexOf(name);
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : def;
@@ -51,10 +39,9 @@ const int = (name, value) => {
 };
 const COUNT = int("--count", argVal("--count", "50000"));
 if (COUNT === 0) usage("--count 0 tests nothing");
-const MODE = argVal("--mode", "all"); // all | m | n | d | u | un | ud | s
+const MODE = argVal("--mode", "all");
 if (!["all", "m", "n", "d", "u", "un", "ud", "s"].includes(MODE)) usage(`unknown --mode ${MODE}`);
 const MAX_SAMPLES = int("--max-samples", argVal("--max-samples", "30"));
-// `--seed N` for one run, or `--seeds A-B` to sweep a range.
 const SEEDS = (() => {
   const range = argVal("--seeds", null);
   if (range) {
@@ -68,7 +55,7 @@ const SEEDS = (() => {
   return [int("--seed", argVal("--seed", "1"))];
 })();
 
-// ── deterministic PRNG (mulberry32) so any failure reproduces ────────
+// mulberry32
 function rng(seed) {
   let a = seed >>> 0;
   return () => {
@@ -80,12 +67,9 @@ function rng(seed) {
   };
 }
 
-// ── dialect-edge token alphabets ─────────────────────────────────────
-// Patterns are valid UTF-8 text (they cross Rust's &str API). Bias hard
-// toward the constructs most likely to drift: classes (both `!`/`^`
-// negation forms, POSIX first-`]`, ranges, escapes, illegal `/`), braces
-// (nested, empty branches), every `**` position, escapes, stray closers,
-// and non-ASCII.
+// Valid UTF-8 (patterns cross Rust's `&str` API), biased toward what
+// drifts: classes, braces, every `**` position, escapes, stray closers,
+// non-ASCII.
 const PAT_TOKENS = [
   "a",
   "b",
@@ -129,8 +113,6 @@ const PAT_TOKENS = [
   "{a,}",
   "{ab,{c,d}}",
   "{a,b}{c,d}",
-  // Braces that cross a separator: regrouping, pending `**/`, the
-  // work budget.
   "{**,a}/",
   "{/,a,}",
   "{a/,a//}",
@@ -161,15 +143,15 @@ const PAT_TOKENS = [
   "é",
   "ü",
   "中",
-  "🎉", // valid multi-byte UTF-8 (encoded via TextEncoder)
+  "🎉",
   "!",
   "src/",
   ".txt",
   "foo",
   "node_modules",
 ];
-// Paths are JS strings, so they reach both runtimes as valid UTF-8: the
-// `\xHH` tokens are Latin-1 characters, the others multi-byte ones.
+// JS strings, so valid UTF-8 on both sides: the `\xHH` tokens are Latin-1
+// characters.
 const PATH_TOKENS = [
   "a",
   "b",
@@ -212,7 +194,7 @@ const PATH_TOKENS = [
   ".txt",
 ];
 
-// ── wire codec (must match tools/difftest/src/main.rs) ───────────────
+// The wire codec of tools/difftest/src/main.rs.
 const ENC = new TextEncoder();
 function escapeBytes(bytes) {
   let out = "";
@@ -223,16 +205,10 @@ function escapeBytes(bytes) {
   }
   return out;
 }
-// PATTERN and PATH both travel as UTF-8 — identical bytes to what the JS
-// side's UTF-8 encoder sees and to what Rust receives. The public JS
-// API is string-only, so the shared input domain is UTF-8 strings; raw
-// non-UTF-8 byte paths are Rust-only territory the differential can't reach.
 const patternWire = (s) => escapeBytes(ENC.encode(s));
 const pathWire = patternWire;
 
-// ── JS reference results ─────────────────────────────────────────────
-// Indexed by JS `DirMatch` value (Match=0, Pruned=1, Descend=2, DescendAndMatch=3,
-// DescendAll=4, DescendAllAndMatch=5).
+// Indexed by the JS `DirMatch` value.
 const DIR_TOKEN = [
   "match",
   "pruned",
@@ -242,9 +218,6 @@ const DIR_TOKEN = [
   "descend-all-match",
 ];
 
-// Single-pattern queries take `c.pat`, union ones `c.patterns`; `m`, `u`
-// and their NFA twins `n`, `un` match `c.input`, `d` and `ud` take it as
-// a directory.
 const UNION = new Set(["u", "un", "ud"]);
 const NFA = new Set(["n", "un"]);
 const DIR = new Set(["d", "ud"]);
@@ -267,14 +240,12 @@ function jsResult(c) {
 function wireLine(c) {
   const f = `${c.dot ? 1 : 0}${c.ci ? 1 : 0}`;
   if (c.cmd === "s") return `s\t${f}\t${c.patterns.map(patternWire).join("\t")}`;
-  // union: <cmd> <flags> <input> <pat...>
   if (UNION.has(c.cmd)) {
     return `${c.cmd}\t${f}\t${pathWire(c.input)}\t${c.patterns.map(patternWire).join("\t")}`;
   }
   return `${c.cmd}\t${f}\t${patternWire(c.pat)}\t${pathWire(c.input)}`;
 }
 
-// ── generators ───────────────────────────────────────────────────────
 function makeGen(seed) {
   const rnd = rng(seed);
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
@@ -285,7 +256,7 @@ function makeGen(seed) {
     let s = "";
     const n = randint(1, maxTok);
     for (let i = 0; i < n; i++) s += pick(PAT_TOKENS);
-    if (chance(0.3)) s = pick(["!", "!!", "/", ""]) + s; // negation / root bias
+    if (chance(0.3)) s = pick(["!", "!!", "/", ""]) + s;
     return s;
   };
   const stripBang = (s) => {
@@ -299,13 +270,14 @@ function makeGen(seed) {
     return s;
   };
 
+  // Union members are stripped of `!`: Rust rejects a negated member and
+  // JS accepts it, so raw equality cannot compare them.
   return () => {
     const cmd = MODE === "all" ? pick(["m", "m", "m", "n", "d", "d", "u", "un", "ud", "s"]) : MODE;
     const dot = chance(0.5);
     const ci = chance(0.5);
     const scale = chance(0.05) ? 4 : 1;
     if (cmd === "s") {
-      // Single patterns keep negation; unions strip it (Rust rejects it).
       const k = chance(0.5) ? 1 : randint(2, 5);
       const patterns =
         k === 1 ? [genPattern(10)] : Array.from({ length: k }, () => stripBang(genPattern(6)));
@@ -313,9 +285,6 @@ function makeGen(seed) {
     }
     const input = genPath(8 * scale);
     if (!UNION.has(cmd)) return { cmd, dot, ci, pat: genPattern(10 * scale), input };
-    // union: 2..10 patterns stripped of `!` — negated members are the one
-    // documented API divergence (Rust rejects NegatedInUnion, JS accepts;
-    // GLOB_SPEC §6), so raw equality can't compare them.
     const k = randint(2, 10);
     const patterns = [];
     for (let i = 0; i < k; i++) patterns.push(stripBang(genPattern(6 * scale)));
@@ -323,7 +292,6 @@ function makeGen(seed) {
   };
 }
 
-// ── run one seed ─────────────────────────────────────────────────────
 function runSeed(seed) {
   const gen = makeGen(seed);
   const cases = Array.from({ length: COUNT }, () => gen());
@@ -364,7 +332,6 @@ function runSeed(seed) {
   return { seed, n: jsResults.length, diff, samples };
 }
 
-// ── main ─────────────────────────────────────────────────────────────
 console.log(`[fuzz] mode=${MODE} count=${COUNT} seeds=[${SEEDS[0]}..${SEEDS[SEEDS.length - 1]}]`);
 const t0 = Date.now();
 let totalDiff = 0;

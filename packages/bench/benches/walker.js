@@ -1,6 +1,5 @@
-// Walker comparison across tree scales: globstar (default API)
-// vs fast-glob / globby / tinyglobby. Output is consumed by
-// `scripts/bench.mjs`.
+// The walkers on three tree scales: globstar against fast-glob, globby
+// and tinyglobby; `scripts/bench.mjs` reads the output.
 
 import { bench, run, group, summary, do_not_optimize } from "mitata";
 import fastGlob from "fast-glob";
@@ -99,8 +98,8 @@ const PATTERNS_HUGE = [
   "**/*.md",
 ];
 
-// The others take `onlyFiles` to return files only, which globstar
-// always does; it refuses options it does not have.
+// The others take `onlyFiles` for what globstar always does; it refuses
+// options it does not have.
 const opts = (root) => ({ cwd: root, dot: true, onlyFiles: true });
 const ownOpts = (root) => ({ cwd: root, dot: true });
 

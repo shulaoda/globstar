@@ -1,25 +1,15 @@
-//! Ecosystem probe (Rust side). `scripts/ecosystem/generate.mjs` feeds it
-//! the cases harvested from other libraries' test suites; it answers each
-//! with every Rust matcher the benchmarks compare against, plus `globstar`
-//! itself, so the corpus records what each library does at the version
-//! `Cargo.lock` pins.
+//! The Rust side of `scripts/ecosystem/generate.mjs`: each case of another
+//! library's suite answered by every Rust matcher the benchmarks compare
+//! against, and by globstar, at the versions `Cargo.lock` pins.
 //!
-//! ## Wire format
-//!
-//! One request per line, tab-separated: `<dot><ci>` (each `0`/`1`), the
-//! pattern, the path. The fields use the corpus escapes (`\\`, `\t`, `\n`).
-//! One answer line per request, tab-separated, in this order:
-//!
-//! `globstar`, `globset`, `fast-glob`, `wax`
-//!
-//! Each token is `match`, `no-match`, `err:<Kind>` (globstar), `error:<text>`
-//! (another library refused the pattern) or `panic`. The probe does not
-//! decide which options a library can express: it runs globset with
-//! `case_insensitive` as asked and every library on the path as given; the
-//! generator masks the rows a library cannot be asked about.
-//!
-//! globset runs with `literal_separator(true)`, `backslash_escape(true)` and
-//! `empty_alternates(true)`, the configuration closest to this dialect.
+//! One request per line, tab-separated: `<dot><ci>` (`0`/`1`), the
+//! pattern, the path, with the corpus escapes (`\\`, `\t`, `\n`). One
+//! answer line per request: `globstar`, `globset`, `fast-glob`, `wax`,
+//! each `match`, `no-match`, `err:<Kind>` (globstar), `error:<text>` (the
+//! library refused the pattern) or `panic`. globset runs with
+//! `literal_separator`, `backslash_escape` and `empty_alternates`, the
+//! configuration closest to this dialect; the generator masks the rows a
+//! library cannot be asked about.
 
 use std::io::{self, BufRead, Write};
 use std::panic::{self, AssertUnwindSafe};
@@ -29,7 +19,7 @@ use globstar::{CompileOptions, Glob};
 use wax::Program as _;
 
 fn main() {
-    // A panicking library is an answer (`panic`), not the end of the run.
+    // A panicking library is an answer, not the end of the run.
     panic::set_hook(Box::new(|_| {}));
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -75,7 +65,6 @@ fn ours(pattern: &str, path: &str, dot: bool, ci: bool) -> String {
     match Glob::new_with(pattern, opts) {
         Ok(g) => verdict(g.is_match(path.as_bytes())),
         Err(e) => {
-            // The variant name, as the corpus spells it: `err:Kind`.
             let debug = format!("{e:?}");
             let kind = debug.split([' ', '(', '{']).next().unwrap_or("Unknown");
             format!("err:{kind}")
@@ -103,7 +92,7 @@ fn wax_answer(pattern: &str, path: &str) -> String {
     }
 }
 
-/// `error:<text>` on one line, short enough for a corpus comment.
+/// On one line, short enough for a corpus comment.
 fn error(text: &str) -> String {
     let flat: String = text
         .split_whitespace()
@@ -115,7 +104,6 @@ fn error(text: &str) -> String {
     format!("error:{flat}")
 }
 
-/// The corpus escapes: `\\`, `\t`, `\n`; any other byte is itself.
 fn unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();

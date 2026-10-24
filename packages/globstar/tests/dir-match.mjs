@@ -1,13 +1,11 @@
 // `matchDir` where the shared corpus cannot reach: a list with a negated
 // member (Rust's `Glob::union` refuses one) and the `DirMatch` helpers.
-// The verdicts of plain patterns and lists are rows of
-// `fixtures/corpus/corpus-dir.txt` and `corpus-multi-dir.txt`.
 
 import assert from "node:assert/strict";
 import { compileMatcher, DirMatch } from "../src/index.js";
 
 // A negated member says exactly whether the directory itself matches
-// (§15.4).
+// (GLOB_SPEC §15.4).
 for (const [d, matches] of [
   ["lib", true],
   ["src", true],
@@ -28,8 +26,8 @@ for (const v of [0, 1, 2, 3, 4, 5]) {
 }
 assert.equal(DirMatch.from(false, false, true), DirMatch.DescendAll);
 
-// A union with a negated member may match anywhere (what `!b` keeps is
-// everything but `b`): a walker must never prune a folder because of it.
+// A union with a negated member may match anywhere: a walker must never
+// prune a folder because of it.
 {
   const m = compileMatcher(["src/**", "!b"]);
   assert.ok(m.match("lib/x.ts"));
@@ -39,9 +37,8 @@ assert.equal(DirMatch.from(false, false, true), DirMatch.DescendAll);
 
 console.log("✓ matchDir with a negated member, and the DirMatch helpers");
 
-// Windows: an escaped `\` is a literal no segment holds (§4.2), so its
-// expansion seeds nothing, and `matchDir` prunes where it is next. Twin
-// of `an_escaped_backslash_is_dead_on_windows`.
+// An escaped `\` is a literal no segment holds (GLOB_SPEC §4.2): its
+// expansion seeds nothing, and `matchDir` prunes where it is next.
 if (process.platform === "win32") {
   const text = (m) => m.staticPrefixes().map((b) => new TextDecoder().decode(b));
   assert.deepEqual(text(compileMatcher(["src\\\\sub/*.ts", "src/sub/*.ts"])), ["src/sub"]);

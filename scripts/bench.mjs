@@ -1,11 +1,8 @@
 #!/usr/bin/env node
-// One-click benchmark runner.
-//
-// Compares globstar (default public API) against the dominant
-// ecosystem libraries in five tables (build / build + first non-match /
-// match / memory / peak memory) for both single-pattern and
-// multi-pattern matchers, plus end-to-end walker timings. Rust + JS columns are merged into
-// single tables so rows can be read across runtimes.
+// BENCHMARKS.md: globstar against the ecosystem libraries in five tables
+// (build, build + first non-match, match, memory, peak memory) for single
+// and multi-pattern matchers, plus the walkers, Rust and JS columns side
+// by side.
 //
 //   node scripts/bench.mjs              # full run (~5 min on Apple Silicon)
 //   node scripts/bench.mjs --skip-rust  # JS only
@@ -24,11 +21,9 @@ const args = new Set(process.argv.slice(2));
 const SKIP_RUST = args.has("--skip-rust");
 const SKIP_JS = args.has("--skip-js");
 
-// The matcher row labels, from the fixtures both runtimes' benches read.
 const SINGLE_PATTERNS = PATTERNS.map(([label]) => label);
 const MULTI_SETS = PATTERN_SETS.map(([label]) => label);
 
-// Walker row labels — `<scale>_<pattern-set>`.
 const WALKER_LABELS = [
   "small_multi-small",
   "small_multi-huge",
@@ -38,14 +33,11 @@ const WALKER_LABELS = [
   "large_multi-huge",
 ];
 
-// ── helpers ──────────────────────────────────────────────────────
-
 let failed = false;
 
-// The Rust side is built with every function on a 64-byte boundary and
-// every jump target on a 32-byte one, in its own target directory.
-// Without them, code placement alone moved a 2 ns row 1.7× and a
-// 190 ns row 1.15× between builds that ran the same instructions.
+// Every function on a 64-byte boundary and every jump target on a 32-byte
+// one: without them, code placement alone moved a 2 ns row 1.7× between
+// builds that ran the same instructions.
 const RUST_ENV = {
   ...process.env,
   RUSTFLAGS: "-C llvm-args=-align-all-functions=6 -C llvm-args=-align-all-nofallthru-blocks=5",
@@ -71,11 +63,8 @@ function step(name, cmd, argv) {
   return (res.stdout || "") + (res.stderr || "");
 }
 
-// ANSI escape sequences are inherently control-char-prefixed.
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s) => s.replace(/\u001b\[[0-9;]*m/g, "");
-
-// ── parsers ──────────────────────────────────────────────────────
 
 function parseCriterion(text) {
   const out = {};
@@ -137,8 +126,6 @@ function parseTable(text, headerHint) {
   return out;
 }
 
-// ── formatting ──────────────────────────────────────────────────
-
 const UNIT_FACTOR = { ns: 1, µs: 1000, ms: 1_000_000, s: 1_000_000_000 };
 const UNIT_ORDER = ["ns", "µs", "ms", "s"];
 
@@ -148,8 +135,8 @@ function timeToNs(s) {
   return parseFloat(m[1]) * UNIT_FACTOR[m[2]];
 }
 
+// The unit that puts the value in [1, 1000).
 function nsToString(ns) {
-  // Pick the unit that puts the value in [1, 1000).
   for (const u of UNIT_ORDER) {
     const factor = UNIT_FACTOR[u];
     if (ns < factor * 1000 || u === "s") {
@@ -165,9 +152,8 @@ function formatCell(val, opts = {}) {
     const scaled = opts.divideBy ? ns / opts.divideBy : ns;
     return nsToString(scaled);
   }
-  // Bare integer (Rust memory tools).
+  // A bare integer (the Rust memory tools), or JS's `424 B`.
   if (/^\d+$/.test(val) && opts.isMem) return bytesToKb(parseInt(val, 10));
-  // JS memory: `424 B` style.
   const m = val.match(/^([\d.]+)\s*B$/);
   if (m) return bytesToKb(parseFloat(m[1]));
   return val;
@@ -176,8 +162,6 @@ function formatCell(val, opts = {}) {
 function bytesToKb(bytes) {
   return `${(bytes / 1024).toFixed(2)} KB`;
 }
-
-// ── runners ──────────────────────────────────────────────────────
 
 const rust = {};
 const js = {};
@@ -238,7 +222,7 @@ if (!SKIP_JS) {
   js.multiMem = parseTable(jsMultiRaw, "Pattern set");
 
   // Peak memory in a process of its own, whose young generation holds a
-  // whole build so that no GC runs inside one: the timings above run
+  // whole build so that no GC runs inside one; the timings above run
   // with V8's defaults.
   const peak = (name, bench, hint) =>
     parseTable(
@@ -259,8 +243,6 @@ if (!SKIP_JS) {
   );
 }
 
-// ── markdown emission ────────────────────────────────────────────
-
 function table(headers, rows) {
   if (rows.length === 0) return "_(no data)_";
   const sep = headers.map(() => "---").join(" | ");
@@ -269,20 +251,12 @@ function table(headers, rows) {
   return `| ${head} |\n| ${sep} |\n${body}`;
 }
 
-/**
- * Emit one table that pulls cells from multiple sources (typically the
- * Rust and JS sides) and joins them on a shared row-label list.
- *
- * `sources[i]` is `{ data, rowKey, libCols, cellOpts }` where
- *   data        — parsed `{ group: { libKey: "v unit" } }` map
- *   rowKey(lbl) — translates a label like `"literal"` into the parser's
- *                 group key (`"compile_literal"` for criterion,
- *                 `"compile: literal"` for mitata, etc.)
- *   libCols     — `[[displayName, lookupKey], …]`
- *   cellOpts    — `{ isMem, divideBy }` passed through to `formatCell`
- */
 const missingCells = [];
 
+// One table over several sources (the Rust and the JS side), joined on
+// `rowLabels`. A source is `{ data, rowKey, libCols, cellOpts }`:
+// `rowKey(label)` is the parser's group key, `libCols` is
+// `[[displayName, lookupKey], …]`, `cellOpts` goes to `formatCell`.
 function combinedTable(rowLabelHeader, rowLabels, sources) {
   const headers = [rowLabelHeader, ...sources.flatMap((s) => s.libCols.map((c) => c[0]))];
   const rows = rowLabels.map((label) => {
@@ -291,7 +265,7 @@ function combinedTable(rowLabelHeader, rowLabels, sources) {
       const group = src.data[groupKey] ?? {};
       return src.libCols.map(([name, key]) => {
         // A library that threw in mitata leaves no number, not a failed
-        // step: count the hole so the run fails rather than print "—".
+        // step: the hole fails the run rather than print "—".
         if (group[key] === undefined) missingCells.push(`${label} / ${name}`);
         return formatCell(group[key] ?? "—", src.cellOpts ?? {});
       });
@@ -301,15 +275,11 @@ function combinedTable(rowLabelHeader, rowLabels, sources) {
   return table(headers, rows);
 }
 
-// ── source helpers ──────────────────────────────────────────────
-
 const empty = {};
 
-// The five matcher tables of one runtime: `data` is its criterion or
-// mitata parse, `mem` and `peak` its memory tables, `key(phase, label)`
-// the group key of a row, `cols` the library columns (`match` adds
-// fast_glob on the Rust side). Rust criterion times the whole path batch per iter;
-// `divideBy` brings it onto the per-call basis mitata reports.
+// The five matcher tables of one runtime. Rust criterion times the whole
+// path batch per iteration; `divideBy` brings it onto the per-call basis
+// mitata reports.
 function matcherTables(data, mem, peak, key, cols, { match = cols, divideBy } = {}) {
   const src = (d, rowKey, libCols, cellOpts) => ({ data: d ?? empty, rowKey, libCols, cellOpts });
   return {
@@ -367,8 +337,6 @@ const jsWalker = {
     ["tinyglobby (JS)", "tinyglobby"],
   ],
 };
-
-// ── report assembly ─────────────────────────────────────────────
 
 const sections = [];
 
@@ -556,8 +524,8 @@ if (failed) {
   process.stderr.write("\n[bench] a step failed; BENCHMARKS.md not written\n");
   process.exit(1);
 }
+// Half a run is for reading, not for the committed report.
 if (SKIP_RUST || SKIP_JS) {
-  // Half a run is for reading, not for the committed report.
   process.stdout.write(report);
 } else {
   writeFileSync(resolve(ROOT, "BENCHMARKS.md"), report);

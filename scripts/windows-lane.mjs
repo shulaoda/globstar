@@ -1,17 +1,13 @@
-// A local Windows lane, no Windows machine needed: the Rust tests
-// cross-built for x86_64-pc-windows-gnu and the JS suites on a Windows
-// node.exe, both run under wine in Docker.
+// A local Windows lane: the Rust tests cross-built for
+// x86_64-pc-windows-gnu and the JS suites on a Windows node.exe, both
+// under wine in Docker. The first run builds the container
+// `globstar-wine` (several minutes, about 2 GB); `docker rm -f
+// globstar-wine` starts over, and WINE_CONTAINER names another prepared
+// container. Not covered: real NTFS, and symlinks, which wine cannot make.
 //
 //   node scripts/windows-lane.mjs           # both runtimes
 //   node scripts/windows-lane.mjs --rust    # the Rust crates only
 //   node scripts/windows-lane.mjs --js      # the JS suites only
-//
-// The first run builds the container `globstar-wine` (mingw-w64, wine,
-// the windows-gnu target, Node for Windows): several minutes and about
-// 2 GB. Later runs reuse it; `docker rm -f globstar-wine` starts over,
-// and WINE_CONTAINER names another prepared container. Not covered: real
-// NTFS (wine works on the host's file system) and symlinks, which wine
-// cannot make (the walker suite skips those groups).
 
 import { spawnSync } from "node:child_process";
 import { globSync } from "node:fs";
@@ -29,9 +25,8 @@ for (const arg of args) {
 const want = (flag) => args.length === 0 || args.includes(flag);
 const container = process.env.WINE_CONTAINER ?? "globstar-wine";
 const NODE = "v24.15.0";
-// The suites CI runs with `node --test`, one by one here: the runner
-// reads its children through pipes, which node.exe under wine cannot
-// write to.
+// One by one: `node --test` reads its children through pipes, which
+// node.exe under wine cannot write to.
 const JS_SUITES = globSync("packages/*/tests/*.mjs", { cwd: root }).sort();
 
 // Runs `script` in the container from the repo root; the exit status.
@@ -104,8 +99,8 @@ if (want("--rust")) {
 if (want("--js")) {
   for (const suite of JS_SUITES) {
     console.log(`[lane] JS: ${suite} (node.exe under wine)`);
-    // Under wine, node.exe cannot write to a pipe: its streams go to
-    // files, printed after.
+    // node.exe under wine cannot write to a pipe: its streams go to files,
+    // printed after.
     const status = inContainer(
       `wine /opt/node-win/node.exe ${suite} > /tmp/lane.out 2> /tmp/lane.err; s=$?; ` +
         `tr -d '\\r' < /tmp/lane.out; grep -v XDG_RUNTIME_DIR /tmp/lane.err | tr -d '\\r'; exit $s`,

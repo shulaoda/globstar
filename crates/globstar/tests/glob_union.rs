@@ -1,15 +1,10 @@
-//! Tests for `Glob::union` that the shared corpus cannot hold: equivalence
-//! with matching the members one by one
-//! (`patterns.iter().any(|p| Glob::new(p).is_match(path))`), the error
-//! contract, and the limits.
+//! `Glob::union` against matching the members one by one, its error
+//! contract, and its limits.
 
 use globstar::{CompileOptions, Glob, GlobError};
 use std::collections::BTreeSet;
 use std::fs;
 
-/// Oracle: independently compile each pattern and OR the results.
-/// Equivalent to what `Glob::union` should produce for non-negated
-/// inputs, but computed without sharing any state across patterns.
 fn or_oracle(patterns: &[&str], path: &[u8]) -> bool {
     patterns
         .iter()
@@ -22,11 +17,9 @@ fn empty_throws() {
     assert!(matches!(result, Err(GlobError::EmptyPatternSet)));
 }
 
+// No budget is shared between members.
 #[test]
 fn members_that_compile_alone_compile_together() {
-    // No budget is shared: members of separator-crossing braces around a
-    // `**`, ten of which once copied past a shared expansion budget,
-    // compile as one and answer as their members.
     let member = "{,/}".repeat(10) + "**/f";
     let members: Vec<String> = (0..10).map(|i| format!("{member}{i}")).collect();
     let refs: Vec<&str> = members.iter().map(String::as_str).collect();
@@ -38,10 +31,9 @@ fn members_that_compile_alone_compile_together() {
     assert!(union.is_match(b"a/f3") && !union.is_match(b"f"));
 }
 
+// One chain more than a word has bits: the index picks by id, not by bit.
 #[test]
 fn a_union_past_a_words_chains_names_each_by_id() {
-    // 64 wildcard chains and the literal set: one chain more than a word
-    // has bits, so the chain index picks them by id, not by bit.
     let mut members: Vec<String> = (0..64).map(|i| format!("d{i}/**/*.x{i}")).collect();
     members.extend(["a/b.txt".into(), "c.txt".into()]);
     let union = Glob::union(&members).unwrap();
@@ -54,12 +46,11 @@ fn a_union_past_a_words_chains_names_each_by_id() {
     assert!(!union.is_match(b"d1/q/f.x2"));
 }
 
+// Past 64 chains the index alone picks them, while no call walks more
+// than 64 by one key or without any, and their nodes stay within four
+// times the pattern's weight; else the NFA serves.
 #[test]
 fn a_union_of_many_wildcard_members_keeps_its_chains_while_indexed() {
-    // Past 64 chains the index alone picks them, and only while no call
-    // walks more than 64 by one key or without any, and their nodes stay
-    // within four times the pattern's weight (2^30 paths are never
-    // listed); else the NFA serves.
     let keyed: Vec<String> = (0..5000).map(|i| format!("d{i}/*/n{i}.js")).collect();
     let keyless: Vec<String> = (0..100).map(|i| format!("*{i}*/**")).collect();
     let crowded: Vec<String> = (0..100).map(|i| format!("d{i}/q{i}/n.js")).collect();
@@ -94,9 +85,9 @@ fn a_union_of_many_wildcard_members_keeps_its_chains_while_indexed() {
     assert!(union.is_match(b"d4999/q/n4999.js") && !union.is_match(b"d7/x/n8.js"));
 }
 
+// Only the set's bytes are bounded, not how many paths it holds.
 #[test]
 fn a_union_of_many_file_names_keeps_its_literal_set() {
-    // Only the set's bytes are bounded, not how many paths it holds.
     let members: Vec<String> = (0..10_000)
         .map(|i| format!("src/m{}/f{i}.ts", i % 100))
         .collect();
@@ -111,13 +102,12 @@ fn a_union_of_many_file_names_keeps_its_literal_set() {
 
 #[test]
 fn a_union_past_the_key_room_answers_as_its_members() {
-    // One member gives more keys than the room (26 per class branch): its
-    // chain is found by its head, the others by their keys.
+    // One member gives more keys than the room: its chain is found by its
+    // head, the others by their keys.
     let classes: Vec<String> = (0..1000).map(|i| format!("[a-z]{i:x}")).collect();
     let mut members: Vec<String> = (0..20).map(|i| format!("d{i}/**/*.x{i}")).collect();
     members.push(format!("big/{{{}}}", classes.join(",")));
-    // 64 chains share 2,000 names: more entries than the room, so the
-    // union scans them.
+    // 64 chains share 2,000 names: more entries than the room, so no index.
     let heads: Vec<String> = (0..64).map(|i| format!("{i:x}/")).collect();
     let names: Vec<String> = (0..2000).map(|i| format!("n{i}")).collect();
     let shared = format!("{{{}}}*{{{}}}", heads.join(","), names.join(","));
@@ -140,10 +130,9 @@ fn a_union_past_the_key_room_answers_as_its_members() {
     }
 }
 
+// `{a,b,/}` repeated cuts its segments into glued pieces.
 #[test]
 fn braces_whose_segments_multiply_compile_as_one() {
-    // `{a,b,/}` repeated cuts its segments into glued pieces: alone or in
-    // a list, it compiles, and the list answers as its members.
     let heavy = "{a,b,/}".repeat(100);
     let member = "{a,b,/}".repeat(28);
     let behind = format!("x/{member}");
@@ -167,23 +156,21 @@ fn a_member_error_names_the_member() {
     assert_eq!(**error, GlobError::UnterminatedClass { at: 4 });
     assert_eq!(err.to_string(), format!("pattern 2: {error}"));
     assert!(err.source().is_some());
-    // A union of one is still a list.
+    // A union of one is still a list; a single pattern is not.
     assert!(matches!(
         Glob::union(["[z-a]"]),
         Err(GlobError::InMember { index: 0, .. })
     ));
-    // A single pattern is not.
     assert!(matches!(
         Glob::new("[z-a]"),
         Err(GlobError::InvalidRange { .. })
     ));
 }
 
+// Factoring lifts all of one body under two spellings and keeps one empty
+// branch, so a literal keeps the literal engine.
 #[test]
 fn members_spelled_differently_fold_into_one() {
-    // One body under two spellings: factoring lifts all of it and keeps
-    // one empty branch, so nothing follows an open `**` (graph.rs
-    // debug-asserts it) and a literal keeps the Literal engine.
     for (a, b) in [
         ("**", "**/**"),
         ("a/**", "a/**/**"),
@@ -198,7 +185,6 @@ fn members_spelled_differently_fold_into_one() {
             assert_eq!(union.match_dir(path), single.match_dir(path), "{a} {b}");
         }
     }
-    // Under case folding, plain paths that differ in case fold into one.
     let folded = Glob::union_with(
         ["Src/A.ts", "src/a.ts", "LIB/b.ts", "x/*.md"],
         CompileOptions::default().case_insensitive(true),
@@ -207,10 +193,9 @@ fn members_spelled_differently_fold_into_one() {
     assert!(folded.shape().contains("literals 2"), "{}", folded.shape());
 }
 
+// The shared tokens leave each member in one drain, not one per token.
 #[test]
 fn long_shared_prefixes_lift_in_one_pass() {
-    // The shared tokens leave each member in one drain, not one per
-    // token, so two 64 KB members factor in linear time.
     let (x, y) = ("a/".repeat(32_000) + "x", "a/".repeat(32_000) + "y");
     let start = std::time::Instant::now();
     let union = Glob::union([&x, &y]).unwrap();
@@ -219,13 +204,10 @@ fn long_shared_prefixes_lift_in_one_pass() {
     assert!(!union.is_match(("a/".repeat(32_000) + "z").as_bytes()));
 }
 
+// Unlike the JS factory, a union is a pure OR of positive patterns. The
+// index counts every member given, a repeat too.
 #[test]
 fn negated_members_are_rejected() {
-    // Deliberate Rust/JS asymmetry: `Glob::union` is a pure OR of
-    // positive patterns, so even a lone `!foo` is rejected — while the
-    // JS `globstar()`/`compileMatcher()` factory accepts negation as
-    // part of its include/exclude contract.
-    // The index counts every member given, a repeat too.
     for (members, index) in [
         (&["a", "!b"][..], 1),
         (&["!foo"][..], 0),
@@ -241,12 +223,10 @@ fn negated_members_are_rejected() {
     }
 }
 
+// Members apart only in the literal segment after a `**` run as one chain
+// with a set there, whatever the mix of roots, middles and tails.
 #[test]
 fn members_that_differ_in_one_segment_match_as_the_members_do() {
-    // Members apart only in the literal segment after a `**` run as one
-    // chain with a set there; whatever the mix of roots, middles and
-    // tails (and whether that segment is a literal in every member), the
-    // union answers as the members do, under both dot settings.
     let roots = ["**", "src", "tests", "packages/*", "a/**"];
     let middles = ["node_modules", ".git", "dist", "x", "*.log", "*", "x/y"];
     let tails = ["/**", "", "/*.ts", "/x"];
@@ -291,14 +271,11 @@ fn members_that_differ_in_one_segment_match_as_the_members_do() {
     }
 }
 
+// Groups of 2, 3, 5 and 10 corpus patterns against the OR of their
+// members; the picks are deterministic, so a failure reproduces.
 #[test]
 fn corpus_differential_vs_or_oracle() {
-    // Load every (pattern, path) from the canonical corpus files and
-    // verify `Glob::union(group).is_match` agrees with the inlined OR
-    // oracle on a sampling of group sizes 2/3/5/10.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/corpus");
-    // Ordered sets, so each run tests the same groups and a failure
-    // reproduces.
     let mut all_patterns: BTreeSet<String> = BTreeSet::new();
     let mut all_paths: BTreeSet<String> = BTreeSet::new();
     for entry in fs::read_dir(&dir).unwrap() {
@@ -318,7 +295,7 @@ fn corpus_differential_vs_or_oracle() {
             }
             let pattern = parts[0];
             let path = parts[1];
-            // Skip negated (out of union scope) and any flag-bearing rows.
+            // Negated rows and rows with flags are out of scope.
             if pattern.starts_with('!') {
                 continue;
             }
@@ -340,7 +317,6 @@ fn corpus_differential_vs_or_oracle() {
         valid.len()
     );
 
-    // Deterministic "random" picker so test failures reproduce.
     let mut rng: u64 = 0xDEAD_BEEF;
     let mut next = || {
         rng = rng
@@ -381,8 +357,7 @@ fn corpus_differential_vs_or_oracle() {
     assert!(checks > 5_000, "too few checks: {checks}");
 }
 
-/// Members of a union too big for the chains: its graph NFA keeps dense
-/// rows at 100 members and goes sparse at 600.
+/// Too big for the chains: dense NFA rows at 100 members, sparse at 600.
 fn big_union(n: usize) -> Vec<String> {
     (0..n)
         .map(|i| {

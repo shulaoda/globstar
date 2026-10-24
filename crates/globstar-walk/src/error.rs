@@ -1,48 +1,43 @@
-//! Error types produced by [`Walk`](crate::Walk).
+//! Errors of [`Walk`](crate::Walk).
 
 use std::io;
 use std::path::PathBuf;
 
-/// Errors produced by [`Walk`](crate::Walk).
-///
-/// `InvalidPattern` surfaces at construction when any main or ignore
-/// pattern fails to compile, and so does `Io` when `base` cannot be made
-/// absolute (no current directory). Every other `Io` is yielded during
-/// iteration — the base check and the seeds' stats too, which run on the
-/// first `next()`; the walker continues after yielding an I/O error so
-/// consumers can log and keep going. A folder that cannot be read, or an
-/// entry of it that cannot be typed, is reported with the folder's path.
+/// `InvalidPattern` comes from construction, and so does `Io` when
+/// `base` cannot be made absolute (no current directory). Every other
+/// `Io` is yielded in place while the walk goes on, so a consumer can
+/// log it and continue; the base check and the seeds' stats run on the
+/// first `next()`.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum WalkError {
-    /// A glob pattern (main or ignore) failed to parse/compile.
+    /// A pattern or ignore entry failed to compile.
     InvalidPattern {
-        /// The pattern that failed, as written (`!src/[z-a]`); in a list,
-        /// the member that failed. A pattern or ignore entry longer than
-        /// [`MAX_PATTERN_LEN`](globstar::error::MAX_PATTERN_LEN) bytes as
-        /// written is refused before it is read (`TooLong`), and named by
-        /// its first 64 characters and `…`.
+        /// The pattern as written (`!src/[z-a]`); in a list, the member
+        /// that failed. One longer than
+        /// [`MAX_PATTERN_LEN`](globstar::error::MAX_PATTERN_LEN) bytes
+        /// is named by its first 64 characters and `…`.
         pattern: String,
-        /// Human-readable reason (from the underlying parser). When the
-        /// walker read the pattern differently (a leading `!` or `/`
-        /// gone, `//` or `.` taken out), it ends with the text its byte
-        /// offsets count in: `(in 'src/[z-a]', as the walker reads it)`.
+        /// The parser's reason. When the walker read the pattern
+        /// differently (a leading `!` or `/` gone, `//` or `.` taken
+        /// out), it ends with the text its byte offsets count in:
+        /// `(in 'src/[z-a]', as the walker reads it)`.
         reason: String,
-        /// The compile error, to branch on its kind (also
-        /// [`Error::source`](std::error::Error::source)). `None` for an
-        /// entry the walker refuses itself: an ignore entry that starts
+        /// The compile error (also
+        /// [`Error::source`](std::error::Error::source)); `None` for an
+        /// entry the walker refuses itself, an ignore entry that starts
         /// with `!`.
         source: Option<globstar::GlobError>,
     },
 
-    /// An I/O error, yielded in place while the walk goes on: the base
-    /// is missing or not a folder, a seed's part or a folder could not
-    /// be read, or an entry could not be typed. A folder removed or made
-    /// a file after its parent listed it is left out, not an error.
+    /// The base is missing or not a folder, a seed's part or a folder
+    /// could not be read, or an entry could not be typed. A folder
+    /// removed or made a file after its parent listed it is left out,
+    /// not an error.
     Io {
-        /// Path where the error occurred.
+        /// The folder being read, or the path that failed.
         path: PathBuf,
-        /// Underlying I/O error.
+        /// The underlying error.
         source: io::Error,
     },
 }

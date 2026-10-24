@@ -1,5 +1,4 @@
-//! What large patterns keep, and peak at, while they compile: counted by
-//! this binary's global allocator.
+//! What large patterns keep, and peak at, while they compile.
 
 use std::sync::atomic::Ordering::Relaxed;
 
@@ -30,7 +29,6 @@ fn large_patterns_stay_small() {
     let cut = format!("abcdefghijklmnop/{x16}bq");
     let wide = copied(16, "[a-z", "\x01-\x7f", "]");
     let cases = [
-        // A long name list stays a sorted suffix index.
         (
             "20,000 names",
             names(20_000, |i| format!("src/file{i}.ts")),
@@ -50,8 +48,7 @@ fn large_patterns_stay_small() {
             MB,
             32 * MB,
         ),
-        // A big union's graph NFA keeps no dense rows: its tables grow
-        // with the members, not their square.
+        // A big union's graph NFA keeps no dense rows.
         (
             "20,000 dir/file members",
             names(20_000, |i| format!("dir{i}/file{i}")),
@@ -78,7 +75,7 @@ fn large_patterns_stay_small() {
         ),
         // The chain index holds a key or so per byte: chains that share a
         // long list, or a brace of class branches, are not filed under
-        // every string of it.
+        // every string.
         (
             "64 heads, 12,000 names",
             vec![format!(
@@ -121,7 +118,8 @@ fn large_patterns_stay_small() {
             8 * MB,
             32 * MB,
         ),
-        // Braces that cross a `/` keep the walk to a few groups.
+        // Braces that cross a `/` keep the walk to a few groups; side by
+        // side, a few edges per brace.
         (
             "{**,a}/ x256",
             vec!["{**,a}/".repeat(256) + "x"],
@@ -130,7 +128,6 @@ fn large_patterns_stay_small() {
             4 * MB,
             16 * MB,
         ),
-        // Side by side, their `**/` chain: a few edges per brace.
         (
             "{**,a}/ x8192",
             vec!["{**,a}/".repeat(8192) + "x"],
@@ -163,8 +160,6 @@ fn large_patterns_stay_small() {
             MB,
             16 * MB,
         ),
-        // Side by side, the branches before each share a join node: a
-        // few edges per brace.
         (
             "{a/,} x8192",
             vec!["{a/,}".repeat(8192) + "x"],
@@ -181,7 +176,6 @@ fn large_patterns_stay_small() {
             8 * MB,
             32 * MB,
         ),
-        // A long class copied into a few segments still compiles.
         (
             "16 KB class in 16 segments",
             vec![wide],
@@ -191,8 +185,7 @@ fn large_patterns_stay_small() {
             16 * MB,
         ),
         // A long head before many branches is not copied out once per
-        // branch into the static prefixes: 32 KB patterns. Twin of the
-        // check in packages/globstar/tests/large.mjs.
+        // branch into the static prefixes.
         (
             "16 KB head, 16,000 empty branches",
             vec![format!("{x16}{{{}}}", ",".repeat(16_382))],
@@ -258,10 +251,8 @@ fn large_patterns_stay_small() {
     one_more_state_costs_little();
 }
 
-// One more state costs what the one before it did: the matcher keeps its
-// tables at their length, never with the room a growing `Vec` leaves.
-// Twin of the same check in packages/globstar/tests/large.mjs; each range
-// stays in one NFA form, whose switch is a real step.
+// The matcher keeps its tables at their length, never with the room a
+// growing `Vec` leaves; each range stays in one NFA form.
 fn one_more_state_costs_little() {
     even_steps(
         "segment NFA",
@@ -297,10 +288,9 @@ fn copied(n: usize, open: &str, unit: &str, close: &str) -> String {
     format!("{head}{}{close}", unit.repeat(units))
 }
 
-// Braces whose segments multiply, beside a `**` or not, copy segments
-// until the copies weigh what the pattern does, then cut them into pieces
-// glued edge to edge: what they keep and peak at grows with the pattern,
-// twice the pattern costing at most a little more than twice.
+// Braces whose segments multiply copy segments until the copies weigh
+// what the pattern does, then cut them into glued pieces: twice the
+// pattern costs at most a little more than twice.
 fn multiplying_segments_stay_linear() {
     let lists = |n: usize| {
         let a: Vec<String> = (0..n).map(|i| format!("/a{i}")).collect();
@@ -333,13 +323,12 @@ fn multiplying_segments_stay_linear() {
         );
         assert!(peak <= 8 * MB, "{name}: peaks at {peak} bytes");
     }
+    // A long class, run of `?`s or classes, or brace of empty branches
+    // after a brace that ends in many segments: copied onto a few, then
+    // one piece the rest glue to.
     for pattern in [
         lists(2048),
         "{a,b,c,d,e,f,g,h,/}".repeat(3421),
-        // A long class, or a long run of `?` or of classes, or a brace of
-        // empty branches, after a brace that ends in many segments: copied
-        // onto a few, then one piece the rest glue to.
-        // Twin of the check in packages/globstar/tests/large.mjs.
         copied(500, "[a-z", "!-~", "]"),
         copied(1024, "", "?", ""),
         copied(512, "", "[\x01-\x7f]", ""),

@@ -1,9 +1,6 @@
-//! Multi-pattern memory comparison: globstar union (one merged matcher),
-//! globset (one GlobSet over Aho-Corasick + N regexes), wax (one
-//! `wax::any` program over the set). Mirrors the JS-side
-//! `matcher_multi.js`; a cell is what the matcher keeps once it has
-//! matched every bench path, or with `--peak` the most its build and
-//! those matches held at once (`counter::kept_and_peak`).
+//! What a union keeps once it has matched every bench path, against
+//! globset and wax; with `--peak`, the most its build and those matches
+//! held at once.
 
 use std::path::Path;
 

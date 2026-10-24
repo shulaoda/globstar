@@ -70,14 +70,12 @@ for (const [index, line] of cases.split("\n").entries()) {
 
 console.log("✓ shared parser golden cases");
 
-// Static-prefix pinning, with crates/globstar/tests/glob.rs.
 const prefixesOf = (patterns) =>
   compileMatcher(patterns)
     .staticPrefixes()
     .map((b) => new TextDecoder().decode(b))
     .sort();
-// The shared rows: the patterns, `=>`, the sorted prefixes (one pattern
-// or a union). Twin of `static_prefixes_match_the_shared_rows` in glob.rs.
+// `fixtures/static-prefixes.tsv`: the patterns, `=>`, the sorted prefixes.
 const prefixRows = readFileSync(resolve(here, "../../../fixtures/static-prefixes.tsv"), "utf8");
 for (const line of prefixRows.split("\n")) {
   if (!line || line.startsWith("#")) continue;
@@ -87,11 +85,11 @@ for (const line of prefixRows.split("\n")) {
   const got = prefixesOf(patterns.length === 1 ? patterns[0] : patterns);
   assert.deepEqual(got, cols.slice(at + 1), JSON.stringify(patterns));
 }
-// A negated branch means matches can fall anywhere: seed from the cwd
-// (a single empty prefix, never an empty list — the Rust convention).
+// A negated member means matches can fall anywhere: one empty prefix,
+// never an empty list.
 assert.deepEqual(prefixesOf(["src/*.ts", "!x"]), [""]);
 assert.deepEqual(prefixesOf(["!x"]), [""]);
-// Doubling braces expand while the budget lasts; sixteen pass it.
+// Eight doubling braces give 256 heads; sixteen pass the budget.
 assert.equal(prefixesOf("{a,b}".repeat(8) + "/x").length, 256);
 assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
 {
@@ -101,9 +99,8 @@ assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
   assert.equal(px.length, 1000);
   assert.ok(px.reduce((n, p) => n + p.length, 0) <= 4 * pattern.length, "prefixes stay linear");
 }
-// A head costs the bytes read to reach it: a file list keeps its heads,
-// while 4,096 names behind a 16 KB folder pass 64 budgets of those and
-// keep the folder.
+// A head costs the bytes read to reach it: a file list keeps its heads;
+// 4,096 names behind a 16 KB folder pass 64 budgets and keep the folder.
 {
   const pad = (i) => String(i).padStart(4, "0");
   const files = Array.from(
@@ -117,9 +114,8 @@ assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
 }
 console.log("✓ static prefix extraction");
 
-// One body under two spellings: factoring lifts all of it and keeps one
-// empty branch, so the union answers as either member. Twin of
-// `members_spelled_differently_fold_into_one` in crates/globstar/tests/glob_union.rs.
+// Factoring lifts all of one body under two spellings and keeps one empty
+// branch.
 for (const [a, b] of [
   ["**", "**/**"],
   ["a/**", "a/**/**"],
@@ -135,7 +131,6 @@ for (const [a, b] of [
 }
 const folded = parse("\\a").body;
 assert.deepEqual(factorBranches([folded, parse("a").body]), folded);
-// Under case folding, plain paths that differ in case fold into one.
 const ciSet = buildEngine(
   ["Src/A.ts", "src/a.ts", "LIB/b.ts", "x/*.md"].map((p) => parse(p)),
   { dot: true, caseInsensitive: true },
@@ -144,8 +139,6 @@ assert.ok(ciSet.shape().includes("literals 2"), ciSet.shape());
 console.log("✓ members spelled differently fold into one");
 
 // Only a literal set's bytes are bounded, not how many paths it holds.
-// Twin of `a_union_of_many_file_names_keeps_its_literal_set` in
-// crates/globstar/tests/glob_union.rs.
 {
   const files = Array.from({ length: 10_000 }, (_, i) => `src/m${i % 100}/f${i}.ts`);
   const engine = buildEngine(
@@ -158,12 +151,9 @@ console.log("✓ members spelled differently fold into one");
 }
 console.log("✓ a union of many file names keeps its literal set");
 
-// Past 64 chains the index alone picks them, and only while no call
-// walks more than 64 by one key or without any, and their nodes stay
-// within four times the pattern's weight (2^30 paths are never listed);
-// else the NFA serves. Twin of
-// `a_union_of_many_wildcard_members_keeps_its_chains_while_indexed` in
-// crates/globstar/tests/glob_union.rs.
+// Past 64 chains the index alone picks them, while no call walks more
+// than 64 by one key or without any, and their nodes stay within four
+// times the pattern's weight; else the NFA serves.
 {
   const keyed = Array.from({ length: 5000 }, (_, i) => `d${i}/*/n${i}.js`);
   const keyless = Array.from({ length: 100 }, (_, i) => `*${i}*/**`);
@@ -201,9 +191,8 @@ console.log("✓ a union of many file names keeps its literal set");
 }
 console.log("✓ a union of many wildcard members keeps its chains while indexed");
 
-// Options: booleans only, own keys only, no unknown keys, the engine
-// hook one of its two values; `undefined` keeps the default. `"false"`
-// is not a boolean and throws.
+// Booleans only, own keys only, no unknown keys, the engine hook one of
+// its two values; `undefined` keeps the default.
 for (const bad of [
   { caseInsensitive: "false" },
   { dot: 0 },
@@ -224,10 +213,6 @@ try {
 }
 console.log("✓ matcher options are checked");
 
-// Errors: a list member's error names its index (counting every member
-// given), `at` of InvalidRange is the range, JSON keeps the message.
-// Twins of `a_member_error_names_the_member` (glob_union.rs) and
-// `invalid_range_points_at_the_range` (glob.rs).
 {
   const { GlobError, DirMatch, MAX_PATTERN_LEN, MAX_BRACE_NESTING } =
     await import("../src/index.js");
@@ -239,6 +224,7 @@ console.log("✓ matcher options are checked");
     }
     throw new Error("no error");
   };
+  // A list member's error names its index, counting every member given.
   const member = thrown(() => compileMatcher(["src/**", "src/**", "lib/[a"]));
   assert.ok(member instanceof GlobError);
   assert.equal(member.kind, "UnterminatedClass");
@@ -246,9 +232,7 @@ console.log("✓ matcher options are checked");
   assert.equal(member.at, 4);
   assert.ok(member.message.startsWith("pattern 2: "), member.message);
   assert.equal(thrown(() => compileMatcher("lib/[a")).index, undefined);
-  // `{a,b,/}` repeated cuts its segments into glued pieces: alone or in a
-  // list, it compiles, and the list answers as its members. Twin of
-  // `braces_whose_segments_multiply_compile_as_one`.
+  // `{a,b,/}` repeated cuts its segments into glued pieces.
   const heavy = "{a,b,/}".repeat(100);
   const each = "{a,b,/}".repeat(28);
   for (const members of [
@@ -265,9 +249,7 @@ console.log("✓ matcher options are checked");
       );
     }
   }
-  // Members of separator-crossing braces around a `**`, ten of which once
-  // copied past a shared expansion budget, compile as one. Twin of
-  // `members_that_compile_alone_compile_together`.
+  // No budget is shared between members.
   const each10 = "{,/}".repeat(10) + "**/f";
   const members = Array.from({ length: 10 }, (_, i) => `${each10}${i}`);
   const union = compileMatcher(members);
@@ -280,19 +262,19 @@ console.log("✓ matcher options are checked");
     );
   }
   assert.ok(union.match("a/f3") && !union.match("f"));
+  // `at` of InvalidRange is the range; JSON keeps the message.
   const range = thrown(() => compileMatcher("src/[abcz-a].ts"));
   assert.equal(range.at, 8);
   const json = JSON.parse(JSON.stringify(range));
   assert.equal(json.message, range.message);
   assert.deepEqual([json.kind, json.at, json.low, json.high], ["InvalidRange", 8, 0x7a, 0x61]);
-  // Any iterable is a list; DirMatch is frozen; the limits are exported.
   assert.equal(compileMatcher(new Set(["*.ts", "*.js"])).match("a.js"), true);
   assert.ok(Object.isFrozen(DirMatch));
   assert.deepEqual([MAX_PATTERN_LEN, MAX_BRACE_NESTING], [65536, 32]);
 }
 console.log("✓ errors and API surface");
 
-// The length limit is exact, in bytes. Twin of `the_length_limit_is_exact`.
+// The length limit is exact, in bytes.
 {
   const { MAX_PATTERN_LEN } = await import("../src/index.js");
   compileMatcher("a".repeat(MAX_PATTERN_LEN));
@@ -320,8 +302,7 @@ console.log("✓ errors and API surface");
   const grew = process.memoryUsage().arrayBuffers - before;
   assert.ok(grew < 1 << 20, `refusing a 16 MB pattern allocated ${grew} bytes`);
 }
-// A lone surrogate has no UTF-8 form (§2.1): such a pattern is a
-// TypeError that says where, alone or in a list; a well-formed pair is fine.
+// A lone surrogate has no UTF-8 form (GLOB_SPEC §2.1).
 for (const [pattern, at] of [
   ["\ud800", 0],
   ["a\udc00", 1],
@@ -336,10 +317,8 @@ for (const [pattern, at] of [
 assert.equal(compileMatcher("😀*").match("😀x"), true);
 console.log("✓ limits");
 
-// The engine's routing: what each pattern in fixtures/engine-shapes.tsv
-// compiles to. A slower path (everything sent to the NFA, no shared
-// nodes, no affix matchers) still answers right, so only this sees it.
-// Twin of crates/globstar/tests/engine_shapes.rs.
+// What each pattern of `fixtures/engine-shapes.tsv` compiles to: a slower
+// routing still answers right, so only this sees it.
 {
   const shapes = readFileSync(resolve(here, "../../../fixtures/engine-shapes.tsv"), "utf8");
   let rows = 0;
@@ -357,12 +336,10 @@ console.log("✓ limits");
 }
 console.log("✓ engine shapes");
 
-// A class matches through a byte table, which must take exactly what the
-// class's ranges define (ASCII here: a path string holds no lone byte past
-// 0x7f). Twin of `a_byte_set_takes_what_its_class_does`.
+// A class's byte table takes exactly what its ranges define (ASCII: a
+// path string holds no lone byte past 0x7f).
 {
   const { isPathSep } = await import("../src/bytes.js");
-  // The class's own meaning, range by range: the oracle for its byte table.
   const inClass = (ranges, b) => !isPathSep(b) && ranges.some(({ lo, hi }) => b >= lo && b <= hi);
   for (const pattern of [
     "[a]",
@@ -386,7 +363,7 @@ console.log("✓ engine shapes");
     for (const ci of [false, true]) {
       const m = compileMatcher("x" + pattern, { caseInsensitive: ci });
       for (let b = 1; b < 0x80; b++) {
-        if (b === 0x2f || (process.platform === "win32" && b === 0x5c)) continue; // separators
+        if (b === 0x2f || (process.platform === "win32" && b === 0x5c)) continue;
         // Case folding adds each listed letter's other case, then the
         // class is negated.
         const listed = (c) => inClass(cls.ranges, c);

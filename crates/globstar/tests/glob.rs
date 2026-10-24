@@ -1,11 +1,7 @@
-//! Integration tests for the Glob type.
-
 use globstar::{CompileOptions, Glob};
 
 #[test]
 fn large_shapes_stay_on_segment_engine() {
-    // A wide name list, a deep path and a brace product all compile and
-    // match right on the segment engine.
     let names: Vec<String> = (0..500).map(|i| format!("a{i}")).collect();
     let wide = format!("{{{}}}/**", names.join(","));
     let deep = (0..120)
@@ -33,10 +29,9 @@ fn large_shapes_stay_on_segment_engine() {
     );
 }
 
+// The in-segment closures are built without recursion.
 #[test]
 fn long_segments_compile_on_a_small_stack() {
-    // The in-segment closures are built without recursion, so a long
-    // segment, or a long list under dot=false, fits a small stack.
     let compile = || {
         let seg = format!("a{}b", "*{,}".repeat(500));
         assert!(Glob::new(&seg).unwrap().is_match(b"axb"));
@@ -49,10 +44,9 @@ fn long_segments_compile_on_a_small_stack() {
     small.spawn(compile).unwrap().join().unwrap();
 }
 
+// About 3,500 in-segment states: past the closure budget.
 #[test]
 fn huge_segments_match_without_kept_closures() {
-    // About 3,500 in-segment states: past the closure budget, each step
-    // closes its set as it goes.
     let list: Vec<String> = (0..600).map(|i| format!("*x{i}")).collect();
     let list = format!("{{{}}}", list.join(","));
     for (dot, path, want) in [
@@ -69,10 +63,9 @@ fn huge_segments_match_without_kept_closures() {
     }
 }
 
+// 18,000 states, two of them active.
 #[test]
 fn wide_graphs_step_by_what_is_active() {
-    // 18,000 states, two of them active: a step touches what is active,
-    // not every literal sibling group.
     let g = Glob::new(&("{a/,b/}".repeat(9000) + "x")).unwrap();
     let path = "a/".repeat(100) + "x";
     let start = std::time::Instant::now();
@@ -82,10 +75,8 @@ fn wide_graphs_step_by_what_is_active() {
     assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
 }
 
-// Braces with a `**/` side by side chain their globstars, so the graph
-// keeps a few edges per brace: 8,192 of them (57 KB) compile, and a path
-// pays per segment for the states, not their square. Twin of the check
-// in large.mjs.
+// Braces with a `**/` side by side chain their globstars: a few edges per
+// brace, and a path pays per segment for the states, not their square.
 #[test]
 fn side_by_side_globstar_braces_stay_linear() {
     let path = "a/".repeat(16) + "x";
@@ -99,11 +90,9 @@ fn side_by_side_globstar_braces_stay_linear() {
     }
 }
 
-// Branches that may be empty, side by side, let each segment follow
-// every one before it. The ones before it share a join node, so the graph
-// keeps an edge or two per unit of pattern: it compiles fast, and no
-// segment walks a successor list as long as the pattern. Twin of the
-// check in large.mjs.
+// Branches that may be empty, side by side, let each segment follow every
+// one before it; those share a join node, so no segment walks a successor
+// list as long as the pattern.
 #[test]
 fn edges_that_multiply_stay_linear() {
     for (pattern, path) in [
@@ -125,10 +114,10 @@ fn edges_that_multiply_stay_linear() {
     }
 }
 
+// The all-below proof feeds at most 64 wildcard-only segments, and a
+// chain's tail tokens are budgeted.
 #[test]
 fn match_dir_stays_cheap_on_long_wildcard_chains() {
-    // The all-below proof feeds at most 64 wildcard-only segments, and
-    // the chain's tail tokens are budgeted.
     let union = Glob::union(["**".to_string(), format!("**/{}x", "*/".repeat(16_000))]).unwrap();
     let chain = Glob::new(&format!("**/{}*", "*/".repeat(32_000))).unwrap();
     let deep = "a/".repeat(32_000) + "a";
@@ -140,12 +129,11 @@ fn match_dir_stays_cheap_on_long_wildcard_chains() {
     assert!(long.matches() && long.may_match_below());
 }
 
+// Whether a run of `{?,}` takes every name is found in one pass over its
+// states, for a whole segment at compile time and for a cut one at each
+// all-below proof.
 #[test]
 fn wildcard_lengths_cost_one_pass() {
-    // A run of `{?,}` takes as many lengths as it has braces: whether
-    // its wildcards take every name is found in one pass over its
-    // states, not one step per length, both for a whole segment at
-    // compile time and for a cut one at each all-below proof.
     let start = std::time::Instant::now();
     assert!(Glob::new(&"{?,}".repeat(16_000)).unwrap().is_match(b"abc"));
     let cut = format!(
@@ -161,9 +149,9 @@ fn wildcard_lengths_cost_one_pass() {
     assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
 }
 
+// In bytes, not chars.
 #[test]
 fn the_length_limit_is_exact() {
-    // 65,536 bytes compile; one more is TooLong, in bytes, not chars.
     use globstar::error::MAX_PATTERN_LEN;
     assert!(Glob::new(&"a".repeat(MAX_PATTERN_LEN)).is_ok());
     assert_eq!(
@@ -179,8 +167,6 @@ fn the_length_limit_is_exact() {
 
 #[test]
 fn errors_display_and_matchers_dispatch() {
-    // Display is what a CLI prints; `&dyn Matcher` is how a walker holds
-    // a matcher it did not build.
     let err = Glob::new("src/[a").unwrap_err();
     assert_eq!(
         err.to_string(),
@@ -192,9 +178,9 @@ fn errors_display_and_matchers_dispatch() {
     assert_eq!(m.static_prefixes(), vec![b"src".to_vec()]);
 }
 
+// `at` is where the range starts, not where the class opens.
 #[test]
 fn invalid_range_points_at_the_range() {
-    // `at` is where the range starts, not where the class opens.
     let err = Glob::new("src/[abcz-a].ts").unwrap_err();
     assert_eq!(
         err,
@@ -209,15 +195,13 @@ fn invalid_range_points_at_the_range() {
 
 #[test]
 fn glob_debug_is_short() {
-    // The compiled tables stay out of Debug (a union's run to kilobytes).
     let names: Vec<String> = (0..50).map(|i| format!("src/m{i}/**/*.ts")).collect();
     let text = format!("{:?}", Glob::union(&names).unwrap());
     assert_eq!(text, r#"Glob { engine: "Segment", negated: false }"#);
 }
 
-/// The static prefixes of the rows of `fixtures/static-prefixes.tsv`,
-/// shared with the JS tests: the patterns, `=>`, the sorted prefixes.
-/// One pattern is `Glob::new`; more are a union.
+// `fixtures/static-prefixes.tsv`: the patterns, `=>`, the sorted
+// prefixes. One pattern is `Glob::new`; more are a union.
 #[test]
 fn static_prefixes_match_the_shared_rows() {
     for line in include_str!("../../../fixtures/static-prefixes.tsv").lines() {
@@ -245,21 +229,20 @@ fn static_prefixes_match_the_shared_rows() {
 #[test]
 fn prefix_expansion_stays_within_the_budget() {
     let prefixes = |p: &str| Glob::new(p).unwrap().static_prefixes();
-    // Doubling braces expand while the budget lasts (eight give 256
-    // heads); sixteen pass it, and nothing whole is literal before them.
+    // Eight doubling braces give 256 heads; sixteen pass the budget, and
+    // nothing whole is literal before them.
     assert_eq!(prefixes(&("{a,b}".repeat(8) + "/x")).len(), 256);
     assert_eq!(prefixes(&("{a,b}".repeat(16) + "/x")), vec![b"".to_vec()]);
-    // A brace before a long literal copies it while the budget lasts,
-    // then cuts the rest at their last whole segment.
+    // A brace before a long literal copies it while the budget lasts, then
+    // cuts the rest at their last whole segment.
     let branches: Vec<String> = (0..1000).map(|i| format!("b{i}")).collect();
     let pattern = format!("{{{}}}/{}", branches.join(","), "z".repeat(20_000));
     let p = prefixes(&pattern);
     assert_eq!(p.len(), 1000);
     let bytes: usize = p.iter().map(Vec::len).sum();
     assert!(bytes <= 4 * pattern.len(), "{bytes} bytes of prefixes");
-    // A head costs the bytes read to reach it: a file list keeps its heads,
-    // while 4,096 names behind a 16 KB folder pass 64 budgets of those and
-    // keep the folder.
+    // A head costs the bytes read to reach it: a file list keeps its heads;
+    // 4,096 names behind a 16 KB folder pass 64 budgets and keep the folder.
     let files: Vec<String> = (0..4000)
         .map(|i| format!("packages/foo/src/components/xyz/Comp{i:04}.tsx"))
         .collect();
@@ -270,8 +253,7 @@ fn prefix_expansion_stays_within_the_budget() {
     assert!(p == [folder.as_bytes()], "{} prefixes", p.len());
 }
 
-// A class is a byte table: one lookup per byte, however many items it
-// lists: 30,000 items over 65,000 bytes. Twin of the check in large.mjs.
+// 30,000 items over 65,000 bytes.
 #[test]
 fn a_long_class_costs_one_lookup_per_byte() {
     let glob = Glob::new(&format!("*[{}]", "b".repeat(30_000))).unwrap();
@@ -282,9 +264,8 @@ fn a_long_class_costs_one_lookup_per_byte() {
     assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
 }
 
-// Two globstars around a block: under `dot=false` the second one's dot
-// check reads the middle once, not once per place the block is tried.
-// Twin of the check in large.mjs.
+// Under `dot=false` the second globstar's dot check reads the middle once,
+// not once per place the block is tried.
 #[test]
 fn a_block_between_globstars_reads_the_middle_once() {
     let glob = Glob::new_with("**/x/**/y", CompileOptions::default().dot(false)).unwrap();
@@ -295,10 +276,8 @@ fn a_block_between_globstars_reads_the_middle_once() {
     assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
 }
 
-// A union's merge reads each member at each of its segments: long members
-// alike in every segment yet never the same are left apart, not read once
-// per segment, so 64 KB of them compiles in milliseconds. Twin of the
-// check in large.mjs.
+// Long members alike in every segment yet never the same are left apart,
+// not read once per segment.
 #[test]
 fn a_union_of_long_members_alike_in_every_segment_compiles_fast() {
     let middle = "a/".repeat(16_000);
@@ -326,10 +305,8 @@ fn a_union_of_long_members_alike_in_every_segment_compiles_fast() {
     }
 }
 
-// The graph walk finds a union's groups by all they hold: members alike
-// but for a class or an in-segment brace are not each compared with
-// every one before, so 32,768 of them compile in milliseconds. Twin of
-// the check in large.mjs.
+// The graph walk finds a union's groups by all they hold, not by comparing
+// each member with every one before.
 #[test]
 fn members_apart_only_in_a_class_or_brace_compile_fast() {
     let side = |i: usize| ["a", "b"][i % 2];
@@ -349,10 +326,8 @@ fn members_apart_only_in_a_class_or_brace_compile_fast() {
     }
 }
 
-// Groups that each hold a brace of 40,000 empty branches, side by side or
-// met again at 30 nested braces, compile in milliseconds: no segment is
-// copied into a brace, and none of them is copied onto another, so
-// nothing multiplies. Twin of the check in large.mjs.
+// No segment is copied into a brace of 40,000 empty branches, and none of
+// them onto another.
 #[test]
 fn groups_holding_huge_braces_compile_quickly() {
     let core = |n: usize, m: usize| {
@@ -398,8 +373,7 @@ fn groups_holding_huge_braces_compile_quickly() {
 }
 
 // The chain index reads a run of one-string nodes after a long list in
-// one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
-// the check in large.mjs.
+// one pass over the list.
 #[test]
 fn a_run_after_a_long_list_reads_it_once() {
     let heads: Vec<String> = (0..11).map(|i| format!("p{i}/")).collect();
@@ -413,11 +387,8 @@ fn a_run_after_a_long_list_reads_it_once() {
     assert!(glob.is_match(path.as_bytes()));
 }
 
-// The chain index searches a path's last segment for the first 16 bytes
-// of a member's literal at most, and the walk checks the rest: members
-// `x3/*` + 400 `a`s + `q3*` turn down a 64 KB segment of `a`s in
-// microseconds, without a compare of the whole literal at every byte.
-// Twin of the check in large.mjs.
+// The chain index searches a last segment for the first 16 bytes of a
+// member's literal at most; the walk checks the rest.
 #[test]
 fn a_long_infix_is_searched_for_its_start() {
     let lit = "a".repeat(400);
@@ -435,7 +406,7 @@ fn a_long_infix_is_searched_for_its_start() {
     }
 }
 
-// Windows: an escaped `\` is a literal no segment holds (§4.2), so its
+// An escaped `\` is a literal no segment holds (GLOB_SPEC §4.2): its
 // expansion seeds nothing, and `match_dir` prunes where it is next.
 #[cfg(windows)]
 #[test]
@@ -450,6 +421,5 @@ fn an_escaped_backslash_is_dead_on_windows() {
     );
     let dead = Glob::new("a/b\\\\c/*.ts").unwrap();
     assert_eq!(dead.match_dir(b"a"), globstar::DirMatch::Pruned);
-    // A pure literal too: the literal engine seeds nothing either.
     assert!(Glob::new("a\\\\b").unwrap().static_prefixes().is_empty());
 }

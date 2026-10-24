@@ -1,6 +1,5 @@
-// Single-pattern matcher comparison: globstar (default API) vs
-// picomatch / minimatch / micromatch. Output is consumed by
-// `scripts/bench.mjs` to populate BENCHMARKS.md.
+// globstar against picomatch, minimatch and micromatch on single
+// patterns; `scripts/bench.mjs` reads the output.
 
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
@@ -8,8 +7,7 @@ import micro from "micromatch";
 import { globstar } from "@globstar/core";
 import { PATTERNS, fresh, matcherBench } from "./shared.js";
 
-// Every library answers with dot files matched, as globstar does by
-// default and as the Rust bench sets for all.
+// As globstar's default, and as the Rust bench sets for all.
 const DOT = { dot: true };
 
 await matcherBench(

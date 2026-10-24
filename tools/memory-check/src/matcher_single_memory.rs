@@ -1,9 +1,6 @@
-//! Cross-runtime memory comparison: measures the production matcher on
-//! the single-pattern bench rows (`fixtures/bench-single.tsv`, which the
-//! JS bench reads too), so the rows line up with the JS column. A cell
-//! is what one matcher keeps once it has matched every bench path, or
-//! with `--peak` the most its build and those matches held at once
-//! (`counter::kept_and_peak`).
+//! What a single-pattern matcher keeps once it has matched every bench
+//! path, against globset and wax; with `--peak`, the most its build and
+//! those matches held at once.
 
 use std::path::Path;
 
@@ -22,7 +19,7 @@ const TRIALS: usize = 9;
 fn main() {
     let peak = std::env::args().any(|a| a == "--peak");
     let cell = |(kept, most): (usize, usize)| if peak { most } else { kept };
-    // Public-API build of `globstar`. `dot=true` mirrors the JS default.
+    // `dot=true`, as in JS.
     let build_public = |pattern: &str| {
         Glob::new_with(pattern, CompileOptions::default().dot(true)).expect("compile")
     };

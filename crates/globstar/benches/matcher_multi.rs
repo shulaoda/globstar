@@ -1,11 +1,7 @@
-//! Multi-pattern bench: `Glob::union` against third-party baselines,
-//! mirroring JS's `matcher_multi.js`.
-//!
-//! Each library matches a set the way it offers to: globset through one
-//! `GlobSet`, wax through `wax::any` (one program over the set). The
-//! fast-glob crate has no such facility, so its column loops its
-//! single-pattern function over the set, stopping at the first hit, as a
-//! caller would.
+//! `Glob::union` against the others' set APIs: globset through one
+//! `GlobSet`, wax through `wax::any`. The fast-glob crate has no set, so
+//! its column loops its single-pattern function over the set, stopping at
+//! the first hit, as a caller would.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;
@@ -38,7 +34,6 @@ fn build_wax<'a>(patterns: &[&'a str]) -> wax::Any<'a> {
     wax::any(patterns.iter().copied()).expect("wax any")
 }
 
-/// The build alone: what a library does before its first match.
 fn bench_build(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let mut group = c.benchmark_group(format!("build_{label}"));
     group.bench_function("globstar", |b| {
@@ -53,9 +48,8 @@ fn bench_build(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.finish();
 }
 
-/// A build and its first call, a non-match: regex-backed matchers build
-/// their search cache on first use, so the build alone undercounts
-/// them, and a miss makes separate matchers all run.
+/// Regex-backed matchers build their search cache on first use, and a
+/// miss makes separate matchers all run.
 fn bench_compile(c: &mut Criterion, label: &str, patterns: &[&str]) {
     let first = MISS;
     let mut group = c.benchmark_group(format!("compile_{label}"));
@@ -111,8 +105,8 @@ fn bench_match(c: &mut Criterion, label: &str, patterns: &[&str]) {
     group.finish();
 }
 
-/// Every library must give globstar's answer on every (set, path) pair,
-/// so the rows time the same answers. Runs once before timing.
+/// Every library gives globstar's answer on every pair, so the rows time
+/// the same answers.
 fn assert_all_agree() {
     for (label, patterns) in common::sets() {
         let union = build_globstar(&patterns);

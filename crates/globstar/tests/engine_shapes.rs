@@ -1,7 +1,5 @@
-//! The engine's routing: what each pattern in `fixtures/engine-shapes.tsv`
-//! compiles to. A slower path (everything sent to the NFA, no shared
-//! nodes, no affix matchers) still answers right, so only this sees it.
-//! Twin of the same check in packages/globstar/tests/compiler-stages.mjs.
+//! What each pattern of `fixtures/engine-shapes.tsv` compiles to: a slower
+//! routing still answers right, so only this sees it.
 
 use globstar::Glob;
 
@@ -28,10 +26,8 @@ fn patterns_compile_to_their_shapes() {
     assert!(rows >= 20, "only {rows} rows");
 }
 
-// Rust only: JS steps every graph NFA past 32 states sparsely. Past 64
-// states the graph NFA keeps dense rows while they fit 4 KiB (170 states;
-// 171 do not) and no position leads to more than 48 literals; either form
-// answers as the members do one by one.
+// Past 64 states the graph NFA keeps dense rows while they fit 4 KiB (170
+// states) and no position leads to more than 48 literals.
 #[test]
 fn a_graph_past_64_states_keeps_dense_rows_within_bounds() {
     let lits = |n: usize| -> Vec<String> { (0..n).map(|i| format!("dir{i}/file{i}")).collect() };

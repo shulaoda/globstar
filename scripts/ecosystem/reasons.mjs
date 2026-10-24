@@ -1,12 +1,11 @@
-// Why a row's answer differs from the library whose suite it came from:
-// a reason id, a title and a short explanation, chosen by the first rule
-// that fits. The ids name the groups in the `-diff.txt` files and the
-// rows of the README's breakdown, so they stay stable across
-// regenerations; the prose describes both sides without ranking them.
+// Why a row's answer differs from the library whose suite it came from: a
+// reason id, a title and a short explanation, by the first rule that fits.
+// The ids name the groups in the `-diff.txt` files and the README's
+// breakdown, so they stay stable across regenerations.
 
 const SPEC = "GLOB_SPEC";
 
-// Reasons for a pattern globstar refuses, by `GlobError` kind.
+// A pattern globstar refuses, by `GlobError` kind.
 const REJECTS = {
   UnterminatedClass: {
     title: "A `[` that never closes",
@@ -61,8 +60,7 @@ const THEY_REJECT = {
     "globstar's answer on the path shown (`-` when the upstream test gave none).",
 };
 
-// Reasons for two answers that disagree, in the order they are tried.
-// `when(pattern, path, row)` says whether the rule fits.
+// Two answers that disagree, in the order the rules are tried.
 const DISAGREE = [
   {
     id: "quoted-text",
@@ -246,8 +244,7 @@ const DISAGREE = [
   },
 ];
 
-// The reason for a row whose `ours` and `theirs` differ. `ours` is a
-// token (`match`, `no-match`, `err:Kind`); `theirs` is a token or
+// `ours` is a token (`match`, `no-match`, `err:Kind`); `theirs` a token or
 // `{ err }`.
 export function reasonFor(row, ours, theirs) {
   if (ours.startsWith("err:")) {

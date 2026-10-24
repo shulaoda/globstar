@@ -1,17 +1,15 @@
 #!/usr/bin/env node
-// Regenerate `fixtures/ecosystem/`: the cases other glob libraries assert
+// Regenerates `fixtures/ecosystem/`: the cases other glob libraries assert
 // in their own test suites, answered by globstar and by every library the
-// benchmarks compare against, at the versions the workspace pins.
-//
-//   node scripts/ecosystem/generate.mjs
-//
-// For each suite this writes `<side>/<lib>.txt` (rows where globstar and
-// the library agree, as corpus rows asserting globstar's answer),
+// benchmarks compare against, at the versions the workspace pins. Per
+// suite: `<side>/<lib>.txt` (rows where globstar and the library agree),
 // `<side>/<lib>-diff.txt` (rows where they differ, grouped by reason, the
-// library's answer in a comment) and the README with the counts and the
+// library's answer in a comment), and the README with the counts and the
 // cross-library matrix. The suites are fetched once into
 // `node_modules/.cache/ecosystem/`; the Rust libraries answer through
-// `tools/ecosystem` (built here).
+// `tools/ecosystem`.
+//
+//   node scripts/ecosystem/generate.mjs
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -29,12 +27,9 @@ const OUT = join(ROOT, "fixtures/ecosystem");
 const CACHE = join(ROOT, "node_modules/.cache/ecosystem");
 const require = createRequire(join(ROOT, "packages/bench/package.json"));
 
-// ── the libraries that answer ─────────────────────────────────────────
-
-// Which options each library can be asked about. A row needing an option
-// a library lacks is not compared with it (`n/a`), unless the option
-// cannot change the answer: `dot` only matters when a name starts with
-// `.`.
+// Which options each library can be asked about: a row needing one a
+// library lacks is `n/a` for it, unless the option cannot change the
+// answer (`dot` only matters when a name starts with `.`).
 const LIBS = [
   { id: "globstar", side: "", dot: true, ci: true },
   { id: "picomatch", side: "js", dot: true, ci: true },
@@ -46,10 +41,9 @@ const LIBS = [
 ];
 const PROBE_ORDER = ["globstar", "globset", "fast-glob", "wax"];
 
-// Every library runs in the configuration closest to this dialect, so
-// what is left differs in meaning, not in settings. A suite's test that
-// sets one of these options to this value is imported; one that sets it
-// to the other value is not (it tests the other behavior).
+// Every library runs in the configuration closest to this dialect. A
+// suite's test that sets one of these options to this value is imported;
+// one that sets it to the other value tests the other behavior and is not.
 const CONFIG = {
   picomatch: {
     options: { strictSlashes: true },
@@ -74,8 +68,6 @@ const CONFIG = {
 const hasDotName = (path) => /(^|\/)\.[^/]/.test(path);
 const comparable = (lib, row) =>
   (!row.ci || lib.ci) && (row.dot || lib.dot || !hasDotName(row.path));
-
-// ── versions ──────────────────────────────────────────────────────────
 
 const jsVersion = (name) => require(`${name}/package.json`).version;
 const lock = readFileSync(join(ROOT, "Cargo.lock"), "utf8");
@@ -106,8 +98,6 @@ for (const s of SOURCES) {
     );
   }
 }
-
-// ── harvest ───────────────────────────────────────────────────────────
 
 const dirs = {};
 for (const s of SOURCES) dirs[s.id] = await fetchSource(s, CACHE);
@@ -146,8 +136,6 @@ const HARVEST = {
   wax: () => harvestWax(dirs.wax),
 };
 
-// ── normalize: a harvested case becomes a row, or is dropped ──────────
-
 // Options the JS suites pass that cannot change an `isMatch` answer.
 const JS_IGNORED = new Set(["nonull", "null", "matches"]);
 // globset's option constants: what each means for the row.
@@ -157,6 +145,7 @@ const MAX_ROW_BYTES = 512;
 const EXTGLOB = /[@!+?*]\(/;
 const POSIX_CLASS = /\[\[:/;
 
+// A harvested case as a row, or dropped with a reason.
 function normalize(source, c) {
   const drop = (why) => ({ drop: why });
   if (c.pattern.length > MAX_ROW_BYTES || c.path.length > MAX_ROW_BYTES)
@@ -166,7 +155,8 @@ function normalize(source, c) {
   let dot = true;
   let ci = false;
   if (source.side === "js") {
-    dot = false; // the three libraries' default
+    // The three libraries' default.
+    dot = false;
     const options =
       c.options && typeof c.options === "object" && !Array.isArray(c.options) ? c.options : {};
     const aligned = CONFIG[source.id].options;
@@ -195,8 +185,6 @@ function normalize(source, c) {
     },
   };
 }
-
-// ── answers ───────────────────────────────────────────────────────────
 
 const { compileMatcher } = await import(join(ROOT, "packages/globstar/src/glob.js"));
 const { GlobError } = await import(join(ROOT, "packages/globstar/src/error.js"));
@@ -241,9 +229,8 @@ const JS_ANSWER = {
     ),
 };
 
-// The probe's wire escapes.
+// The probe's wire escapes, and a corpus field (a tab is `⇥`, a newline `⏎`).
 const wire = (s) => s.replaceAll("\\", "\\\\").replaceAll("\t", "\\t").replaceAll("\n", "\\n");
-// A corpus field: as it is, except a tab is `⇥` and a newline `⏎`.
 const esc = (s) => s.replaceAll("\t", "⇥").replaceAll("\n", "⏎");
 
 function rustAnswers(rows) {
@@ -277,8 +264,6 @@ function rustAnswers(rows) {
     return out;
   });
 }
-
-// ── the run ───────────────────────────────────────────────────────────
 
 const suites = [];
 for (const source of SOURCES) {
@@ -348,8 +333,6 @@ function status(lib, row) {
   if (theirsErr) return "they-reject";
   return ours === theirs ? "agree" : "disagree";
 }
-
-// ── write ─────────────────────────────────────────────────────────────
 
 const sourceLib = (s) => s.id;
 const showAnswer = (a) => (typeof a === "string" ? a : `error (${a.err})`);
@@ -496,8 +479,6 @@ function wrap(text, width) {
   if (line) lines.push(line);
   return lines;
 }
-
-// ── README ────────────────────────────────────────────────────────────
 
 const pct = (a, b) => (b === 0 ? "–" : `${Math.round((1000 * a) / b) / 10}%`);
 let md = `# Ecosystem corpus

@@ -1,14 +1,6 @@
-// String mode ↔ byte mode differential.
-//
-// An ASCII pattern is matched on the JS string itself, reading a segment's
-// UTF-8 bytes only where a unit-counting construct meets non-ASCII text; a
-// pattern with a non-ASCII byte matches the path's UTF-8 bytes throughout.
-// Forced byte mode (`__engine: "bytes"`) is the reference. On the
-// same pattern × path the two must agree. This sweeps random patterns ×
-// paths, including multi-byte text, `?`-vs-bytes traps, and
-// dot/class/brace shapes, asserting they agree.
-//
-// Run: node packages/globstar/tests/string-mode.mjs [count]
+// String mode against byte mode (`__engine: "bytes"`, the reference) on
+// random patterns × paths, multi-byte text and `?`-vs-bytes traps
+// included: the two must agree. `node string-mode.mjs [count]`.
 
 import { compileMatcher } from "../src/glob.js";
 import { GlobError } from "../src/error.js";
@@ -106,7 +98,6 @@ for (let i = 0; i < COUNT; i++) {
   try {
     seg = compileMatcher(pat, { dot, caseInsensitive: ci });
   } catch (e) {
-    // A parse error is fine; anything else is a bug.
     if (!(e instanceof GlobError)) throw e;
     continue;
   }
@@ -139,8 +130,7 @@ if (bad > 0) {
   console.error(`✗ ${bad} divergences over ${tried} cases`);
   process.exit(1);
 }
-// Most generated patterns compile; a run that loses many has stopped
-// testing anything.
+// A run that loses many patterns to parse errors has stopped testing.
 if (tried < COUNT * 0.9) {
   console.error(`✗ only ${tried} of ${COUNT} cases ran`);
   process.exit(1);

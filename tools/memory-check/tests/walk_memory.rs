@@ -1,5 +1,4 @@
-//! What a walk holds while it runs: counted by this binary's global
-//! allocator.
+//! What a walk holds while it runs.
 
 use std::path::Path;
 use std::sync::atomic::Ordering::Relaxed;
@@ -25,7 +24,7 @@ fn a_walk_holds_little() {
 }
 
 // A pattern too long as written is refused before the walker copies or
-// normalizes it: `a/` × 4M (8 MB) peaked at 80 MB, ten times its size.
+// normalizes it.
 fn too_long_refused_unread(root: &Path) {
     let pattern = "a/".repeat(4 * MB);
     let base = LIVE.load(Relaxed);
@@ -36,9 +35,8 @@ fn too_long_refused_unread(root: &Path) {
     assert!(peak < 16 << 10, "{peak} bytes at the peak");
 }
 
-// A folder's entries stream out as they are read; only its child
-// folders wait: with 20,000 entries the heap stays small before the
-// first one comes out.
+// A folder's entries stream out as they are read; only its child folders
+// wait.
 fn folders_not_entries(root: &Path) {
     let dir = root.join("w");
     std::fs::create_dir_all(&dir).unwrap();
@@ -56,9 +54,8 @@ fn folders_not_entries(root: &Path) {
     assert!(held < MB / 4, "{held} bytes held before the first entry");
 }
 
-// A folder waiting to be read shares the links on its way down with the
-// folder it was found in: 2,000 folders below a chain of 16 links hold
-// the 16 links once, not once each.
+// 2,000 folders below a chain of 16 links hold the 16 links once, not
+// once each.
 #[cfg(unix)]
 fn each_link_once(root: &Path) {
     for i in 0..=16 {

@@ -1,6 +1,5 @@
 //! A counting global allocator: the heap bytes live, and the most that
-//! were live at once, for what a build leaves behind and what it peaks
-//! at. The two memory binaries and the memory tests include this file.
+//! were live at once. The memory binaries and tests include this file.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::mem::size_of_val;
@@ -21,8 +20,7 @@ unsafe impl GlobalAlloc for Counter {
         LIVE.fetch_sub(layout.size(), Relaxed);
         unsafe { System.dealloc(ptr, layout) }
     }
-    // The change in size, as the program holds one block throughout (a
-    // shrink wraps, which subtracts).
+    // The change in size; a shrink wraps, which subtracts.
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let grow = new_size.wrapping_sub(layout.size());
         let live = LIVE.fetch_add(grow, Relaxed).wrapping_add(grow);
@@ -34,11 +32,9 @@ unsafe impl GlobalAlloc for Counter {
 #[global_allocator]
 static A: Counter = Counter;
 
-/// What a matcher keeps once it has matched each of `paths`, and the
-/// most it held at once from the start of its build through those
-/// matches: its own size and the heap, each the median of `trials`
-/// builds (which dampens the allocator's noise around a boundary
-/// allocation).
+/// What a matcher keeps once it has matched each of `paths`, and the most
+/// it held at once from the start of its build through those matches: its
+/// own size and the heap, each the median of `trials` builds.
 pub fn kept_and_peak<T>(
     trials: usize,
     paths: &[&str],

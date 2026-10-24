@@ -1,35 +1,19 @@
-//! Bounded-exhaustive `match_dir` verification.
-//!
-//! Enumerates EVERY pattern buildable from a fixed segment alphabet (the
-//! full 14-token set at 1-2 segments, a core 8-token set at 3) against
-//! every path in a fixed universe, and checks the properties that define
-//! `match_dir` relative to `is_match`:
-//!
-//! 1. the match flag is exactly `is_match(dir)`;
-//! 2. if any universe path strictly below the dir matches, the result must
-//!    descend — a pruning walker must never lose a match;
-//! 3. `Pruned` implies no universe descendant matches;
-//! 4. the segment engine's anchored chains and its NFA agree on every
-//!    `is_match` (`CompileOptions::force_nfa`);
-//! 5. the all-below flag is set exactly when every path up to three
-//!    levels below the dir matches — a directory is skipped whole only
-//!    when nothing below it escapes. Three levels is past the deepest
-//!    pattern, so a path that deep matches only through a `**`.
-//!
-//! Deterministic: no randomness — the whole space within the bounds is
-//! covered on every run. The JS twin
-//! (packages/globstar/tests/dir-exhaustive.mjs) runs the identical
-//! enumeration.
+//! Every pattern of a fixed segment alphabet (14 tokens at 1–2 segments,
+//! 8 at 3) against every path of a fixed universe, for the properties that
+//! define `match_dir` relative to `is_match`: the match flag is
+//! `is_match(dir)`; a directory with a matching path strictly below it
+//! descends; `Pruned` means no descendant matches; the anchored chains
+//! and the NFA agree on every `is_match`; the all-below flag is set
+//! exactly when every path up to three levels below matches (deeper than
+//! any pattern, so such a path matches only through a `**`).
 
 use globstar::{CompileOptions, DirMatch, Glob};
 
-/// Full alphabet: literals, wildcards, classes, dot heads, braces, globstar.
 const SEGMENTS: &[&str] = &[
     "a", "b", "ab", "*", "?", "a*", "*a", "[ab]", "[!a]", ".a", "{a,b}", "{a,*}", "**", ".*",
 ];
-/// Core alphabet for the depth-3 sweep (keeps the space tractable).
 const CORE: &[&str] = &["a", "b", "*", "?", "[ab]", ".a", "{a,b}", "**"];
-/// Path universe segments; `c` matches nothing literal in the alphabet.
+/// `c` matches nothing literal in the alphabet.
 const PSEG: &[&str] = &["a", "b", "ab", "c", ".a"];
 
 /// All `/`-joined sequences of `segs` with exactly `depth` components.
@@ -61,8 +45,7 @@ fn patterns() -> Vec<String> {
     out
 }
 
-/// Every relative path of 1..=3 `PSEG` segments, shallowest first: the
-/// directories judged, and the suffixes all-below is judged on.
+/// Every path of 1..=3 `PSEG` segments, shallowest first.
 fn universe() -> Vec<String> {
     let mut out = Vec::new();
     for d in 1..=3 {
@@ -71,7 +54,6 @@ fn universe() -> Vec<String> {
     out
 }
 
-/// Does every `dir + "/" + suffix` match?
 fn all_below(is_match: impl Fn(&[u8]) -> bool, dir: &str, suffixes: &[String]) -> bool {
     suffixes
         .iter()
@@ -79,7 +61,6 @@ fn all_below(is_match: impl Fn(&[u8]) -> bool, dir: &str, suffixes: &[String]) -
 }
 
 /// Every match starts with one of the static prefixes, byte for byte.
-/// (Under case_insensitive a match may differ in case: not checked.)
 fn assert_prefixes_cover(glob: &Glob, paths: &[String], matched: &[bool]) {
     let prefixes = glob.static_prefixes();
     for (path, _) in paths.iter().zip(matched).filter(|(_, m)| **m) {
@@ -93,12 +74,10 @@ fn assert_prefixes_cover(glob: &Glob, paths: &[String], matched: &[bool]) {
     }
 }
 
-/// `child` is strictly below `dir` (dir + `/` + more).
 fn is_below(child: &str, dir: &str) -> bool {
     child.len() > dir.len() && child.as_bytes()[dir.len()] == b'/' && child.starts_with(dir)
 }
 
-/// Precompute the strictly-below relation over the universe.
 fn below_map(paths: &[String]) -> Vec<Vec<usize>> {
     paths
         .iter()
@@ -117,7 +96,7 @@ fn check(patterns: &[String], paths: &[String], dot: bool, ci: bool) {
     check_below(patterns, paths, &universe(), dot, ci);
 }
 
-/// `check`, with all-below judged on `dir/s` for each of `suffixes`.
+/// All-below judged on `dir/s` for each of `suffixes`.
 fn check_below(patterns: &[String], paths: &[String], suffixes: &[String], dot: bool, ci: bool) {
     let below = below_map(paths);
     for pattern in patterns {
@@ -128,9 +107,6 @@ fn check_below(patterns: &[String], paths: &[String], suffixes: &[String], dot: 
     }
 }
 
-/// The same properties over OR-union matchers (`Glob::union`), on every
-/// ordered pair from an 8-pattern set plus every ordered triple from a
-/// 4-pattern core.
 fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool) {
     let below = below_map(paths);
     let suffixes = universe();
@@ -142,10 +118,6 @@ fn check_union(sets: &[Vec<&'static str>], paths: &[String], dot: bool, ci: bool
     }
 }
 
-/// The five `match_dir` properties of one matcher over `paths`: the
-/// chains agree with the forced NFA, the match flag is `is_match`, a
-/// directory with a matching descendant is never pruned, and all-below
-/// holds exactly when every `dir/s` matches.
 fn check_glob(
     label: &dyn std::fmt::Debug,
     [glob, nfa]: [&Glob; 2],
@@ -156,6 +128,7 @@ fn check_glob(
     ci: bool,
 ) {
     let matched: Vec<bool> = paths.iter().map(|p| glob.is_match(p.as_bytes())).collect();
+    // Under case_insensitive a match may differ in case from its prefix.
     if !ci {
         assert_prefixes_cover(glob, paths, &matched);
     }
@@ -202,6 +175,7 @@ fn dir_exhaustive_dot_matrix() {
     check(&pats, &paths, true, false);
 }
 
+/// Every ordered pair of eight patterns, every ordered triple of four.
 #[test]
 fn dir_exhaustive_unions() {
     const UNION_PATTERNS: &[&str] = &["a/b", "a/*", "*/b", "**/b", "a/**", "{a,b}/c", ".a/*", "?"];
@@ -227,8 +201,7 @@ fn dir_exhaustive_unions() {
 }
 
 /// A globstar, then three elements: the chain's tail tokens take one or
-/// two of them, which no shorter pattern reaches. Paths go four deep,
-/// and all-below is judged three levels down, as deep as the tail.
+/// two of them. Paths go four deep, all-below three.
 #[test]
 fn dir_exhaustive_long_tails() {
     const HEADS: &[&str] = &["", "a/", "*/"];

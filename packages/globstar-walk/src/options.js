@@ -1,5 +1,3 @@
-// User-facing options for `glob` / `globSync`.
-
 const DEFAULTS = {
   cwd: ".",
   dot: false,
@@ -10,10 +8,8 @@ const DEFAULTS = {
 
 export const typeName = (v) => (v === null ? "null" : typeof v);
 
-// The options bag with every default filled in and `ignore` as a list.
-// Only own keys count (a key on `Object.prototype` changes nothing), a
-// key set to `undefined` keeps its default, and a value of the wrong type
-// or an unknown key is a TypeError.
+// Only own keys count, `undefined` keeps the default, an unknown key or a
+// value of the wrong type is a TypeError.
 export function normalizeOptions(input) {
   input ??= {};
   if (typeof input !== "object" || Array.isArray(input)) {

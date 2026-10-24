@@ -1,20 +1,19 @@
-//! The bench corpus, read from `fixtures/`. The JS benches read the same
-//! files (`packages/bench/benches/shared.js`), so the rows of the two
-//! runtimes line up by construction. `tools/memory-check` includes this
-//! module by path.
+//! The bench corpus, read from `fixtures/`; the JS benches read the same
+//! files, so the rows of the two runtimes line up. `tools/memory-check`
+//! includes this module by path.
 #![allow(dead_code)]
 
 use std::sync::LazyLock;
 
-/// A path no row matches. A first call on it runs every part a matcher
-/// left for its first use (in a list of separate matchers, each one).
+/// A path no row matches: a first call on it runs every part a matcher
+/// left for its first use.
 pub const MISS: &str = "crates/core/src/foo";
 
 /// The 11 paths the match benches answer.
 pub static PATHS: LazyLock<Vec<&str>> =
     LazyLock::new(|| lines(include_str!("../../../../fixtures/bench-paths.txt")));
 
-/// The single-pattern rows: `(label, pattern)`.
+/// `(label, pattern)`.
 pub static SINGLE: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
     lines(include_str!("../../../../fixtures/bench-single.tsv"))
         .into_iter()
@@ -22,11 +21,9 @@ pub static SINGLE: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
         .collect()
 });
 
-/// The union rows: `(label, patterns)`. `ignore-list-40`, `file-list-100`
-/// and `gitignore-89` are files of their own, and so are the three real
-/// .gitignore sets, `global-586`, `openssl-500` and `joomla-705`;
-/// `all-cases` is every pattern of the bench but those three in one
-/// union, each once.
+/// `(label, patterns)`: the sets file, the three list files, the three
+/// real `.gitignore` sets, and `all-cases`, every pattern of the bench but
+/// those three in one union.
 pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
     let mut out: Vec<_> = lines(include_str!("../../../../fixtures/bench-sets.tsv"))
         .into_iter()
@@ -81,7 +78,6 @@ pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
     out
 }
 
-/// The data lines of a fixture: not blank, not a `#` comment.
 fn lines(text: &'static str) -> Vec<&'static str> {
     text.lines()
         .filter(|l| !l.is_empty() && !l.starts_with('#'))

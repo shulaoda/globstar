@@ -1,11 +1,6 @@
-//! Multi-pattern walker comparison across tree scales.
-//!
-//! Three axes:
-//! - **scale**: small (~120) / medium (~3.7K) / large (~25K) files
-//! - **patterns**: multi-small (4 patterns) / multi-huge (10 patterns)
-//! - **lib**: globstar-walk / globwalk / ignore::WalkBuilder
-//!
-//! `wax::walk` is single-pattern only and skipped here.
+//! Multi-pattern walks against globwalk and `ignore::WalkBuilder` on
+//! three tree scales (about 120, 3.7K and 25K files) with a 4- and a
+//! 10-pattern set. `wax::walk` takes one pattern, so it is left out.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use globstar_walk::Walk;
@@ -16,17 +11,16 @@ use std::path::PathBuf;
 const TREE_SCALES: &[&TreeShape] = &[&TREE_SMALL, &TREE_MEDIUM, &TREE_LARGE];
 
 struct TreeShape {
-    /// Directory key (also bench tree dir name).
     name: &'static str,
     /// `src/<area>/module_<n>.<ext>` for every area × module × one of
-    /// four extensions, and the same files again under `subs`
-    /// sub-folders of each area.
+    /// four extensions, and the same files again under `subs` sub-folders
+    /// of each area.
     areas: usize,
     modules: usize,
     subs: usize,
-    /// Test files under `tests/{unit,integration}/test_<n>.ts`.
+    /// `tests/{unit,integration}/test_<n>.ts`.
     tests: usize,
-    /// Synthetic `node_modules/pkgN/...` packages.
+    /// `node_modules/pkg<n>/{src,dist}/…`.
     pkgs: usize,
     files_per_pkg: usize,
     /// `dist/chunk_<n>.{js,js.map}`.
@@ -65,6 +59,21 @@ const TREE_LARGE: TreeShape = TreeShape {
     files_per_pkg: 30,
     dist_chunks: 500,
 };
+
+const PATTERNS_SMALL: &[&str] = &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
+
+const PATTERNS_HUGE: &[&str] = &[
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.test.ts",
+    "**/*.json",
+    "**/package.json",
+    "components/**/*.vue",
+    "scripts/**/*.sh",
+    "docs/**/*.md",
+    "src/**/*.spec.ts",
+    "**/*.md",
+];
 
 fn build_tree(shape: &TreeShape) -> PathBuf {
     let mut root = std::env::temp_dir();
@@ -114,23 +123,6 @@ fn build_tree(shape: &TreeShape) -> PathBuf {
     fs::File::create(&sentinel).expect("create sentinel");
     root
 }
-
-// 4-pattern set.
-const PATTERNS_SMALL: &[&str] = &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
-
-// 10-pattern set — exercises a larger factored union.
-const PATTERNS_HUGE: &[&str] = &[
-    "src/**/*.ts",
-    "src/**/*.tsx",
-    "tests/**/*.test.ts",
-    "**/*.json",
-    "**/package.json",
-    "components/**/*.vue",
-    "scripts/**/*.sh",
-    "docs/**/*.md",
-    "src/**/*.spec.ts",
-    "**/*.md",
-];
 
 fn bench_combo(c: &mut Criterion, scale: &TreeShape, label: &str, patterns: &[&str]) {
     let root = build_tree(scale);

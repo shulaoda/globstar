@@ -1,13 +1,13 @@
-// Harvest the cases a Rust library's own tests assert, by reading the
-// test source: `matches!`/`nmatches!`/`syntaxerr!` in globset's glob.rs,
-// `assert!(glob_match(..))` in fast-glob's test.rs, `Glob::new(..)` and
-// `is_match(..)` in wax's lib.rs.
+// The cases a Rust library's own tests assert, read from the test source:
+// `matches!`/`nmatches!`/`syntaxerr!` in globset's glob.rs,
+// `assert!(glob_match(..))` in fast-glob's test.rs, rstest rows in wax's
+// lib.rs.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// A Rust string literal starting at `src[i]` (`"…"`, `r"…"`, `r#"…"#`):
-// its value and the index after it, or null.
+// A Rust string literal at `src[i]` (`"…"`, `r"…"`, `r#"…"#`): its value
+// and the index after it, or null.
 function literalAt(src, i) {
   let hashes = 0;
   let j = i;
@@ -44,7 +44,7 @@ function literalAt(src, i) {
     } else if (n === "x") {
       out += String.fromCharCode(parseInt(src.slice(j + 1, j + 3), 16));
       j += 2;
-    } else out += n; // `\\`, `\"`, `\'`
+    } else out += n;
   }
   return null;
 }
@@ -54,7 +54,6 @@ const skipSpace = (src, i) => {
   return i;
 };
 
-// The name of the `fn` whose body holds index `i`.
 function enclosingFn(src, i) {
   const before = src.slice(0, i);
   const m = [...before.matchAll(/fn\s+([a-z_0-9]+)\s*\(/g)].pop();
@@ -66,8 +65,6 @@ const lineOf = (src, i) => src.slice(0, i).split("\n").length;
 function makeCase(pattern, path, options, at, group, kind = "match") {
   return { pattern, path, options, at, group, kind };
 }
-
-// ── globset ───────────────────────────────────────────────────────────
 
 // `matches!(name, pat, path[, OPTS])`, `nmatches!(…)` and
 // `syntaxerr!(name, pat, kind)`; OPTS is one of the test module's option
@@ -97,8 +94,6 @@ export function harvestGlobset(dir) {
   return { cases, skipped: {}, failures: 0, files: 1 };
 }
 
-// ── fast-glob ─────────────────────────────────────────────────────────
-
 // `assert!(glob_match(pat, path))` and its negation, grouped by test fn.
 export function harvestFastGlob(dir) {
   const file = "tests/test.rs";
@@ -123,15 +118,13 @@ export function harvestFastGlob(dir) {
   return { cases, skipped: {}, failures: 0, files: 1 };
 }
 
-// ── wax ───────────────────────────────────────────────────────────────
-
-// rstest suites: a `#[rstest]` block lists `#[case(…)]` rows, then a fn
-// whose body says what the rows are. `assert_match_program_with(
-// harness::assert_new_glob_is_ok("pat"), path, f)` matches one pattern
-// against each row's path; with `expression` in place of the literal,
-// each row is a (pattern, path) pair. `assert_new_glob_is_err(expression)`
-// rows are rejected patterns; `assert_new_glob_is_ok(expression)` alone
-// only says the pattern compiles and is counted, not harvested.
+// A `#[rstest]` block lists `#[case(…)]` rows, then a fn whose body says
+// what they are: `assert_match_program_with(harness::assert_new_glob_is_ok("pat"),
+// path, f)` matches one pattern against each row's path, or with
+// `expression` in place of the literal each row is a (pattern, path) pair;
+// `assert_new_glob_is_err(expression)` rows are rejected patterns;
+// `assert_new_glob_is_ok(expression)` alone only says the pattern
+// compiles and is counted, not harvested.
 export function harvestWax(dir) {
   const file = "src/lib.rs";
   const src = readFileSync(join(dir, file), "utf8");
@@ -141,7 +134,6 @@ export function harvestWax(dir) {
   for (const m of src.matchAll(blocks)) {
     const [, caseBlock, name, body] = m;
     const at = `${file}:${lineOf(src, m.index)}`;
-    // The string literals each `#[case(` starts with.
     const rows = [];
     for (const c of caseBlock.matchAll(/#\[case\(\s*/g)) {
       const first = literalAt(caseBlock, c.index + c[0].length);

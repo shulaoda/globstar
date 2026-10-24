@@ -1,29 +1,23 @@
-// Harvest the cases a JS library's own test suite exercises.
-//
-// picomatch and micromatch are mocha suites: the files are run as they
-// are, with mocha's globals supplied and the library under test replaced
-// by a recorder that notes every (pattern, path, options) it is asked
-// about and then answers from the real library. No parsing, so computed
-// fixtures and loops are harvested too. minimatch's `test/patterns.js` is
-// a table of (pattern, matches, options, files), read directly.
+// The cases a JS library's own test suite exercises. picomatch and
+// micromatch are mocha suites, run as they are under a fake mocha with the
+// library replaced by a recorder that notes every (pattern, path, options)
+// and answers from the real library, so computed fixtures and loops are
+// harvested too. minimatch's `test/patterns.js` is a table, read directly.
 
 import Module from "node:module";
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
-// A harvested case. `options` are the upstream options as passed;
-// `at` is `file:line` in the upstream suite; `group` names the test.
+// `options` as the suite passed them; `at` is `file:line` in the suite;
+// `group` names the test.
 function makeCase(pattern, path, options, at, group) {
   return { pattern, path, options: options ?? {}, at, group };
 }
 
-// ── mocha suites ──────────────────────────────────────────────────────
-
-// Run every `test/*.js` of `dir` under a fake mocha. `wrap(real, record)`
-// builds the recorder that replaces `require('..')`; `extra` maps other
-// module requests to replacements (`minimatch` for picomatch's comparison
-// test, a stub for `fill-range`).
+// Every `test/*.js` of `dir`. `wrap(real, record)` builds the recorder
+// that replaces `require('..')`; `extra` maps other module requests to
+// replacements.
 export async function harvestMocha({ dir, real, wrap, extra = {} }) {
   const testDir = join(dir, "test");
   const files = readdirSync(testDir)
@@ -57,7 +51,7 @@ export async function harvestMocha({ dir, real, wrap, extra = {} }) {
   };
   const recorder = wrap(real, record);
 
-  // Mocha, enough of it: `describe` collects, the tree runs afterwards.
+  // Enough of mocha: `describe` collects, the tree runs afterwards.
   const makeSuite = (title) => ({
     title,
     suites: [],
@@ -139,8 +133,8 @@ export async function harvestMocha({ dir, real, wrap, extra = {} }) {
     for (const fn of suite.hooks.after) await call(fn).catch(() => failures++);
   };
 
-  // `assert` that records nothing and stops nothing: a failing upstream
-  // assertion must not hide the calls after it.
+  // An `assert` that stops nothing: a failing upstream assertion must not
+  // hide the calls after it.
   const lenientAssert = (() => {
     const real = Module.createRequire(import.meta.url)("node:assert");
     const lenient = (...a) => {
@@ -204,8 +198,8 @@ export async function harvestMocha({ dir, real, wrap, extra = {} }) {
   return { cases, skipped, failures, files: files.length };
 }
 
-// The recorder for picomatch's API: `picomatch(pattern, options)` returns
-// a matcher; `isMatch(path, pattern, options)` answers directly.
+// picomatch: `picomatch(pattern, options)` returns a matcher;
+// `isMatch(path, pattern, options)` answers directly.
 export function wrapPicomatch(real, record) {
   const recorder = (pattern, options, returnState) => {
     const matcher = real(pattern, options, returnState);
@@ -223,9 +217,8 @@ export function wrapPicomatch(real, record) {
   return recorder;
 }
 
-// The recorder for micromatch's API: list-in, matches-out at the top,
-// plus the predicates. `contains` is substring matching and is not glob
-// matching, so it is passed through unrecorded.
+// micromatch: list in, matches out at the top, plus the predicates.
+// `contains` is substring matching, passed through unrecorded.
 export function wrapMicromatch(real, record) {
   const each = (list, patterns, options) => {
     for (const item of [].concat(list)) record(patterns, item, options);
@@ -257,12 +250,10 @@ export function wrapMicromatch(real, record) {
   return recorder;
 }
 
-// ── minimatch's pattern table ─────────────────────────────────────────
-
-// `test/patterns.js` exports a list: a string starts a section, a
-// function changes the file list, an entry is `[pattern, matches,
-// options, files, tapOptions]`. The matches column is minimatch's own
-// claim; the generator asks the library instead.
+// `test/patterns.js`: a string starts a section, a function changes the
+// file list, an entry is `[pattern, matches, options, files, tapOptions]`.
+// The matches column is minimatch's own claim; the generator asks the
+// library instead.
 export async function harvestMinimatch(dir) {
   const file = join(dir, "test", "patterns.js");
   const { default: patterns } = await import(pathToFileURL(file).href);

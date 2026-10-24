@@ -1,5 +1,4 @@
-// Large and deep patterns. JS twin of the size tests in
-// `crates/globstar/tests/glob.rs`.
+// Large and deep patterns.
 
 import assert from "node:assert/strict";
 import v8 from "node:v8";
@@ -23,8 +22,7 @@ function onWorker(body, resourceLimits) {
   });
 }
 
-// The in-segment closures are built without recursion, so a long
-// segment, or a long list under dot=false, fits a small stack.
+// The in-segment closures are built without recursion.
 assert.deepEqual(
   await onWorker(
     `
@@ -41,8 +39,7 @@ assert.deepEqual(
 console.log("✓ large patterns compile on a small stack");
 
 // A long head before many branches is not copied out once per branch
-// into the static prefixes: 32 KB patterns compile in milliseconds on a
-// 64 MB heap. Twin of the check in tools/memory-check/tests/large_patterns.rs.
+// into the static prefixes.
 for (const [name, ms, hit] of await onWorker(
   `
   const x = (n) => "x".repeat(n);
@@ -73,8 +70,7 @@ for (const [name, ms, hit] of await onWorker(
 console.log("✓ long heads before many branches stay small");
 
 // A union too big for the chains agrees with its members: its graph NFA
-// is sparse at both 100 and 600 members (Rust keeps dense rows at 100). Twin of
-// `big_unions_agree_with_their_members` in crates/globstar/tests/glob_union.rs.
+// is sparse at both 100 and 600 members.
 {
   const bigUnion = (n) =>
     Array.from({ length: n }, (_, i) => {
@@ -126,10 +122,8 @@ console.log("✓ long heads before many branches stay small");
   }
 }
 
-// 64 wildcard chains and the literal set: one chain more than two words
-// have bits, so the chain index picks them by id, not by bit. Twin of
-// `a_union_past_a_words_chains_names_each_by_id` in
-// crates/globstar/tests/glob_union.rs.
+// One chain more than two words have bits: the index picks by id, not by
+// bit.
 {
   const members = Array.from({ length: 64 }, (_, i) => `d${i}/**/*.x${i}`);
   const union = compileMatcher([...members, "a/b.txt", "c.txt"]);
@@ -138,11 +132,9 @@ console.log("✓ long heads before many branches stay small");
   assert.ok(!union.match("d1/q/f.x2"));
 }
 
-// A union past the key room answers as its members do: one member gives
-// more keys than the room (26 per class branch) and is found by its
-// head; 64 chains sharing 2,000 names file more entries than the room
-// and are scanned. Twin of `a_union_past_the_key_room_answers_as_its_members`
-// in crates/globstar/tests/glob_union.rs.
+// Past the key room: one member gives more keys than the room and is
+// found by its head; 64 chains sharing 2,000 names file more entries than
+// the room and are scanned.
 {
   const hex = (i) => i.toString(16);
   const members = [
@@ -165,8 +157,7 @@ console.log("✓ long heads before many branches stay small");
   }
 }
 
-// About 4,200 in-segment states: past the closure budget, each step
-// closes its set as it goes.
+// About 4,200 in-segment states: past the closure budget.
 {
   const list = `{${Array.from({ length: 600 }, (_, i) => `*x${i}`).join(",")}}`;
   for (const [dot, path, want] of [
@@ -182,9 +173,8 @@ console.log("✓ long heads before many branches stay small");
   }
 }
 
-// What large patterns keep once compiled. Twin of
-// tools/memory-check/tests/large_patterns.rs; heap counts are rougher in
-// JS, so the bounds are looser.
+// What large patterns keep once compiled; heap counts are rougher than
+// the Rust ones, so the bounds are looser.
 v8.setFlagsFromString("--expose-gc");
 const gc = vm.runInNewContext("gc");
 const used = () => {
@@ -193,9 +183,7 @@ const used = () => {
 };
 const MB = 1 << 20;
 const names = (n, f) => Array.from({ length: n }, (_, i) => f(i));
-// The bytes a compiled matcher keeps, and its answer for `path`; the
-// matcher is garbage once this returns. Freed array buffers are counted
-// a turn later, hence the wait.
+// Freed array buffers are counted a turn later, hence the wait.
 async function keeps(patterns, path) {
   gc();
   await new Promise((resolve) => setImmediate(resolve));
@@ -206,7 +194,6 @@ async function keeps(patterns, path) {
   return [used() - before, m.match(path)];
 }
 for (const { name, patterns, path, matches, maxKept } of [
-  // A long name list stays a sorted suffix index.
   {
     name: "20,000 names",
     patterns: names(20_000, (i) => `src/file${i}.ts`),
@@ -221,7 +208,6 @@ for (const { name, patterns, path, matches, maxKept } of [
     matches: true,
     maxKept: 16 * MB,
   },
-  // A big union's graph NFA keeps no dense rows.
   {
     name: "20,000 dir/file members",
     patterns: names(20_000, (i) => `dir${i}/file${i}`),
@@ -230,8 +216,7 @@ for (const { name, patterns, path, matches, maxKept } of [
     maxKept: 32 * MB,
   },
   // The chain index holds a key or so per byte: chains that share a long
-  // list, or a brace of class branches, are not filed under every string
-  // of it.
+  // list, or a brace of class branches, are not filed under every string.
   {
     name: "64 heads, 12,000 names",
     patterns: `{${names(64, (i) => `${i.toString(16)}/`).join(",")}}*{${names(12_000, (i) => i.toString(16)).join(",")}}`,
@@ -276,10 +261,8 @@ for (const { name, patterns, path, matches, maxKept } of [
 }
 
 // A matcher keeps its arrays at their length: one more state costs a few
-// slots, not the room V8 leaves after `push` (half again plus 16 slots). Each range stays in one NFA
-// form, whose switch is a real step.
-// The heap one matcher keeps, counted over 4,000. Each count is a call
-// of its own: the matchers of one must be gone before the next begins.
+// slots, not the room V8 leaves after `push`. The heap one matcher keeps,
+// counted over 4,000, the smaller of two counts.
 async function heapPer(pattern) {
   gc();
   await new Promise((resolve) => setImmediate(resolve));
@@ -290,8 +273,6 @@ async function heapPer(pattern) {
   assert.equal(kept[0].match(""), false);
   return (used() - before) / kept.length;
 }
-// The smaller of two counts: a count only gains from what else the heap
-// holds at the time.
 async function perMatcher(pattern) {
   const first = await heapPer(pattern);
   return Math.min(first, await heapPer(pattern));
@@ -309,8 +290,8 @@ async function evenSteps(name, shape, from, to) {
 await evenSteps("segment NFA", (k) => `src/**/n*d[k-m]e?${"t".repeat(k)}`, 2, 20);
 await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
 
-// A brace with 60,000 branches compiles in milliseconds: its branch
-// tails are gathered in one list, not copied once per branch.
+// A brace's branch tails are gathered in one list, not copied once per
+// branch.
 {
   const start = performance.now();
   compileMatcher(`x{?${",".repeat(60_000)}}`);
@@ -318,10 +299,9 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 1000, `60,000 branches took ${ms.toFixed(0)} ms to compile`);
 }
 
-// A run of `{?,}` takes as many lengths as it has braces: found in one
-// pass over its states, not one step per length, both for a whole segment
-// at compile time and for a cut one at each all-below proof. Twin of
-// `wildcard_lengths_cost_one_pass` in crates/globstar/tests/glob.rs.
+// Whether a run of `{?,}` takes every name is found in one pass over its
+// states, for a whole segment at compile time and for a cut one at each
+// all-below proof.
 {
   const start = performance.now();
   assert.equal(compileMatcher("{?,}".repeat(16_000)).match("abc"), true);
@@ -333,9 +313,8 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 2000, `one-pass lengths took ${ms.toFixed(0)} ms`);
 }
 
-// Two globstars around a block: under `dot: false` the second one's dot
-// check reads the middle once, not once per place the block is tried.
-// Twin of `a_block_between_globstars_reads_the_middle_once`.
+// Under `dot: false` the second globstar's dot check reads the middle
+// once, not once per place the block is tried.
 {
   const m = compileMatcher("**/x/**/y", { dot: false });
   const middle = "x/".repeat(32_000);
@@ -346,10 +325,8 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 300, `a block between globstars over 64,000 bytes took ${ms.toFixed(0)} ms`);
 }
 
-// A union's merge reads each member at each of its segments: long members
-// alike in every segment yet never the same are left apart, not read once
-// per segment, so 64 KB of them compiles in milliseconds. Twin of
-// `a_union_of_long_members_alike_in_every_segment_compiles_fast`.
+// Long members alike in every segment yet never the same are left apart,
+// not read once per segment.
 {
   const middle = "a/".repeat(16_000);
   const pad = (i) => String(i).padStart(2, "0");
@@ -368,10 +345,8 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   }
 }
 
-// The graph walk finds a union's groups by all they hold: members alike
-// but for a class or an in-segment brace are not each compared with
-// every one before, so 32,768 of them compile in milliseconds. Twin of
-// `members_apart_only_in_a_class_or_brace_compile_fast`.
+// The graph walk finds a union's groups by all they hold, not by
+// comparing each member with every one before.
 {
   const side = (i) => (i % 2 ? "b" : "a");
   const hex = (i) => i.toString(16).padStart(4, "0");
@@ -390,10 +365,8 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   }
 }
 
-// Groups that each hold a brace of 40,000 empty branches, side by side or
-// met again at 30 nested braces, compile in milliseconds: no segment is
-// copied into a brace, and none of them is copied onto another, so
-// nothing multiplies. Twin of `groups_holding_huge_braces_compile_quickly`.
+// No segment is copied into a brace of 40,000 empty branches, and none of
+// them onto another.
 {
   const core = (n, m) => {
     const classes = Array.from(
@@ -422,8 +395,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
 }
 
 // The chain index reads a run of one-string nodes after a long list in
-// one pass over the list: 6,000 names behind 10,000 such nodes. Twin of
-// `a_run_after_a_long_list_reads_it_once`.
+// one pass over the list.
 {
   const heads = Array.from({ length: 11 }, (_, i) => `p${i}/`);
   const names = Array.from({ length: 6000 }, (_, i) => i.toString(16));
@@ -434,11 +406,8 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(m.match(`p3/${"xa".repeat(5000)}176f`));
 }
 
-// The chain index searches a path's last segment for the first 16 bytes
-// of a member's literal at most, and the walk checks the rest: members
-// `x3/*` + 400 `a`s + `q3*` turn down a 64 KB segment of `a`s in
-// milliseconds, under caseInsensitive too. Twin of
-// `a_long_infix_is_searched_for_its_start`.
+// The chain index searches a last segment for the first 16 bytes of a
+// member's literal at most; the walk checks the rest.
 {
   const lit = "a".repeat(400);
   const members = Array.from({ length: 16 }, (_, i) => `x${i}/*${lit}q${i}*`);
@@ -454,8 +423,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   }
 }
 
-// A class is a byte table: one lookup per byte, however many items it
-// lists: 30,000 items over 65,000 bytes. Twin of `a_long_class_costs_one_lookup_per_byte`.
+// A class is one lookup per byte, however many items it lists.
 {
   const m = compileMatcher(`*[${"b".repeat(30_000)}]`);
   const path = "a".repeat(65_000);
@@ -466,8 +434,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.ok(ms < 300, `a 30,000-item class over 65,000 bytes took ${ms.toFixed(0)} ms`);
 }
 
-// Braces that cross a `/` keep the walk to a few groups: each compiles
-// in milliseconds.
+// Braces that cross a `/` keep the walk to a few groups.
 for (const [pattern, path] of [
   ["{**,a}/".repeat(80) + "x", "a/x"],
   ["{a,b,/}".repeat(14), "abababa/bababa"],
@@ -481,10 +448,8 @@ for (const [pattern, path] of [
   assert.ok(m.match(path), pattern.slice(0, 7));
 }
 
-// Braces with a `**/` side by side chain their globstars, so the graph
-// keeps a few edges per brace: 8,192 of them (57 KB) compile, and a path
-// pays per segment for the states, not their square. Twin of
-// `side_by_side_globstar_braces_stay_linear`.
+// Braces with a `**/` side by side chain their globstars: a few edges per
+// brace, and a path pays per segment for the states, not their square.
 for (const unit of ["{**,a}/", "{**,*}/"]) {
   const path = "a/".repeat(16) + "x";
   const start = performance.now();
@@ -495,11 +460,9 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
   assert.ok(ms < 500, `${unit} x8192: ${ms.toFixed(0)} ms`);
 }
 
-// Branches that may be empty, side by side, let each segment follow
-// every one before it. The ones before it share a join node, so the graph
-// keeps an edge or two per unit of pattern: it compiles fast, and no
-// segment walks a successor list as long as the pattern. Twin of
-// `edges_that_multiply_stay_linear`.
+// Branches that may be empty, side by side, let each segment follow every
+// one before it; those share a join node, so no segment walks a successor
+// list as long as the pattern.
 {
   for (const [pattern, path] of [
     ["{,/**/a}".repeat(800) + "/x", "/a".repeat(400) + "/x"],
@@ -518,8 +481,8 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
   }
 }
 
-// A big union compiles in milliseconds (its groups are found by key, not
-// by a scan of all) and matches by one search per segment.
+// A big union's groups are found by key, not by a scan of all, and it
+// matches by one search per segment.
 {
   const patterns = names(20_000, (i) => `dir${i}/file${i}`);
   let start = performance.now();
@@ -532,11 +495,9 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
   assert.ok(ms < 500, `10,000 matches took ${ms.toFixed(0)} ms`);
 }
 
-// Braces whose segments multiply, beside a `**` or not, copy segments
-// until the copies weigh what the pattern does, then cut them into pieces
-// glued edge to edge: they compile in milliseconds, twice the pattern
-// costing about twice. Twin of `multiplying_segments_stay_linear` in
-// tools/memory-check/tests/large_patterns.rs.
+// Braces whose segments multiply copy segments until the copies weigh
+// what the pattern does, then cut them into glued pieces: twice the
+// pattern costs about twice.
 {
   const lists = (n) =>
     `{${Array.from({ length: n }, (_, i) => `/a${i}`).join(",")}}{${Array.from({ length: n }, (_, i) => `b${i}/`).join(",")}}z`;
@@ -571,11 +532,9 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
   }
 }
 
-// A long class, or a long run of `?` or of classes, or a brace of empty
-// branches, after a brace that ends in many segments: copied onto a few,
-// then one piece the rest glue to, so these compile in milliseconds on a
-// 64 MB heap, as a long class copied into a few segments does. Twin of
-// the checks in tools/memory-check/tests/large_patterns.rs.
+// A long class, run of `?`s or classes, or brace of empty branches after a
+// brace that ends in many segments: copied onto a few, then one piece the
+// rest glue to.
 for (const [name, ms, ok] of await onWorker(
   `
   const copied = (n, open, unit, close) => {
@@ -605,10 +564,8 @@ for (const [name, ms, ok] of await onWorker(
   assert.ok(ms < 300, `${name}: ${ms.toFixed(0)} ms`);
 }
 
-// `matchDir` on long wildcard chains: the all-below proof feeds at most
-// 64 wildcard-only segments and the chain's tail tokens are budgeted.
-// Twin of
-// `match_dir_stays_cheap_on_long_wildcard_chains` in crates/globstar/tests/glob.rs.
+// The all-below proof feeds at most 64 wildcard-only segments, and a
+// chain's tail tokens are budgeted.
 {
   const union = compileMatcher(["**", `**/${"*/".repeat(16_000)}x`]);
   const chain = compileMatcher(`**/${"*/".repeat(32_000)}*`);
@@ -621,9 +578,7 @@ for (const [name, ms, ok] of await onWorker(
   for (const dm of [shallow, long]) assert.ok(DirMatch.matches(dm) && DirMatch.mayMatchBelow(dm));
 }
 
-// Two 64 KB members with a shared prefix compile in milliseconds: the
-// shared tokens leave each member in one splice. Twin of
-// `long_shared_prefixes_lift_in_one_pass` in crates/globstar/tests/glob_union.rs.
+// The shared tokens leave each member in one splice, not one per token.
 {
   const [x, y] = ["a/".repeat(32_000) + "x", "a/".repeat(32_000) + "y"];
   const start = performance.now();
@@ -633,8 +588,7 @@ for (const [name, ms, ok] of await onWorker(
   assert.ok(union.match(x) && union.match(y) && !union.match("a/".repeat(32_000) + "z"));
 }
 
-// A long name list matches by binary search: 10,000 matches of a
-// 20,000-name union take milliseconds, not minutes.
+// A long name list matches by binary search.
 {
   const m = compileMatcher(names(20_000, (i) => `src/file${i}.ts`));
   const start = performance.now();

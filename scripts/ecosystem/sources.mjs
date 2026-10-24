@@ -1,6 +1,6 @@
 // The test suites the ecosystem corpus is harvested from, pinned to the
 // version of the library the workspace runs (`packages/bench` for JS,
-// `Cargo.lock` for Rust), and where each lives once fetched.
+// `Cargo.lock` for Rust).
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -57,7 +57,7 @@ export const SOURCES = [
   },
 ];
 
-// Fetch a source once into `cacheDir/<id>-<version>` and return that path.
+// Fetched once into `cacheDir/<id>-<version>`.
 export async function fetchSource(source, cacheDir) {
   const dir = join(cacheDir, `${source.id}-${source.version}`);
   if (existsSync(join(dir, ".complete"))) return dir;

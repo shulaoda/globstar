@@ -1,16 +1,8 @@
-//! Single-pattern head-to-head: `globstar` against third-party
-//! matchers. Mirrors the JS-side `matcher_single.js` so the same
-//! `(pattern, path)` corpus drives both rows in the comparison table.
-//!
-//! Each pattern reports three timings:
-//!
-//! - `build`   — a fresh matcher, before its first match.
-//! - `compile` — the build and its first call, a non-match.
-//! - `match`   — a precompiled matcher over every entry in [`PATHS`]
-//!   per iteration (walker model).
-//!
-//! `fast_glob` is stateless (`glob_match` parses and matches in one
-//! call), so it has a `match` row only.
+//! Single patterns against globset, wax and fast_glob, on the corpus the
+//! JS benches read. Three rows per pattern: `build` (a fresh matcher),
+//! `compile` (the build and its first call, a non-match) and `match` (a
+//! compiled matcher over every path of [`PATHS`]). `fast_glob` is
+//! stateless, so it has a `match` row only.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use fast_glob::glob_match as fg_glob_match;
@@ -22,17 +14,15 @@ use wax::Program as WaxPattern;
 mod common;
 use common::{MISS, PATHS, SINGLE};
 
-/// `dot` defaults to `true` in both runtimes, so `**/*.md` doesn't
-/// filter out dotfiles — keeps Rust and JS results comparable.
+/// As in JS, so the two runtimes' rows compare.
 const DOT: bool = true;
 
-/// Public-API build — the "globstar (Rust)" column in BENCHMARKS.md.
 fn build_public(pattern: &str) -> Glob {
     Glob::new_with(pattern, CompileOptions::default().dot(DOT)).expect("compile")
 }
 
-/// Every library must give globstar's answer on every (pattern, path)
-/// pair, so the rows time the same answers. Runs once before timing.
+/// Every library gives globstar's answer on every pair, so the rows time
+/// the same answers.
 fn assert_all_agree() {
     for &(label, pattern) in SINGLE.iter() {
         let public = build_public(pattern);
@@ -66,7 +56,6 @@ fn strict_globset(pattern: &str) -> globset::GlobMatcher {
         .compile_matcher()
 }
 
-/// The build alone: what a library does before its first match.
 fn bench_build(c: &mut Criterion, label: &str, pattern: &str) {
     let mut group = c.benchmark_group(format!("build_{label}"));
     group.bench_function("globstar", |b| {
@@ -87,9 +76,8 @@ fn bench_build(c: &mut Criterion, label: &str, pattern: &str) {
     group.finish();
 }
 
-/// The build and its first call, a non-match: regex-backed matchers
-/// build their search cache on first use, so the build alone
-/// undercounts them.
+/// Regex-backed matchers build their search cache on first use, so the
+/// build alone undercounts them.
 fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
     let first = MISS;
     let mut group = c.benchmark_group(format!("compile_{label}"));
@@ -107,8 +95,6 @@ fn bench_compile(c: &mut Criterion, label: &str, pattern: &str) {
             black_box(g.is_match(first))
         });
     });
-    // fast_glob has no separate compile step; we measure it inside
-    // the per-call match below where a single call is parse+match.
     group.finish();
 }
 
@@ -139,8 +125,7 @@ fn bench_match(c: &mut Criterion, label: &str, pattern: &str) {
             }
         });
     });
-    // Stateless fast_glob — parse + match per call, batched over PATHS
-    // so its number sits on the same axis as the others.
+    // Parse and match per call, over the same paths as the others.
     group.bench_function("fast_glob", |b| {
         b.iter(|| {
             for p in PATHS.iter() {

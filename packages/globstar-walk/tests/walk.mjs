@@ -1,7 +1,4 @@
-// Integration tests for `glob` / `globSync` against real temp trees.
-// Only the public API is exercised. Mirrors the shape of
-// crates/globstar-walk/tests/walk.rs (the Rust twin), with extra rows
-// for the JS-only surfaces (options normalization, error shapes).
+// `glob` / `globSync` against temporary trees, through the public API only.
 
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -35,9 +32,8 @@ function tmpTree(tag, files, links = {}) {
 
 const rel = (root, paths) => paths.map((p) => path.relative(root, p).replaceAll("\\", "/")).sort();
 
-// Symlink creation needs a privilege on Windows — probe once, skip
-// symlink-dependent assertions where unavailable. Wine reports success
-// and makes no link, so the probe looks for the link too.
+// Symlinks need a privilege on Windows, and wine reports success while
+// making no link, so the probe looks for the link too.
 const symlinksOk = (() => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "glob-walk-js-sym-"));
   try {
@@ -60,7 +56,7 @@ async function check(name, fn) {
   }
 }
 
-// Every sync expectation is also asserted against the async path.
+// Every expectation holds on the sync and the async path.
 async function expectBoth(root, patterns, options, expected, note) {
   const s = rel(root, globSync(patterns, { cwd: root, ...options }));
   assert.deepEqual(s, expected.slice().sort(), `${note} (sync)`);
@@ -68,9 +64,8 @@ async function expectBoth(root, patterns, options, expected, note) {
   assert.deepEqual(a, expected.slice().sort(), `${note} (async)`);
 }
 
-// Every sync failure is also asserted against the async path: `globSync`
-// throws what `glob` rejects with, as `check` (a class or a predicate)
-// accepts.
+// `globSync` throws what `glob` rejects with (`check`: a class or a
+// predicate).
 async function throwsBoth(patterns, options, check, note) {
   assert.throws(() => globSync(patterns, options), check, note);
   await assert.rejects(glob(patterns, options), check, note);
@@ -78,7 +73,6 @@ async function throwsBoth(patterns, options, check, note) {
 
 const isIo = (e) => e instanceof WalkError && e.kind === "Io";
 
-// ── ignore applies to static-prefix seeds ───────────────────────────────
 await check("ignore applies to seeded prefixes", async () => {
   const root = tmpTree("ignoreseed", ["src/generated/api.ts", "src/index.ts"]);
   await expectBoth(
@@ -106,14 +100,12 @@ await check("ignore applies to seeded prefixes", async () => {
   );
 });
 
-// ── `/!x` routes to ignore, not matcher negation ────────────────────────
 await check("slash-bang routes to ignore", async () => {
   const root = tmpTree("slashbang", ["a.txt", "b.txt"]);
   await expectBoth(root, ["**/*.txt", "/!b.txt"], {}, ["a.txt"], "acts as exclusion");
   await expectBoth(root, ["/!b.txt"], {}, [], "ignore-only yields nothing");
 });
 
-// ── broken symlink: seed ≡ walk ─────────────────────────────────────────
 await check("seed emits broken symlink like walk", async () => {
   if (!symlinksOk) return;
   const root = tmpTree("brokenseed", [], { "links/broken.txt": "/nonexistent-target-xyz" });
@@ -121,7 +113,6 @@ await check("seed emits broken symlink like walk", async () => {
   await expectBoth(root, ["links/broken.txt"], {}, ["links/broken.txt"], "seed path");
 });
 
-// ── seed EACCES surfaces loudly ─────────────────────────────────────────
 await check("seed permission error throws", async () => {
   const root = tmpTree("eaccesseed", ["locked/b.txt"]);
   const locked = path.join(root, "locked");
@@ -133,14 +124,13 @@ await check("seed permission error throws", async () => {
     } catch {
       rootUser = false;
     }
-    if (rootUser) return; // permission wall is void under root
+    if (rootUser) return;
     await throwsBoth(["locked/b.txt"], { cwd: root }, isIo);
   } finally {
     fs.chmodSync(locked, 0o755);
   }
 });
 
-// ── pattern normalization: ./ // and bare . ─────────────────────────────
 await check("patterns normalize ./ and //", async () => {
   const root = tmpTree("normalize", ["a/b/x.txt"]);
   for (const pat of ["./a/b/*.txt", "a//b/*.txt", "a/./b/*.txt", ".//a/b/*.txt"]) {
@@ -150,7 +140,6 @@ await check("patterns normalize ./ and //", async () => {
   await expectBoth(root, ["a/b/*.txt", "//"], {}, ["a/b/x.txt"], "`//` member is dropped");
 });
 
-// ── looping symlink: seed ≡ walk ────────────────────────────────────────
 await check("seed emits looping symlink like walk", async () => {
   if (!symlinksOk) return;
   const root = tmpTree("loopseed", [], { "links/loop.txt": "loop.txt" });
@@ -158,7 +147,6 @@ await check("seed emits looping symlink like walk", async () => {
   await expectBoth(root, ["links/loop.txt"], {}, ["links/loop.txt"], "seed path");
 });
 
-// ── options: explicit undefined keeps defaults ──────────────────────────
 await check("undefined option values keep defaults", async () => {
   const root = tmpTree("optundef", ["real/y.txt"]);
   await expectBoth(
@@ -179,15 +167,10 @@ await check("undefined option values keep defaults", async () => {
   );
 });
 
-// ── option misuse: clear typed errors ───────────────────────────────────
 await check("option misuse throws clear TypeErrors", async () => {
   const root = tmpTree("optmisuse", ["a.txt"]);
   await expectBoth(root, ["*.txt"], { ignore: "*.txt" }, [], "bare-string ignore accepted");
-  // A pattern, `cwd` or `ignore` of the wrong type throws. Flags must be
-  // booleans (`"false"` would turn dotfiles on, `null` would drop
-  // symlinks); options must be a plain object (a string would
-  // walk `process.cwd()`); an unknown key (a typo, or another tool's name
-  // for an option) throws instead of being ignored.
+  // Flags must be booleans, options a plain object, keys known.
   for (const [patterns, bad] of [
     [["a.txt"], { cwd: root, ignore: 42 }],
     [["a.txt"], { cwd: root, ignore: ["ok", 5] }],
@@ -205,7 +188,6 @@ await check("option misuse throws clear TypeErrors", async () => {
   ]) {
     await throwsBoth(patterns, bad, TypeError, JSON.stringify([patterns, bad]));
   }
-  // Only own keys count.
   Object.prototype.dot = "yes";
   Object.prototype.cwd = "/";
   try {
@@ -221,23 +203,19 @@ await check("any iterable is a pattern list", async () => {
   await expectBoth(root, new Set(["*.ts", "*.js"]), {}, ["a.ts", "b.js"], "Set");
 });
 
+// `!/!x` ≡ `!!x` ≡ `x`; a run that leaves `.` hides nothing either, and
+// `!.`, `!/`, `!!/.` select nothing.
 await check("bangs exposed by normalization count too", async () => {
-  // `!/!x` ≡ `!!x` ≡ `x`: a `/` between two `!` runs hides neither.
-  // Twin of `walker_bangs_exposed_by_normalization_count_too`.
   const root = tmpTree("bangfold", ["x", "y", "d/z"]);
   await expectBoth(root, ["!/!x"], {}, ["x"], "!/!x");
   await expectBoth(root, ["**", "!!/!x"], {}, ["d/z", "y"], "!!/!x");
   await expectBoth(root, ["**", "!/!/!x"], {}, ["d/z", "y"], "!/!/!x");
-  // A run that leaves `.` hides nothing either; `!.`, `!/` and `!!/.`
-  // select nothing.
   await expectBoth(root, ["!./!x"], {}, ["x"], "!./!x");
   await expectBoth(root, ["**", "!./!./!x"], {}, ["d/z", "y"], "!./!./!x");
   await expectBoth(root, ["x", "!.", "!/", "!!/."], {}, ["x"], "!. !/ !!/.");
 });
 
 await check("bangs split in one pass", async () => {
-  // A 64 KB `!/!/…x` took seconds when each `!` run normalized the rest
-  // of the pattern again. Twin of `walker_splits_bangs_in_one_pass`.
   const root = tmpTree("bangpass", ["x"]);
   for (const p of ["!/".repeat(32000) + "x", "!./".repeat(21000) + "x"]) {
     const start = performance.now();
@@ -246,12 +224,11 @@ await check("bangs split in one pass", async () => {
   }
 });
 
+// Counted in bytes as written, before the `!` split and normalizing, so a
+// `/` run cannot hide the length, and the message quotes a head only.
 await check("a pattern too long as written is refused", async () => {
-  // Counted in bytes as written, before the `!` split and normalizing, so
-  // a `/` run cannot hide the length; a 1 MB `/[…` was quoted twice in a
-  // 2 MB message. Twin of `walker_refuses_a_pattern_too_long_as_written`.
   const root = tmpTree("toolong", ["x"]);
-  const max = 65536; // MAX_PATTERN_LEN
+  const max = 65536;
   const huge = "/[" + "a".repeat(1 << 20);
   const padded = "/".repeat(max) + "x";
   const wide = "é".repeat(max / 2) + "x";
@@ -277,14 +254,11 @@ await check("a pattern too long as written is refused", async () => {
     );
     assert.ok(performance.now() - start < 500, `${written.length} chars took too long to refuse`);
   }
-  // At the limit as written it is read as usual.
   const fits = ["/".repeat(max - 1) + "x", "é".repeat(max / 2)];
   await expectBoth(root, fits, {}, ["x"], "at the limit");
 });
 
 await check("an ignore entry that starts with `!` is refused", async () => {
-  // It would ignore everything else. Twin of
-  // `walker_refuses_an_ignore_entry_that_starts_with_bang`.
   const root = tmpTree("bangignore", ["src/a.ts"]);
   const refused = (e) =>
     e instanceof WalkError && e.kind === "InvalidPattern" && e.pattern === "!src/**";
@@ -293,18 +267,16 @@ await check("an ignore entry that starts with `!` is refused", async () => {
   }
 });
 
-// ── bad cwd fails loudly even with an empty positive set ────────────────
 await check("bad cwd validated before empty-positives return", async () => {
   const missing = path.join(os.tmpdir(), "glob-walk-js-definitely-missing");
   await throwsBoth([], { cwd: missing }, isIo);
   await throwsBoth(["!x"], { cwd: missing }, isIo);
 });
 
-// ── InvalidPattern names the member that fails ──────────────────────────
+// The bad member is named, not the whole list, which comma-joined could
+// read as one valid pattern (`a/{b,c/**}`).
 await check("invalid member of a pattern list is named", async () => {
   const root = tmpTree("list-bad", ["src/a.ts"]);
-  // The bad member is named, not the whole list: a comma-joined list
-  // could read as one valid pattern (`a/{b,c/**}`).
   await throwsBoth(
     ["src/**/*.{ts,tsx}", "lib/[abc"],
     { cwd: root },
@@ -321,7 +293,7 @@ await check("invalid member of a pattern list is named", async () => {
     (e) => e instanceof WalkError && e.pattern === "a/{b",
   );
   // Found from the core's member index, not by compiling each member
-  // again, so 5,000 members fail fast with a short message.
+  // again.
   const many = Array.from({ length: 5000 }, (_, i) => "{**,a}{/,b}".repeat(4) + `{**,a}/f${i}`);
   many[4321] = "lib/[abc";
   const start = performance.now();
@@ -332,7 +304,6 @@ await check("invalid member of a pattern list is named", async () => {
   assert.ok(performance.now() - start < 500, "5,000 members took too long to fail");
 });
 
-// ── WalkError JSON shape ────────────────────────────────────────────────
 await check("WalkError.toJSON is readable", async () => {
   const missing = path.join(os.tmpdir(), "glob-walk-js-definitely-missing");
   let err = null;
@@ -348,7 +319,6 @@ await check("WalkError.toJSON is readable", async () => {
   assert.equal(json.cause, undefined, "raw Node cause must not leak into JSON");
 });
 
-// ── walk basics: parity split, dot default, symlink cycle ───────────────
 await check("walk basics still hold", async () => {
   const root = tmpTree("basics", ["src/a.ts", "src/a.test.ts", ".hidden/h.ts"]);
   await expectBoth(root, ["**/*.ts", "!**/*.test.ts"], {}, ["src/a.ts"], "bang split");
@@ -366,11 +336,8 @@ await check("walk basics still hold", async () => {
   assert.deepEqual(got, ["real/back/x.txt", "real/x.txt"].sort(), "cycle terminates");
 });
 
-// ── seeds reach what a root walk reaches ────────────────────────────────
-// Twins of the `walker_seed_*` tests in crates/globstar-walk/tests/walk.rs.
+// `{a,/b}` gives the prefix `/b`, which no walked path holds.
 await check("a seed with an empty segment is dropped", async () => {
-  // `{a,/b}` gives the prefix `/b`, which no root walk reaches, so that
-  // seed is dropped.
   const root = tmpTree("emptyseg", ["a/x", "a/b/x", "b/x"]);
   await expectBoth(root, ["{a,/b}/x"], {}, ["a/x"], "{a,/b}/x");
   await expectBoth(root, ["{/a,/b}/x"], {}, [], "{/a,/b}/x");
@@ -379,9 +346,9 @@ await check("a seed with an empty segment is dropped", async () => {
   await expectBoth(root, ["{/src,x}/m.js", "a/x"], {}, ["a/x"], "no doubled seed");
 });
 
+// A looping link, a name too long, a name with a NUL: a root walk lists
+// nothing there, so a seed there is silent too.
 await check("seed errors follow the root walk", async () => {
-  // Nothing can be below a looping link, past a name too long for the
-  // filesystem, or at a name with a NUL.
   if (!symlinksOk) return;
   const root = tmpTree("seederr", ["ok.txt"], { loop: "loop" });
   await expectBoth(root, ["{ok.txt,loop/x.txt}"], {}, ["ok.txt"], "looping link");
@@ -389,9 +356,9 @@ await check("seed errors follow the root walk", async () => {
   await expectBoth(root, ["{ok.txt,a\0b/x.txt}"], {}, ["ok.txt"], "NUL");
 });
 
+// A seed through a link starts with the link on its way down, as a root
+// walk does.
 await check("a seed through a symlink knows its cycle", async () => {
-  // A root walk reaches `a/link` holding the link's target, so it does
-  // not go round `a/link/link`; a seed must start the same way.
   if (!symlinksOk) return;
   const root = tmpTree("seedcycle", ["a/x.txt"], { "a/link": "." });
   for (const [seeded, rootWalk] of [
@@ -408,21 +375,19 @@ await check("a seed through a symlink knows its cycle", async () => {
   await expectBoth(root, ["a/link/**/*.txt"], {}, ["a/link/x.txt"], "one level");
 });
 
+// `realpathSync` keeps a link's spelling (`../A`), so on a
+// case-insensitive disk two links to one folder would look like two.
 await check("cycles are found by the on-disk spelling", async () => {
-  // `realpathSync` keeps a link's spelling (`../A`), so on a
-  // case-insensitive disk two links to one folder would look like two.
   if (!symlinksOk) return;
   const probe = tmpTree("caseprobe", ["X"]);
-  if (!fs.existsSync(path.join(probe, "x"))) return; // case-sensitive disk
+  if (!fs.existsSync(path.join(probe, "x"))) return;
   const root = tmpTree("casecycle", ["a/x.txt"], { "a/up1": "../A", "a/up2": "../a" });
   await expectBoth(root, ["**/*.txt"], {}, ["a/up1/x.txt", "a/up2/x.txt", "a/x.txt"], "3 paths");
 });
 
-// ── paths, bases and errors spelled as the user wrote them ──────────────
+// `d/.` is the folder `d` (WALKER_SPEC §4.3): a pattern selects no file,
+// an ignore entry prunes the folders it names (§3.2).
 await check("a trailing `.` names the folder", async () => {
-  // `d/.` is the folder `d` (`d/`, §4.3), so `*/.` selects no file. As a
-  // pattern it selects no file; as an ignore entry it
-  // prunes the folders it names (§3.2).
   const root = tmpTree("trailingdot", ["x.txt", "d/y.txt", "d/e/z.txt"]);
   await expectBoth(root, ["*/."], {}, [], "*/.");
   await expectBoth(root, ["**/."], {}, [], "**/.");
@@ -430,16 +395,15 @@ await check("a trailing `.` names the folder", async () => {
   await expectBoth(root, ["**"], { ignore: ["d/e/."] }, ["d/y.txt", "x.txt"], "ignore d/e/.");
 });
 
+// `jump/..` is the folder holding `jump`, not the parent of its target.
 await check("cwd resolves `..` as text", async () => {
-  // `jump/..` is the folder holding `jump`, not the parent of its
-  // target, and `..` never reaches the output (Rust does the same).
   if (!symlinksOk) return;
   const root = tmpTree("cwddotdot", ["top.txt", "real/inner/in.txt", "real/r.txt"], {
     jump: "real/inner",
   });
   const out = globSync(["*.txt"], { cwd: path.join(root, "jump", "..") });
-  // Through `rel`: after the resolved cwd the walker joins with `/` on
-  // every platform (WALKER_SPEC §8.2), where `path.join` writes `\`.
+  // Through `rel`: the walker joins with `/` on every platform (WALKER_SPEC
+  // §8.2), where `path.join` writes `\`.
   assert.deepEqual(rel(root, out), ["top.txt"]);
   assert.ok(!out[0].includes(".."), out[0]);
 });
@@ -472,11 +436,9 @@ await check("an error names the pattern as written", async () => {
   );
 });
 
+// Under dot=true `**/node_modules/**/*` covers all of `node_modules` (the
+// entry itself does not match it), so the folder is never read.
 await check("a subtree the ignore covers is not read", async () => {
-  // Under dot=true `**/node_modules/**/*` covers all of `node_modules`, so
-  // an unreadable `node_modules` raises nothing (the entry does not match
-  // `node_modules/` itself, so only the all-below check prunes). Twin of
-  // `walker_skips_a_subtree_the_ignore_covers`.
   const root = tmpTree("ignoreprune", ["src/a.js", "node_modules/p/f.js"]);
   const locked = path.join(root, "node_modules");
   fs.chmodSync(locked, 0o000);
@@ -487,7 +449,7 @@ await check("a subtree the ignore covers is not read", async () => {
     readable = false;
   }
   try {
-    if (readable) return; // root reads anything
+    if (readable) return;
     const opts = { dot: true, ignore: ["**/node_modules/**/*"] };
     await expectBoth(root, ["**/*.js"], opts, ["src/a.js"], "pruned");
   } finally {
@@ -495,9 +457,9 @@ await check("a subtree the ignore covers is not read", async () => {
   }
 });
 
+// Linux keeps any bytes; readdir hands them back with U+FFFD, a path no
+// file has. APFS refuses such names.
 await check("a name that is not UTF-8 is skipped", async () => {
-  // Linux keeps any bytes; readdir hands them back with U+FFFD, a path
-  // no file has. (APFS refuses such names: nothing to test there.)
   const root = tmpTree("nonutf8", ["src/ok.txt"]);
   const bad = Buffer.concat([Buffer.from(root + "/caf"), Buffer.from([0xe9])]);
   try {
@@ -510,10 +472,10 @@ await check("a name that is not UTF-8 is skipped", async () => {
   await expectBoth(root, ["*/*.txt"], {}, ["src/ok.txt"], "*/*.txt");
 });
 
+// Without entry types (ext4 `^filetype`, XFS `ftype=0`) readdir lstats
+// each entry itself and fails when one vanishes in between; simulated once
+// per call.
 await check("an entry that vanishes during a typed read is skipped", async () => {
-  // Without entry types (ext4 `^filetype`, XFS `ftype=0`, …) readdir
-  // lstats each entry itself and fails when one vanishes in between;
-  // simulate that once per call.
   const root = tmpTree("vanish", ["src/a.ts", "src/b.ts"]);
   const vanished = () =>
     Object.assign(new Error("ENOENT: no such file or directory, lstat"), {
@@ -549,14 +511,11 @@ await check("an entry that vanishes during a typed read is skipped", async () =>
   }
 });
 
+// Once the root is listed, `b` is removed and `d` becomes a file.
 await check("a folder gone before its read is left out", async () => {
-  // A folder removed, or made a file, after its parent listed it is left
-  // out, as if it had gone before: the rest of the walk goes on, with no
-  // error. Twin of the Rust check.
   const fsMod = (await import("node:fs")).default;
   const real = { readdirSync: fsMod.readdirSync, readdir: fsMod.readdir };
   let root;
-  // Once the root is listed, `b` is removed and `d` becomes a file.
   const vanish = (dir) => {
     if (dir !== root) return;
     fs.rmSync(path.join(root, "b"), { recursive: true });
@@ -586,12 +545,10 @@ await check("a folder gone before its read is left out", async () => {
   }
 });
 
-// ── A seed is reached as a root walk reaches it ─────────────────────────
+// A folder the ignore set covers is pruned before it is read, from a seed
+// as from the root.
 if (process.platform !== "win32" && process.getuid?.() !== 0) {
   await check("a seed under a folder the ignore set covers is not read", async () => {
-    // The seed goes through the walk's own per-entry rule, so the
-    // covered-folder prune applies to it as it does in a root walk: a
-    // folder that cannot be read is never opened. Twin of the Rust check.
     const root = tmpTree("covered-seed", ["node_modules/p/i.js", "a.js"]);
     const locked = path.join(root, "node_modules");
     fs.chmodSync(locked, 0o000);
@@ -610,11 +567,8 @@ if (process.platform !== "win32" && process.getuid?.() !== 0) {
   });
 }
 
-// ── A trailing `/` matches folders only ─────────────────────────────────
+// WALKER_SPEC §3.2: a positive one selects no file.
 await check("a pattern that ends in / matches folders only", async () => {
-  // WALKER_SPEC §3.2: `node_modules/` prunes the folder, never a file;
-  // anchored like any pattern. A positive one selects no file. Twin of
-  // the Rust check.
   const root = tmpTree("folders", [
     "node_modules/p/i.js",
     "src/a.js",
@@ -634,11 +588,8 @@ await check("a pattern that ends in / matches folders only", async () => {
   }
 });
 
-// ── An ignore that ends in /** prunes the folder ─────────────────────────
+// WALKER_SPEC §3.2: a dot-led name below the folder is not found.
 await check("an ignore that ends in /** prunes the folder under either dot", async () => {
-  // WALKER_SPEC §3.2: `node_modules` is never read, and a dot-led name
-  // below it that a pattern names is not found, as fast-glob and
-  // tinyglobby do not find it. Twin of the Rust check.
   const root = tmpTree("prunestar", [
     "node_modules/p/i.js",
     "node_modules/.cache/x",
@@ -652,11 +603,9 @@ await check("an ignore that ends in /** prunes the folder under either dot", asy
   }
 });
 
-// ── Special files are not files ─────────────────────────────────────────
+// A link takes its target's type; a dangling one is still yielded.
 if (process.platform !== "win32" && symlinksOk) {
   await check("FIFOs and sockets are no files", async () => {
-    // A reader would block on a FIFO. A link takes its target's type; a
-    // dangling one is still emitted. Twin of the Rust check.
     const root = tmpTree("special", ["a.txt"]);
     execFileSync("mkfifo", [path.join(root, "fifo")]);
     const server = net.createServer().listen(path.join(root, "sock"));
@@ -679,7 +628,6 @@ if (process.platform !== "win32" && symlinksOk) {
   });
 }
 
-// ── A lone `!` is an empty pattern ──────────────────────────────────────
 await check("a lone bang is an empty pattern, named as written", async () => {
   const root = tmpTree("lone-bang", ["a.js"]);
   for (const lone of ["!", "!!"]) {
@@ -695,16 +643,15 @@ await check("a lone bang is an empty pattern, named as written", async () => {
   }
 });
 
-// ── A seed finds a name only as its folder lists it ─────────────────────
+// APFS opens an NFC spelling of a name stored NFD; a root walk never
+// matches such a spelling.
 await check("a seed finds a name only as listed", async () => {
-  // APFS opens an NFC spelling of a name stored NFD, which a root walk,
-  // comparing names as listed, never matches. Twin of the Rust check.
   const nfd = "e\u0301";
   let root;
   try {
     root = tmpTree("nfd", [`${nfd}.txt`, `${nfd}/a.ts`]);
   } catch {
-    return; // a file system that does not keep the name as given (wine's)
+    return;
   }
   if (!fs.readdirSync(root).includes(`${nfd}.txt`)) return;
   for (const [pattern, want] of [
@@ -717,7 +664,6 @@ await check("a seed finds a name only as listed", async () => {
   }
 });
 
-// ── Windows: paths a Win32 API can open ─────────────────────────────────
 if (process.platform === "win32") {
   await check("a drive-root or verbatim cwd gives paths Win32 opens", async () => {
     const root = tmpTree("win-join", ["src/a.ts"]);
@@ -732,8 +678,7 @@ if (process.platform === "win32") {
       assert.ok(!out[0].includes("\\/"), out[0]);
       fs.statSync(out[0]);
     }
-    // Under a verbatim cwd (`\\?\C:\…`) the separator is `\` throughout:
-    // Win32 reads no `/` in such a path.
+    // Under a verbatim cwd (`\\?\C:\…`) the separator is `\` throughout.
     for (const pattern of ["src/*.ts", "**/*.ts"]) {
       const [only, ...rest] = globSync(pattern, { cwd: "\\\\?\\" + root });
       assert.equal(rest.length, 0);
@@ -741,11 +686,9 @@ if (process.platform === "win32") {
     }
   });
 
-  // Twin of `windows_seeds_reach_what_a_root_walk_lists` in walk.rs.
   await check("seeds reach what a root walk lists", async () => {
     const root = tmpTree("win-seeds", ["src/a.ts", "src/sub/b.ts", "secret/key.pem"]);
-    // One spelling per file, whatever the pattern's shape; an escaped
-    // `\` is no separator, so its member adds no second copy.
+    // One spelling per file; an escaped `\` is no separator.
     for (const patterns of [
       ["**/b.ts"],
       ["src/sub/*.ts"],
@@ -755,9 +698,8 @@ if (process.platform === "win32") {
       assert.deepEqual(globSync(patterns, { cwd: root }), [root + "/src/sub/b.ts"], patterns);
       await expectBoth(root, patterns, {}, ["src/sub/b.ts"], String(patterns));
     }
-    // A drive is never below cwd, and a name Win32 rewrites (`src.`,
-    // `src `, `nul`, `con.txt`) reaches no folder a root walk lists: no
-    // match, no error, nothing past the ignore rules.
+    // A drive is never below cwd; a name Win32 rewrites reaches no folder
+    // a root walk lists.
     const drive = root.replaceAll("\\", "/") + "/src/*.ts";
     for (const patterns of [
       [drive],

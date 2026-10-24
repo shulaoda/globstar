@@ -1,24 +1,12 @@
-//! Integration test driver for the golden test corpus.
-//!
-//! Runs every `(pattern, path, expected)` row through the public engine
-//! and asserts it agrees with the recorded truth:
-//!
-//! - `globstar`     — public API (`Glob::new` / `Glob::union`), engine dispatch
-//! - `nfa`          — the same patterns compiled with no anchored chains,
-//!   so the segment engine's NFA decides (`CompileOptions::force_nfa`)
-//!
-//! Single-pattern `is_match` rows live in `fixtures/corpus/corpus*.txt`
-//! and `fixtures/ecosystem/{js,rust}/*.txt` (a row may expect `err:Kind`
-//! instead of an answer); `match_dir` rows in
-//! `fixtures/corpus/corpus-dir.txt`; multi-pattern rows in
-//! `fixtures/corpus/corpus-multi.txt` and `corpus-multi-dir.txt`.
-//!
-//! Nothing is skipped: a compile error where a row expects an answer is
-//! a failure, and a row the loader cannot read stops the run.
-//!
-//! Output lines like `corpus=single engine=globstar pass=N fail=N` are
-//! picked up by the `scripts/verify.mjs` orchestrator when this file is
-//! invoked via `cargo test --test corpus -- --nocapture`.
+//! The golden corpus: every `(pattern, path, expected)` row through the
+//! public API and through the segment engine's NFA alone
+//! (`CompileOptions::force_nfa`). Single-pattern rows are
+//! `fixtures/corpus/corpus*.txt` and `fixtures/ecosystem/{js,rust}/*.txt`
+//! (a row may expect `err:Kind`), `match_dir` rows `corpus-dir.txt`,
+//! multi-pattern rows `corpus-multi.txt` and `corpus-multi-dir.txt`.
+//! Nothing is skipped. The lines `corpus=single engine=globstar pass=N
+//! fail=N` are what `scripts/verify.mjs` reads from `cargo test --test
+//! corpus -- --nocapture`.
 
 use globstar::{CompileOptions, DirMatch, Glob, GlobError};
 use std::fmt::Debug;
@@ -26,7 +14,6 @@ use std::path::PathBuf;
 
 const FIXTURES_DIR: &str = "../../fixtures";
 
-/// The spec corpus's single-pattern files.
 const SPEC_FILES: &[&str] = &[
     "corpus/corpus.txt",
     "corpus/corpus-realworld.txt",
@@ -42,9 +29,7 @@ const SPEC_FILES: &[&str] = &[
     "corpus/corpus-unix.txt",
 ];
 
-/// The spec corpus, then the ecosystem corpus (`fixtures/ecosystem/`):
-/// other libraries' suites with our answers. They were recorded on POSIX,
-/// so Windows skips them.
+/// The ecosystem corpus was recorded on POSIX, so Windows skips it.
 fn single_files() -> Vec<String> {
     let mut files: Vec<String> = SPEC_FILES.iter().map(|f| f.to_string()).collect();
     if cfg!(windows) {
@@ -67,7 +52,6 @@ fn corpus_path(name: &str) -> PathBuf {
     PathBuf::from(manifest).join(FIXTURES_DIR).join(name)
 }
 
-/// What a row expects: an answer, or a compile error of this kind.
 #[derive(Debug)]
 enum Want<T> {
     Value(T),
@@ -84,7 +68,6 @@ fn error_kind(e: &GlobError) -> String {
         .to_string()
 }
 
-/// `Ok` when `got` is what `want` asks for, else what went wrong.
 fn judge<T: PartialEq + Debug>(got: Result<T, GlobError>, want: &Want<T>) -> Result<(), String> {
     match (got, want) {
         (Ok(v), Want::Value(w)) if v == *w => Ok(()),
@@ -125,7 +108,6 @@ impl Stats {
     }
 }
 
-/// Print every engine's line, then fail with their samples.
 fn finish(corpus: &str, stats: &[(&str, &Stats)]) {
     for (engine, s) in stats {
         s.print(corpus, engine);
@@ -141,14 +123,13 @@ fn finish(corpus: &str, stats: &[(&str, &Stats)]) {
     }
 }
 
-/// A field as bytes: written as it is, except that a tab is `⇥` and a
-/// newline `⏎`, which a tab-separated line cannot hold.
+/// A field as bytes: a tab is written `⇥` and a newline `⏎`.
 fn decode(s: &str) -> Vec<u8> {
     s.replace('⇥', "\t").replace('⏎', "\n").into_bytes()
 }
 
-/// The flags column: `dot=` and `case_insensitive=`, each `true` or
-/// `false`; anything else is a typo and stops the run.
+/// `dot=` and `case_insensitive=`, each `true` or `false`; anything else
+/// stops the run.
 fn parse_flags(s: &str, default_dot: bool, at: &str) -> (bool, bool) {
     let mut dot = default_dot;
     let mut ci = false;
@@ -170,8 +151,6 @@ fn parse_flags(s: &str, default_dot: bool, at: &str) -> (bool, bool) {
     (dot, ci)
 }
 
-/// A row's columns: pattern, path, expected, and the flags (with the
-/// default `dot`).
 struct Cols {
     at: String,
     pattern: String,
@@ -181,7 +160,6 @@ struct Cols {
     case_insensitive: bool,
 }
 
-/// The data rows of `file`; a short row stops the run.
 fn rows_of(file: &str, default_dot: bool) -> Vec<Cols> {
     let path = corpus_path(file);
     let text = std::fs::read_to_string(&path)
@@ -214,13 +192,11 @@ fn rows_of(file: &str, default_dot: bool) -> Vec<Cols> {
 }
 
 impl Cols {
-    /// The pattern column as text.
     fn pattern(&self) -> String {
         String::from_utf8(decode(&self.pattern))
             .unwrap_or_else(|_| panic!("{}: pattern is not UTF-8", self.at))
     }
 
-    /// The patterns column of a multi-pattern file.
     fn patterns(&self) -> Vec<String> {
         match parse_json_string_array(&self.pattern) {
             Some(v) if !v.is_empty() => v,
@@ -228,7 +204,7 @@ impl Cols {
         }
     }
 
-    /// The expected column: `err:Kind`, or an answer `value` reads.
+    /// `err:Kind`, or an answer `value` reads.
     fn want<T>(&self, value: impl Fn(&str) -> Option<T>) -> Want<T> {
         match self.expected.strip_prefix("err:") {
             Some(kind) => Want::Err(kind.to_string()),
@@ -245,7 +221,6 @@ impl Cols {
             .case_insensitive(self.case_insensitive)
     }
 
-    /// The row as a failure message names it.
     fn describe(&self, pattern: &dyn Debug, engine: &str) -> String {
         format!(
             "{}: pattern={pattern:?} path={:?} dot={} ci={}: {engine}",
@@ -277,9 +252,8 @@ fn parse_dir(s: &str) -> Option<DirMatch> {
     }
 }
 
-/// Minimal JSON-array decoder for `corpus-multi.txt`'s patterns column —
-/// patterns are plain strings with no embedded quotes, so a tiny
-/// hand-rolled scanner avoids pulling in `serde_json`.
+/// The patterns column of a multi-pattern row: a JSON array of strings,
+/// read without `serde_json`.
 fn parse_json_string_array(s: &str) -> Option<Vec<String>> {
     let s = s.trim();
     let bytes = s.as_bytes();
@@ -293,7 +267,6 @@ fn parse_json_string_array(s: &str) -> Option<Vec<String>> {
     let mut escape = false;
     for ch in body.chars() {
         if escape {
-            // Mirror the JSON-string escape set we actually care about.
             match ch {
                 '"' | '\\' | '/' => buf.push(ch),
                 'n' => buf.push('\n'),
@@ -326,8 +299,6 @@ fn parse_json_string_array(s: &str) -> Option<Vec<String>> {
     }
     Some(out)
 }
-
-// ── tests ─────────────────────────────────────────────────────────────
 
 #[test]
 fn corpus_single_engines_vs_truth() {
@@ -374,10 +345,8 @@ fn corpus_multi_engines_vs_truth() {
     finish("multi", &[("globstar", &globstar), ("nfa", &nfa)]);
 }
 
-/// `corpus-dir.txt` rows default to `dot=false`, the walker convention;
-/// rows for the other half of the matrix say `dot=true`. Negated rows
-/// run too: `match_dir` answers `Descend`, or `DescendAndMatch` where the
-/// directory itself matches, for them (GLOB_SPEC §15.4).
+/// `corpus-dir.txt` rows default to `dot=false`, the walker convention.
+/// Negated rows run too (GLOB_SPEC §15.4).
 #[test]
 fn corpus_dir_engines_vs_truth() {
     let mut globstar = Stats::default();

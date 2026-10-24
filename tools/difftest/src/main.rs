@@ -1,36 +1,22 @@
-//! Cross-runtime differential-test harness (Rust side).
+//! The Rust side of the JS↔Rust differential fuzzer (`scripts/fuzz.mjs`):
+//! one request per line on stdin, one result token per line on stdout.
 //!
-//! Reads one request per line on stdin and writes one result token per line
-//! on stdout, through `globstar`'s public API, plus the hidden
-//! `force_nfa` option for the lanes that cross-check the NFA. The JS driver
-//! (`scripts/fuzz.mjs`) generates random inputs,
-//! feeds the SAME inputs to this binary and to the `@globstar/core` JS
-//! port, and asserts the two agree. This measures JS↔Rust drift on the
-//! infinite out-of-corpus input space, which the fixed hand corpus cannot.
+//! Tab-separated. The first field is the command, the second two flag
+//! chars, `dot` then `case_insensitive` (`0`/`1`); every following field
+//! is a byte-escaped token (`\\` a backslash, `\xHH` the byte `0xHH`).
 //!
-//! ## Wire format
+//! | line                                  | op                                       | output tokens                      |
+//! |---------------------------------------|------------------------------------------|------------------------------------|
+//! | `m <flags> <pattern> <path>`          | `Glob::is_match`                         | `match` / `no-match` / `err:<Kind>` |
+//! | `n <flags> <pattern> <path>`          | `force_nfa` + `is_match`                 | as `m`                             |
+//! | `d <flags> <pattern> <dir>`           | `Glob::match_dir`                        | `pruned` / `descend` / `match` / `descend-match` / `descend-all` / `descend-all-match` / `err:<Kind>` |
+//! | `u <flags> <path> <pat1> [pat2 ...]`  | `Glob::union` + `is_match`               | as `m`                             |
+//! | `un <flags> <path> <pat1> [pat2 ...]` | `Glob::union` + `force_nfa` + `is_match` | as `m`                             |
+//! | `ud <flags> <dir> <pat1> [pat2 ...]`  | `Glob::union` + `match_dir`              | as `d`                             |
+//! | `s <flags> <pat1> [pat2 ...]`         | `Glob::static_prefixes` (union when >1)  | `px:<escaped,sorted>` / `err:<Kind>` |
 //!
-//! Tab-separated. The first field is the command, the second is two flag
-//! chars `dot` then `case_insensitive` (each `0`/`1`, e.g. `10` = dot on,
-//! ci off). Every following field is a byte-escaped token.
-//!
-//! | line                                  | op                | output tokens                                   |
-//! |---------------------------------------|-------------------|-------------------------------------------------|
-//! | `m <flags> <pattern> <path>`          | `Glob::is_match`  | `match` / `no-match` / `err:<Kind>`             |
-//! | `n <flags> <pattern> <path>`          | `force_nfa` + `is_match` (the NFA, no chains) | as `m`            |
-//! | `d <flags> <pattern> <dir>`           | `Glob::match_dir` | `pruned` / `descend` / `match` / `descend-match` / `descend-all` / `descend-all-match` / `err:<Kind>` |
-//! | `u <flags> <path> <pat1> [pat2 ...]`  | `Glob::union` + `is_match` | as `m`                                 |
-//! | `un <flags> <path> <pat1> [pat2 ...]` | `Glob::union` + `force_nfa` + `is_match` | as `m`                   |
-//! | `ud <flags> <dir> <pat1> [pat2 ...]`  | `Glob::union` + `match_dir` | as `d`                                |
-//! | `s <flags> <pat1> [pat2 ...]`         | `Glob::static_prefixes` (union when >1) | `px:<escaped,sorted>` / `err:<Kind>` |
-//!
-//! ## Byte escaping
-//!
-//! `\\` decodes to a single backslash, `\xHH` to the raw byte `0xHH`; every
-//! other byte is itself. A PATTERN crosses Rust's `&str` API, so its decoded
-//! bytes are run through `str::from_utf8` — invalid UTF-8 there is a driver
-//! bug and is reported as `err:NonUtf8Pattern` rather than silently dropped.
-//! A PATH stays raw `&[u8]`, so it may be arbitrary (non-UTF-8) bytes.
+//! A pattern crosses the `&str` API: one that is not UTF-8 is a driver
+//! bug, reported as `err:NonUtf8Pattern`. A path stays raw bytes.
 
 use globstar::{CompileOptions, DirMatch, Glob, GlobError};
 use std::io::{self, BufRead, Write};
@@ -53,9 +39,7 @@ fn main() {
     out.flush().expect("stdout flush");
 }
 
-/// Dispatch one request line to its result token. Any structurally malformed
-/// line yields `err:BadRequest` so a driver/protocol bug is loud, not a
-/// silent false "agreement".
+/// A malformed line is `err:BadRequest`, never a silent agreement.
 fn handle(line: &str) -> String {
     let cols: Vec<&str> = line.split('\t').collect();
     if cols.len() < 3 {
@@ -68,7 +52,6 @@ fn handle(line: &str) -> String {
     };
 
     match cmd {
-        // m|n|d <flags> <pattern> <path>
         "m" | "n" | "d" => {
             let (pat, input) = match (decode_pattern(cols[2]), cols.get(3)) {
                 (Ok(p), Some(f)) => (p, unescape(f)),
@@ -79,7 +62,6 @@ fn handle(line: &str) -> String {
                 Err(e) => err_token(&e),
             }
         }
-        // u|un|ud <flags> <path> <pat1> [pat2 ...]
         "u" | "un" | "ud" => {
             if cols.len() < 4 {
                 return "err:BadRequest".to_string();
@@ -104,7 +86,6 @@ fn handle(line: &str) -> String {
                 Err(e) => err_token(&e),
             }
         }
-        // s <flags> <pat1> [pat2 ...]
         "s" => {
             let mut patterns = Vec::with_capacity(cols.len() - 2);
             for raw in &cols[2..] {
@@ -132,7 +113,6 @@ fn handle(line: &str) -> String {
     }
 }
 
-/// The answer to query `m`, `n` or `d` on `input`.
 fn answer(query: &str, g: &Glob, input: &[u8]) -> String {
     match query {
         "m" | "n" => is_match_token(g.is_match(input)),
@@ -140,7 +120,6 @@ fn answer(query: &str, g: &Glob, input: &[u8]) -> String {
     }
 }
 
-/// Inverse of [`unescape`], mirroring the JS driver's `escapeBytes`.
 fn escape(bytes: &[u8]) -> String {
     let mut out = String::new();
     for &b in bytes {
@@ -155,7 +134,6 @@ fn escape(bytes: &[u8]) -> String {
     out
 }
 
-/// Two chars: dot then case_insensitive, each `0`/`1`.
 fn parse_flags(s: &str) -> Option<CompileOptions> {
     let b = s.as_bytes();
     if b.len() != 2 {
@@ -166,10 +144,6 @@ fn parse_flags(s: &str) -> Option<CompileOptions> {
     Some(CompileOptions::default().dot(dot).case_insensitive(ci))
 }
 
-/// Decode an escaped pattern field to a `String`. Patterns must be valid
-/// UTF-8 (they cross `Glob::new_with`'s `&str` boundary); the JS driver
-/// guarantees this by encoding via `TextEncoder`, so a failure here is a
-/// driver bug surfaced as a distinct, never-silent token.
 fn decode_pattern(field: &str) -> Result<String, String> {
     String::from_utf8(unescape(field)).map_err(|_| "err:NonUtf8Pattern".to_string())
 }
@@ -186,23 +160,20 @@ fn dir_token(d: DirMatch) -> String {
         DirMatch::DescendAndMatch => "descend-match",
         DirMatch::DescendAll => "descend-all",
         DirMatch::DescendAllAndMatch => "descend-all-match",
-        // A verdict this harness does not know yet: never a JS token.
+        // Never a JS token.
         _ => "unknown-dir-match",
     }
     .to_string()
 }
 
-/// A `GlobError` as the `err:<Kind>` token the JS `GlobError.kind` gives:
-/// the variant's name. A union member's error is its own kind in JS
-/// (with an `index`), so `InMember` reads through to it.
+/// The variant's name, as JS `GlobError.kind` spells it; a union member's
+/// error is its own kind in JS, so `InMember` reads through to it.
 fn err_token(e: &GlobError) -> String {
     let debug = format!("{:?}", e.root());
     let kind = debug.split([' ', '{', '(']).next().unwrap_or(&debug);
     format!("err:{kind}")
 }
 
-/// Decode a byte-escaped wire field: `\\` → `\`, `\xHH` → byte `0xHH`,
-/// anything else verbatim. Mirrors the JS driver's `escapeBytes`.
 fn unescape(s: &str) -> Vec<u8> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
@@ -219,8 +190,7 @@ fn unescape(s: &str) -> Vec<u8> {
                     let lo = hex(b[i + 3]);
                     match (hi, lo) {
                         (Some(h), Some(l)) => out.push((h << 4) | l),
-                        // A malformed `\x` escape: a lone backslash stands in
-                        // for it, and nothing panics.
+                        // A malformed `\x`: a lone backslash stands in.
                         _ => out.push(b'\\'),
                     }
                     i += 4;

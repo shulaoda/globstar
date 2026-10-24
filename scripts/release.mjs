@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-// One-shot version bump across every manifest, kept in lockstep:
-// Cargo.toml (workspace.package + the path-dependency pin),
-// both package.json files, and Cargo.lock.
+// One version bump across Cargo.toml (workspace.package and the
+// path-dependency pin), both package.json files and Cargo.lock.
 //
-//   node scripts/release.mjs            # bump patch (0.0.1 -> 0.0.2)
+//   node scripts/release.mjs            # patch (0.0.1 -> 0.0.2)
 //   node scripts/release.mjs minor      # 0.0.2 -> 0.1.0
 //   node scripts/release.mjs major      # 0.1.0 -> 1.0.0
-//   node scripts/release.mjs 1.2.3      # explicit target
+//   node scripts/release.mjs 1.2.3      # explicit
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -38,8 +37,7 @@ const [a, b] = [order(next), order(current)];
 const newer = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 if (newer <= 0) throw new Error(`${next} is not newer than ${current}`);
 
-// Read and check every manifest before writing any, so an error leaves
-// the tree as it was.
+// Every manifest is read and checked before any is written.
 const line = `"version": "${current}"`;
 const pkgs = PKGS.map((f) => {
   const s = readFileSync(f, "utf8");
@@ -48,7 +46,7 @@ const pkgs = PKGS.map((f) => {
 });
 writeFileSync(CARGO, cargo.replaceAll(`version = "${current}"`, `version = "${next}"`));
 for (const [f, s] of pkgs) writeFileSync(f, s.replace(line, `"version": "${next}"`));
-execSync("cargo update --workspace --quiet"); // refresh Cargo.lock
+execSync("cargo update --workspace --quiet");
 
 console.log(`${current} -> ${next} (Cargo.toml, Cargo.lock, ${PKGS.join(", ")})`);
 console.log(`

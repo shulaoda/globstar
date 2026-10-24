@@ -1,28 +1,10 @@
 #!/usr/bin/env node
-// Corpus-driven correctness verification for both runtimes.
-//
-// Four corpora share the same harness; the files are in
-// `fixtures/corpus/`, and single also reads `fixtures/ecosystem/`:
-//
-//   single — SINGLE_FILES list below   single-pattern × 2 lanes
-//   multi  — `corpus-multi.txt`        N-pattern OR × 2 lanes
-//   dir    — `corpus-dir.txt`          match_dir
-//   mdir   — `corpus-multi-dir.txt`    N-pattern match_dir
-//
-// Two lanes per match row:
-//   - globstar     — public API (`globstar(...)`, `Glob::new` / `Glob::union`)
-//   - nfa          — the same patterns compiled with no anchored chains
-//                    (`force_nfa` / `__engine: "nfa"`), so the segment
-//                    engine's NFA decides
-//
-// Nothing is skipped: a compile error where a row expects an answer is
-// a failure (a single-pattern row may expect `err:Kind`), and a row the
-// loader cannot read, or an exception that is not a GlobError, stops
-// the run.
-//
-// Rust path runs `cargo test --test corpus -- --nocapture` and parses
-// the test's `corpus=… engine=… pass=N fail=N` output. JS path is
-// inlined below.
+// The corpora (`fixtures/corpus/`, and `fixtures/ecosystem/` for single)
+// on both runtimes: `single` and `multi` through the public API and the
+// NFA alone (`force_nfa` / `__engine: "nfa"`), `dir` and `mdir` through
+// `match_dir`. Nothing is skipped. Rust runs `cargo test --test corpus --
+// --nocapture` and its `corpus=… engine=… pass=N fail=N` lines are read;
+// JS runs inline.
 //
 //   node scripts/verify.mjs              # full
 //   node scripts/verify.mjs --skip-rust  # JS only
@@ -52,9 +34,7 @@ if (SKIP_RUST && SKIP_JS) {
 
 const FIXTURES_DIR = resolve(ROOT, "fixtures");
 
-// The spec corpus, then the ecosystem corpus (`fixtures/ecosystem/`):
-// other libraries' suites with our answers. They were recorded on POSIX,
-// so Windows skips them.
+// The ecosystem corpus was recorded on POSIX, so Windows skips it.
 const SINGLE_FILES = [
   "corpus/corpus.txt",
   "corpus/corpus-realworld.txt",
@@ -75,14 +55,11 @@ const SINGLE_FILES = [
       )),
 ];
 
-// ── shared helpers ──────────────────────────────────────────────────
-
-// A field as it is, except that a tab is `⇥` and a newline `⏎`, which a
-// tab-separated line cannot hold.
+// A field as it is, except that a tab is `⇥` and a newline `⏎`.
 const decode = (s) => s.replaceAll("⇥", "\t").replaceAll("⏎", "\n");
 
-// The flags column: `dot=` and `case_insensitive=`, each `true` or
-// `false`; anything else is a typo and stops the run.
+// `dot=` and `case_insensitive=`, each `true` or `false`; anything else
+// stops the run.
 function parseFlags(s, defaultDot, at) {
   const flags = { dot: defaultDot, caseInsensitive: false };
   for (const kv of s.split(",")) {
@@ -133,8 +110,6 @@ function record(stats, why, describe) {
   }
 }
 
-// The data rows of `file`: PATTERN, PATH, EXPECTED and the flags (with
-// the default `dot`). A short row stops the run.
 function rowsOf(file, defaultDot) {
   const rows = [];
   const lines = readFileSync(join(FIXTURES_DIR, file), "utf8").split("\n");
@@ -153,8 +128,7 @@ function rowsOf(file, defaultDot) {
   return rows;
 }
 
-// The expected column: `{ err: kind }` for `err:Kind`, else the answer
-// `value` reads.
+// `{ err: kind }` for `err:Kind`, else the answer `value` reads.
 function wantOf(row, value) {
   if (row.expected.startsWith("err:")) return { err: row.expected.slice(4) };
   const v = value(row.expected);
@@ -180,14 +154,11 @@ const describe = (row, pattern, engine) =>
 
 const show = (want) => (want.err === undefined ? String(want.value) : `err:${want.err}`);
 
-// ── JS-side runners ─────────────────────────────────────────────────
-
 async function runJsVerify() {
   const { compileMatcher } = await import("../packages/globstar/src/glob.js");
   const { GlobError } = await import("../packages/globstar/src/error.js");
 
-  // `{ value }`, or `{ err }` for a GlobError; anything else thrown is a
-  // bug and stops the run.
+  // Anything thrown but a GlobError is a bug and stops the run.
   function attempt(f) {
     try {
       return { value: f() };
@@ -208,7 +179,6 @@ async function runJsVerify() {
   });
   const parseMatch = (s) => (s === "match" ? true : s === "no-match" ? false : undefined);
 
-  // ── single-pattern and multi-pattern corpora, two lanes each
   const lanes = (rows, patternOf) => {
     const stats = { globstar: makeStats(), nfa: makeStats() };
     for (const row of rows) {
@@ -229,11 +199,8 @@ async function runJsVerify() {
   );
   const multi = lanes(rowsOf("corpus/corpus-multi.txt", true), patternsOf);
 
-  // ── match_dir corpora — public API vs truth. Rows default to
-  // `dot=false` (the walker convention); negated rows run too, a negated
-  // pattern answers `Descend` or `DescendAndMatch` (§15.4). Indexed by JS `DirMatch` value
-  // (Match=0, Pruned=1, Descend=2, DescendAndMatch=3, DescendAll=4,
-  // DescendAllAndMatch=5).
+  // The dir corpora default to `dot=false`, the walker convention; negated
+  // rows run too (GLOB_SPEC §15.4). Indexed by the JS `DirMatch` value.
   const DIR_TOKEN = [
     "match",
     "pruned",
@@ -265,8 +232,6 @@ async function runJsVerify() {
   ];
 }
 
-// ── orchestration ───────────────────────────────────────────────────
-
 const sides = [];
 
 if (!SKIP_RUST) {
@@ -285,13 +250,9 @@ if (!SKIP_JS) {
   const rows = await runJsVerify();
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   process.stderr.write(`[verify]   done in ${dt}s\n`);
-  // Rows carry up to 10 failure samples each (makeStats); join them so
-  // the failure-samples block below prints JS diagnostics too.
   const jsFailures = rows.flatMap((r) => r.failures.map((m) => `[${r.corpus}/${r.engine}] ${m}`));
   sides.push({ runtime: "JS", rows, spawnStatus: 0, rawStderr: jsFailures.join("\n") });
 }
-
-// ── unified summary ─────────────────────────────────────────────────
 
 const pad = (s, n) => {
   s = String(s);
@@ -308,9 +269,8 @@ console.log(
 );
 console.log("-".repeat(8 + 8 + 12 + 6 + 5 + 4));
 
-// Stable cross-runtime row order: single → multi → dir → mdir,
-// then globstar → nfa. Rust prints in cargo-test name
-// order (alphabetical), JS in author order — sort so both line up.
+// Rust prints in cargo-test name order, JS in author order: sorted so
+// both line up.
 const CORPUS_ORDER = { single: 0, multi: 1, dir: 2, mdir: 3 };
 const ENGINE_ORDER = { globstar: 0, nfa: 1 };
 const rowKey = (r) => [CORPUS_ORDER[r.corpus] ?? 99, ENGINE_ORDER[r.engine] ?? 99];
@@ -341,7 +301,7 @@ for (const side of sides) {
 }
 
 // Both runtimes read the same files, so they must check the same number
-// of rows: a row one loader reads and the other drops is a bug in one.
+// of rows.
 if (sides.length === 2) {
   const count = (side) =>
     new Map(side.rows.map((r) => [String(r.corpus) + "/" + String(r.engine), r.pass + r.fail]));

@@ -1,11 +1,13 @@
-// `glob` (concurrent readdir) and `globSync` (DFS) over `@globstar/core`.
-// The behavior is specified in references/spec/WALKER_SPEC.md.
+// `glob` (concurrent readdir) and `globSync` (depth-first) over
+// `@globstar/core`; the behavior is `references/spec/WALKER_SPEC.md`.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { compileMatcher, DirMatch, GlobError, MAX_PATTERN_LEN } from "@globstar/core";
 import { WalkError } from "./error.js";
 import { normalizeOptions, typeName } from "./options.js";
+
+const WINDOWS = process.platform === "win32";
 
 export async function glob(patterns, options) {
   const ctx = prepare(patterns, options);
@@ -20,7 +22,7 @@ export async function glob(patterns, options) {
       pending++;
       fs.readdir(frame.absolute, { withFileTypes: true }, (err, dirents) => {
         pending--;
-        if (failed) return; // late callback after rejection — drop it
+        if (failed) return;
         if (err) {
           try {
             dirents = afterReadError(err, frame.absolute);
@@ -30,8 +32,8 @@ export async function glob(patterns, options) {
             return;
           }
         }
-        // Re-enter `submit` per descended dir so the next readdir
-        // starts immediately — fans syscalls across libuv's threadpool.
+        // Each folder found is submitted at once: the reads fan out
+        // across libuv's threadpool.
         if (dirents !== null) processDirents(ctx, dirents, frame, out, descendShim);
         if (pending === 0) resolve(out);
       });
@@ -47,13 +49,11 @@ export function globSync(patterns, options) {
   if (ctx === null) return [];
 
   const out = ctx.seedResults;
-  // Reverse so `pop` drains seeds in forward order.
+  // Popped: the first seed walks first, and a folder's first child next.
   const stack = ctx.seedFrames.slice().reverse();
-
   const descend = [];
   while (stack.length > 0) {
     const frame = stack.pop();
-
     let dirents;
     try {
       dirents = fs.readdirSync(frame.absolute, { withFileTypes: true });
@@ -61,11 +61,8 @@ export function globSync(patterns, options) {
       dirents = afterReadError(err, frame.absolute);
       if (dirents === null) continue;
     }
-
     descend.length = 0;
     processDirents(ctx, dirents, frame, out, descend);
-    // Push descended frames in reverse so the next pop is the first
-    // child — preserves DFS forward order per level.
     for (let i = descend.length - 1; i >= 0; i--) stack.push(descend[i]);
   }
   return out;
@@ -75,7 +72,6 @@ function prepare(patterns, optsInput) {
   const opts = normalizeOptions(optsInput);
   const matcherOpts = { dot: opts.dot, caseInsensitive: opts.caseInsensitive };
 
-  // A string is one pattern; any other iterable is a list.
   const list =
     typeof patterns !== "string" &&
     patterns != null &&
@@ -91,20 +87,18 @@ function prepare(patterns, optsInput) {
       throw new TypeError(`pattern must be a string, got ${typeName(raw)}`);
     }
     checkLength(raw);
-    // To match a literal leading `!`, escape it: `\!foo`.
     const split = splitBangs(raw);
-    if (split === null) continue; // `.`, `//`, `!.` — selects or ignores nothing
+    if (split === null) continue;
     (split.bangs & 1 ? negatives : positives).push({ raw, body: split.body });
   }
 
-  // Positives first (error-precedence parity with Rust); ignore still
-  // compiles before the no-positives early return.
+  // Positives first: the same error precedence as the Rust walker.
   const matcher = compileUnion(positives, matcherOpts);
   const ignorePatterns = [];
   for (const raw of opts.ignore) {
     checkLength(raw);
-    // §3.2: ignore entries are never `!`-split, only normalized. A
-    // leading `!` there would ignore everything else, and is refused.
+    // An ignore entry is normalized but never `!`-split (§3.2); a
+    // leading `!` there would ignore everything else.
     const n = normalizePattern(raw);
     if (n === null) continue;
     if (n.startsWith("!")) {
@@ -120,8 +114,7 @@ function prepare(patterns, optsInput) {
   for (const n of negatives) ignorePatterns.push(n);
   const ignore = compileUnion(ignorePatterns, matcherOpts);
 
-  // Lock cwd to an absolute path and validate BEFORE the empty-positives
-  // early return: bad-cwd loudness must not depend on pattern content.
+  // Before the no-positives return: a bad cwd fails whatever the patterns.
   const cwd = path.resolve(opts.cwd);
   let cwdStat;
   try {
@@ -142,8 +135,8 @@ function prepare(patterns, optsInput) {
     ignore,
     cwd,
     followSymlinks: opts.followSymlinks,
-    // Whether the ignore set can cover a whole subtree (matchDir
-    // all-below), which `dot: false` never does.
+    // Whether the ignore set can cover a whole subtree, which `dot: false`
+    // never does.
     pruneIgnored: opts.dot && ignore !== null,
     seedFrames: [],
     seedResults: [],
@@ -152,11 +145,9 @@ function prepare(patterns, optsInput) {
   return ctx;
 }
 
-// Seed the traversal from the matcher's static prefixes. Each seed is
-// reached the way a root walk reaches it: part by part from cwd, each
-// part judged by `processDirents` as its folder's only entry (an lstat
-// stands in for the dirent). An ancestor that gives no child frame drops
-// the seed; the last part's file and frame are the seed's.
+// Each seed is reached the way a root walk reaches it: part by part from
+// cwd, each part judged as its folder's only entry (an lstat stands in
+// for the dirent). An ancestor that gives no child frame drops the seed.
 function initFromPrefixes(ctx) {
   for (const bytes of ctx.matcher.staticPrefixes()) {
     let frame = { absolute: ctx.cwd, relative: "", links: [] };
@@ -165,8 +156,8 @@ function initFromPrefixes(ctx) {
       ctx.seedFrames.push(frame);
       continue;
     }
-    // A walked path never holds `..`, `.` or an empty segment, so no
-    // root walk reaches such a prefix (and `..` would escape cwd).
+    // A walked path never holds `..`, `.` or an empty segment, so no root
+    // walk reaches such a prefix.
     const parts = WINDOWS ? prefix.split(/[/\\]/) : prefix.split("/");
     if (parts.some((p) => p === "" || p === ".." || p === ".")) continue;
     for (let i = 0; i < parts.length && frame !== undefined; i++) {
@@ -177,8 +168,8 @@ function initFromPrefixes(ctx) {
       try {
         entry = fs.lstatSync(abs);
       } catch (cause) {
-        if (nothingThere(cause)) break; // §9.4
-        throw new WalkError("Io", { path: abs, cause }); // §9.3
+        if (nothingThere(cause)) break;
+        throw new WalkError("Io", { path: abs, cause });
       }
       entry.name = name;
       const last = i === parts.length - 1;
@@ -190,57 +181,32 @@ function initFromPrefixes(ctx) {
   }
 }
 
-// A stat error that means no entry can be at the path, so a root walk
-// would never list one (§9.4): it is missing, a part is not a folder, a
-// link loops, the name is too long or invalid, or it holds a NUL.
-function nothingThere(err) {
-  switch (err?.code) {
-    case "ENOENT":
-    case "ENOTDIR":
-    case "ELOOP":
-    case "ENAMETOOLONG":
-    case "EINVAL":
-    case "ERR_INVALID_ARG_VALUE":
-      return true;
-    default:
-      return false;
-  }
-}
-
-// Per-frame match loop, shared by sync and async paths. `results` and
-// `descend` are push-shaped sinks: sync passes plain arrays; async
-// passes `out` and a `{ push: submit }` shim that fans new frames
-// straight back into `fs.readdir`.
+// The entries of one folder. `results` and `descend` are push sinks: the
+// sync walk passes arrays, the async one `out` and `{ push: submit }`.
 function processDirents(ctx, dirents, frame, results, descend) {
   const matcher = ctx.matcher;
   const ignore = ctx.ignore;
   const followSymlinks = ctx.followSymlinks;
   const links = frame.links;
-  // A child is a head and its name; the folder's heads are made once.
   const relHead = frame.relative === "" ? "" : frame.relative + "/";
   const absHead = withSep(frame.absolute);
 
   for (let i = 0; i < dirents.length; i++) {
     const dirent = dirents[i];
     const isSymlink = dirent.isSymbolicLink();
-
-    // `followSymlinks: false` → drop symlinks entirely (matches
-    // tinyglobby's `excludeSymlinks` semantics, NOT walkdir's "treat
-    // as file"). Skip before any further work.
     if (isSymlink && !followSymlinks) continue;
 
     const name = dirent.name;
-    // A name that is not valid UTF-8 comes back with U+FFFD, a spelling
-    // no file has: there is no path to report, nor a folder to read.
+    // A name that is not valid UTF-8 comes back with U+FFFD, a spelling no
+    // file has (§7.1).
     if (name.includes("\uFFFD") && !exists(absHead + name)) continue;
     const childRel = relHead + name;
 
-    // Ignore-filter early so an ignored symlink never costs a stat.
+    // Before any stat: an ignored symlink costs no resolution.
     if (ignore !== null && ignore.match(childRel)) continue;
 
-    // A symlink takes its target's type (a Dirent only flags "is
-    // symlink"); one that resolves to nothing (dangling, looping) stays
-    // a link, emitted like a file.
+    // A symlink takes its target's type; one that resolves to nothing
+    // stays a link, yielded like a file.
     let target = null;
     if (isSymlink) {
       try {
@@ -252,21 +218,17 @@ function processDirents(ctx, dirents, frame, results, descend) {
     const typed = target ?? dirent;
     if (isSpecial(typed)) continue;
 
-    // The absolute path is built only for an entry that needs it.
     if (!typed.isDirectory()) {
       if (matcher.match(childRel)) results.push(absHead + name);
       continue;
     }
-    // Asked with its `/`, the folder is pruned by an ignore entry that
-    // ends in `/` or `/**` (§3.2), under either `dot`.
+    // Asked with its `/`, a folder is pruned by an ignore entry that ends
+    // in `/` or `/**` (§3.2), under either `dot`.
     if (ignore !== null && ignore.match(childRel + "/")) continue;
     if (!DirMatch.mayMatchBelow(matcher.matchDir(childRel))) continue;
-    // An ignore that covers everything below skips the subtree
-    // (`**/x/**/*`; one that ends in `/**` was caught above).
+    // An ignore that covers everything below skips the subtree.
     if (ctx.pruneIgnored && DirMatch.matchesAllBelow(ignore.matchDir(childRel))) continue;
     const childAbs = absHead + name;
-    // Cycle break: a link to a folder already on the way down is not
-    // descended.
     let childLinks = links;
     if (target !== null) {
       const link = linkToDescend(links, childAbs, target);
@@ -278,11 +240,10 @@ function processDirents(ctx, dirents, frame, results, descend) {
 }
 
 // The link `abs`, whose target `stat` typed, as an entry of a frame's
-// `links`; `null` when descending it would close a cycle, its target
-// being on the way down already. A folder has one `(dev, ino)`, which
-// the stat gave for free; a hit is confirmed by canonical path, since
-// some file systems hand out inode numbers that are not unique. Windows
-// has no cheap identity in a stat: the canonical path is compared.
+// `links`; null when its target is on the way down already. A `(dev,
+// ino)` hit is confirmed by canonical path, since some file systems hand
+// out inode numbers that are not unique; Windows has no cheap identity in
+// a stat, so the canonical path is compared.
 function linkToDescend(links, abs, stat) {
   if (WINDOWS) {
     const canonical = realpath(abs);
@@ -301,8 +262,8 @@ function linkToDescend(links, abs, stat) {
   return { dev, ino, path: abs };
 }
 
-// The on-disk spelling of `p` (as Rust's `canonicalize`; the non-native
-// `realpathSync` keeps a link's own spelling), or `null`.
+// The on-disk spelling of `p` (the non-native `realpathSync` keeps a
+// link's own spelling), or null.
 function realpath(p) {
   try {
     return fs.realpathSync.native(p);
@@ -311,112 +272,7 @@ function realpath(p) {
   }
 }
 
-const WINDOWS = process.platform === "win32";
-
-// WALKER_SPEC §4.3: spell patterns the way walked paths are spelled —
-// strip leading `/`s, collapse `//`, drop `.` segments. A last `.`
-// names the folder before it, so it becomes a trailing `/` (`d/.` ≡
-// `d/`, never the files `d` would match). `/` in a pattern is always
-// structural (`\/` is a parse error), so textual splitting is safe.
-// `null` when nothing remains (`.`, `./`, `//`): it selects or ignores
-// nothing. The written "" stays, for the core to refuse.
-function normalizePattern(raw) {
-  let i = 0;
-  while (i < raw.length && raw.charCodeAt(i) === 0x2f) i++;
-  const s = raw.slice(i);
-  const trailingSlash = s.endsWith("/") || s.endsWith("/.");
-  const segs = s.split("/").filter((seg) => seg !== "" && seg !== ".");
-  if (segs.length === 0) return raw === "" ? "" : null;
-  return segs.join("/") + (trailingSlash ? "/" : "");
-}
-
-// WALKER_SPEC §4.2: the `!` count and the body of a written pattern;
-// `null` when it selects or ignores nothing (`.`, `//`, `!.`).
-// Normalization runs once, before the split (§4.3 first, so `/!x` ≡
-// `!x`). Cutting a `!` run can leave only its own segment empty or `.`;
-// that segment goes, with its `/`, and a run after it counts too:
-// `!/!x` ≡ `!!x`, the body `x` with two `!`.
-function splitBangs(raw) {
-  let rest = normalizePattern(raw);
-  if (rest === null) return null;
-  let bangs = 0;
-  for (;;) {
-    let run = 0;
-    while (run < rest.length && rest.charCodeAt(run) === 0x21 /* ! */) run++;
-    if (run === 0) return { bangs, body: rest };
-    bangs += run;
-    rest = rest.slice(run);
-    if (rest === "") return { bangs, body: "" };
-    const left = rest.startsWith(".") ? rest.slice(1) : rest;
-    if (left === "" || left.startsWith("/")) {
-      rest = left.slice(1);
-      if (rest === "") return null;
-    }
-  }
-}
-
-// Compiles `{ raw, body }` pairs (`body` normalized: leading `/`
-// stripped etc.) into one matcher; `null` for an empty list. A failure
-// names the member, as written, that the union failed in; when the
-// written text differs, the reason says which text its byte offsets
-// count in.
-function compileUnion(patterns, opts) {
-  if (patterns.length === 0) return null;
-  try {
-    return compileMatcher(
-      patterns.map((p) => p.body),
-      opts,
-    );
-  } catch (e) {
-    if (!(e instanceof GlobError)) throw e;
-    // The core names the member it failed in (`index`, with offsets into
-    // that member): a list of members that each compile compiles.
-    const { raw, body } = patterns[e.index ?? 0];
-    let reason = e.message.replace(/^pattern \d+: /, "");
-    if (raw !== body) reason += ` (in '${body}', as the walker reads it)`;
-    throw new WalkError("InvalidPattern", { pattern: raw, reason, cause: e });
-  }
-}
-
-// WALKER_SPEC §9.2: a written pattern or ignore entry longer than
-// MAX_PATTERN_LEN bytes is refused before it is split or normalized, and
-// named by its first characters only. A UTF-16 unit takes 1 to 3 bytes.
-function checkLength(raw) {
-  if (raw.length <= MAX_PATTERN_LEN / 3) return;
-  const len = Buffer.byteLength(raw);
-  if (len <= MAX_PATTERN_LEN) return;
-  let head = "";
-  let shown = 0;
-  for (const ch of raw) {
-    if (shown++ === 64) break;
-    head += ch;
-  }
-  const cause = new GlobError("TooLong", { len, max: MAX_PATTERN_LEN });
-  throw new WalkError("InvalidPattern", { pattern: `${head}…`, reason: cause.message, cause });
-}
-
-// Does an entry exist at `p`?
-function exists(p) {
-  try {
-    fs.lstatSync(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Where a filesystem keeps no entry types (ext4 without `filetype`, XFS
-// `ftype=0`, some FUSE and network mounts), readdir lstats each entry
-// itself and fails the whole call when one vanishes between the two.
-const vanishedDuringRead = (err) => err?.code === "ENOENT" && err?.syscall === "lstat";
-
-// A read error that says the folder is no longer there: removed, or
-// replaced by a file, after its parent listed it — as if it had gone
-// before (§9.3). cwd was checked first, so it never stands for a missing
-// cwd.
-const gone = (err) => err?.code === "ENOENT" || err?.code === "ENOTDIR";
-
-// The entries of `dir` after its read failed with `err`, or `null` when it
+// The entries of `dir` after its read failed with `err`, or null when it
 // is gone (§9.3); any other failure throws the `WalkError` naming `dir`.
 function afterReadError(err, dir) {
   try {
@@ -428,8 +284,13 @@ function afterReadError(err, dir) {
   throw new WalkError("Io", { path: dir, cause: err });
 }
 
-// The entries of `dir`, typed by one lstat each; an entry that vanishes
-// in between is left out, as if it had gone before the read.
+// Where a file system keeps no entry types (ext4 without `filetype`, XFS
+// `ftype=0`, some FUSE and network mounts), readdir lstats each entry
+// itself and fails the whole call when one vanishes between the two.
+const vanishedDuringRead = (err) => err?.code === "ENOENT" && err?.syscall === "lstat";
+
+// The entries of `dir`, typed by one lstat each; one that vanishes in
+// between is left out.
 function readEachEntry(dir) {
   const out = [];
   const head = withSep(dir);
@@ -447,12 +308,113 @@ function readEachEntry(dir) {
   return out;
 }
 
-// Can opening `name` reach an entry its folder lists under another
-// name? A file system that ignores Unicode normalization (APFS) opens an
-// NFC spelling of a name stored NFD; Win32 drops a trailing `.` or
-// space, opens `NUL`, `con.txt` and the other device names as devices,
-// and reads `C:` as a drive. A root walk, comparing names as listed,
-// never matches such a spelling.
+// A read error that says the folder is no longer there: removed, or made
+// a file, since its parent listed it (§9.3).
+const gone = (err) => err?.code === "ENOENT" || err?.code === "ENOTDIR";
+
+// A stat error that means no entry can be at the path, so a root walk
+// would never list one (§9.4).
+function nothingThere(err) {
+  switch (err?.code) {
+    case "ENOENT":
+    case "ENOTDIR":
+    case "ELOOP":
+    case "ENAMETOOLONG":
+    case "EINVAL":
+    case "ERR_INVALID_ARG_VALUE":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function exists(p) {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A pattern spelled the way walked paths are (§4.3): leading `/`s
+// stripped, `//` collapsed, `.` segments dropped, a last `.` kept as a
+// trailing `/` (`d/.` ≡ `d/`). Null when nothing remains (`.`, `./`,
+// `//`); the written "" stays, for the core to refuse.
+function normalizePattern(raw) {
+  let i = 0;
+  while (i < raw.length && raw.charCodeAt(i) === 0x2f) i++;
+  const s = raw.slice(i);
+  const trailingSlash = s.endsWith("/") || s.endsWith("/.");
+  const segs = s.split("/").filter((seg) => seg !== "" && seg !== ".");
+  if (segs.length === 0) return raw === "" ? "" : null;
+  return segs.join("/") + (trailingSlash ? "/" : "");
+}
+
+// The `!` count and the body of a written pattern (§4.2); null when it
+// selects or ignores nothing (`.`, `//`, `!.`). Normalized first, so
+// `/!x` ≡ `!x`; cutting a `!` run can leave only its own segment empty or
+// `.`, which goes with its `/`, and a run after it counts too (`!/!x` ≡
+// `!!x`).
+function splitBangs(raw) {
+  let rest = normalizePattern(raw);
+  if (rest === null) return null;
+  let bangs = 0;
+  for (;;) {
+    let run = 0;
+    while (run < rest.length && rest.charCodeAt(run) === 0x21) run++;
+    if (run === 0) return { bangs, body: rest };
+    bangs += run;
+    rest = rest.slice(run);
+    if (rest === "") return { bangs, body: "" };
+    const left = rest.startsWith(".") ? rest.slice(1) : rest;
+    if (left === "" || left.startsWith("/")) {
+      rest = left.slice(1);
+      if (rest === "") return null;
+    }
+  }
+}
+
+// The `{ raw, body }` pairs as one matcher, or null for none. A failure
+// names the member as written, with the text its offsets count in when
+// normalizing changed it.
+function compileUnion(patterns, opts) {
+  if (patterns.length === 0) return null;
+  try {
+    return compileMatcher(
+      patterns.map((p) => p.body),
+      opts,
+    );
+  } catch (e) {
+    if (!(e instanceof GlobError)) throw e;
+    const { raw, body } = patterns[e.index ?? 0];
+    let reason = e.message.replace(/^pattern \d+: /, "");
+    if (raw !== body) reason += ` (in '${body}', as the walker reads it)`;
+    throw new WalkError("InvalidPattern", { pattern: raw, reason, cause: e });
+  }
+}
+
+// A written pattern longer than MAX_PATTERN_LEN bytes is refused before
+// it is read (§9.2), named by its first characters. A UTF-16 unit takes 1
+// to 3 bytes.
+function checkLength(raw) {
+  if (raw.length <= MAX_PATTERN_LEN / 3) return;
+  const len = Buffer.byteLength(raw);
+  if (len <= MAX_PATTERN_LEN) return;
+  let head = "";
+  let shown = 0;
+  for (const ch of raw) {
+    if (shown++ === 64) break;
+    head += ch;
+  }
+  const cause = new GlobError("TooLong", { len, max: MAX_PATTERN_LEN });
+  throw new WalkError("InvalidPattern", { pattern: `${head}…`, reason: cause.message, cause });
+}
+
+// Can opening `name` reach an entry its folder lists under another name?
+// APFS opens an NFC spelling of a name stored NFD; Win32 drops a trailing
+// `.` or space, opens the device names as devices, and reads `C:` as a
+// drive.
 function opensAsAnother(name) {
   return isNonAscii(name) || (WINDOWS && win32Rewrites(name));
 }
@@ -467,15 +429,14 @@ function listed(dir, name) {
   }
 }
 
-// Does Win32 open this name as something else: a trailing `.` or space,
-// a device name (`NUL`, `com1`, `con.txt`), or a `:` (a drive, a stream)?
+// A trailing `.` or space, a device name (`NUL`, `com1`, `con.txt`), or a
+// `:` (a drive, a stream).
 function win32Rewrites(name) {
   if (name.endsWith(".") || name.endsWith(" ") || name.includes(":")) return true;
   return /^(?:CON|PRN|AUX|NUL|COM\d|LPT\d)[ \t\n\f\r]*$/i.test(name.split(".", 1)[0]);
 }
 
-// A FIFO, a socket or a device: not a file to read, so never emitted (a
-// reader would block on a FIFO).
+// A FIFO, a socket or a device: a reader would block on a FIFO.
 function isSpecial(s) {
   return !s.isDirectory() && !s.isFile() && !s.isSymbolicLink();
 }
@@ -485,14 +446,11 @@ function isNonAscii(s) {
   return false;
 }
 
-// §7.4: `parent` with a separator after it, so a child is `withSep(parent)
-// + name` — bypassing `path.join`'s normalization (`..` / `.` / repeated
-// `/`): we only ever append a dirent name, or a seed part the seeding
-// checks for `..`, `.` and empty, to a `path.resolve`'d cwd or a previous
-// child, so neither input ever holds those. The separator is `/` (§8.2),
-// but `\` under a verbatim Windows path (`\\?\C:\…`), which Win32 reads
-// with no `/` in it; a parent that already ends in one (a drive root,
-// `C:\`) gets none.
+// `parent` with a separator after it (§7.4), so a child is `withSep(parent)
+// + name` without `path.join`'s normalization: what is appended is a
+// dirent name, or a seed part checked for `..`, `.` and empty. The
+// separator is `/` (§8.2), but `\` under a verbatim Windows path
+// (`\\?\C:\…`), which Win32 reads with no `/` in it.
 function withSep(parent) {
   const last = parent.charCodeAt(parent.length - 1);
   if (last === 0x2f) return parent;
