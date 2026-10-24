@@ -388,21 +388,23 @@ nesting.
 ## 10. What each layer buys
 
 Each fast path above was measured by turning it off alone, at
-`60e4f4e` (2026-10-24): Rust, functions and jump targets aligned as in
-`scripts/bench.mjs`, the bench rows of BENCHMARKS.md, best of three
-alternating runs (a run against itself moves rows by about 5%). The
-ratios are off / on, on the rows the change moves most.
+`60e4f4e` (2026-10-24), the last two rows at `84fe3a5`: Rust, functions
+and jump targets aligned as in `scripts/bench.mjs`, the bench rows of
+BENCHMARKS.md, best of three alternating runs (a run against itself
+moves rows by about 5%). The ratios are off / on, on the rows the
+change moves most.
 
-| Turned off                         | What runs instead                 | Cost                                                                                            |
-| ---------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------- |
-| chains (§4)                        | the graph NFA for every call      | `is_match` 2.7× geomean, 6.1–13.5× on the big ignore lists; single-pattern `match_dir` 1.9–2.9× |
-| blocks (§4.2)                      | the NFA for unions with `**/x/**` | `is_match` 2.2× (ignore-list-40) to 13.8× (global-586)                                          |
-| the chain index (§5)               | gates for every union             | `is_match` 1.4× (ignore-list-40) to 7.4× (global-586) on every union of more than ten chains    |
-| gates (§5)                         | the index for 2–10 chains too     | mixed-roots `is_match` 1.28×, memory 1.33×                                                      |
-| `match_dir` off a lone line (§4.4) | an NFA for single patterns too    | `match_dir` 2.0–2.8×, memory 1.17–1.47×, build 1.04–1.27×                                       |
-| dense graph NFAs (§6)              | `Sparse` for every graph          | union `match_dir` 1.3× (global-586) to 6.3× (mixed-roots)                                       |
-| suffix sets (§7.1)                 | `Generic` for every alternation   | `*.{ts,tsx,js,jsx}` 2.0×; global-586 `is_match` 42×, memory 3.7×                                |
-| kept closures (§7.3)               | the closing step                  | class-anychar `is_match` 1.8× (an NFA then; pieces since, §7.2)                                 |
+| Turned off                          | What runs instead                   | Cost                                                                                                                                     |
+| ----------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| chains (§4)                         | the graph NFA for every call        | `is_match` 2.7× geomean, 6.1–13.5× on the big ignore lists; single-pattern `match_dir` 1.9–2.9×                                          |
+| blocks (§4.2)                       | the NFA for unions with `**/x/**`   | `is_match` 2.2× (ignore-list-40) to 13.8× (global-586)                                                                                   |
+| the chain index (§5)                | gates for every union               | `is_match` 1.4× (ignore-list-40) to 7.4× (global-586) on every union of more than ten chains                                             |
+| gates (§5)                          | the index for 2–10 chains too       | mixed-roots `is_match` 1.28×, memory 1.33×                                                                                               |
+| `match_dir` off a lone line (§4.4)  | an NFA for single patterns too      | `match_dir` 2.0–2.8×, memory 1.17–1.47×, build 1.04–1.27×                                                                                |
+| dense graph NFAs (§6)               | `Sparse` for every graph            | union `match_dir` 1.3× (global-586) to 6.3× (mixed-roots)                                                                                |
+| suffix sets (§7.1)                  | `Generic` for every alternation     | `*.{ts,tsx,js,jsx}` 2.0×; global-586 `is_match` 42×, memory 3.7×                                                                         |
+| a word of bits up to 64 chains (§5) | the id list past 64 for every index | `is_match` 1.2–2.0× in Rust, 1.04–1.4× in JS, on every indexed union                                                                     |
+| kept closures (§7.3)                | the closing step                    | segments with a brace around wildcards (`{foo,bar}*`, `[ab]{c,d}*`): `match_dir` 1.04–1.3×, `is_match` 1.05–1.1×, for 10–18% less memory |
 
 Every one of them pays for itself somewhere, by at least a quarter.
 

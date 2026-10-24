@@ -266,7 +266,7 @@ class SegNfaSmall {
 // marks that every segment of L units matches (1 ≤ L ≤ 31), and `from`
 // that every one of `from` units or more does (≤ 32; 0: none known), so
 // `from` 1 is "every non-empty segment" (`matchDir`'s all-below, see
-// `coversBelow` in nfa.js).
+// `coversBelow` in graph-nfa.js).
 function wildLens(b, entry, init, test) {
   const kinds = b.kinds;
   const n = kinds.length;
