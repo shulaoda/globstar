@@ -1,0 +1,25 @@
+crates/globstar/src/engine/segment/mod.rs
+  s_43b9a5518ea7f8::t_446e95e7068c20 16-18
+packages/globstar/src/engine/segment/index.js
+  s_43b9a5518ea7f8::t_4d7c9836a09c36 9-11
+references/theory/00-index.md
+  s_43b9a5518ea7f8::t_af7080f5754a57 8
+references/theory/02-segment-engine.md
+  s_43b9a5518ea7f8::t_435cda96c5516a 4-6,8,11-111,115-375,380-397,406-407,409-430
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "49a2ef2c112422fb6073aa5a6d3319da293c3e27",
+  "prompts": {},
+  "sessions": {
+    "s_43b9a5518ea7f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5164cac1-5542-48b2-91e9-92602e6134f9",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
