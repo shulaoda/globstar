@@ -13,7 +13,9 @@
 //! `chain_index` picks a big union's chains, `wild` (with `seg_nfa`)
 //! matches inside a segment, `seg_nfa` also across glued pieces,
 //! `facts` reads the literal facts off the AST, `bits` holds the bit
-//! sets the NFAs use; the byte comparisons are `crate::bytes`.
+//! sets the NFAs use; the byte comparisons are `crate::bytes`. The
+//! layers, the thresholds that pick them and what each buys:
+//! `references/theory/02-segment-engine.md`.
 
 mod bits;
 mod chain;

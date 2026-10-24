@@ -5,7 +5,7 @@ These notes record the formal foundations of the engine modules under `crates/gl
 ## Reading order
 
 1. [01-glob-as-regular-language.md](01-glob-as-regular-language.md) — the glob dialect specified in `references/spec/GLOB_SPEC.md` is a regular language under the closure operations of union, concatenation, and Kleene star. The leading `!` and the absence of `!(...)` extglobs are discussed.
-2. [02-segment-engine.md](02-segment-engine.md) — the segment engine, the one engine for every non-literal pattern: patterns as a graph of per-segment elements, anchored matching of linear paths, the NFA over the graph behind unions and `match_dir`, and the JS string/byte dual-mode execution.
+2. [02-segment-engine.md](02-segment-engine.md) — the segment engine, the one engine for every non-literal pattern: patterns as a graph of per-segment elements; the layers that match it (chains, the pickers of a union's chains, the NFA over the graph, the in-segment matchers) and which one a call runs; the thresholds that pick them and what each layer was measured to buy; and the JS string/byte dual-mode execution.
 3. [03-literal-prefilter.md](03-literal-prefilter.md) — the suffix-anchored literal prefilter used to short-circuit the matcher; its correctness invariant.
 4. [04-walker-and-pruning.md](04-walker-and-pruning.md) — static-prefix extraction and the six-valued `match_dir` predicate, which together drive directory-level pruning.
 
