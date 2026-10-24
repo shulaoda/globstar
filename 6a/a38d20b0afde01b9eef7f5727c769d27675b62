@@ -1,0 +1,63 @@
+crates/globstar/src/engine/segment/bits.rs
+  s_b3b8b1e69bfa07::t_8df7bff2f9469d 4-10,189-287
+crates/globstar/src/engine/segment/chain.rs
+  s_b3b8b1e69bfa07::t_e6656ee02abd3e 21
+crates/globstar/src/engine/segment/chain_index.rs
+  s_b3b8b1e69bfa07::t_af2658a04fcedc 14
+crates/globstar/src/engine/segment/graph.rs
+  s_b3b8b1e69bfa07::t_0f5639621d0719 24-27,38-119
+crates/globstar/src/engine/segment/graph_nfa.rs
+  s_b3b8b1e69bfa07::t_46b24a6ac80ae3 13
+crates/globstar/src/engine/segment/literal_ends.rs
+  s_b3b8b1e69bfa07::t_7a275242c96745 1-3
+crates/globstar/src/engine/segment/mod.rs
+  s_b3b8b1e69bfa07::t_6b8ddaa2152651 12-19,26,38,86-87,89-90
+crates/globstar/src/engine/segment/seg_nfa.rs
+  s_b3b8b1e69bfa07::t_9bff51d1d45987 12-15,17,19-21,760
+crates/globstar/src/engine/segment/wild.rs
+  s_b3b8b1e69bfa07::t_041147defa82d5 3-7,12,18-22,430-833
+packages/globstar/src/engine/segment/bits.js
+  s_b3b8b1e69bfa07::t_f8e622b508729b 2-7,21-52
+packages/globstar/src/engine/segment/chain-index.js
+  s_b3b8b1e69bfa07::t_2566accd35f7bf 12
+packages/globstar/src/engine/segment/chain.js
+  s_b3b8b1e69bfa07::t_67828be486f2d7 15-17
+packages/globstar/src/engine/segment/graph-nfa.js
+  s_b3b8b1e69bfa07::t_1cca103426bdad 16-18,23-26,113,217
+packages/globstar/src/engine/segment/graph.js
+  s_b3b8b1e69bfa07::t_2755fba4c47333 23-25,41,45-81
+packages/globstar/src/engine/segment/index.js
+  s_b3b8b1e69bfa07::t_001c814bae7092 16,27-28,30,40
+packages/globstar/src/engine/segment/literal-ends.js
+  s_b3b8b1e69bfa07::t_dc082d6961e2fe 1-4
+packages/globstar/src/engine/segment/seg-nfa.js
+  s_b3b8b1e69bfa07::t_de8a582a3813a6 18,20-22
+packages/globstar/src/engine/segment/wild.js
+  s_b3b8b1e69bfa07::t_25f346386d9eb9 2-4,6,9,11-22,272-506
+references/spec/WALKER_SPEC.md
+  s_b3b8b1e69bfa07::t_1f0d0cd83595ad 221
+references/theory/00-index.md
+  s_b3b8b1e69bfa07::t_ea9f2dd40b8e7f 14-18
+references/theory/02-segment-engine.md
+  s_b3b8b1e69bfa07::t_fe0d559a44b67e 42-43,367-386,455-466
+references/theory/03-literal-prefilter.md
+  s_b3b8b1e69bfa07::t_5d00b2ef6d2bb6 5,223-224,230-231
+references/theory/04-walker-and-pruning.md
+  s_b3b8b1e69bfa07::t_88e8ebc284f976 10,73,365-369,371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6aa38d20b0afde01b9eef7f5727c769d27675b62",
+  "prompts": {},
+  "sessions": {
+    "s_b3b8b1e69bfa07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "013c118d-3f12-4652-8633-b611e890a786",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
