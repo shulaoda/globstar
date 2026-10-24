@@ -775,14 +775,12 @@ An implementation MUST NOT set all-below unless `all_below(P, d)` holds. A consu
 
 #### Reference rule
 
-The reference implementations decide the flag segment by segment. Under `dot = false` it is never set: `**` does not match `d/.cache`, so no subtree is covered. Under `dot = true` they continue from the state `d` leaves the matcher in and step it over _wildcard-only segments_: names whose bytes only `?`, `*` and `**` consume (literals and classes, negated classes included, take none), so that only its length tells one such segment from another. A globstar absorbs the segment; an element inside a segment takes it when its wildcards alone take every name of that length (`*` and `?*` take every length, `?` one byte, `??*` two bytes or more, `*.js` none); a literal never does. The state must accept after every step, whatever the lengths of the steps, and the flag is set once no step reaches a new state. A real segment is taken wherever a wildcard-only one of the same length is (no wildcard is dot-protected under `dot = true`), which gives the guarantee.
-
-The search is bounded. It first steps the segment that fires only what takes every length, at most 65 times. Where that proves nothing, it tells lengths apart up to 31 bytes (every longer length counts as one, so an element that takes only names of 33 bytes or more is not counted) and visits at most 64 sets of elements that segments fire, firing a length at most 512 times. Past a bound the flag is not set.
+The reference implementations decide the flag segment by segment. Under `dot = false` it is never set: `**` does not match `d/.cache`, so no subtree is covered. Under `dot = true` they continue from the state `d` leaves the matcher in and step it over a _wildcard-only segment_: a name of any length whose bytes only `?`, `*` and `**` consume (literals and classes, negated classes included, take none). A globstar absorbs the segment; an element inside a segment takes it only if its wildcards alone take every non-empty name (`*`, `?*` and `{?,??*}` do; `?` and `*.js` do not); a literal never does. The state must accept after every step, and the flag is set once a step leaves the state unchanged, within 65 steps; past them it is not set. A real segment is taken wherever a wildcard-only one is (no wildcard is dot-protected under `dot = true`), which gives the guarantee.
 
 Consequences:
 
 - A pure literal pattern never sets it, and neither does a negated pattern (§15.4).
-- A union sets it when its members cover the subtree together, not only when one member does (§16.2). Members may split the names by length: `["**/?", "**/??*"]`, and the brace `{**/?,**/??*}` alike, get `DescendAllAndMatch` at `a`.
+- A union sets it when its members cover the subtree together, not only when one member does (§16.2). Members that differ in one segment are merged first (`["**/?", "**/??*"]` becomes one element, `**/?{,?*}`, and is proven at `a`); a brace the user wrote is not regrouped, so `{**/?,**/??*}` keeps its two branches and gets `DescendAndMatch` at `a`, though it matches the same paths.
 
 #### Examples
 

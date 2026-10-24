@@ -255,10 +255,8 @@ Entering a join enters its successors, as a `G0` does without staying.
 `match_dir`'s prefix bit is `active ∩ reach1`, where `reach1[s]` holds
 iff some continuation of at least one segment from s reaches accept.
 Its all-below bit steps the active set over wildcard-only segments
-until it settles, then searches by length class (§04 §2.5). Both give
-up past their caps with the safe answer (GLOB_SPEC §15.5). The fired
-sets are the same in every kind, visited in one order, so every kind
-and both runtimes answer alike.
+until it settles (§04 §2.5), and gives up past its cap with the safe
+answer (GLOB_SPEC §15.5).
 
 ## 7. In-segment matchers
 
@@ -322,13 +320,13 @@ dot-protected: a dot-led segment is refused before the NFA runs.
 
 ### 7.4 What wildcards alone take
 
-For `match_dir`'s all-below, each element knows the lengths whose
-every segment its wildcards alone take (`Lens`: bits for 1 to 31, and
-every length from some L ≤ 32 on). An affix or a suffix set reads them
-off its shape, pieces have none (a literal or class stands in each);
-the in-segment NFA finds them in one pass over its
-states in order, since every edge but a star's loop points to a later
-state. `any_seg` is the case "every non-empty segment".
+For `match_dir`'s all-below, each element knows whether its wildcards
+alone take every non-empty segment (`any_seg`). An affix or a suffix
+set reads it off its shape (`*`, `?*`, a suffix that may be empty),
+pieces never do (a literal or class stands in each), and the in-segment
+NFA finds it in one pass over its states in order, since every edge but
+a star's loop points to a later state: the lengths its wildcards take,
+one bit each below 64 and every length from a tail on.
 
 ### 7.5 Glued pieces
 
@@ -339,9 +337,9 @@ out in graph order and a piece is glued only to later ones, so every
 ε-edge still points to a later state. The sparse graph NFA notes the
 entry state of each piece a step holds, matches the segment from all
 of them at once, and goes on from the nodes whose exits it reaches.
-For `match_dir`, the same one pass over its states gives each exit the
-lengths its wildcards alone take from the entries, so a cut pattern
-proves all-below as the copied segments would.
+For `match_dir`, the same one pass over its states tells each exit
+whether the wildcards alone take every segment from the entries to it,
+so a cut pattern proves all-below as the copied segments would.
 
 ## 8. Unions
 
@@ -381,7 +379,6 @@ nesting.
 | kept closures                            | 128 KiB                                   | the step closes its set                      |
 | in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
 | wildcard-only cover steps                | 64                                        | all-below: `false`                           |
-| cover sets, firings                      | 64 sets, 512 firings, 64 states per state | all-below: `false`                           |
 | union merge reads                        | 16 per node, ≥ 4,096                      | the members stay apart                       |
 | suffix prefilter set (`literal_ends.rs`) | 16 branches                               | no prefilter                                 |
 
@@ -422,12 +419,10 @@ the NFA over the graph is the non-backtracking floor that rules out
 ReDoS. A chain with at most one globstar is O(n).
 
 `match_dir` adds at most 65 wildcard-only segments for the all-below
-proof (64, and the step that shows the set has settled), then, where
-elements split the names by length, at most 64 more (one per set of
-states a length class fires; 512 firings, holding at most 64 states
-per NFA state in all; a set with pieces costs one pass over the glued
-pieces' states), and 4,096 element compares for a chain's tail tokens;
-past them it gives the safe answer (GLOB_SPEC §15.5). The engine
+proof (64, and the step that shows the set has settled; a set with
+pieces costs one pass over the glued pieces' states), and 4,096 element
+compares for a chain's tail tokens; past them it gives the safe answer
+(GLOB_SPEC §15.5). The engine
 answers `is_match`, `match_dir` and `static_prefixes` natively.
 
 ## 12. JS dual-mode execution
@@ -459,7 +454,7 @@ search of their keys: a typed table costs V8 more to allocate (about
 | `engine/segment/chain.rs`        | `engine/segment/chain.js`        | chains, gates, `match_dir` off a lone line (§4, §5)          |
 | `engine/segment/chain_index.rs`  | `engine/segment/chain-index.js`  | the chain index (§5)                                         |
 | `engine/segment/graph_nfa.rs`    | `engine/segment/graph-nfa.js`    | the graph NFA and the all-below search (§6)                  |
-| `engine/segment/wild.rs`         | `engine/segment/wild.js`         | affixes, suffix sets, pieces, `Lens` (§7)                    |
+| `engine/segment/wild.rs`         | `engine/segment/wild.js`         | affixes, suffix sets, pieces (§7)                            |
 | `engine/segment/seg_nfa.rs`      | `engine/segment/seg-nfa.js`      | the in-segment NFA and the glue NFA (§7.3–7.5)               |
 | `engine/segment/literal_ends.rs` | `engine/segment/literal-ends.js` | suffix prefilter (§03), static prefixes (§04)                |
 | `engine/segment/bits.rs`         | `engine/segment/bits.js`         | bit sets, byte sets of classes; in Rust, the byte sketch too |

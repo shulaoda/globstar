@@ -3,8 +3,6 @@
 //! while they fit `MAX_ROW_BYTES`, a sparse step beyond; it runs when
 //! the chains cannot serve, and answers `match_dir` where it is kept.
 
-use std::collections::HashSet;
-
 use crate::bytes::{cmp_folded, seg_end};
 use crate::dir_match::DirMatch;
 
@@ -12,20 +10,11 @@ use super::SegmentMatcher;
 use super::bits::{Bits, Wide};
 use super::graph::{ACCEPT, Edges, Elem, INNER};
 use super::seg_nfa::GlueNfa;
-use super::wild::Lens;
 
 /// The wildcard-only segments `covers_below` feeds before it gives up:
 /// a pattern needs about one more than its longest run of them, and
 /// "not provable" is a valid answer (GLOB_SPEC §15.5).
 const MAX_COVER_SEGMENTS: usize = 64;
-
-/// The search by length (`Nfa::covers_by_length`) gives up past this
-/// many sets of states that segments fire, past eight times as many
-/// firings of a class, or once the sets it fires hold this many states
-/// per state of the NFA (counted at each firing): it costs about what
-/// as many segments do.
-const MAX_COVER_SETS: usize = 64;
-const MAX_COVER_FIRINGS: usize = 8 * MAX_COVER_SETS;
 
 /// An NFA over graph positions: one state per position plus the
 /// accept state, which is the last.
@@ -39,9 +28,6 @@ pub(super) struct Nfa<B: Bits> {
     /// States that can still consume ≥ 1 segment on a path to
     /// accept; drives `match_dir`'s prefix bit.
     reach1: B,
-    /// Per length class (`len_classes`), the states a segment of it
-    /// fires for sure; empty when the classes are one.
-    fire: Box<[B]>,
 }
 
 /// The same automaton past `MAX_ROW_BYTES` of rows, with a literal
@@ -68,8 +54,6 @@ pub(super) struct SparseNfa {
     /// them, `n + 1 + p`), that can still consume ≥ 1 segment on a path
     /// to accept.
     reach1: Wide,
-    /// See `len_classes`.
-    len_classes: u32,
     /// The glued pieces' NFA, when the graph has pieces.
     glue: Option<Box<GlueNfa>>,
 }
@@ -143,16 +127,6 @@ fn lit_fanout(elems: &[Elem], edges: &Edges) -> usize {
         .fold(0, usize::max)
 }
 
-/// The lengths `covers_below` tells apart: 1 to K one by one, and every
-/// longer one as K + 1, where K is the most an element singles out (a
-/// `?` K = 1, a `??*` K = 1 too: it takes every length from 2). Past
-/// that every element takes every length or none. 0 when no element
-/// takes some lengths but not others: the search by length is the
-/// wildcard-only one then.
-fn len_classes(elems: &[Elem]) -> u32 {
-    elems.iter().map(|e| e.lens().reach()).max().unwrap_or(0)
-}
-
 /// The successors of position `p` (`n`: the start) that start a
 /// segment: the stored ones of a graph with a crossing brace but the
 /// pieces glued to `p` (the glue NFA's), else the next position.
@@ -219,26 +193,10 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
         after[i] = c;
     }
     let init = closure_of(&mut succ_of(elems, edges, n), &after);
-    // Per length class, the states a segment of it fires for sure.
-    let k = len_classes(elems);
-    let fire = if k == 0 {
-        Box::default()
-    } else {
-        let mut fire: Box<[B]> = (0..=k).map(|_| B::zero(words)).collect();
-        for (s, e) in elems.iter().enumerate() {
-            let mut mask = e.lens().classes(k);
-            while mask != 0 {
-                fire[mask.trailing_zeros() as usize].set(s);
-                mask &= mask - 1;
-            }
-        }
-        fire
-    };
     Nfa {
         after: after.into_boxed_slice(),
         init,
         reach1,
-        fire,
     }
 }
 
@@ -320,7 +278,6 @@ fn sparse_nfa(
         succ: succ.into_boxed_slice(),
         ends,
         reach1,
-        len_classes: len_classes(elems),
         glue,
     }
 }
@@ -408,15 +365,8 @@ impl<B: Bits> Nfa<B> {
     /// Feeds wildcard-only segments until the set settles, requiring
     /// an accept after each one. A real segment fires every
     /// transition a wildcard-only one does, so `true` holds for all
-    /// real paths; `false` may only mean "not provable". Where that
-    /// proves nothing, segments of each length may
-    /// (`covers_by_length`).
+    /// real paths; `false` may only mean "not provable".
     fn covers_below(&self, m: &SegmentMatcher, active: &mut B) -> bool {
-        let start = (!self.fire.is_empty()).then(|| active.clone());
-        self.covers_wild(m, active) || start.is_some_and(|s| self.covers_by_length(&s))
-    }
-
-    fn covers_wild(&self, m: &SegmentMatcher, active: &mut B) -> bool {
         let mut next = B::zero(B::words(self.after.len()));
         // Tokens only move forward or sit on a globstar, so the set
         // settles within the number of states.
@@ -431,67 +381,6 @@ impl<B: Bits> Nfa<B> {
             std::mem::swap(active, &mut next);
         }
         false
-    }
-
-    /// A wildcard-only segment fires what takes every segment, and
-    /// segments of one length fire more: `?` takes every one-byte name
-    /// and `??*` every longer one, so side by side they cover every
-    /// name though neither does alone. The segments of one length class
-    /// (`len_classes`) fire the same states for sure, so the sets the
-    /// classes fire, from `active` on, stand for every path below:
-    /// what each fired set enters must hold accept. A real segment
-    /// fires at least what its class does, so `true` holds for all
-    /// real paths. An empty fired set enters nothing, and a set's
-    /// takers (its states that take some length) fire what the same
-    /// takers fired before. The search visits fired sets, which are
-    /// the same in every NFA, in the same order, and gives up past its
-    /// caps (`MAX_COVER_SETS`).
-    fn covers_by_length(&self, active: &B) -> bool {
-        let words = B::words(self.after.len());
-        let mut takes = B::zero(words);
-        self.fire.iter().for_each(|f| takes.or_with(f));
-        let budget = MAX_COVER_SETS * self.after.len();
-        let (mut firings, mut work) = (0, 0);
-        let mut seen: Vec<B> = Vec::new();
-        // The takers fired from.
-        let mut tried: Vec<B> = Vec::new();
-        let mut set = active.clone();
-        let mut i = 0;
-        loop {
-            let mut takers = set.clone();
-            takers.and_with(&takes);
-            if !tried.contains(&takers) {
-                tried.push(takers);
-                for f in &self.fire {
-                    let mut class = set.clone();
-                    class.and_with(f);
-                    firings += 1;
-                    if class.is_zero() || firings > MAX_COVER_FIRINGS {
-                        return false;
-                    }
-                    work += class.count();
-                    if work > budget {
-                        return false;
-                    }
-                    if seen.contains(&class) {
-                        continue;
-                    }
-                    if seen.len() == MAX_COVER_SETS {
-                        return false;
-                    }
-                    seen.push(class);
-                }
-            }
-            let Some(from) = seen.get(i) else {
-                return true;
-            };
-            i += 1;
-            set.clear();
-            from.for_each(|s| set.or_with(&self.after[s]));
-            if !set.test(self.accept()) {
-                return false;
-            }
-        }
     }
 }
 
@@ -691,17 +580,9 @@ impl SparseNfa {
 
     /// Does every path below the directory match? As `Nfa::covers_below`.
     /// A piece takes a segment to the nodes the glue NFA reaches, so it
-    /// fires those for the lengths it takes every segment of to them
-    /// (`GlueNfa::wild_exits`), as the whole segments through it would;
-    /// that costs a pass over the glue NFA per set of states.
+    /// fires those its wildcards alone take every segment to
+    /// (`GlueNfa::any_exits`), as the whole segments through it would.
     fn covers_below(&self, m: &SegmentMatcher, active: &mut Active) -> bool {
-        // The search by length starts where the wildcard-only one does,
-        // which steps `active` on.
-        let start = (self.len_classes > 0 || self.glue.is_some()).then(|| active.clone());
-        self.covers_wild(m, active) || start.is_some_and(|s| self.covers_by_length(m, &s))
-    }
-
-    fn covers_wild(&self, m: &SegmentMatcher, active: &mut Active) -> bool {
         let mut next = Active::new(self);
         let accept = self.accept();
         let any_seg = |s: u32| m.elems[s as usize].any_seg();
@@ -725,11 +606,8 @@ impl SparseNfa {
                 }
             }
             if let Some(entries) = entries {
-                for (node, lens) in self.glue().wild_exits(&entries) {
-                    if lens.from == 1 {
-                        self.fire(m, node, &mut next);
-                    }
-                }
+                self.glue()
+                    .any_exits(&entries, |node| self.fire(m, node as u32, &mut next));
             }
             if !next.has(accept) {
                 return false;
@@ -740,98 +618,5 @@ impl SparseNfa {
             std::mem::swap(active, &mut next);
         }
         false
-    }
-
-    /// As `Nfa::covers_by_length`; a fired set is its states,
-    /// ascending. The classes are a set's own: lengths past what any of
-    /// its takers singles out fire alike, and a graph without pieces
-    /// has the NFA's (`len_classes`) for every set.
-    fn covers_by_length(&self, m: &SegmentMatcher, active: &Active) -> bool {
-        let budget = MAX_COVER_SETS * (self.n as usize + 1);
-        let (mut firings, mut work) = (0, 0);
-        let mut seen: Vec<Box<[u32]>> = Vec::new();
-        let mut known: HashSet<Box<[u32]>> = HashSet::new();
-        let mut tried: HashSet<Vec<(u32, Lens)>> = HashSet::new();
-        let mut classes: Vec<Vec<u32>> = Vec::new();
-        let mut next = Active::new(self);
-        let mut i = 0;
-        loop {
-            let takers = self.takers(m, if i == 0 { active } else { &next });
-            let k = takers
-                .iter()
-                .fold(self.len_classes, |k, (_, l)| k.max(l.reach()));
-            if tried.insert(takers.clone()) {
-                // Every class's fired set in one pass: a state joins
-                // the classes it takes.
-                classes.clear();
-                classes.resize(k as usize + 1, Vec::new());
-                for &(s, lens) in &takers {
-                    let mut mask = lens.classes(k);
-                    while mask != 0 {
-                        classes[mask.trailing_zeros() as usize].push(s);
-                        mask &= mask - 1;
-                    }
-                }
-                for f in &classes {
-                    firings += 1;
-                    if f.is_empty() || firings > MAX_COVER_FIRINGS {
-                        return false;
-                    }
-                    work += f.len();
-                    if work > budget {
-                        return false;
-                    }
-                    if known.contains(&f[..]) {
-                        continue;
-                    }
-                    if seen.len() == MAX_COVER_SETS {
-                        return false;
-                    }
-                    known.insert(f[..].into());
-                    seen.push(f[..].into());
-                }
-            }
-            let Some(from) = seen.get(i) else {
-                return true;
-            };
-            i += 1;
-            next.clear();
-            for &s in from {
-                self.fire(m, s, &mut next);
-            }
-            if !next.has(self.accept()) {
-                return false;
-            }
-        }
-    }
-
-    /// The states of `set` that take every segment of some length, and
-    /// the nodes its pieces take every segment of some length to, with
-    /// those lengths, ascending: what a length class may fire. Literals
-    /// take none.
-    fn takers(&self, m: &SegmentMatcher, set: &Active) -> Vec<(u32, Lens)> {
-        let mut out = Vec::new();
-        let mut entries = None;
-        let mut add = |s: u32| {
-            let lens = m.elems[s as usize].lens();
-            if lens != Lens::default() {
-                out.push((s, lens));
-            } else {
-                self.note_piece(m, s, &mut entries);
-            }
-        };
-        for &item in &set.items {
-            match item.checked_sub(self.n + 1) {
-                Some(p) => self.succ(p as usize, 1, 3).iter().for_each(|&s| add(s)),
-                None if item != self.accept() => add(item),
-                None => {}
-            }
-        }
-        if let Some(entries) = entries {
-            out.extend(self.glue().wild_exits(&entries));
-        }
-        out.sort_unstable_by_key(|&(s, _)| s);
-        out.dedup_by_key(|&mut (s, _)| s);
-        out
     }
 }

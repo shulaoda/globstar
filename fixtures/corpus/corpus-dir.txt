@@ -393,14 +393,14 @@ x{a/b}y*	xa	pruned
 /p/dist/**/[!.]*	/p/dist	descend	dot=true
 # /p/foo.log/a — the dir matches, its files don't
 **/*.log	/p/foo.log	descend-match	dot=true
-# Branches that split the names by length cover together (GLOB_SPEC
-# §15.5), as the union of the same two does (corpus-multi-dir.txt).
-{**/?,**/??*}	a	descend-all-match	dot=true
+# Branches that split the names by length cover together, but each
+# element is asked to take every name on its own (GLOB_SPEC §15.5):
+# not provable. The union of the same two merges them into one element
+# and is (corpus-multi-dir.txt).
+{**/?,**/??*}	a	descend-match	dot=true
 # /p/abc/xyz — no branch takes three bytes
 {**/?,**/??}	/p/abc	descend	dot=true
-# `?/**/?` takes every path below `a` that ends in one byte, `**/??*`
-# every other
-{?/**/?,**/??*}	a	descend-all	dot=true
+{?/**/?,**/??*}	a	descend	dot=true
 
 ## all-below.dot.false.never.covers
 # /p/dist/.cache escapes every wildcard under dot=false.

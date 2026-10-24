@@ -53,16 +53,11 @@ export function compileSegNfa(nodes, dot, ci) {
   const small = b.kinds.length <= 32;
   const nfa = small ? new SegNfaSmall(b, entry, dot) : new SegNfaWide(b, entry, dot);
   const test = small ? (a, s) => (a & (1 << s)) !== 0 : bitTest;
-  const lens = wildLens(b, entry, nfa.init, test);
-  nfa.lenBits = lens.bits;
-  nfa.lenFrom = lens.from;
   return {
     matcher: nfa,
     minLen: satisfiable(b, entry) ? 0 : NEVER_LEN,
     dotProtect: !dot && wildLed(b, nfa.initDotBlocked, test),
-    // Does it accept every non-empty segment through its wildcards
-    // alone? (`matchDir` all-below.)
-    anySeg: lens.from === 1,
+    anySeg: anySeg(b, entry, nfa.init, test),
   };
 }
 
@@ -192,9 +187,6 @@ class SegNfaSmall {
     this.initDotBlocked = dot ? this.init : closeSmall(b, 1 << entry, true);
     this.acceptMask = 1 << (n - 1);
     this.countsBytes = b.countsBytes;
-    // What its wildcards alone take, by length (see `wildLens`).
-    this.lenBits = 0;
-    this.lenFrom = 0;
   }
 
   matches(str, s0, e0) {
@@ -230,25 +222,22 @@ class SegNfaSmall {
   }
 }
 
-// What the wildcards alone accept, by segment length: bit L of `bits`
-// marks that every segment of L units matches (1 ≤ L ≤ 31), and `from`
-// that every one of `from` units or more does (≤ 32; 0: none known), so
-// `from` 1 is "every non-empty segment" (`matchDir`'s all-below, see
-// `coversBelow` in graph-nfa.js).
-function wildLens(b, entry, init, test) {
+// Do the wildcards alone take every non-empty segment (`matchDir`'s
+// all-below, see `coversBelow` in graph-nfa.js)?
+function anySeg(b, entry, init, test) {
   const kinds = b.kinds;
   const n = kinds.length;
-  // Most segments start with a literal or a class: no length.
+  // Most segments start with a literal or a class: none.
   let any = false;
   for (let s = 0; s < n && !any; s++) any = kinds[s] === S_ANY && test(init, s);
-  if (!any) return { bits: 0, from: 0 };
+  if (!any) return false;
   const scratch = n <= LENS_SCRATCH;
   const lo = scratch ? LENS_LO.fill(0, 0, n) : new Int32Array(n);
   const hi = scratch ? LENS_HI.fill(0, 0, n) : new Int32Array(n);
   const tail = (scratch ? LENS_TAIL : new Float64Array(n)).fill(Infinity, 0, n);
   lo[entry] = 1;
   wildLengths(b, lo, hi, tail);
-  return lensOf(lo[n - 1], hi[n - 1], tail[n - 1]);
+  return allNonEmpty(lo[n - 1], hi[n - 1], tail[n - 1]);
 }
 
 // The lengths of the segments the wildcards alone take from the states
@@ -258,7 +247,8 @@ function wildLens(b, entry, init, test) {
 // reached. Lengths below 64 are one bit each, in `lo` (0-31) and `hi`
 // (32-63), and every length from `tail` on is one too (Infinity: none
 // known). Lengths past 63 below the tail are left out, which keeps out
-// lengths only.
+// lengths only: a run of 70 `?` beside a `*` is not told to take every
+// length.
 function wildLengths(nfa, lo, hi, tail) {
   const kinds = nfa.kinds;
   const nexts = nfa.nexts;
@@ -301,19 +291,14 @@ const LENS_LO = new Int32Array(LENS_SCRATCH);
 const LENS_HI = new Int32Array(LENS_SCRATCH);
 const LENS_TAIL = new Float64Array(LENS_SCRATCH);
 
-// The non-empty lengths as `bits` and `from`: where the run of every
-// longer length starts, when that is by 32. The run is told only when
-// the tail is by 64; one past that is left out.
-function lensOf(lo, hi, tail) {
+// Every non-empty length: 1 to 63 one by one, and every longer one
+// through the tail.
+function allNonEmpty(lo, hi, tail) {
   if (tail < 32) {
     lo |= -1 << tail;
     hi = -1;
   } else if (tail < 64) hi |= -1 << (tail - 32);
-  lo &= ~1;
-  // Where the run through 63 starts (64: none does).
-  const run = 64 - (hi === -1 ? 32 + Math.clz32(~lo) : Math.clz32(~hi));
-  const from = tail <= 64 && run <= 32 ? run : 0;
-  return { bits: from >= 1 && from < 32 ? lo & ~(-1 << from) : lo, from };
+  return tail <= 64 && (lo | 1) === -1 && hi === -1;
 }
 
 // The same automaton over Int32Array words: more than 32 states. The
@@ -339,9 +324,6 @@ class SegNfaWide {
     this.initDotBlocked = dot ? this.init : entrySet(true);
     this.accept = n - 1;
     this.countsBytes = b.countsBytes;
-    // What its wildcards alone take, by length (see `wildLens`).
-    this.lenBits = 0;
-    this.lenFrom = 0;
   }
 
   matches(str, s0, e0) {
@@ -514,8 +496,8 @@ export class GlueNfa {
     this.countsBytes = b.countsBytes;
     this.spanLo = spanLo;
     this.spanHi = spanHi;
-    // The lengths `wildExits` finds, one set for all its calls.
-    this.lens = null;
+    // The lengths `anyExits` finds, one set for all its calls.
+    this.lengths = null;
   }
 
   // An empty set of its states.
@@ -544,17 +526,16 @@ export class GlueNfa {
     }
   }
 
-  // What the wildcards alone take from the entry states in `entries`
-  // (dot=true), as triples in state order: each node a piece of which
-  // they end a segment at, with the lengths every segment of which they
-  // take there (`bits`, `from`), as `wildLens` finds a segment's. A
-  // segment of a length reaches the nodes it does for every segment of
-  // it, so a node stands for all the segments between these entries and
-  // it, as a whole segment does.
-  wildExits(entries) {
+  // Calls `exit` with each node a piece of which the wildcards alone,
+  // from the entry states in `entries`, end every non-empty segment at
+  // (dot=true), as `anySeg` reads a whole segment. A segment of a length
+  // reaches the nodes it does for every segment of it, so a node stands
+  // for all the segments between these entries and it, as a whole
+  // segment does.
+  anyExits(entries, exit) {
     const n = this.kinds.length;
-    this.lens ??= { lo: new Int32Array(n), hi: new Int32Array(n), tail: new Float64Array(n) };
-    const { lo, hi, tail } = this.lens;
+    this.lengths ??= { lo: new Int32Array(n), hi: new Int32Array(n), tail: new Float64Array(n) };
+    const { lo, hi, tail } = this.lengths;
     lo.fill(0);
     hi.fill(0);
     tail.fill(Infinity);
@@ -562,13 +543,9 @@ export class GlueNfa {
       for (let bits = entries[w]; bits !== 0; bits &= bits - 1) lo[w * 32 + ctz32(bits)] |= 1;
     }
     wildLengths(this, lo, hi, tail);
-    const out = [];
     for (let s = 0; s < n; s++) {
-      if (this.kinds[s] !== S_EXIT) continue;
-      const lens = lensOf(lo[s], hi[s], tail[s]);
-      if (lens.bits !== 0 || lens.from !== 0) out.push(this.nexts[s], lens.bits, lens.from);
+      if (this.kinds[s] === S_EXIT && allNonEmpty(lo[s], hi[s], tail[s])) exit(this.nexts[s]);
     }
-    return out;
   }
 
   // The states of `node` from which some segment reaches an exit that

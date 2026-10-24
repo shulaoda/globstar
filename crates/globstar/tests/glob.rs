@@ -141,79 +141,11 @@ fn match_dir_stays_cheap_on_long_wildcard_chains() {
 }
 
 #[test]
-fn branches_that_split_names_by_length_cover_together() {
-    // `?` takes every one-byte name and `??*` every longer one: side by
-    // side they cover every name, though neither does alone, in every
-    // NFA kind (padding grows the graph past each kind's size) and the
-    // JS twin alike (GLOB_SPEC §15.5).
-    let dot = CompileOptions::default().dot(true);
-    let below = |p: &str, dir: &str| {
-        let g = Glob::new_with(p, dot).unwrap();
-        g.match_dir(dir.as_bytes()).matches_all_below()
-    };
-    for pad in [0, 20, 60, 200] {
-        let pads: String = (0..pad).map(|i| format!(",p{i}/x")).collect();
-        assert!(below(&format!("{{**/?,**/??*{pads}}}"), ""), "{pad}");
-        assert!(below(&format!("{{**/?,**/??*{pads}}}"), "a/bc"), "{pad}");
-        assert!(below(&format!("{{?/**/?,**/??*{pads}}}"), "a"), "{pad}");
-        // No branch takes two bytes.
-        assert!(!below(&format!("{{**/?,**/???*{pads}}}"), "a"), "{pad}");
-    }
-    // Lengths are told apart up to 31 bytes, every longer one as one.
-    let q = |n: usize| "?".repeat(n);
-    let upto = |k: usize, skip: usize| -> String {
-        (1..=k)
-            .filter(|&n| n != skip)
-            .map(|n| format!("**/{},", q(n)))
-            .collect()
-    };
-    assert!(below(&format!("{{{}**/{}*}}", upto(31, 0), q(32)), ""));
-    assert!(!below(&format!("{{{}**/{}*}}", upto(31, 17), q(32)), ""));
-    assert!(!below(&format!("{{{}**/{}*}}", upto(30, 0), q(32)), ""));
-    // A run of 33 is past the classes: not provable, though it covers.
-    assert!(!below(
-        &format!("{{{}**/{},**/{}*}}", upto(31, 0), q(32), q(33)),
-        ""
-    ));
-}
-
-#[test]
-fn the_all_below_search_by_length_stays_cheap() {
-    // A covering pair beside many `?` runs, so that every length class
-    // fires sets of its own: the search gives up within its caps.
-    let mut seed = 7u32;
-    let mut rnd = |n: u32| {
-        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345) & 0x7fff_ffff;
-        seed % n
-    };
-    let mut branches = vec!["**/?".to_string(), "**/??*".to_string()];
-    for i in 0..400 {
-        let depth = 1 + rnd(6);
-        let segs: Vec<String> = (0..depth)
-            .map(|_| "?".repeat(1 + rnd(31) as usize))
-            .collect();
-        branches.push(format!("**/{}/z{i}", segs.join("/")));
-    }
-    let g = Glob::new_with(
-        &format!("{{{}}}", branches.join(",")),
-        CompileOptions::default().dot(true),
-    )
-    .unwrap();
-    let start = std::time::Instant::now();
-    for _ in 0..50 {
-        for dir in ["", "a", "ab/c", "abcdefgh/x/yy"] {
-            assert!(g.match_dir(dir.as_bytes()).may_match_below());
-        }
-    }
-    assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
-}
-
-#[test]
 fn wildcard_lengths_cost_one_pass() {
-    // A run of `{?,}` takes as many lengths as it has braces: found in
-    // one pass over its states, not one step per length, both for a
-    // whole segment at compile time and for a cut one at each all-below
-    // proof.
+    // A run of `{?,}` takes as many lengths as it has braces: whether
+    // its wildcards take every name is found in one pass over its
+    // states, not one step per length, both for a whole segment at
+    // compile time and for a cut one at each all-below proof.
     let start = std::time::Instant::now();
     assert!(Glob::new(&"{?,}".repeat(16_000)).unwrap().is_match(b"abc"));
     let cut = format!(

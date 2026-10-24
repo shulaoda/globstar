@@ -14,13 +14,6 @@ export function isPathSep(b) {
 // caller iterates set bits under a `word !== 0` guard.
 export const ctz32 = (v) => 31 - Math.clz32(v & -v);
 
-// Set bits of a 32-bit word.
-export function popcnt32(v) {
-  v -= (v >>> 1) & 0x55555555;
-  v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
-  return Math.imul((v + (v >>> 4)) & 0x0f0f0f0f, 0x01010101) >>> 24;
-}
-
 // ASCII case-insensitive byte equality, the twin of Rust's
 // `u8::eq_ignore_ascii_case`: lowercase both via the `0x20` case bit,
 // then require a letter so non-letter pairs (`@`/`` ` ``) stay unequal.

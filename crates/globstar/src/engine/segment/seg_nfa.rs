@@ -18,7 +18,7 @@ use crate::parse::ast::Node;
 
 use super::bits::{Bits, ByteSet, Wide};
 use super::graph::{ACCEPT, Edges, Elem, INNER};
-use super::wild::{Lens, NEVER, Wild, WildKind};
+use super::wild::{NEVER, Wild, WildKind};
 
 const UNSET: u32 = u32::MAX;
 
@@ -92,23 +92,19 @@ impl SegNfa {
         });
 
         let satisfiable = satisfiable::<B>(&states, entry, words);
-        let mut nfa = SegNfaImpl {
+        let nfa = SegNfaImpl {
             states,
             init,
             init_dot_blocked,
             closures,
             accept: n - 1,
             words,
-            lens: Lens::default(),
         };
-        nfa.lens = nfa.step_lens();
         Wild {
             min_len: if satisfiable { 0 } else { NEVER },
             variable: true,
             dot_protect: !dot && !can_lit_dot,
-            // Does it accept every non-empty segment through its
-            // wildcards alone? (`match_dir` all-below.)
-            any_seg: nfa.lens.from == 1,
+            any_seg: nfa.any_seg(),
             kind: WildKind::Generic(Box::new(kind(nfa))),
         }
     }
@@ -117,14 +113,6 @@ impl SegNfa {
         match self {
             SegNfa::Small(n) => n.matches(seg),
             SegNfa::Wide(n) => n.matches(seg),
-        }
-    }
-
-    /// What its wildcards alone take, by length (`Wild::lens`).
-    pub(super) fn lens(&self) -> Lens {
-        match self {
-            SegNfa::Small(n) => n.lens,
-            SegNfa::Wide(n) => n.lens,
         }
     }
 }
@@ -145,8 +133,6 @@ pub(super) struct SegNfaImpl<B: Bits> {
     closures: Box<[B]>,
     accept: usize,
     words: usize,
-    /// What its wildcards alone take, by length (see `step_lens`).
-    lens: Lens,
 }
 
 #[derive(Debug, Clone)]
@@ -183,23 +169,22 @@ impl<B: Bits> SegNfaImpl<B> {
         run(&self.states, &self.closures, active, seg, self.words).test(self.accept)
     }
 
-    /// What the wildcards alone accept, by segment length (see `Lens`).
-    fn step_lens(&self) -> Lens {
-        // Most segments start with a literal or a class: no length.
+    /// Do the wildcards alone take every non-empty segment (`match_dir`'s
+    /// all-below)?
+    fn any_seg(&self) -> bool {
+        // Most segments start with a literal or a class: none.
         let mut any = false;
         self.init
             .for_each(|s| any |= matches!(self.states[s], SegState::Any(..)));
-        if !any {
-            return Lens::default();
-        }
-        wild_lengths(&self.states, &self.init)[self.accept].lens()
+        any && wild_lengths(&self.states, &self.init)[self.accept].all_nonempty()
     }
 }
 
 /// The lengths of the segments the wildcards alone take to a state:
 /// each length below 64 one bit, and `tail`, from which on every length
 /// is (`u32::MAX`: none known). Lengths past 63 below the tail are left
-/// out, which keeps out lengths only.
+/// out, which keeps out lengths only: a run of 70 `?` beside a `*` is
+/// not told to take every length.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Lengths {
     low: u64,
@@ -238,27 +223,15 @@ impl Lengths {
         }
     }
 
-    /// The non-empty ones as a `Lens`: lengths 1 to 31, and where the
-    /// run of every longer length starts, when that is by 32. The run
-    /// is told only when the tail is by 64; one past that is left out.
-    fn lens(self) -> Lens {
-        let mut low = self.low;
-        if self.tail < 64 {
-            low |= u64::MAX << self.tail;
-        }
-        low &= !1;
-        // Where the run through 63 starts (64: none does).
-        let run = 64 - low.leading_ones();
-        let from = if self.tail <= 64 && run <= 32 { run } else { 0 };
-        let bits = low as u32;
-        Lens {
-            bits: if (1..32).contains(&from) {
-                bits & ((1 << from) - 1)
-            } else {
-                bits
-            },
-            from,
-        }
+    /// Every non-empty length: 1 to 63 one by one, and every longer one
+    /// through the tail.
+    fn all_nonempty(self) -> bool {
+        let run = if self.tail < 64 {
+            u64::MAX << self.tail
+        } else {
+            0
+        };
+        self.tail <= 64 && (self.low | run | 1) == u64::MAX
     }
 }
 
@@ -585,24 +558,21 @@ impl GlueNfa {
         });
     }
 
-    /// What the wildcards alone take from the entry states in `entries`
-    /// (dot=true): each node a piece of which they end a segment at,
-    /// with the lengths every segment of which they take there, as
-    /// `SegNfaImpl::step_lens` finds a segment's. A segment of a length
-    /// reaches the nodes it does for every segment of it, so a node
-    /// stands for all the segments between these entries and it, as a
-    /// whole segment does.
-    pub(super) fn wild_exits(&self, entries: &Wide) -> Vec<(u32, Lens)> {
+    /// Calls `exit` with each node a piece of which the wildcards alone,
+    /// from the entry states in `entries`, end every non-empty segment
+    /// at (dot=true), as `SegNfaImpl::any_seg` reads a whole segment. A
+    /// segment of a length reaches the nodes it does for every segment
+    /// of it, so a node stands for all the segments between these
+    /// entries and it, as a whole segment does.
+    pub(super) fn any_exits(&self, entries: &Wide, mut exit: impl FnMut(usize)) {
         let at = wild_lengths(&self.states, entries);
-        self.states
-            .iter()
-            .zip(at)
-            .filter_map(|(state, lengths)| match state {
-                SegState::Exit(node) => Some((*node, lengths.lens())),
-                _ => None,
-            })
-            .filter(|&(_, lens)| lens != Lens::default())
-            .collect()
+        for (state, lengths) in self.states.iter().zip(at) {
+            if let SegState::Exit(node) = state
+                && lengths.all_nonempty()
+            {
+                exit(*node as usize);
+            }
+        }
     }
 
     /// The states of `node` from which some segment reaches an exit
@@ -757,34 +727,33 @@ impl SegBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::{Lens, SegNfa};
+    use super::SegNfa;
     use crate::parse::ast::Node;
 
-    // What the wildcards alone take, found in one pass over the states,
-    // is what stepping them a byte at a time finds.
+    // Whether the wildcards alone take every non-empty segment is found
+    // in one pass over the states, as stepping them a byte at a time
+    // would find it.
     #[test]
-    fn wildcard_lengths_are_found_in_one_pass() {
-        let lens = |pattern: &str| {
+    fn any_seg_is_found_in_one_pass() {
+        let any_seg = |pattern: &str| {
             let ast = crate::parse::parse(pattern.as_bytes()).unwrap();
             let nodes: Vec<&Node> = match &ast.body {
                 Node::Concat(nodes) => nodes.iter().collect(),
                 node => vec![node],
             };
-            SegNfa::wild(&nodes, true, false).lens()
+            SegNfa::wild(&nodes, true, false).any_seg
         };
-        let of = |bits, from| Lens { bits, from };
         let run = |unit: &str, n: usize| unit.repeat(n);
-        assert_eq!(lens(&run("{?,}", 100)), of(!1, 0));
-        assert_eq!(lens(&(run("{,?}", 100) + "*")), Lens::ALL);
-        assert_eq!(lens(&(run("?", 32) + "*")), of(0, 32));
-        assert_eq!(lens(&(run("?", 33) + "*")), of(0, 0));
-        assert_eq!(lens("{??,?}{??,?}"), of(0b11100, 0));
-        assert_eq!(lens("{?,???*}"), of(0b10, 3));
-        assert_eq!(lens("{?,???*}a"), of(0, 0));
+        assert!(!any_seg(&run("{?,}", 100)));
+        assert!(any_seg(&(run("{,?}", 100) + "*")));
+        assert!(!any_seg("??*"));
+        assert!(any_seg("{?,??*}"));
+        assert!(!any_seg("{?,???*}"));
+        assert!(!any_seg("{?,??*}a"));
         // A run that a star's lengths join below 64 goes on for good;
         // one they join past 63 is not told.
         let joined = |stars: usize| format!("{{{},{}*}}", run("{?,}", 80), run("?", stars));
-        assert_eq!(lens(&joined(60)), Lens::ALL);
-        assert_eq!(lens(&joined(70)), of(!1, 0));
+        assert!(any_seg(&joined(60)));
+        assert!(!any_seg(&joined(70)));
     }
 }

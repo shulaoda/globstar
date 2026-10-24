@@ -35,7 +35,7 @@ use crate::parse::ast::Node;
 use super::Bytes;
 use super::chain_index::{KeyScratch, LINEAR_CHAINS, SegKeys, key_room, segment_keys};
 use super::seg_nfa::GlueNfa;
-use super::wild::{Affix, Lens, NEVER, Wild, WildKind, compile_wild, concat_lits};
+use super::wild::{Affix, NEVER, Wild, WildKind, compile_wild, concat_lits};
 
 // ── the elements ──────────────────────────────────────────────────────────
 
@@ -90,17 +90,6 @@ impl Elem {
             Elem::Lit(_) | Elem::Join | Elem::Piece(_) => false,
             Elem::Wild(w) => w.any_seg,
             Elem::G0 | Elem::G1 => true,
-        }
-    }
-
-    /// What it takes through its wildcards alone (dot=true), by
-    /// segment length (`match_dir`'s all-below).
-    #[inline]
-    pub(super) fn lens(&self) -> Lens {
-        match self {
-            Elem::Lit(_) | Elem::Join | Elem::Piece(_) => Lens::default(),
-            Elem::Wild(w) => w.lens(),
-            Elem::G0 | Elem::G1 => Lens::ALL,
         }
     }
 

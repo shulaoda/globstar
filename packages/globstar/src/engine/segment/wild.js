@@ -116,28 +116,6 @@ export function compileWild(nodes, dot, ci) {
   return makeWild(WK_SUFFIXES, fields);
 }
 
-// What `w` takes through its wildcards alone (dot=true), by segment
-// length, as `lenBits` and `lenFrom` hold for an NFA (see `wildLens`
-// in seg-nfa.js): bit L for every segment of L units (1 ≤ L ≤ 31), and
-// every length from `wildLenFrom` on (0: none). Only `?`s and `*`s with
-// nothing literal around them (a suffix that may be empty) take every
-// segment of a length.
-export function wildLenBits(w) {
-  if (w.kind === WK_GENERIC) return w.matcher.lenBits;
-  if (w.variable || !bare(w) || w.minLen < 1 || w.minLen > 31) return 0;
-  return 1 << w.minLen;
-}
-
-export function wildLenFrom(w) {
-  if (w.kind === WK_GENERIC) return w.matcher.lenFrom;
-  if (!w.variable || !bare(w)) return 0;
-  const from = Math.max(w.minLen, 1);
-  return from <= 32 ? from : 0;
-}
-
-const bare = (w) =>
-  w.prefixStr.length === 0 && (w.kind === WK_AFFIX ? w.suffixStr.length === 0 : w.suffixEmpty);
-
 // The group of the suffixes ending in character `c`.
 function lastGroup(c, ci) {
   if (ci && c >= 0x41 && c <= 0x5a) c += 32;
