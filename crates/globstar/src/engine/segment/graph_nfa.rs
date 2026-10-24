@@ -1,7 +1,5 @@
-//! The NFA over the graph: one state per position, stepped once per
-//! path segment. Dense rows in a `u64` up to 64 states, boxed word rows
-//! while they fit `MAX_ROW_BYTES`, a sparse step beyond; it runs when
-//! the chains cannot serve, and answers `match_dir` where it is kept.
+//! The NFA over the graph: one state per position, stepped once per path
+//! segment. Dense rows up to `MAX_ROW_BYTES`, a sparse step beyond.
 
 use crate::bytes::{cmp_folded, seg_end};
 use crate::dir_match::DirMatch;
@@ -11,82 +9,60 @@ use super::bits::{Bits, Wide};
 use super::graph::{ACCEPT, Edges, Elem, INNER};
 use super::seg_nfa::GlueNfa;
 
-/// The wildcard-only segments `covers_below` feeds before it gives up:
-/// a pattern needs about one more than its longest run of them, and
-/// "not provable" is a valid answer (GLOB_SPEC §15.5).
+/// Wildcard-only segments `covers_below` feeds before it gives up.
 const MAX_COVER_SEGMENTS: usize = 64;
 
-/// An NFA over graph positions: one state per position plus the
-/// accept state, which is the last.
+/// Dense rows pay while few states are active together: within this
+/// many bytes of rows, and while no position leads to more than
+/// `MAX_DENSE_LITS` literals, which the sparse step finds by one search.
+const MAX_ROW_BYTES: usize = 4 * 1024;
+const MAX_DENSE_LITS: usize = 48;
+
 #[derive(Debug, Clone)]
 pub(super) struct Nfa<B: Bits> {
-    /// Per state, the closure entered after consuming a segment there
-    /// (a globstar's includes itself); the accept slot is never read.
+    /// Per state, the closure entered after it takes a segment; a
+    /// globstar's holds itself. The accept slot is never read.
     after: Box<[B]>,
-    /// ε-closure of the start.
     init: B,
-    /// States that can still consume ≥ 1 segment on a path to
-    /// accept; drives `match_dir`'s prefix bit.
+    /// States from which at least one more segment reaches accept.
     reach1: B,
 }
 
-/// The same automaton past `MAX_ROW_BYTES` of rows, with a literal
-/// fan-out past `MAX_DENSE_LITS`, or over a graph with pieces, stepped
-/// sparsely. A position keeps its successors, not a closure row, and the
-/// active set holds states and whole positions: "every successor of `p`
-/// is entered" is one entry, whose literals are found by one binary
-/// search. A step costs what it tests, and the tables grow with the
-/// graph, not its square.
+/// Each position keeps its successors instead of a closure row, and the
+/// active set holds states and whole positions (`n + 1 + p`: every
+/// successor of `p` is entered).
 #[derive(Debug, Clone)]
 pub(super) struct SparseNfa {
-    /// Positions, one per node (state `i` is position `i` is node `i`);
-    /// the accept state is `n`.
+    /// States `0..n` are the positions; `n` is accept.
     n: u32,
-    /// Per position (the start last) its successors, in three parts:
-    /// the literal ones sorted by literal (case-folded when
-    /// insensitive), the nullable ones (`**/`), then the rest. Part `k`
-    /// of position `p` is `succ[at[3p + k]..at[3p + k + 1]]`.
+    /// Position `p`'s successors in three parts, part `k` being
+    /// `succ[at[3p + k]..at[3p + k + 1]]`: the literals sorted by
+    /// literal, the nullable ones, the rest. The start is position `n`.
     at: Box<[u32]>,
     succ: Box<[u32]>,
-    /// Positions the pattern may end after.
     ends: Wide,
-    /// States, and positions with a successor (as `Active` indexes
-    /// them, `n + 1 + p`), that can still consume ≥ 1 segment on a path
-    /// to accept.
+    /// States, and positions as `Active` indexes them, from which at
+    /// least one more segment reaches accept.
     reach1: Wide,
-    /// The glued pieces' NFA, when the graph has pieces.
     glue: Option<Box<GlueNfa>>,
 }
 
 #[derive(Debug, Clone)]
 pub(super) enum AnyNfa {
     Small(Nfa<u64>),
-    // The rarer kinds are boxed, so the common one sets the size.
+    /// Boxed with `Sparse`, so the common kind sets the size.
     Wide(Box<Nfa<Wide>>),
     Sparse(Box<SparseNfa>),
 }
 
-impl AnyNfa {
-    pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
-        match self {
-            AnyNfa::Small(n) => n.is_match(m, path),
-            AnyNfa::Wide(n) => n.is_match(m, path),
-            AnyNfa::Sparse(n) => n.is_match(m, path),
-        }
-    }
-
-    pub(super) fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
-        match self {
-            AnyNfa::Small(n) => n.match_dir(m, dir_path),
-            AnyNfa::Wide(n) => n.match_dir(m, dir_path),
-            AnyNfa::Sparse(n) => n.match_dir(m, dir_path),
-        }
-    }
+/// States (`0..=n`, accept `n`) and positions (`n + 1 + p`), in one list
+/// to walk and one bit set to dedupe.
+#[derive(Clone)]
+struct Active {
+    items: Vec<u32>,
+    has: Wide,
 }
 
-/// The NFA over the graph: dense rows in a `u64`, or past 64 states
-/// within `MAX_ROW_BYTES` and `MAX_DENSE_LITS`; sparse beyond, and for
-/// a graph with pieces, which keeps `glue`, their NFA, with it.
 pub(super) fn any_nfa(
     elems: &[Elem],
     ci: bool,
@@ -107,16 +83,6 @@ pub(super) fn any_nfa(
     }
 }
 
-/// Dense rows test each active state, so they pay off while few states
-/// are active together. The sparse NFA finds a segment among a
-/// position's literals by one search: it wins on a wide literal fan-out
-/// (a union of 50 names) and past about 170 states, and its tables are
-/// linear in the graph.
-const MAX_ROW_BYTES: usize = 4 * 1024;
-
-const MAX_DENSE_LITS: usize = 48;
-
-/// The most literals one position (or the start) leads to.
 fn lit_fanout(elems: &[Elem], edges: &Edges) -> usize {
     (0..=elems.len())
         .map(|i| {
@@ -127,9 +93,8 @@ fn lit_fanout(elems: &[Elem], edges: &Edges) -> usize {
         .fold(0, usize::max)
 }
 
-/// The successors of position `p` (`n`: the start) that start a
-/// segment: the stored ones of a graph with a crossing brace but the
-/// pieces glued to `p` (the glue NFA's), else the next position.
+/// The successors of position `p` (`n`: the start) that start a segment:
+/// the pieces glued to `p` are the glue NFA's.
 fn succ_of<'a>(
     elems: &'a [Elem],
     edges: Option<&'a Edges>,
@@ -146,21 +111,14 @@ fn succ_of<'a>(
         .chain(stored.iter().copied().filter(move |&t| !glued(t)))
 }
 
-/// The NFA over the graph (whose `edges` a crossing brace stores; a
-/// linear pattern's positions follow one another). State `i` is
-/// position `i`, the accept state last.
 fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
     let n = elems.len();
     let accept = n;
     let words = B::words(n + 1);
-    // The rows are filled below.
     let mut after: Vec<B> = (0..=n).map(|_| B::zero(0)).collect();
     let mut reach1 = B::zero(words);
-
-    // The closure some targets give, from the last position back:
-    // successors always lie ahead, so each is complete when needed,
-    // and a nullable successor contributes its own successors. A join
-    // is only those: it never takes a segment, so no set holds it.
+    // Successors lie ahead, so a pass from the last position back finds
+    // every closure complete; a join is only its successors.
     let closure_of = |targets: &mut dyn Iterator<Item = u32>, after: &[B]| {
         let mut c = B::zero(words);
         for t in targets {
@@ -181,12 +139,9 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
     for i in (0..n).rev() {
         let el = &elems[i];
         let mut c = closure_of(&mut succ_of(elems, edges, i), &after);
-        // A state reaches accept through ≥ 1 segment iff its element
-        // can consume one and what follows reaches accept.
         if el.satisfiable() && (c.test(accept) || c.intersects(&reach1)) {
             reach1.set(i);
         }
-        // A globstar stays after taking a segment.
         if el.is_globstar() {
             c.set(i);
         }
@@ -200,34 +155,24 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
     }
 }
 
-/// The sparse NFA over the graph: each position keeps its successors,
-/// the start's last, the literal ones sorted by literal.
 fn sparse_nfa(
     elems: &[Elem],
     ci: bool,
     edges: Option<&Edges>,
     glue: Option<Box<GlueNfa>>,
 ) -> SparseNfa {
-    // The start is position `n`.
     let n = elems.len();
-
-    // A position reaches accept through ≥ 1 segment iff its element
-    // can consume one and what it enters reaches accept: from the last
-    // position back, as successors always lie ahead.
-    // (A nullable successor is a `**/`, which reaches accept through
-    // one segment whenever it reaches it at all, or a join, which takes
-    // none and reaches it as its successors do: no set holds a join's
-    // state, only its position, see `enter`.)
-    // (A piece reaches it iff a segment takes it to an exit that does,
-    // see `GlueNfa::reach`.)
+    // From the last position back: a position reaches accept through a
+    // segment when its element takes one and a successor reaches it; a
+    // piece when the glue NFA says so (`GlueNfa::reach`).
     let mut reach1 = Wide::zero(Wide::words(2 * n + 2));
-    let mut good = None;
+    let mut glue_reach = None;
     for i in (0..n).rev() {
         let on = succ_of(elems, edges, i).any(|t| t == ACCEPT || reach1.test(t as usize));
         let reaches = match &elems[i] {
             Elem::Piece(entry) => {
                 let glue = glue.as_deref().expect("pieces have a glue NFA");
-                let good = good.get_or_insert_with(|| glue.set());
+                let good = glue_reach.get_or_insert_with(|| glue.set());
                 glue.reach(i, on, good) && *entry != INNER
             }
             e => (e.satisfiable() || matches!(e, Elem::Join)) && on,
@@ -259,8 +204,6 @@ fn sparse_nfa(
                 rest.push(t);
             }
         }
-        // By literal, then position; a list holds no repeats, as the
-        // walk deduplicates tails before it emits after them.
         lits.sort_unstable_by(|&a, &b| {
             let lit = |t: u32| elems[t as usize].as_lit();
             cmp_folded(lit(a), lit(b), ci).then(a.cmp(&b))
@@ -282,6 +225,24 @@ fn sparse_nfa(
     }
 }
 
+impl AnyNfa {
+    pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
+        match self {
+            AnyNfa::Small(n) => n.is_match(m, path),
+            AnyNfa::Wide(n) => n.is_match(m, path),
+            AnyNfa::Sparse(n) => n.is_match(m, path),
+        }
+    }
+
+    pub(super) fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
+        match self {
+            AnyNfa::Small(n) => n.match_dir(m, dir_path),
+            AnyNfa::Wide(n) => n.match_dir(m, dir_path),
+            AnyNfa::Sparse(n) => n.match_dir(m, dir_path),
+        }
+    }
+}
+
 impl<B: Bits> Nfa<B> {
     #[inline]
     fn accept(&self) -> usize {
@@ -293,7 +254,6 @@ impl<B: Bits> Nfa<B> {
     }
 
     pub(super) fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
-        // The empty dir is the walk root: nothing consumed yet.
         let root = dir_path.is_empty();
         let (mut active, exact) = if root {
             (self.init.clone(), m.is_match(dir_path))
@@ -303,13 +263,10 @@ impl<B: Bits> Nfa<B> {
             (active, exact)
         };
         let prefix = root || active.intersects(&self.reach1);
-        // `dot=false` never covers a subtree: no wildcard matches the
-        // dot-led names below.
         let all = m.dot && prefix && self.covers_below(m, &mut active);
         DirMatch::new(exact, prefix, all)
     }
 
-    /// The active set after every segment of `path`.
     fn run(&self, m: &SegmentMatcher, path: &[u8]) -> B {
         let mut active = self.init.clone();
         let mut next = B::zero(B::words(self.after.len()));
@@ -347,8 +304,7 @@ impl<B: Bits> Nfa<B> {
         });
     }
 
-    /// `step` over a non-empty segment that only wildcards consume:
-    /// every literal and class rejects it (`dot=true` only).
+    /// `step` over a segment that only wildcards take (`dot=true` only).
     fn step_wild(&self, m: &SegmentMatcher, active: &B, next: &mut B) {
         next.clear();
         let accept = self.accept();
@@ -359,17 +315,11 @@ impl<B: Bits> Nfa<B> {
         });
     }
 
-    /// Does every path below the directory match? `active` is the
-    /// state set the directory's segments leave behind.
-    ///
-    /// Feeds wildcard-only segments until the set settles, requiring
-    /// an accept after each one. A real segment fires every
-    /// transition a wildcard-only one does, so `true` holds for all
-    /// real paths; `false` may only mean "not provable".
+    /// Feeds wildcard-only segments until the set settles, requiring an
+    /// accept after each: a real segment fires at least what one does, so
+    /// `true` holds for every path below.
     fn covers_below(&self, m: &SegmentMatcher, active: &mut B) -> bool {
         let mut next = B::zero(B::words(self.after.len()));
-        // Tokens only move forward or sit on a globstar, so the set
-        // settles within the number of states.
         for _ in 0..=self.after.len().min(MAX_COVER_SEGMENTS) {
             self.step_wild(m, active, &mut next);
             if !next.test(self.accept()) {
@@ -384,15 +334,6 @@ impl<B: Bits> Nfa<B> {
     }
 }
 
-/// A sparse state set: states (`0..=n`, the accept state `n`) and whole
-/// positions (every successor of position `p` entered, as `n + 1 + p`),
-/// in one list to walk and one bit set to dedupe.
-#[derive(Clone)]
-struct Active {
-    items: Vec<u32>,
-    has: Wide,
-}
-
 impl Active {
     fn new(nfa: &SparseNfa) -> Self {
         Active {
@@ -405,7 +346,6 @@ impl Active {
         self.has.test(item as usize)
     }
 
-    /// Empty it, touching only what it holds.
     fn clear(&mut self) {
         for &i in &self.items {
             self.has.unset(i as usize);
@@ -413,7 +353,6 @@ impl Active {
         self.items.clear();
     }
 
-    /// Add a state or a position; `false` when it was there already.
     fn add(&mut self, item: u32) -> bool {
         if self.has(item) {
             return false;
@@ -429,13 +368,23 @@ impl Active {
 }
 
 impl SparseNfa {
+    #[inline]
+    fn accept(&self) -> u32 {
+        self.n
+    }
+
     fn glue(&self) -> &GlueNfa {
         self.glue
             .as_deref()
             .expect("a piece comes with the glue NFA")
     }
 
-    /// Adds node `s`'s entry state to `entries` if it is a piece.
+    /// Position `p`'s successor parts `from..to` (0 literals, 1
+    /// nullable, 2 the rest, 3 the end).
+    fn succ(&self, p: usize, from: usize, to: usize) -> &[u32] {
+        &self.succ[self.at[3 * p + from] as usize..self.at[3 * p + to] as usize]
+    }
+
     fn note_piece(&self, m: &SegmentMatcher, s: u32, entries: &mut Option<Wide>) {
         if let Elem::Piece(entry) = m.elems[s as usize] {
             entries
@@ -444,23 +393,11 @@ impl SparseNfa {
         }
     }
 
-    #[inline]
-    fn accept(&self) -> u32 {
-        self.n
-    }
-
-    /// Position `p`'s successors from part `from` to part `to` (0 the
-    /// literals, 1 the nullable ones, 2 the rest, 3 the end).
-    fn succ(&self, p: usize, from: usize, to: usize) -> &[u32] {
-        &self.succ[self.at[3 * p + from] as usize..self.at[3 * p + to] as usize]
-    }
-
     pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
         self.run(m, path).has(self.accept())
     }
 
     pub(super) fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
-        // The empty dir is the walk root: nothing consumed yet.
         let root = dir_path.is_empty();
         let (mut active, exact) = if root {
             (self.init(), m.is_match(dir_path))
@@ -470,20 +407,16 @@ impl SparseNfa {
             (active, exact)
         };
         let prefix = root || active.items.iter().any(|&i| self.reach1.test(i as usize));
-        // `dot=false` never covers a subtree: no wildcard matches the
-        // dot-led names below.
         let all = m.dot && prefix && self.covers_below(m, &mut active);
         DirMatch::new(exact, prefix, all)
     }
 
-    /// The start's closure.
     fn init(&self) -> Active {
         let mut active = Active::new(self);
         self.enter(self.n as usize, &mut active);
         active
     }
 
-    /// The active set after every segment of `path`.
     fn run(&self, m: &SegmentMatcher, path: &[u8]) -> Active {
         let mut active = self.init();
         let mut next = Active::new(self);
@@ -503,7 +436,7 @@ impl SparseNfa {
     fn step(&self, m: &SegmentMatcher, active: &Active, seg: &[u8], next: &mut Active) {
         next.clear();
         let absorb_ok = m.dot || seg.first() != Some(&b'.');
-        // The pieces' entries, matched together after the rest.
+        // The pieces' entries are matched together, after the rest.
         let mut entries = None;
         let mut consumes = |s: u32| match &m.elems[s as usize] {
             Elem::Lit(lit) => m.lit_eq(lit, seg),
@@ -525,7 +458,6 @@ impl SparseNfa {
                 continue;
             };
             let p = p as usize;
-            // Equal literals sit together, one binary search away.
             let lits = self.succ(p, 0, 1);
             let order = |s: u32| cmp_folded(m.elems[s as usize].as_lit(), seg, m.case_insensitive);
             let first = lits.partition_point(|&s| order(s).is_lt());
@@ -553,10 +485,8 @@ impl SparseNfa {
         self.enter(s as usize, next);
     }
 
-    /// Enter every successor of position `p`: the position itself
-    /// stands for them, and through a nullable one (`**/`) its
-    /// successors are entered too. The positions this adds are the
-    /// work list: each is expanded once, as the walk reaches it.
+    /// Enter position `p`, and through its nullable successors theirs;
+    /// the positions added are the work list.
     fn enter(&self, p: usize, next: &mut Active) {
         let base = self.n + 1;
         let mut i = next.items.len();
@@ -578,10 +508,8 @@ impl SparseNfa {
         }
     }
 
-    /// Does every path below the directory match? As `Nfa::covers_below`.
-    /// A piece takes a segment to the nodes the glue NFA reaches, so it
-    /// fires those its wildcards alone take every segment to
-    /// (`GlueNfa::any_exits`), as the whole segments through it would.
+    /// As `Nfa::covers_below`; a piece fires the exits the glue NFA
+    /// reaches through wildcards alone.
     fn covers_below(&self, m: &SegmentMatcher, active: &mut Active) -> bool {
         let mut next = Active::new(self);
         let accept = self.accept();
@@ -596,7 +524,6 @@ impl SparseNfa {
                     }
                     continue;
                 };
-                // Literals never take a wildcard-only segment.
                 for &s in self.succ(p as usize, 1, 3) {
                     if any_seg(s) {
                         self.fire(m, s, &mut next);

@@ -1,18 +1,7 @@
-//! In-segment mini NFA — the `WildKind::Generic` backend. A Thompson
-//! NFA over the in-segment nodes, simulated with a bit set: a `u64` for
-//! up to 64 states, a word slice beyond, so no in-segment pattern is
-//! too large. One state per node: a `*` takes any byte and stays, with
-//! an ε-edge out (an `Any` that is its own `next`).
-//!
-//! Every ε-edge of the NFA points to a later state (see
-//! `compile_node`), so one ascending sweep closes a set (`close`). A
-//! step ORs per-state closures while they fit `MAX_CLOSURE_BYTES`; past
-//! that (a dense set per state is quadratic in the states) it closes its
-//! set as it goes, so memory stays linear in the pattern.
-//!
-//! The glued pieces' NFA (`GlueNfa`) is built of the same states, by
-//! the same builder, and closed, stepped and measured by the same
-//! passes.
+//! The in-segment NFA (`WildKind::Generic`): a Thompson NFA over the
+//! segment's nodes, simulated with a bit set. Every ε-edge points to a
+//! later state, so one ascending sweep closes a set. The glue NFA of the
+//! pieces a brace cuts is built of the same states.
 
 use crate::parse::ast::Node;
 
@@ -22,9 +11,8 @@ use super::wild::{NEVER, Wild, WildKind};
 
 const UNSET: u32 = u32::MAX;
 
-/// The most the per-state closures may take, about 1,000 states. Up to
-/// there ORing dense closures is the faster step; past it, closing the
-/// set as the step goes wins and keeps memory linear.
+/// The most the per-state closures may take (about 1,000 states); past
+/// it a step closes its set as it goes, which keeps memory linear.
 const MAX_CLOSURE_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, Clone)]
@@ -33,23 +21,75 @@ pub(super) enum SegNfa {
     Wide(SegNfaImpl<Wide>),
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct SegNfaImpl<B: Bits> {
+    states: Box<[SegState]>,
+    init: B,
+    /// The entry closure of a protected leading `.`: `*`, `?` and negated
+    /// classes dropped, no `*` passed.
+    init_dot_blocked: B,
+    /// Per-state ε-closures; empty past `MAX_CLOSURE_BYTES`.
+    closures: Box<[B]>,
+    accept: usize,
+    words: usize,
+}
+
+#[derive(Debug, Clone)]
+enum SegState {
+    Byte(u8, u32),
+    Class(Box<ByteSet>, u32),
+    /// Takes any byte. A `?` moves to `.0`; a `*` is its own `.0` and
+    /// leaves by the ε-edge `.1`. One kind keeps the hot loop at three arms.
+    Any(u32, u32),
+    Split(u32, u32),
+    Jump(u32),
+    Match,
+    /// A glued piece's segment may end here, at graph node `.0`.
+    Exit(u32),
+}
+
+/// The lengths of the segments the wildcards alone take to a state: one
+/// bit each below 64, and every length from `tail` on (`u32::MAX`: none).
+/// Lengths past 63 below the tail are left out, which keeps out lengths
+/// only.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Lengths {
+    low: u64,
+    tail: u32,
+}
+
+/// The pieces of the segments a brace cuts, as one NFA: a piece's states,
+/// then a fan of ε-edges to the pieces glued after it and an `Exit` where
+/// its segment may end. A piece is glued only to later ones, so every
+/// ε-edge still points to a later state.
+#[derive(Debug, Clone)]
+pub(super) struct GlueNfa {
+    states: Box<[SegState]>,
+    closures: Box<[Wide]>,
+    words: usize,
+    /// Per graph node, the range of its states.
+    spans: Box<[(u32, u32)]>,
+}
+
+struct SegBuilder {
+    states: Vec<SegState>,
+    tails: Vec<u32>,
+    ci: bool,
+}
+
 impl SegNfa {
-    /// The segment as a `Wild` over its NFA, with what the graph reads
-    /// off it: one that accepts nothing gets `NEVER`, and it is
-    /// dot-protected when nothing that may take a protected leading `.`
-    /// (a literal `.`, a positive class listing it) can start a match.
     pub(super) fn wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
-        let mut b = SegBuilder {
+        let mut builder = SegBuilder {
             states: Vec::with_capacity(16),
             tails: Vec::new(),
             ci,
         };
-        let entry = b.compile_nodes(nodes.iter().copied()) as usize;
-        let accept = b.alloc(SegState::Match);
-        for t in std::mem::take(&mut b.tails) {
-            b.patch(t, accept);
+        let entry = builder.compile_nodes(nodes.iter().copied()) as usize;
+        let accept = builder.alloc(SegState::Match);
+        for t in std::mem::take(&mut builder.tails) {
+            builder.patch(t, accept);
         }
-        let states = b.states.into_boxed_slice();
+        let states = builder.states.into_boxed_slice();
         if states.len() <= 64 {
             Self::build(states, entry, dot, SegNfa::Small)
         } else {
@@ -77,20 +117,15 @@ impl SegNfa {
             set
         };
         let init = entry_set(false);
-        // Under `dot` a leading `.` needs no protection, so the blocked
-        // closure is just `init`.
         let init_dot_blocked = if dot { init.clone() } else { entry_set(true) };
-
-        // Can any state of the protected entry set consume a leading
-        // `.`? If not, a dot-led segment can never match under
-        // dot=false and the whole matcher is protected.
+        // The segment is dot-protected when nothing can take a protected
+        // leading `.` by name.
         let mut can_lit_dot = false;
         init_dot_blocked.for_each(|s| match &states[s] {
             SegState::Byte(x, _) => can_lit_dot |= *x == b'.',
             SegState::Class(cls, _) => can_lit_dot |= cls.has(b'.'),
             _ => {}
         });
-
         let satisfiable = satisfiable::<B>(&states, entry, words);
         let nfa = SegNfaImpl {
             states,
@@ -117,51 +152,10 @@ impl SegNfa {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct SegNfaImpl<B: Bits> {
-    states: Box<[SegState]>,
-    /// ε-closure of the entry (used for all non-dot-led segments, and
-    /// for the EOF/empty-segment accept).
-    init: B,
-    /// Entry ε-closure for a protected leading `.`: the consumers that
-    /// refuse that `.` (`*`, `?`, negated classes) dropped, and no `*`
-    /// passed.
-    init_dot_blocked: B,
-    /// Per-state ε-closure (positions ≥ 1 are never segment starts, so
-    /// nothing is blocked); empty past `MAX_CLOSURE_BYTES`, where a step
-    /// closes its set itself.
-    closures: Box<[B]>,
-    accept: usize,
-    words: usize,
-}
-
-#[derive(Debug, Clone)]
-enum SegState {
-    /// byte, next
-    Byte(u8, u32),
-    /// class, next
-    Class(Box<ByteSet>, u32),
-    /// next, exit — takes any byte (segments contain no separators, so
-    /// "any byte" ≡ "any non-separator byte" here). A `?` moves to
-    /// `next` and has no `exit`; a `*` is its own `next`, so it stays,
-    /// and leaves by the ε-edge `exit`. One kind for both keeps the hot
-    /// loop at three arms.
-    Any(u32, u32),
-    Split(u32, u32),
-    Jump(u32),
-    Match,
-    /// A glued piece's segment may end here, at graph node `.0` (see
-    /// `GlueNfa`): kept in a set as `Match` is.
-    Exit(u32),
-}
-
 impl<B: Bits> SegNfaImpl<B> {
     #[inline]
     fn matches(&self, seg: &[u8]) -> bool {
-        // Under dot=true the blocked closure equals `init`, so the compile
-        // already collapsed the dot decision into which set this picks.
-        let protected_start = seg.first() == Some(&b'.');
-        let active = if protected_start {
+        let active = if seg.first() == Some(&b'.') {
             self.init_dot_blocked.clone()
         } else {
             self.init.clone()
@@ -169,26 +163,13 @@ impl<B: Bits> SegNfaImpl<B> {
         run(&self.states, &self.closures, active, seg, self.words).test(self.accept)
     }
 
-    /// Do the wildcards alone take every non-empty segment (`match_dir`'s
-    /// all-below)?
+    /// Do the wildcards alone take every non-empty segment?
     fn any_seg(&self) -> bool {
-        // Most segments start with a literal or a class: none.
         let mut any = false;
         self.init
             .for_each(|s| any |= matches!(self.states[s], SegState::Any(..)));
         any && wild_lengths(&self.states, &self.init)[self.accept].all_nonempty()
     }
-}
-
-/// The lengths of the segments the wildcards alone take to a state:
-/// each length below 64 one bit, and `tail`, from which on every length
-/// is (`u32::MAX`: none known). Lengths past 63 below the tail are left
-/// out, which keeps out lengths only: a run of 70 `?` beside a `*` is
-/// not told to take every length.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Lengths {
-    low: u64,
-    tail: u32,
 }
 
 impl Lengths {
@@ -210,7 +191,7 @@ impl Lengths {
         }
     }
 
-    /// As many more as a star takes: every length from the least on.
+    /// Every length from the least on.
     fn star(self) -> Lengths {
         let least = if self.low == 0 {
             self.tail
@@ -223,8 +204,6 @@ impl Lengths {
         }
     }
 
-    /// Every non-empty length: 1 to 63 one by one, and every longer one
-    /// through the tail.
     fn all_nonempty(self) -> bool {
         let run = if self.tail < 64 {
             u64::MAX << self.tail
@@ -235,10 +214,8 @@ impl Lengths {
     }
 }
 
-/// The lengths of the segments the wildcards alone take from the states
-/// in `entry` to each state, in one pass in state order: every edge but
-/// a star's loop onto itself points to a later state, so a state's are
-/// all in when it is reached.
+/// The lengths from the states in `entry` to each state, in one pass in
+/// state order: every edge but a star's loop points to a later state.
 fn wild_lengths<B: Bits>(states: &[SegState], entry: &B) -> Vec<Lengths> {
     let mut at = vec![Lengths::NONE; states.len()];
     entry.for_each(|s| at[s].low |= 1);
@@ -250,13 +227,12 @@ fn wild_lengths<B: Bits>(states: &[SegState], entry: &B) -> Vec<Lengths> {
         let (a, b, by) = match states[s] {
             SegState::Split(a, b) => (a, b, here),
             SegState::Jump(t) => (t, UNSET, here),
-            // A `*` stays, then leaves.
-            SegState::Any(nx, exit) if nx as usize == s => {
+            SegState::Any(next, exit) if next as usize == s => {
                 here = here.star();
                 at[s] = here;
                 (exit, UNSET, here)
             }
-            SegState::Any(nx, _) => (nx, UNSET, here.shift()),
+            SegState::Any(next, _) => (next, UNSET, here.shift()),
             _ => continue,
         };
         for t in [a, b] {
@@ -268,9 +244,7 @@ fn wild_lengths<B: Bits>(states: &[SegState], entry: &B) -> Vec<Lengths> {
     at
 }
 
-/// Can the entry reach `Match` through consumers some byte fires? Every
-/// edge but a star's loop onto itself points to a later state, so one
-/// ascending sweep finds all the entry reaches.
+/// Can the entry reach `Match` through consumers some byte fires?
 fn satisfiable<B: Bits>(states: &[SegState], entry: usize, words: usize) -> bool {
     let mut reach = B::zero(words);
     reach.set(entry);
@@ -293,12 +267,9 @@ fn satisfiable<B: Bits>(states: &[SegState], entry: usize, words: usize) -> bool
     false
 }
 
-/// Close `set` under ε-edges, keeping only consumers and `Match`. Every
-/// ε-edge points to a later state, so one ascending sweep sees each
-/// state after all that reach it; the word being swept stays in a
-/// register, where most edges land. `block` builds the entry set of a
-/// protected leading `.`: the consumers that refuse that `.` (`*`, `?`,
-/// negated classes) are dropped, and no `*` is passed.
+/// Close `set` under ε-edges, keeping consumers, `Match` and `Exit`. The
+/// word being swept stays in a register, where most edges land. `block`:
+/// the entry set of a protected leading `.`.
 fn close<B: Bits>(states: &[SegState], set: &mut B, block: bool) {
     let words = set.words_mut();
     for w in 0..words.len() {
@@ -308,13 +279,10 @@ fn close<B: Bits>(states: &[SegState], set: &mut B, block: bool) {
             let bit = todo.isolate_lowest_one();
             todo ^= bit;
             let s = w * 64 + bit.trailing_zeros() as usize;
-            // The ε-targets, and whether the state stays (a `*` is a
-            // consumer with a way out).
             let (a, b, stays) = match &states[s] {
                 SegState::Split(a, b) => (*a, *b, false),
                 SegState::Jump(t) => (*t, UNSET, false),
                 SegState::Any(..) if block => (UNSET, UNSET, false),
-                // A `*` stays and leaves.
                 SegState::Any(_, exit) if *exit != UNSET => (*exit, UNSET, true),
                 SegState::Class(cls, _) if block && cls.negated => (UNSET, UNSET, false),
                 SegState::Byte(..)
@@ -345,10 +313,8 @@ fn close<B: Bits>(states: &[SegState], set: &mut B, block: bool) {
     }
 }
 
-/// `active` after every byte of `seg`, or empty once nothing is left:
-/// one OR of a kept closure per consumer that fires, or without kept
-/// closures (`closures` empty) the consumers move and `close` adds what
-/// their targets reach. Forced inline, one loop per way: it is the
+/// `active` after every byte of `seg`: through the kept closures, or
+/// closing each step's set when there are none. Forced inline: it is the
 /// in-segment NFAs' whole inner loop.
 #[inline(always)]
 fn run<B: Bits>(states: &[SegState], closures: &[B], mut active: B, seg: &[u8], words: usize) -> B {
@@ -386,12 +352,10 @@ fn run<B: Bits>(states: &[SegState], closures: &[B], mut active: B, seg: &[u8], 
     active
 }
 
-/// Each state's ε-closure, in one backward pass: every ε-edge points to
-/// a later state, whose closure is done (a `*` stays in its own).
+/// Each state's ε-closure, in one backward pass.
 fn closures<B: Bits>(states: &[SegState], words: usize) -> Box<[B]> {
     let n = states.len();
-    // Filled back to front: state `t` sits at `n - 1 - t` until the
-    // final reverse.
+    // State `t` sits at `n - 1 - t` until the final reverse.
     let mut out: Vec<B> = Vec::with_capacity(n);
     for s in (0..n).rev() {
         let done = |t: u32| &out[n - 1 - t as usize];
@@ -419,31 +383,9 @@ fn closures<B: Bits>(states: &[SegState], words: usize) -> Box<[B]> {
     out.into_boxed_slice()
 }
 
-/// The pieces of every segment a separator-crossing brace cuts (see
-/// `graph.rs`), as one NFA of the same states. A piece is its nodes'
-/// states, then a fan of ε-edges: one to each piece glued after it,
-/// and an `Exit` when its segment may end there. A join among pieces
-/// is the fan alone. A segment is matched from the entry states of the
-/// pieces the graph NFA holds, all at once, and the exits it reaches
-/// are where the graph NFA goes on. Nodes are laid out in graph order,
-/// and a piece is glued only to later ones, so every ε-edge still
-/// points to a later state.
-#[derive(Debug, Clone)]
-pub(super) struct GlueNfa {
-    states: Box<[SegState]>,
-    /// Per-state ε-closures while they fit `MAX_CLOSURE_BYTES`, as in
-    /// `SegNfaImpl`.
-    closures: Box<[Wide]>,
-    words: usize,
-    /// Per graph node, the range of its states (empty outside the
-    /// pieces).
-    spans: Box<[(u32, u32)]>,
-}
-
 impl GlueNfa {
-    /// The NFA of the nodes that are glued to their predecessors
-    /// (`glued`) or have a successor glued to them, each of which becomes
-    /// an `Elem::Piece`. `pieces` holds a wildcard node's nodes.
+    /// Of the nodes glued to their predecessors or with a successor glued
+    /// to them, each of which becomes an `Elem::Piece`.
     pub(super) fn new(
         elems: &mut [Elem],
         edges: &Edges,
@@ -453,7 +395,7 @@ impl GlueNfa {
     ) -> Self {
         let n = elems.len();
         let glued_to = |t: u32| t != ACCEPT && glued[t as usize];
-        let mut b = SegBuilder {
+        let mut builder = SegBuilder {
             states: Vec::new(),
             tails: Vec::new(),
             ci,
@@ -466,7 +408,7 @@ impl GlueNfa {
             if !glued[i] && !succ.iter().any(|&t| glued_to(t)) {
                 continue;
             }
-            let first = b.states.len() as u32;
+            let first = builder.states.len() as u32;
             let (lit, one);
             let nodes: &[&Node] = match &elems[i] {
                 Elem::Lit(bytes) => {
@@ -475,29 +417,28 @@ impl GlueNfa {
                     &one
                 }
                 Elem::Wild(_) => &pieces[i],
-                // A join is the fan alone.
                 Elem::Join => &[],
                 _ => unreachable!("a globstar is never glued"),
             };
-            let entry = b.compile_nodes(nodes.iter().copied());
+            let entry = builder.compile_nodes(nodes.iter().copied());
             for s in std::mem::take(&mut waiting[i]) {
-                b.patch(s, entry);
+                builder.patch(s, entry);
             }
-            let tails = std::mem::take(&mut b.tails);
+            let tails = std::mem::take(&mut builder.tails);
             let exit = succ.iter().any(|&t| !glued_to(t));
             let glues = succ.iter().filter(|&&t| glued_to(t));
             let ways = usize::from(exit) + glues.clone().count();
             // Split `k` takes leaf `k` or the rest, as a brace's do.
-            let fan = b.states.len();
+            let fan = builder.states.len();
             for _ in 1..ways {
-                b.alloc(SegState::Split(UNSET, UNSET));
+                builder.alloc(SegState::Split(UNSET, UNSET));
             }
             let mut leaves = Vec::with_capacity(ways);
             if exit {
-                leaves.push(b.alloc(SegState::Exit(i as u32)));
+                leaves.push(builder.alloc(SegState::Exit(i as u32)));
             }
             for &t in glues {
-                let s = b.alloc(SegState::Jump(UNSET));
+                let s = builder.alloc(SegState::Jump(UNSET));
                 waiting[t as usize].push(s);
                 leaves.push(s);
             }
@@ -507,16 +448,16 @@ impl GlueNfa {
                 } else {
                     leaves[k + 1]
                 };
-                b.states[fan + k] = SegState::Split(leaves[k], rest);
+                builder.states[fan + k] = SegState::Split(leaves[k], rest);
             }
             let fan_entry = if ways > 1 { fan as u32 } else { leaves[0] };
             for t in tails {
-                b.patch(t, fan_entry);
+                builder.patch(t, fan_entry);
             }
-            spans[i] = (first, b.states.len() as u32);
+            spans[i] = (first, builder.states.len() as u32);
             elems[i] = Elem::Piece(if glued[i] { INNER } else { entry });
         }
-        let states = b.states.into_boxed_slice();
+        let states = builder.states.into_boxed_slice();
         let words = Wide::words(states.len());
         let closures = if states.len() * words * 8 <= MAX_CLOSURE_BYTES {
             closures(&states, words)
@@ -531,14 +472,12 @@ impl GlueNfa {
         }
     }
 
-    /// An empty set of its states.
     pub(super) fn set(&self) -> Wide {
         Wide::zero(self.words)
     }
 
-    /// Calls `exit` with each node whose piece ends a match of `seg`
-    /// begun at the entry states in `active`. A protected leading `.`
-    /// (`dot` off) is taken only by name, as in `SegNfaImpl`.
+    /// Calls `exit` with each node whose piece ends a match of `seg` from
+    /// the entry states in `active`.
     pub(super) fn exits(
         &self,
         mut active: Wide,
@@ -558,12 +497,8 @@ impl GlueNfa {
         });
     }
 
-    /// Calls `exit` with each node a piece of which the wildcards alone,
-    /// from the entry states in `entries`, end every non-empty segment
-    /// at (dot=true), as `SegNfaImpl::any_seg` reads a whole segment. A
-    /// segment of a length reaches the nodes it does for every segment
-    /// of it, so a node stands for all the segments between these
-    /// entries and it, as a whole segment does.
+    /// Calls `exit` with each node at which the wildcards alone, from the
+    /// entry states in `entries`, end every non-empty segment.
     pub(super) fn any_exits(&self, entries: &Wide, mut exit: impl FnMut(usize)) {
         let at = wild_lengths(&self.states, entries);
         for (state, lengths) in self.states.iter().zip(at) {
@@ -575,11 +510,9 @@ impl GlueNfa {
         }
     }
 
-    /// The states of `node` from which some segment reaches an exit
-    /// that `good` holds for (`node`'s own when `exit_on`), added to
-    /// `good`; whether its entry is one. Called for each node from the
-    /// last back: every edge leads to a later state, so what a state
-    /// leads to is known when it is reached.
+    /// Adds to `good` the states of `node` from which some segment
+    /// reaches an exit in `good` (`node`'s own when `exit_on`); whether
+    /// its entry is one. Called from the last node back.
     pub(super) fn reach(&self, node: usize, exit_on: bool, good: &mut Wide) -> bool {
         let (lo, hi) = self.spans[node];
         for s in (lo as usize..hi as usize).rev() {
@@ -599,12 +532,6 @@ impl GlueNfa {
     }
 }
 
-struct SegBuilder {
-    states: Vec<SegState>,
-    tails: Vec<u32>,
-    ci: bool,
-}
-
 impl SegBuilder {
     fn alloc(&mut self, s: SegState) -> u32 {
         self.states.push(s);
@@ -620,8 +547,6 @@ impl SegBuilder {
             | SegState::Class(_, n)
             | SegState::Any(n, _)
             | SegState::Jump(n) => *n = target,
-            // A Split is never a dangling tail: a brace returns its
-            // branches' leaf tails.
             SegState::Split(..) | SegState::Match | SegState::Exit(_) => unreachable!(),
         }
     }
@@ -630,13 +555,13 @@ impl SegBuilder {
         let mut entry: Option<u32> = None;
         let mut pending: Vec<u32> = Vec::new();
         for node in nodes {
-            let (op_entry, mut op_tails) = self.compile_node(node);
+            let (node_entry, mut node_tails) = self.compile_node(node);
             for t in pending.drain(..) {
-                self.patch(t, op_entry);
+                self.patch(t, node_entry);
             }
-            pending.append(&mut op_tails);
+            pending.append(&mut node_tails);
             if entry.is_none() {
-                entry = Some(op_entry);
+                entry = Some(node_entry);
             }
         }
         self.tails.append(&mut pending);
@@ -670,7 +595,6 @@ impl SegBuilder {
                 (s, vec![s])
             }
             Node::Star => {
-                // Its own `next`; the exit is patched in later.
                 let s = self.states.len() as u32;
                 self.alloc(SegState::Any(s, UNSET));
                 (s, vec![s])
@@ -678,21 +602,18 @@ impl SegBuilder {
             Node::Brace(branches) => {
                 debug_assert!(!branches.is_empty());
                 // The splits come before the branches, so every ε-edge
-                // points to a later state (`close` and `closures` rely on it).
+                // points to a later state.
                 let first = self.states.len();
                 for _ in 1..branches.len() {
                     self.alloc(SegState::Split(UNSET, UNSET));
                 }
-                // `self.tails` is empty here (every caller drains it),
-                // so the branch tails can be collected straight out of it.
                 let mut entries = Vec::with_capacity(branches.len());
                 let mut tails: Vec<u32> = Vec::new();
                 for branch in branches {
                     entries.push(self.compile_nodes(branch.seq().iter()));
                     tails.append(&mut self.tails);
                 }
-                // Split `i` picks branch `i` or the rest: the next split,
-                // or the last branch.
+                // Split `i` picks branch `i` or the rest.
                 let last = entries.len() - 1;
                 for i in 0..last {
                     let rest = if i + 1 < last {
@@ -704,8 +625,6 @@ impl SegBuilder {
                 }
                 (if last == 0 { entries[0] } else { first as u32 }, tails)
             }
-            // Separator-crossing nodes never appear inside a segment, and
-            // a sequence is walked as its nodes.
             _ => unreachable!("separator-crossing node inside a segment"),
         }
     }
@@ -714,7 +633,6 @@ impl SegBuilder {
         if !(self.ci && b.is_ascii_alphabetic()) {
             return self.alloc(SegState::Byte(b, UNSET));
         }
-        // Case-insensitively a letter is the class of its two cases.
         let mut set = ByteSet {
             bits: [0; 4],
             negated: false,
@@ -730,9 +648,6 @@ mod tests {
     use super::SegNfa;
     use crate::parse::ast::Node;
 
-    // Whether the wildcards alone take every non-empty segment is found
-    // in one pass over the states, as stepping them a byte at a time
-    // would find it.
     #[test]
     fn any_seg_is_found_in_one_pass() {
         let any_seg = |pattern: &str| {
@@ -750,8 +665,8 @@ mod tests {
         assert!(any_seg("{?,??*}"));
         assert!(!any_seg("{?,???*}"));
         assert!(!any_seg("{?,??*}a"));
-        // A run that a star's lengths join below 64 goes on for good;
-        // one they join past 63 is not told.
+        // A run a star's lengths join below 64 goes on for good; one they
+        // join past 63 is not told.
         let joined = |stars: usize| format!("{{{},{}*}}", run("{?,}", 80), run("?", stars));
         assert!(any_seg(&joined(60)));
         assert!(!any_seg(&joined(70)));

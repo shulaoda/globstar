@@ -1,28 +1,7 @@
-// AST → the segment graph. JS twin of `crates/globstar/src/engine/
-// segment/graph.rs`.
-//
-// The walk keeps one *group* per distinct (boundary, partial segment)
-// reaching a point of the pattern, so a brace whose branches end at a
-// `/` costs one node per branch and the continuation is shared;
-// nothing is multiplied out.
-//
-// A segment a separator-crossing brace's edge falls inside (`x{a/,b}y`
-// reads the segments `xa` and `xby`) is copied into each branch, and what
-// follows the brace onto each segment the branches leave open, while the
-// copies weigh no more than the pattern (COPY_PER_WEIGHT). Past that a
-// segment is cut into *pieces* at the edge: `x`, `a`, `b` and `y`, the
-// pieces after `x` *glued* to it and `y` to `b`, and a piece is never
-// copied. So the walk makes every node, edge and token a bounded number
-// of times, whatever the braces: the graph is linear in the pattern, and
-// every pattern the parser accepts compiles. The glued pieces are matched
-// together by one in-segment NFA (`GlueNfa`).
-//
-// A `**` is a globstar where a boundary is on both sides and a star
-// elsewhere, in each brace expansion on its own (GLOB_SPEC §9.1): the walk
-// reads it per group, as the expansions reach it.
-//
-// The graph's elements come first: the vocabulary the compiler, the
-// matcher and the executor share.
+// AST → the segment graph. One walk keeps a group per distinct (boundary,
+// partial segment) reaching a point of the pattern, so a brace adds nodes
+// per branch, never a product; past the copy room the segments a brace
+// cuts become glued pieces (theory 03, §3).
 
 import {
   brace,
@@ -42,121 +21,85 @@ import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild } from "./wild.j
 import { GlueNfa } from "./seg-nfa.js";
 import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain-index.js";
 
-// ── the elements ────────────────────────────────────────────────────
-
-// Element kinds.
 export const EL_LIT = 0;
 export const EL_WILD = 1;
+// Zero or more segments, empty ones too.
 export const EL_G0 = 2;
+// One or more segments: a trailing `/**`.
 export const EL_G1 = 3;
-// Takes no segment: it stands for its successors, which the tails of a
-// group share through it instead of an edge from each (see `graph.js`).
+// Takes no segment; stands for its successors.
 export const EL_JOIN = 4;
-// A piece of a segment a brace cuts, or a join among pieces: the glue NFA
-// matches it with the pieces glued to it (see `GlueNfa`). Its `entry` is
-// its entry state there when a segment may start in it, else INNER.
+// A piece of a segment a brace cuts: its `entry` is its entry state in the
+// glue NFA, or INNER when no segment starts in it.
 export const EL_PIECE = 5;
 
-// The entry of a piece no segment starts in.
 export const INNER = -1;
 
+// The successor that ends the pattern.
+export const ACCEPT = -1;
+// The predecessor of the first nodes.
+const START = -2;
+
+// What the last node left behind: the pattern start, a separator or a
+// `**/`, or a segment a crossing brace cut (what follows glues to the
+// pieces).
+const B_START = 0;
+const B_SEP = 1;
+const B_GLUE = 2;
+
+// Copies a crossing brace may make: this much per unit of pattern weight,
+// at least MIN_COPY_ROOM; past it, segments are cut into pieces.
+const COPY_PER_WEIGHT = 1;
+const MIN_COPY_ROOM = 1 << 14;
+
+// Groups past this many are found by a key of each node's kind (and a
+// literal's bytes), and by a key of whole nodes once more than this many
+// share one.
+const LINEAR_GROUPS = 16;
+
+// Reusable nodes past this many are found by key.
+const LINEAR_NODES = 16;
+
 export const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
-// Absorbs zero segments too.
 export const elemNullable = (e) => e.kind === EL_G0 || e.kind === EL_JOIN;
 
-// Can the element take some segment? (A piece's answer is the glue
-// NFA's, `GlueNfa.reach`.)
+// Can it take some segment? A piece's answer is the glue NFA's.
 export const elemSatisfiable = (e) =>
   e.kind === EL_WILD ? e.wild.minLen !== NEVER_LEN : e.kind !== EL_JOIN && e.kind !== EL_PIECE;
-// Takes every non-empty segment (`matchDir`'s all-below).
 export const elemAnySeg = (e) =>
   e.kind === EL_WILD ? e.wild.anySeg : e.kind === EL_G0 || e.kind === EL_G1;
 
-// `a` copied to its length. V8 grows an array that `push` fills by half
-// again plus 16 slots and never gives the room back; a matcher keeps its
-// arrays as long as it lives, so the ones it stores are copied once.
+// A copy at its length: V8 grows an array `push` fills by half again and
+// never gives the room back.
 export function exact(a) {
   return a.slice();
 }
 
-// Successor marker for "the pattern ends here".
-export const ACCEPT = -1;
-// Tail marker for "the graph start".
-const START = -2;
-
-// What the last node left behind for the next element.
-const B_START = 0; // pattern start
-const B_SEP = 1; // after a separator or a `**/`
-// Inside a segment a crossing brace cut: the tails are its pieces so far,
-// and what follows glues to them.
-const B_GLUE = 2;
-
 function makeElem(kind, litStr, wild) {
   return { kind, litStr: litStr === null ? null : flat(litStr), wild };
 }
-// A globstar element holds nothing of its own: every node of a kind
-// shares one.
 const G0_ELEM = makeElem(EL_G0, null, null);
 const G1_ELEM = makeElem(EL_G1, null, null);
 const JOIN_ELEM = makeElem(EL_JOIN, null, null);
 
-// Each crossing brace's in-segment branches as one choice, in place:
-// `{a,b,/}` walks as `{{a,b},/}`, the choice one piece, not one per
-// branch.
-function regroup(node) {
-  if (node.tag === N_CONCAT) node.children.forEach(regroup);
-  if (node.tag !== N_BRACE || !node.branches.some(crosses)) return;
-  node.branches.forEach(regroup);
-  // The choice takes the first in-segment branch's place.
-  const at = node.branches.findIndex((b) => !crosses(b));
-  if (at === -1) return;
-  const within = node.branches.filter((b) => !crosses(b));
-  node.branches = node.branches.filter(crosses);
-  node.branches.splice(at, 0, within.length === 1 ? within[0] : brace(within));
-}
-
-// Does the node hold a segment boundary?
-function crosses(node) {
-  switch (node.tag) {
-    case N_SEPARATOR:
-    case N_GLOBSTAR:
-      return true;
-    case N_BRACE:
-      return node.branches.some(crosses);
-    case N_CONCAT:
-      return node.children.some(crosses);
-    default:
-      return false;
-  }
-}
-
-// ── the graph ───────────────────────────────────────────────────────
-
-// The graph as the walk leaves it. A pattern without a
-// separator-crossing brace is one path, emitted in order: its edges
-// and start are implied and never stored. The walk regroups the pattern
-// in place (`regroup`), so what needs it as written reads it first.
+// Regroups `body` in place: read it as written first.
 export function buildGraph(body, dot, ci) {
   const nodes = seq(body);
   const { linear, weight, paths } = survey(nodes);
-  // Only a separator-crossing brace can need regrouping.
   if (!linear) regroup(body);
-  const b = new Builder(dot, ci, linear, weight);
-  // Only a union of more paths than LINEAR_CHAINS indexes them.
+  const builder = new Builder(dot, ci, linear, weight);
+  // Only a union the chain index may file reads its segments' keys.
   if (paths > LINEAR_CHAINS) {
-    b.keys = [];
-    b.keyRoom = keyRoom(weight);
+    builder.keys = [];
+    builder.keyRoom = keyRoom(weight);
   }
-  for (const g of b.walk(nodes, [firstGroup()])) b.end(g);
-  return b.finish(weight);
+  for (const g of builder.walk(nodes, [firstGroup()])) builder.end(g);
+  return builder.finish(weight);
 }
 
-// What the walk needs to know about the pattern before it starts: its
-// separators and globstars, inside braces too (`boundaries`), whether it
-// is one path (`linear`: no brace holds a boundary, nor may leave a `**`
-// beside one), its `nodeWeight`, and at least as many as the paths
-// through the graph (a crossing brace adds its branches', a sequence
-// multiplies its nodes').
+// `boundaries`: separators and globstars, inside braces too. `linear`: no
+// brace holds a boundary or may leave a `**` beside one. `paths`: an upper
+// bound on the paths through the graph.
 function survey(nodes) {
   const out = { boundaries: 0, linear: true, weight: 0, paths: 1 };
   for (let i = 0; i < nodes.length; i++) {
@@ -170,11 +113,10 @@ function survey(nodes) {
       out.weight += nodeWeight(node);
       continue;
     }
-    // A brace that may be empty beside a `**` makes it a globstar in
-    // some expansions and a star in others: two paths (`{a,}**`).
+    // A brace that may be empty beside a `**` makes it a globstar in some
+    // expansions and a star in others.
     const nextTo = nodes[i + 1]?.tag === N_GLOBSTAR || nodes[i - 1]?.tag === N_GLOBSTAR;
     if (nextTo && nullable(node)) out.linear = false;
-    // A brace crosses iff its branches hold a boundary.
     const before = out.boundaries;
     let branchPaths = 0;
     out.weight++;
@@ -192,9 +134,8 @@ function survey(nodes) {
   return out;
 }
 
-// What a node weighs: a literal its length, a class one plus its ranges,
-// a brace one plus its branches (an empty one too), anything else one.
-// The size bounds that pick a representation scale with it.
+// A literal weighs its length, a class one plus its ranges, a brace one
+// plus its branches (an empty one too), anything else one.
 export function nodeWeight(node) {
   if (node.tag === N_LITERAL) return node.str.length;
   if (node.tag === N_CLASS) return 1 + node.ranges.length;
@@ -208,44 +149,24 @@ export function nodeWeight(node) {
   return w;
 }
 
-// The room for copies: a segment a crossing brace's edge falls inside is
-// copied into its branches, and text after the brace onto each segment
-// they leave open (`src/{a/x,b/y}.ts`), while all the copies weigh at
-// most this much per unit of pattern weight, never less than
-// MIN_COPY_ROOM. Past that the segments are cut into pieces, which copy
-// nothing, so the graph stays linear in the pattern. Copies keep a
-// pattern's segments whole, as written, and so its chains and literal
-// sets; pieces are for braces whose segments multiply.
-const COPY_PER_WEIGHT = 1;
-const MIN_COPY_ROOM = 1 << 14;
-
-// Paths under construction that agree on everything still to come:
-// the nodes awaiting a successor, the boundary just crossed, the
-// in-segment nodes read since, and:
-// - `pendingGlobstar`: a `**/` read but not yet emitted (a bare `**`
-//   right after it absorbs it, `x/**/**` ≡ `x/**`; anything else makes
-//   it real; more of them add nothing, `**/**/` ≡ `**/`). While set,
-//   `state` is the boundary before it and `buf` is empty.
-// - `doubleStar`: a `**` read at a boundary, `buf` empty: a globstar if a
-//   `/` or the end of the pattern comes next, a star otherwise (§9.1).
-//   The next token decides, in each branch it may be in.
-// - `shadow`: the group stands only for the empty expansions of the
-//   in-segment braces read since the boundary, which leave a `**` next to
-//   it (`{a,}**`, `**{,a}/`). The group that read the braces covers every
-//   other reading, the `**` as a star too, so this one lives only while
-//   the `**` may yet be a globstar, and goes on as a group of its own
-//   once a `/` or the end makes it one.
+// Paths under construction that agree on everything still to come.
+// `pendingGlobstar`: a `**/` read but not emitted; a bare `**` right after
+// it absorbs it (`x/**/**` ≡ `x/**`). While set, `buf` is empty.
+// `doubleStar`: a `**` read at a boundary, a globstar if a `/` or the end
+// comes next, a star otherwise. `shadow`: stands for the empty expansions
+// of the in-segment braces read since the boundary, which leave a `**`
+// beside it (`{a,}**`): lives while the `**` may yet be a globstar, and
+// goes on alone once it is.
 function makeGroup(tails, state, buf, pendingGlobstar, doubleStar, shadow) {
   return { tails, state, buf, pendingGlobstar, doubleStar, shadow };
 }
 const firstGroup = () => makeGroup([START], B_START, [], false, false, false);
 const forkGroup = (g) =>
   makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingGlobstar, g.doubleStar, g.shadow);
-// Inside a segment: a `**` is a star here.
+
+// Inside a segment, where a `**` is a star.
 const within = (g) => g.state === B_GLUE || g.buf.length > 0;
 
-// Drop repeated tails, which merges and reused nodes add; their order
-// means nothing (successors are listed by node).
 function dedupeTails(g) {
   if (g.tails.length < 2) return;
   g.tails.sort((a, b) => a - b);
@@ -256,7 +177,6 @@ function dedupeTails(g) {
   g.tails.length = n;
 }
 
-// Continue as the one group after `id`, reusing the vectors.
 function rebase(g, id, state) {
   g.tails.length = 0;
   g.tails.push(id);
@@ -283,19 +203,10 @@ function nodeEqual(a, b) {
 
 const nodesEqual = (a, b) => a.length === b.length && a.every((n, i) => nodeEqual(n, b[i]));
 
-// Classes equal by content, as Rust's derived `==` compares them.
 function classEqual(a, b) {
   if (a.neg !== b.neg || a.ranges.length !== b.ranges.length) return false;
   return a.ranges.every((x, i) => x.lo === b.ranges[i].lo && x.hi === b.ranges[i].hi);
 }
-
-// Groups joined when they agree on boundary, pending `**`, and partial
-// segment: their continuations are the same nodes. A union leaves a
-// group per member, so past LINEAR_GROUPS they are found by a key of
-// each node's kind (and a literal's bytes), and by a key of whole nodes
-// once more than LINEAR_GROUPS groups apart share one (members apart
-// only inside a class or a brace).
-const LINEAR_GROUPS = 16;
 
 const agrees = (o, g) =>
   o.state === g.state &&
@@ -307,22 +218,21 @@ const agrees = (o, g) =>
 const flagsKey = (g) =>
   `${g.state},${g.pendingGlobstar ? 1 : 0}${g.doubleStar ? 1 : 0}${g.shadow ? 1 : 0}`;
 
+// Each node by kind, a literal by its bytes too.
 function groupKey(g) {
   let key = flagsKey(g);
   for (const n of g.buf) key += n.tag === N_LITERAL ? `|${n.str}` : `|#${n.tag}`;
   return key;
 }
 
-// The same over all of each node.
 function wholeKey(g) {
   let key = flagsKey(g);
   for (const n of g.buf) key += nodeKey(n);
   return key;
 }
 
-// A node's content, written so that no two share a key: a literal
-// length first, a class its ranges, a brace or sequence its count and
-// then each part.
+// A node's content, so that no two share a key: a literal's length first,
+// a class its ranges, a brace or sequence its count and then each part.
 function nodeKey(n) {
   switch (n.tag) {
     case N_LITERAL:
@@ -338,96 +248,84 @@ function nodeKey(n) {
   }
 }
 
-const keyOf = (out, g) => (out.whole ? wholeKey(g) : groupKey(g));
+// Groups that agree, merged.
+const mergedGroups = () => ({ groups: [], index: null, whole: false });
 
-const merged = () => ({ groups: [], index: null, whole: false });
+const keyOf = (merged, g) => (merged.whole ? wholeKey(g) : groupKey(g));
 
-// Add a group.
-function merge(out, g) {
-  const n = out.groups.length;
+function mergeGroup(merged, g) {
+  const n = merged.groups.length;
   let found = -1;
   let refile = false;
   if (n < LINEAR_GROUPS) {
-    found = out.groups.findIndex((o) => agrees(o, g));
+    found = merged.groups.findIndex((o) => agrees(o, g));
   } else {
-    if (out.index === null) indexAll(out);
-    const key = keyOf(out, g);
-    const bucket = out.index.get(key);
-    found = bucket?.find((i) => agrees(out.groups[i], g)) ?? -1;
-    if (bucket === undefined) out.index.set(key, [n]);
+    if (merged.index === null) indexGroups(merged);
+    const key = keyOf(merged, g);
+    const bucket = merged.index.get(key);
+    found = bucket?.find((i) => agrees(merged.groups[i], g)) ?? -1;
+    if (bucket === undefined) merged.index.set(key, [n]);
     else if (found === -1) {
       bucket.push(n);
-      refile = !out.whole && bucket.length > LINEAR_GROUPS;
+      refile = !merged.whole && bucket.length > LINEAR_GROUPS;
     }
   }
-  if (found === -1) out.groups.push(g);
-  else for (const t of g.tails) out.groups[found].tails.push(t);
+  if (found === -1) merged.groups.push(g);
+  else for (const t of g.tails) merged.groups[found].tails.push(t);
   if (refile) {
-    out.whole = true;
-    indexAll(out);
+    merged.whole = true;
+    indexGroups(merged);
   }
 }
 
-// File every group by its key.
-function indexAll(out) {
-  out.index = new Map();
-  out.groups.forEach((o, i) => {
-    const key = keyOf(out, o);
-    const bucket = out.index.get(key);
-    if (bucket === undefined) out.index.set(key, [i]);
+function indexGroups(merged) {
+  merged.index = new Map();
+  merged.groups.forEach((o, i) => {
+    const key = keyOf(merged, o);
+    const bucket = merged.index.get(key);
+    if (bucket === undefined) merged.index.set(key, [i]);
     else bucket.push(i);
   });
 }
 
-// Up to this many reusable nodes are found by a scan, past it by key.
-const LINEAR_NODES = 16;
-// `at` is a lone predecessor (a number) or the list joined (a string).
+// `at`: a lone predecessor (a number) or the list joined (a string).
 const memoKey = (kind, lit, at, glued) => `${kind}${glued ? "+" : ""}:${lit ?? ""}|${at}`;
 
 class Builder {
   constructor(dot, ci, linear, weight) {
-    // Elements in emission order and (unless linear) each node's
-    // successors in a parallel array.
     this.elems = [];
+    // Per node its successors; empty for a linear pattern, whose nodes
+    // follow one another.
     this.succs = [];
     this.start = [];
     this.linear = linear;
-    // Literal, globstar and join nodes, reused when a branch makes the
-    // same (element, predecessors, glued) again: a scanned list while
-    // short, then also an index by key.
+    // Literal, globstar and join nodes by (kind, lit, predecessors, glued),
+    // for reuse: a scanned list while short, then also an index.
     this.memo = [];
     this.memoIndex = null;
-    // Per node, 1 when it goes on the segment of its predecessors (a
-    // group's tails are all glued or none, so this holds for every edge
-    // into it); null while no brace cuts a segment.
+    // Per node, 1 when it goes on the segment of its predecessors; null
+    // while no brace cuts a segment.
     this.glued = null;
-    // Per node, a wildcard piece's nodes, which `GlueNfa` reads.
+    // Per node, a wildcard piece's nodes, for the glue NFA.
     this.pieces = [];
-    // What is left of the room for copies (COPY_PER_WEIGHT).
     this.room = Math.max(COPY_PER_WEIGHT * weight, MIN_COPY_ROOM);
     this.dot = dot;
     this.ci = ci;
-    // The wildcard segments' keys by node, for a union the chain index
-    // may file; null for any other pattern. `keyRoom`: what is left of
-    // the key room.
+    // A crossing brace's wildcard segments' keys by node, for the chain
+    // index; null for any other pattern.
     this.keys = null;
     this.keyRoom = 0;
   }
 
-  // `weight`: the pattern's `nodeWeight`; `keys`: what the chain index
-  // files a union's chains by, null when it has none; `glue`: the glued
-  // pieces' NFA, null when no brace cuts a segment.
   finish(weight) {
     let glue = null;
     if (this.glued !== null) {
       const n = this.elems.length;
       const glued = new Uint8Array(n);
       this.glued.forEach((v, i) => (glued[i] = v));
-      // A join a cut leaves before branches that each start at a `/`, or
-      // nothing after a brace, holds no piece: nothing glues to it, so it
-      // only stands for its successors, as any join does. A successor's
-      // id is past its predecessors', so one pass back sees each join
-      // after what follows it.
+      // A join nothing glues to holds no piece: it only stands for its
+      // successors. Successors come later, so one pass back sees each join
+      // after them.
       for (let i = n - 1; i >= 0; i--) {
         if (
           glued[i] === 1 &&
@@ -452,8 +350,7 @@ class Builder {
     };
   }
 
-  // A node for `elem` after `tails` (`glued` to them or not); an existing
-  // one when a branch already made it.
+  // A node for `elem` after `tails`, or the existing one.
   emit(elem, tails, glued) {
     const id = this.elems.length;
     if (this.linear) {
@@ -474,8 +371,8 @@ class Builder {
     return id;
   }
 
-  // The node made before as (kind, lit, glued) after `tails`, or -1
-  // after recording it as `id`.
+  // The node made before as (kind, lit, glued) after `tails`, or -1 after
+  // recording `id` as it.
   reuse(kind, lit, tails, glued, id) {
     const at = tails.length === 1 ? tails[0] : tails.join(",");
     if (this.memoIndex === null) {
@@ -503,10 +400,8 @@ class Builder {
     else this.succs[tail].push(id);
   }
 
-  // A group about to be copied into each of `ways` branches: its tails
-  // become one join node when that keeps fewer edges, so the branches
-  // share an edge to it instead of one from each tail (`{a/,}` × k would
-  // give k² edges).
+  // Before a group is copied into `ways` branches, its tails become one
+  // join when that keeps fewer edges (`k · ways > k + ways`).
   join(g, ways) {
     if (g.tails.length < 2) return;
     dedupeTails(g);
@@ -517,7 +412,6 @@ class Builder {
     g.tails.push(id);
   }
 
-  // Walk a sequence of nodes.
   walk(nodes, groups) {
     for (const node of nodes) {
       switch (node.tag) {
@@ -526,18 +420,17 @@ class Builder {
             groups = this.push(groups, node);
             break;
           }
-          // A segment the brace's edge falls inside goes on into every
-          // branch (`x{a/,b}`: `xa` and `xb`), or is cut there and the
-          // branches glue to the piece before it.
+          // The open segments go on into every branch, or are cut, and the
+          // branches glue to the pieces.
           let held = 0;
           for (const g of groups) for (const n of g.buf) held += nodeWeight(n);
           if (!this.afford((node.branches.length - 1) * held)) groups = this.cutAll(groups);
           for (const g of groups) this.join(g, node.branches.length);
-          const out = merged();
+          const merged = mergedGroups();
           for (const branch of node.branches) {
-            for (const g of this.walk(seq(branch), groups.map(forkGroup))) merge(out, g);
+            for (const g of this.walk(seq(branch), groups.map(forkGroup))) mergeGroup(merged, g);
           }
-          groups = out.groups;
+          groups = merged.groups;
           for (const g of groups) dedupeTails(g);
           break;
         }
@@ -550,7 +443,6 @@ class Builder {
           }
           for (const g of groups) {
             if (g.doubleStar || within(g)) {
-              // After text, or after a `**`: a star.
               this.text(g);
               g.buf.push(STAR_NODE);
             } else {
@@ -565,18 +457,14 @@ class Builder {
     return groups;
   }
 
-  // Add an in-segment node to every group's partial segment. A brace
-  // that may be empty may leave a boundary, or a `**`, next to what
-  // follows it (`{a,}**`, `**{,a}/`): a shadow goes on as if it were
-  // empty, and other text ends it.
+  // An in-segment node onto every group's partial segment. A brace that
+  // may be empty leaves a `**` beside what follows (`{a,}**`): a shadow
+  // goes on as if it were empty, and other text ends it.
   push(groups, node) {
     const empty = nullable(node);
     let copies = 0;
     for (const g of groups) if (!g.shadow) copies++;
     if (copies < groups.length && !empty) groups = groups.filter((g) => !g.shadow);
-    // Text goes on every segment the groups hold, or, past the room for
-    // copies, the segments end in pieces and the text is one piece glued
-    // to them all (`{a/0,…,a/999}` and a long tail).
     if (copies > 1 && !this.afford((copies - 1) * nodeWeight(node))) {
       groups = this.cutAll(groups);
     }
@@ -594,8 +482,8 @@ class Builder {
     return shadows === null ? groups : groups.concat(shadows);
   }
 
-  // Ready a group for in-segment text: a `**` before it is a star, and a
-  // pending `**/` is real.
+  // Before in-segment text: a `**` before it is a star, and a pending
+  // `**/` is emitted.
   text(g) {
     this.settle(g);
     if (g.doubleStar) {
@@ -604,9 +492,8 @@ class Builder {
     }
   }
 
-  // Emit a group's pending `**/`. It is always a G0: it absorbs empty
-  // segments too, which makes the separators around it lenient. After a
-  // lone G0 it is that one (`**/**/` ≡ `**/`).
+  // Emit a pending `**/`, always a G0; after a lone G0 it is that one
+  // (`**/**/` ≡ `**/`).
   settle(g) {
     if (!g.pendingGlobstar) return;
     const t = g.tails[0];
@@ -614,41 +501,34 @@ class Builder {
     rebase(g, lone ? t : this.emit(G0_ELEM, g.tails, false), B_SEP);
   }
 
-  // End a group's partial segment in a piece: what comes next glues to
-  // it.
+  // End the partial segment in a piece that what follows glues to.
   cut(g) {
     if (g.buf.length === 0) return;
     rebase(g, this.segment(g, true), B_GLUE);
     g.buf = [];
   }
 
-  // Cut every group (`cut`): those that end in a piece agree again.
   cutAll(groups) {
-    const out = merged();
+    const merged = mergedGroups();
     for (const g of groups) {
       this.cut(g);
-      merge(out, g);
+      mergeGroup(merged, g);
     }
-    return out.groups;
+    return merged.groups;
   }
 
-  // Take `units` of the room for copies, if that much is left.
   afford(units) {
     if (units > this.room) return false;
     this.room -= units;
     return true;
   }
 
-  // Close every group's segment into one node per group; they all
-  // continue as one group after the separator. A glued group whose
-  // segment ended with its last piece passes its tails on. A `**` group
-  // takes the `/` as its `**/`, emitted later, and goes on apart, one
-  // group per boundary before it.
+  // Close every group's segment; they all continue as one group after the
+  // separator, and a `**` group takes the `/` as its `**/` and goes on
+  // apart, one group per boundary before it.
   closeAll(groups) {
-    // The first group closed is the one they all continue as, and the
-    // first `**` group after each boundary the one those continue as:
-    // the others hand them their tails. A group left without tails is
-    // gone.
+    // The first group closed is the one the others hand their tails to;
+    // so is the first `**` group after each boundary.
     let joined = null;
     const starred = [null, null, null];
     for (const g of groups) {
@@ -658,8 +538,8 @@ class Builder {
       }
       let into;
       if (g.doubleStar) {
-        // Tails a pending `**/` gathered become one G0: kept, they would
-        // pile up (`{**,a}/` × k: k² edges).
+        // Tails a pending `**/` gathered become one G0, or they pile up
+        // (`{**,a}/` × k: k² edges).
         if (g.tails.length > 1) this.settle(g);
         g.doubleStar = false;
         g.shadow = false;
@@ -681,17 +561,14 @@ class Builder {
       g.tails.length = 0;
     }
     const out = groups.filter((g) => g.tails.length > 0);
-    // The joined group first, then the pending `**/`s in order.
     const at = out.findIndex((g) => !g.pendingGlobstar);
     if (at > 0) out.unshift(out.splice(at, 1)[0]);
     for (const g of out) dedupeTails(g);
     return out;
   }
 
-  // End a group at the end of the pattern. A bare `**` owns the rest of
-  // the path: pending `**/` add nothing to it, and a separator before
-  // them still needs a segment to follow (`x/**/**` ≡ `x/**`), so only
-  // the pattern start gives G0.
+  // A bare `**` at the end owns the rest of the path: G0 only from the
+  // pattern start, since `x/**` needs a segment after the `/`.
   end(g) {
     if (g.shadow && !g.doubleStar) return;
     if (g.doubleStar) {
@@ -705,12 +582,9 @@ class Builder {
     }
   }
 
-  // The node of a group's segment, or of the piece of it read since the
-  // last cut, after its tails; a piece when glued to them or `cut` (what
-  // follows glues to it). A union's wildcard segments keep their keys
-  // (its chains are filed by them), and a crossing brace's wildcard
-  // pieces their nodes; a wildcard node is never shared, so its id is
-  // new.
+  // The node of the group's segment, or of the piece read since the last
+  // cut; a wildcard piece keeps its nodes, a wildcard segment of a
+  // crossing brace its keys.
   segment(g, cut) {
     const elem = this.close(g.buf);
     const wild = elem.kind === EL_WILD;
@@ -727,18 +601,42 @@ class Builder {
     return id;
   }
 
-  // The element of a closed segment.
   close(buf) {
-    // An escaped `\` on Windows: no segment holds a separator, so a
-    // segment with one is a silent miss (§4.2), kept as a wildcard that
-    // wants more bytes than any segment has.
+    // An escaped `\` on Windows is a separator no segment holds (GLOB_SPEC
+    // §4.2): a wildcard that wants more bytes than any segment has.
     if (buf.some((n) => n.tag === N_LITERAL && hasEscapedSep(n.str))) {
       return makeElem(EL_WILD, null, makeWild(WK_AFFIX, { minLen: NEVER_LEN, variable: false }));
     }
     for (const n of buf) {
       if (n.tag !== N_LITERAL) return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
     }
-    // Empty, one literal, or literals glued across a brace edge.
     return makeElem(EL_LIT, concatLits(buf, buf.length), null);
+  }
+}
+
+// Each crossing brace's in-segment branches as one choice, in place:
+// `{a,b,/}` walks as `{{a,b},/}`.
+function regroup(node) {
+  if (node.tag === N_CONCAT) node.children.forEach(regroup);
+  if (node.tag !== N_BRACE || !node.branches.some(crosses)) return;
+  node.branches.forEach(regroup);
+  const at = node.branches.findIndex((b) => !crosses(b));
+  if (at === -1) return;
+  const within = node.branches.filter((b) => !crosses(b));
+  node.branches = node.branches.filter(crosses);
+  node.branches.splice(at, 0, within.length === 1 ? within[0] : brace(within));
+}
+
+function crosses(node) {
+  switch (node.tag) {
+    case N_SEPARATOR:
+    case N_GLOBSTAR:
+      return true;
+    case N_BRACE:
+      return node.branches.some(crosses);
+    case N_CONCAT:
+      return node.children.some(crosses);
+    default:
+      return false;
   }
 }

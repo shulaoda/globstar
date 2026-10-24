@@ -1,6 +1,5 @@
 //! The engine for a pattern without wildcards: one compare against the
-//! literal, separators and case read as `bytes::pat_byte_eq` does. JS
-//! twin: `packages/globstar/src/engine/literal.js`.
+//! literal, separators and case read as `bytes::pat_byte_eq` does.
 
 use crate::bytes::{ends_with_pattern, has_escaped_sep, pat_byte_eq};
 use crate::dir_match::DirMatch;
@@ -20,8 +19,8 @@ impl LiteralMatcher {
     }
 
     pub(crate) fn static_prefixes(&self) -> Vec<Vec<u8>> {
-        // An escaped `\` on Windows is a separator the literal can never
-        // match (§4.2): nothing to seed.
+        // An escaped `\` on Windows is a separator the literal never
+        // matches (GLOB_SPEC §4.2): nothing to seed.
         if has_escaped_sep(&self.literal) {
             return Vec::new();
         }
@@ -32,14 +31,13 @@ impl LiteralMatcher {
         vec![bytes.to_vec()]
     }
 
-    /// The same length and, last byte first, the same bytes.
     pub(crate) fn is_match(&self, path: &[u8]) -> bool {
         path.len() == self.literal.len()
             && ends_with_pattern(path, &self.literal, self.case_insensitive)
     }
 
-    /// One scan: the directory is the literal itself, or a whole
-    /// segment run of it (the root `""` included), or neither.
+    /// The directory is the literal, a whole segment run of it (the root
+    /// `""` included), or neither.
     pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
         let n = self.prefix_len(dir_path);
         if n == dir_path.len() && n == self.literal.len() {
@@ -52,7 +50,6 @@ impl LiteralMatcher {
         }
     }
 
-    /// How many leading bytes of `other` the literal takes.
     fn prefix_len(&self, other: &[u8]) -> usize {
         let literal = &self.literal;
         let mut n = 0usize;

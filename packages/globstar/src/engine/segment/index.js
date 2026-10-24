@@ -1,20 +1,12 @@
-// The segment engine. JS twin of `crates/globstar/src/engine/segment/
-// mod.rs`: a pattern becomes a graph of per-segment elements and a path
-// is matched segment by segment — anchored compares for a path through
-// the graph with at most one globstar or two around a block, one search
-// of a sorted set for the literal-only paths, only the chains its
-// segments pick for a union of many (`chain-index.js`), an NFA over the
-// graph for everything else. A segment a brace cuts is a run of glued
-// pieces, which one in-segment NFA matches together (`GlueNfa`). The
-// graph is linear in the pattern: every pattern compiles. The layers,
-// the thresholds that pick them and what each buys:
+// The segment engine: a pattern as a graph of per-segment elements,
+// matched segment by segment. The design and its thresholds:
 // `references/theory/03-segment-engine.md`.
 
 import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph, EL_LIT, EL_WILD, EL_G0, EL_JOIN, EL_PIECE, exact } from "./graph.js";
-import { MAX_CHAINS, SET_G, chains, chainMatches, chainDir, hasLiteral } from "./chain.js";
+import { MAX_CHAINS, SET_G, chainsOf, chainMatches, chainDir, hasLiteral } from "./chain.js";
 import {
   anyNfa,
   nfaRun,
@@ -27,7 +19,7 @@ import {
   NFA_SMALL,
   NFA_SPARSE,
 } from "./graph-nfa.js";
-import { computeStaticPrefixes, suffixes } from "./literal-ends.js";
+import * as literalEnds from "./literal-ends.js";
 import {
   R_FIRST,
   R_INNER,
@@ -40,31 +32,24 @@ import {
 import { WK_AFFIX, WK_PIECES, WK_SUFFIXES } from "./wild.js";
 
 export class SegmentMatcher {
-  // `opts.forceNfa` bypasses the chains (a test hook); `opts.byteOnly`
-  // the string mode, for a pattern with a byte past ASCII (and as a
-  // test hook that cross-checks the code paths).
+  // `opts.forceNfa`: no anchored chains (a test hook). `opts.byteOnly`: the
+  // path's UTF-8 bytes are matched, not the string (a pattern with a byte
+  // past ASCII, and a test hook).
   constructor(body, dot, ci, opts) {
-    // The facts read the pattern as written; the graph walk regroups it.
-    const prefixes = computeStaticPrefixes(body);
-    const suf = suffixes(body);
+    // The prefixes and the suffixes read the pattern as written; the graph
+    // walk regroups it.
+    const prefixes = literalEnds.staticPrefixes(body);
+    const suffixes = literalEnds.suffixes(body);
     const graph = buildGraph(body, dot, ci);
-    let chainList = opts.forceNfa ? [] : chains(graph, ci);
-    const index = chainIndex(chainList, graph, ci);
-    // Past MAX_CHAINS only the index keeps a call's walks few; without
-    // one the NFA serves.
-    const set = chainList.length > 0 && chainList[0].globstar === SET_G;
-    if (index === null && chainList.length - (set ? 1 : 0) > MAX_CHAINS) chainList = [];
-    // A lone line (one chain through at most one globstar) serves
-    // `matchDir` too.
-    const line = chainList.length === 1 && chainList[0].globstar !== SET_G && chainList[0].g2 < 0;
+    let chains = opts.forceNfa ? [] : chainsOf(graph, ci);
+    const index = chainIndex(chains, graph, ci);
+    // Past MAX_CHAINS only the index keeps a call's walks few.
+    const set = chains.length > 0 && chains[0].globstar === SET_G;
+    if (index === null && chains.length - (set ? 1 : 0) > MAX_CHAINS) chains = [];
+    const line = chains.length === 1 && chains[0].globstar !== SET_G && chains[0].g2 < 0;
     this.elems = graph.elems;
-    // The paths through the graph, tried in order (the literal ones as
-    // one set, first); none past the chain module's caps or for the
-    // test hook.
-    this.chains = exact(chainList);
-    // What a lone line does without: the NFA over the graph, which
-    // serves `matchDir` (and `isMatch` when the chains cannot), and,
-    // for many chains, their index.
+    this.chains = exact(chains);
+    // What a lone line does without: the NFA, and the index of many chains.
     this.nfa = line ? null : anyNfa(graph, ci);
     this.index = index;
     // The chains the current indexed call tried: 0–31, 32–63.
@@ -75,13 +60,11 @@ export class SegmentMatcher {
     this.byteOnly = opts.byteOnly;
     this.prefixes = prefixes.map(flat);
     this.plain = !this.ci && !IS_WINDOWS_SEP;
-    this.suffixes = suf.length > 0 ? suf.map(flat) : null;
+    this.suffixes = suffixes.length > 0 ? suffixes.map(flat) : null;
   }
 
-  // How compilation laid the pattern out (a test hook, twin of Rust's
-  // `Glob::shape`): the elements in order, the chains, the graph NFA's
-  // form. It pins the routing, where a slower path would still answer
-  // right.
+  // A test hook: the elements in order, the chains and the NFA's form
+  // (`fixtures/engine-shapes.tsv`).
   shape() {
     const elems = this.elems.map((e) => {
       if (e.kind === EL_LIT) return "L";
@@ -95,7 +78,6 @@ export class SegmentMatcher {
       if (e.kind === EL_PIECE) return "P";
       return e.kind === EL_G0 ? "G0" : "G1";
     });
-    // A run of one kind as `L(200)`.
     const runs = [];
     for (let i = 0; i < elems.length; ) {
       let n = 1;
@@ -105,7 +87,6 @@ export class SegmentMatcher {
     }
     const g = this.nfa;
     const nfa = g === null ? "none" : g.kind === NFA_SMALL ? "small" : "sparse";
-    // The literal paths' set is counted apart from the chains.
     const first = this.chains[0];
     const set = first !== undefined && first.globstar === SET_G;
     const literals = set ? ` | literals ${first.literals.length}` : "";
@@ -116,9 +97,6 @@ export class SegmentMatcher {
     return this.prefixes.map(latin1Bytes);
   }
 
-  // An ASCII pattern matches the path string itself (a wildcard that
-  // counts reads a segment's UTF-8 bytes, see `wildConsumes`); one with
-  // other bytes matches the path's UTF-8 bytes, one char per byte.
   isMatch(input) {
     return this._isMatch(this.byteOnly ? utf8Latin1(input) : input);
   }
@@ -129,48 +107,42 @@ export class SegmentMatcher {
 
   _isMatch(str) {
     if (!this._prefilter(str)) return false;
-    const chainList = this.chains;
-    if (chainList.length === 0) return this._nfaMatch(str);
-    if (chainList.length === 1) return chainMatches(this, chainList[0], str);
-    return this._anyChainMatches(chainList, str);
+    const chains = this.chains;
+    if (chains.length === 0) return this._nfaMatch(str);
+    if (chains.length === 1) return chainMatches(this, chains[0], str);
+    return this._anyChainMatches(chains, str);
   }
 
-  // Does one of the chains match the whole path? Each runs after quick
-  // looks at the path's ends: its first character against a leading
-  // literal's, its last against a literal suffix, an affix's prefix or a
-  // set's last characters (`chainOf`; none when case-insensitive). Its
-  // own method, so `_isMatch` stays small for the one-chain and NFA
-  // matchers.
-  _anyChainMatches(chainList, str) {
-    // Past 64 chains the index has its own walk: in one method with the
-    // walk up to 64, it kept `_tryPicked` from being inlined there.
+  // Each chain runs after its gate. Its own method: `_isMatch` stays small
+  // for the one-chain and NFA matchers.
+  _anyChainMatches(chains, str) {
+    // In one method with the walk up to 64 chains, the walk past 64 kept
+    // `_tryPicked` from being inlined.
     const ix = this.index;
     if (ix !== null) {
       return ix.stamp === null ? this._indexedChainMatches(str) : this._manyChainMatches(str);
     }
-    // The literal paths' set, when there is one, comes first.
     let from = 0;
-    if (chainList[0].globstar === SET_G) {
-      if (hasLiteral(this, chainList[0].literals, str)) return true;
+    if (chains[0].globstar === SET_G) {
+      if (hasLiteral(this, chains[0].literals, str)) return true;
       from = 1;
     }
     const len = str.length;
     const first = len > 0 ? str.charCodeAt(0) : -1;
     const last = len > 0 ? str.charCodeAt(len - 1) & 63 : 64;
-    // Where the last segment starts, found once some chain asks.
     let lastStart = -1;
-    for (let k = from; k < chainList.length; k++) {
-      const chain = chainList[k];
-      const suffix = chain.quickSuffixStr;
+    for (let k = from; k < chains.length; k++) {
+      const chain = chains[k];
+      const suffix = chain.gateSuffix;
       if (suffix.length > 0) {
         if (!str.endsWith(suffix)) continue;
       } else if (last < 32) {
-        if (((chain.quickLastLo >>> last) & 1) === 0) continue;
+        if (((chain.gateLastLo >>> last) & 1) === 0) continue;
       } else if (last < 64) {
-        if (((chain.quickLastHi >>> (last - 32)) & 1) === 0) continue;
+        if (((chain.gateLastHi >>> (last - 32)) & 1) === 0) continue;
       }
-      if (chain.quickHead >= 0 && chain.quickHead !== first) continue;
-      const prefix = chain.quickPrefixStr;
+      if (chain.gateHead >= 0 && chain.gateHead !== first) continue;
+      const prefix = chain.gatePrefix;
       if (prefix.length > 0) {
         if (lastStart < 0) lastStart = lastSepBefore(str, len) + 1;
         if (!str.startsWith(prefix, lastStart)) continue;
@@ -180,11 +152,8 @@ export class SegmentMatcher {
     return false;
   }
 
-  // `_anyChainMatches` through the chain index: the chains the path's
-  // last segment picks first, then those of its first, of its inner
-  // ones, then those without a key; each chain once, walked without the
-  // quick looks. Most were picked by the segment a quick look reads, and
-  // the walk turns the others down about as fast.
+  // The chains the path's last segment picks first, then its first's, its
+  // inner ones', then the chains without a key; each chain once.
   _indexedChainMatches(str) {
     const ix = this.index;
     const ci = this.ci;
@@ -197,7 +166,6 @@ export class SegmentMatcher {
     probe(ix, R_LAST, str, lastStart, len, ci);
     if (ix.infix.length > 0) probeInfix(ix, str, lastStart, len, ci);
     if (this._tryPicked(picked[0], picked[1], str)) return true;
-    // Where the first segment ends; the last one starts after it.
     const firstEnd = lastStart === 0 ? len : nextSep(str, 0);
     if (ix.lookups[R_FIRST] !== 0) {
       picked[0] = picked[1] = 0;
@@ -214,8 +182,6 @@ export class SegmentMatcher {
     return this._tryPicked(ix.restLo, ix.restHi, str);
   }
 
-  // Walk the chains of `lo`/`hi` (bits for chains 0–31, 32–63) not tried
-  // yet this call, in chain order.
   _tryPicked(lo, hi, str) {
     lo &= ~this.triedLo;
     hi &= ~this.triedHi;
@@ -234,15 +200,13 @@ export class SegmentMatcher {
     return false;
   }
 
-  // `_indexedChainMatches` past 64 chains: the chains each step lists,
-  // once a call (`probeMany`), the inner segments' at once, then those
-  // without a key.
+  // `_indexedChainMatches` past 64 chains: each step's picks listed once a
+  // call, the inner segments' at once.
   _manyChainMatches(str) {
     const ix = this.index;
     const ci = this.ci;
     const len = str.length;
     const lastStart = lastSepBefore(str, len) + 1;
-    // A new call: what the calls before listed is stale.
     if (++ix.epoch === 0x7fffffff) {
       ix.stamp.fill(0);
       ix.epoch = 1;
@@ -269,7 +233,6 @@ export class SegmentMatcher {
     return this._tryListed(str);
   }
 
-  // Walk the chains listed since the last walk.
   _tryListed(str) {
     const ix = this.index;
     while (ix.tried < ix.listed) {
@@ -279,9 +242,9 @@ export class SegmentMatcher {
   }
 
   _nfaMatch(str) {
-    const g = this.nfa;
-    if (g.kind === NFA_SPARSE) return sparseHas(nfaRunSparse(this, str), g.accept);
-    return (nfaRun(this, str) & (1 << g.accept)) !== 0;
+    const nfa = this.nfa;
+    if (nfa.kind === NFA_SPARSE) return sparseHas(nfaRunSparse(this, str), nfa.accept);
+    return (nfaRun(this, str) & (1 << nfa.accept)) !== 0;
   }
 
   _prefilter(str) {
@@ -295,33 +258,32 @@ export class SegmentMatcher {
   }
 
   _matchDir(str) {
-    const g = this.nfa;
-    if (g === null) return chainDir(this, str);
+    const nfa = this.nfa;
+    if (nfa === null) return chainDir(this, str);
     if (str.length === 0) {
-      // The empty dir is the walk root: nothing consumed yet.
       let all = false;
       if (this.dot) {
-        if (g.kind === NFA_SPARSE) all = coversBelowSparse(this, initSparse(g));
-        else all = coversBelow(this, g.init);
+        if (nfa.kind === NFA_SPARSE) all = coversBelowSparse(this, initSparse(nfa));
+        else all = coversBelow(this, nfa.init);
       }
       return DirMatch.from(this.isMatch(str), true, all);
     }
-    let exact;
-    let prefix;
+    // `dot=false` never covers a subtree: no wildcard takes the dot-led
+    // names below.
+    let matches;
+    let mayBelow;
     let all;
-    if (g.kind === NFA_SPARSE) {
+    if (nfa.kind === NFA_SPARSE) {
       const active = nfaRunSparse(this, str);
-      exact = sparseHas(active, g.accept);
-      prefix = sparseReach1(g, active);
-      all = this.dot && prefix && coversBelowSparse(this, active);
+      matches = sparseHas(active, nfa.accept);
+      mayBelow = sparseReach1(nfa, active);
+      all = this.dot && mayBelow && coversBelowSparse(this, active);
     } else {
       const active = nfaRun(this, str);
-      exact = (active & (1 << g.accept)) !== 0;
-      prefix = (active & g.reach1) !== 0;
-      // `dot=false` never covers a subtree: no wildcard matches the
-      // dot-led names below.
-      all = this.dot && prefix && coversBelow(this, active);
+      matches = (active & (1 << nfa.accept)) !== 0;
+      mayBelow = (active & nfa.reach1) !== 0;
+      all = this.dot && mayBelow && coversBelow(this, active);
     }
-    return DirMatch.from(exact, prefix, all);
+    return DirMatch.from(matches, mayBelow, all);
   }
 }

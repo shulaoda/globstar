@@ -1,16 +1,22 @@
-// The literal ends every match shares, read off the AST at compile
-// time: the suffixes the prefilter checks and the static prefixes a
-// walker seeds from. JS twin of
-// `crates/globstar/src/engine/segment/literal_ends.rs`.
+// The literal ends every match shares, read off the AST: the suffixes
+// the prefilter checks and the static prefixes a walker seeds from.
 
 import { hasEscapedSep } from "../../bytes.js";
 import { N_BRACE, N_LITERAL, N_SEPARATOR, endsInGlobstar, seq } from "../../parse/ast.js";
 import { nodeWeight } from "./graph.js";
 
+// A pattern that ends in a brace of more branches gets no prefilter.
+const MAX_SUFFIX_SET = 16;
+
+// How deep braces may nest along one head, the budget every pattern gets
+// for reading heads, and how many budgets of bytes recording them may cost.
+const MAX_HEAD_DEPTH = 64;
+const HEAD_BUDGET_FLOOR = 4096;
+const HEAD_COPY_FACTOR = 64;
+
 // Literal suffixes one of which every match ends with: the trailing
-// literal/separator run (separators as `/`), or when the pattern ends in
-// a brace, one per branch. Empty when nothing is guaranteed. One char
-// per byte, like the path strings they are compared with.
+// literal run, or one per branch of a trailing brace. Empty when nothing
+// is guaranteed.
 export function suffixes(body) {
   const nodes = seq(body);
   const suffix = trailing(nodes, nodes.length, false);
@@ -18,10 +24,9 @@ export function suffixes(body) {
   return suffixSet(nodes);
 }
 
-// The bytes of the literal/separator run that ends `nodes[..end]`, after
-// a `**` when `afterGlobstar` (a brace's branch that may follow one). The
-// `/` of a `**/` is not part of it, nor one a brace that may be empty
-// parts from a `**`: `**/b` and `**{,a}/b` match `b` alone.
+// The literal/separator run that ends `nodes[..end]`. The `/` of a `**/`
+// is not part of it, nor one a brace that may be empty parts from a `**`:
+// `**/b` and `**{,a}/b` match `b` alone.
 function trailing(nodes, end, afterGlobstar) {
   let acc = "";
   for (let i = end - 1; i >= 0; i--) {
@@ -33,67 +38,41 @@ function trailing(nodes, end, afterGlobstar) {
   return acc;
 }
 
-// Largest suffix set worth scanning before the engine runs; a bigger
-// alternation gets no prefilter (the engine groups it).
-const MAX_SUFFIX_SET = 16;
-
-// When the pattern ends in a brace: one guaranteed suffix per branch, or
-// none when a branch guarantees nothing.
+// One suffix per branch of a trailing brace, or none when a branch
+// guarantees nothing.
 function suffixSet(nodes) {
   if (nodes.length === 0) return [];
   const last = nodes[nodes.length - 1];
   if (last.tag !== N_BRACE || last.branches.length > MAX_SUFFIX_SET) return [];
-
-  const commonTail = trailing(nodes, nodes.length - 1, false);
+  const common = trailing(nodes, nodes.length - 1, false);
   const afterGlobstar = endsInGlobstar(nodes, nodes.length - 1, false);
-
   const set = [];
   for (const branch of last.branches) {
     const b = seq(branch);
-    const branchSuffix = trailing(b, b.length, afterGlobstar);
-    // Gluing the common tail to a branch that is not all-literal would
-    // claim more than the branch guarantees.
+    const own = trailing(b, b.length, afterGlobstar);
+    // The common tail joins a branch only when the branch is all literal;
+    // otherwise it would claim more than the branch does.
     const allLiteral = b.every((n) => n.tag === N_LITERAL || n.tag === N_SEPARATOR);
-    const full = allLiteral ? commonTail + branchSuffix : branchSuffix;
+    const full = allLiteral ? common + own : own;
     if (full.length === 0) return [];
     set.push(full);
   }
   return set;
 }
 
-// How deep brace expansions may nest along one static prefix, the part
-// of its budget that does not depend on the pattern, and how many
-// budgets of bytes recording the heads may cost.
-const MAX_HEAD_DEPTH = 64;
-const HEAD_BUDGET_FLOOR = 4096;
-const HEAD_COPY_FACTOR = 64;
-
-// The deepest segment-bounded literal head of each expansion,
-// deduplicated, sorted by (length, bytes). A brace in the head is taken
-// branch by branch with what follows it (`{a,b}/c` gives `a/c` and
-// `b/c`), so a factored union keeps its members' heads.
-//
-// Every byte read and every branch taken costs one unit of a budget of
-// HEAD_BUDGET_FLOOR plus twice the pattern's weight (`nodeWeight`, only
-// worked out once the floor is spent): reading each node once costs at
-// most its weight, and re-reading what follows a brace for each branch
-// is what the rest pays for. Past the budget, or past MAX_HEAD_DEPTH
-// nested braces, the head ends at its last whole segment, a shorter
-// prefix that still holds: `{a,b}{c,d}…` stops after a few braces
-// instead of doubling, and a brace before a long literal copies it a few
-// times, not once per branch. Recording a head costs every byte read to
-// reach it (the slice flattens them all): past HEAD_COPY_FACTOR budgets
-// of those, the reading stops and starts again as if at the depth limit,
-// which gives the one head before the first brace, shared by every
-// expansion.
-export function computeStaticPrefixes(body) {
+// The deepest segment-bounded literal head of each brace expansion,
+// deduplicated. Every byte read and branch taken costs one unit of a
+// budget; past it, or past MAX_HEAD_DEPTH, a head ends at its last whole
+// segment, a shorter prefix that still holds. Past HEAD_COPY_FACTOR
+// budgets of bytes copied into heads, the reading starts again at the
+// depth limit, which gives the one head before the first brace.
+export function staticPrefixes(body) {
   const nodes = seq(body);
   let heads = readAt(nodes, 0);
   if (heads.copied > HEAD_COPY_FACTOR * heads.limit) heads = readAt(nodes, MAX_HEAD_DEPTH);
   return dedupe(heads.out);
 }
 
-// Read the heads of the whole pattern `nodes`, from brace depth `depth`.
 function readAt(nodes, depth) {
   const heads = {
     root: nodes,
@@ -107,16 +86,16 @@ function readAt(nodes, depth) {
   return heads;
 }
 
-// Read `nodes` from `at`, then `then` (`{ nodes, at, next }`: what
-// follows them), after the bytes `acc` (whose last whole segment ends at
-// `boundary`), and record the head each expansion reaches.
+// Read `nodes` from `at`, then `then` (`{ nodes, at, next }`), after `acc`
+// (whose last whole segment ends at `boundary`), and record the head each
+// expansion reaches.
 function readHeads(heads, nodes, at, then, acc, boundary, depth) {
   let i = at;
   let end;
   for (;;) {
     if (i === nodes.length) {
       if (then === null) {
-        end = acc.length; // all literal
+        end = acc.length;
         break;
       }
       nodes = then.nodes;
@@ -125,8 +104,8 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
       continue;
     }
     const node = nodes[i++];
-    // An escaped `\` on Windows: the expansion matches nothing (§4.2), so
-    // it has no head to seed.
+    // An expansion through an escaped `\` on Windows matches nothing
+    // (GLOB_SPEC §4.2): no head to seed.
     if (node.tag === N_LITERAL && hasEscapedSep(node.str)) return;
     if (node.tag === N_LITERAL && afford(heads, node.str.length)) {
       acc += node.str;
@@ -140,37 +119,33 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
     ) {
       const after = { nodes, at: i, next: then };
       for (const branch of node.branches) {
-        // An empty head covers every other one: nothing more to read.
-        if (heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0) break;
+        if (covered(heads)) break;
         readHeads(heads, seq(branch), 0, after, acc, boundary, depth + 1);
       }
       return;
     } else {
-      // Every branch of a brace opening a new segment leaves what came
-      // before whole.
+      // Every branch opening a new segment leaves what came before whole.
       end = node.tag === N_BRACE && opensSegment(node) ? acc.length : boundary;
       break;
     }
   }
   while (end > 0 && acc.charCodeAt(end - 1) === 0x2f) end--;
   heads.copied += acc.length;
-  if (within(heads, heads.copied, HEAD_COPY_FACTOR)) {
-    heads.out.push(acc.slice(0, end));
-  } else {
-    // An empty head covers all the others: the reading stops.
-    heads.out = [""];
-  }
+  if (within(heads, heads.copied, HEAD_COPY_FACTOR)) heads.out.push(acc.slice(0, end));
+  else heads.out = [""];
 }
 
-// Spend `n` units, unless that passes the limit.
+// An empty head covers every other one.
+const covered = (heads) => heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0;
+
 function afford(heads, n) {
   if (!within(heads, heads.spent + n, 1)) return false;
   heads.spent += n;
   return true;
 }
 
-// Whether `used` stays within `factor` limits. The limit is the floor
-// until `used` passes it, then the floor plus twice the weight.
+// The limit is the floor until `used` passes it; the pattern's weight is
+// added only then.
 function within(heads, used, factor) {
   if (used > factor * heads.limit && !heads.weighed) {
     heads.weighed = true;
@@ -183,14 +158,12 @@ function opensSegment(node) {
   return node.branches.every((b) => seq(b)[0]?.tag === N_SEPARATOR);
 }
 
-// Drop prefixes a shorter one already covers; an empty one covers all.
-// Shortest first, so a prefix is only ever covered by one kept before,
-// found by a binary search at each of its `/`.
+// Drops the prefixes a shorter one covers; an empty one covers all.
 function dedupe(prefixes) {
   if (prefixes.length <= 1) return prefixes;
   prefixes.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
   const kept = [];
-  const covered = (p) => {
+  const coveredBy = (p) => {
     for (let i = p.indexOf("/"); i !== -1; i = p.indexOf("/", i + 1)) {
       let lo = 0;
       let hi = kept.length;
@@ -207,7 +180,7 @@ function dedupe(prefixes) {
   };
   for (const p of prefixes) {
     if (p.length === 0) return [p];
-    if (p !== kept[kept.length - 1] && !covered(p)) kept.push(p);
+    if (p !== kept[kept.length - 1] && !coveredBy(p)) kept.push(p);
   }
   return kept;
 }

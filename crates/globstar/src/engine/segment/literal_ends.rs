@@ -1,6 +1,5 @@
-//! The literal ends every match shares, read off the AST at compile
-//! time: the suffixes the prefilter checks and the static prefixes a
-//! walker seeds from.
+//! The literal ends every match shares, read off the AST: the suffixes
+//! the prefilter checks and the static prefixes a walker seeds from.
 
 use crate::bytes::has_escaped_sep;
 use crate::parse::ast::{Node, ends_in_globstar};
@@ -8,13 +7,19 @@ use crate::parse::ast::{Node, ends_in_globstar};
 use super::Bytes;
 use super::graph::node_weight;
 
-/// Largest suffix set worth scanning before the engine runs; a
-/// bigger alternation gets no prefilter (the engine groups it).
+/// A pattern that ends in a brace of more branches gets no prefilter.
 const MAX_SUFFIX_SET: usize = 16;
 
+/// How deep braces may nest along one head, the budget every pattern
+/// gets for reading heads, and how many budgets of bytes recording them
+/// may cost.
+const MAX_HEAD_DEPTH: usize = 64;
+const HEAD_BUDGET_FLOOR: usize = 4096;
+const HEAD_COPY_FACTOR: usize = 64;
+
 /// Literal suffixes one of which every match ends with: the trailing
-/// literal/separator run (separators as `/`), or when the pattern ends
-/// in a brace, one per branch. Empty when nothing is guaranteed.
+/// literal run, or one per branch of a trailing brace. Empty when nothing
+/// is guaranteed.
 pub(super) fn suffixes(body: &Node) -> Box<[Bytes]> {
     let nodes = body.seq();
     let run = trailing(nodes, false);
@@ -26,10 +31,9 @@ pub(super) fn suffixes(body: &Node) -> Box<[Bytes]> {
     Box::new([acc.into_boxed_slice()])
 }
 
-/// The literal/separator run that ends `nodes`, after a `**` when
-/// `after_globstar` (a brace's branch that may follow one). The `/` of a
-/// `**/` is not part of it, nor one a brace that may be empty parts from
-/// a `**`: `**/b` and `**{,a}/b` match `b` alone.
+/// The literal/separator run that ends `nodes`. The `/` of a `**/` is
+/// not part of it, nor one a brace that may be empty parts from a `**`:
+/// `**/b` and `**{,a}/b` match `b` alone.
 fn trailing(nodes: &[Node], after_globstar: bool) -> &[Node] {
     let mut from = nodes.len();
     while from > 0 {
@@ -52,8 +56,8 @@ fn push_run(run: &[Node], acc: &mut Vec<u8>) {
     }
 }
 
-/// When the pattern ends in a brace: one guaranteed suffix per branch,
-/// or none when a branch guarantees nothing.
+/// One suffix per branch of a trailing brace, or none when a branch
+/// guarantees nothing.
 fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
     let branches = match nodes.last() {
         Some(Node::Brace(branches)) if branches.len() <= MAX_SUFFIX_SET => branches,
@@ -67,8 +71,8 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
     let mut acc = Vec::new();
     for branch in branches {
         acc.clear();
-        // Gluing the common tail to a branch that is not all-literal
-        // would claim more than the branch guarantees.
+        // The common tail joins a branch only when the branch is all
+        // literal; otherwise it would claim more than the branch does.
         if branch
             .seq()
             .iter()
@@ -85,30 +89,13 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
     set.into_boxed_slice()
 }
 
-/// How deep brace expansions may nest along one static prefix, the
-/// part of the budget for reading them that every pattern gets, and how
-/// many budgets of bytes recording the heads may cost.
-const MAX_HEAD_DEPTH: usize = 64;
-const HEAD_BUDGET_FLOOR: usize = 4096;
-const HEAD_COPY_FACTOR: usize = 64;
-
-/// The deepest segment-bounded literal head of each expansion,
-/// deduplicated, sorted by (length, bytes). A brace in the head is taken
-/// branch by branch with what follows it (`{a,b}/c` gives `a/c` and
-/// `b/c`), so a factored union keeps its members' heads.
-///
-/// Every byte read and every branch taken costs one unit of a budget of
-/// `HEAD_BUDGET_FLOOR` plus twice the pattern's `weight` (`node_weight`):
-/// reading each node once costs at most its weight, and re-reading what
-/// follows a brace for each branch is what the rest pays for. Past the
-/// budget, or past `MAX_HEAD_DEPTH` nested braces, the head ends at its
-/// last whole segment, a shorter prefix that still holds: `{a,b}{c,d}…`
-/// stops after a few braces instead of doubling, and a brace before a
-/// long literal copies it a few times, not once per branch. Recording a
-/// head costs every byte read to reach it (JS copies them all to cut the
-/// head out): past `HEAD_COPY_FACTOR` budgets of those, the reading
-/// stops and starts again as if at the depth limit, which gives the one
-/// head before the first brace, shared by every expansion.
+/// The deepest segment-bounded literal head of each brace expansion,
+/// deduplicated. Every byte read and branch taken costs one unit of a
+/// budget; past it, or past `MAX_HEAD_DEPTH`, a head ends at its last
+/// whole segment, a shorter prefix that still holds. Past
+/// `HEAD_COPY_FACTOR` budgets of bytes copied into heads, the reading
+/// starts again at the depth limit, which gives the one head before the
+/// first brace.
 pub(super) fn static_prefixes(body: &Node, weight: usize) -> Box<[Bytes]> {
     let read_at = |depth| {
         let mut heads = Heads {
@@ -146,7 +133,6 @@ struct Heads {
 }
 
 impl Heads {
-    /// Spend `n` units, unless that passes the budget.
     fn afford(&mut self, n: usize) -> bool {
         if self.spent + n > self.budget {
             return false;
@@ -155,7 +141,7 @@ impl Heads {
         true
     }
 
-    /// An empty head covers every other one: nothing more to read.
+    /// An empty head covers every other one.
     fn covered(&self) -> bool {
         self.out.last().is_some_and(|h| h.is_empty())
     }
@@ -179,12 +165,12 @@ impl Heads {
                         then = t.next;
                         continue;
                     }
-                    None => break acc.len(), // all literal
+                    None => break acc.len(),
                 }
             };
             match node {
-                // An escaped `\` on Windows: the expansion matches nothing
-                // (§4.2), so it has no head to seed.
+                // An expansion through an escaped `\` on Windows matches
+                // nothing (GLOB_SPEC §4.2): no head to seed.
                 Node::Literal(bytes) if has_escaped_sep(bytes) => {
                     acc.truncate(mark);
                     return;
@@ -227,7 +213,6 @@ impl Heads {
         }
         self.copied += acc.len();
         if self.copied > HEAD_COPY_FACTOR.saturating_mul(self.budget) {
-            // An empty head covers all the others: the reading stops.
             self.out = vec![Bytes::default()];
         } else {
             self.out.push(Bytes::from(head));
@@ -236,8 +221,7 @@ impl Heads {
     }
 }
 
-/// Drop prefixes a shorter one already covers; an empty one covers all.
-/// Shortest first, so a prefix is only ever covered by one kept before.
+/// Drops the prefixes a shorter one covers; an empty one covers all.
 fn dedupe(mut prefixes: Vec<Bytes>) -> Vec<Bytes> {
     prefixes.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
     prefixes.dedup();
@@ -246,7 +230,6 @@ fn dedupe(mut prefixes: Vec<Bytes>) -> Vec<Bytes> {
         if p.is_empty() {
             return vec![p];
         }
-        // A cover ends where `p` has a `/`; `kept` is in the same order.
         let covered = (0..p.len()).filter(|&j| p[j] == b'/').any(|j| {
             kept.binary_search_by(|k| k.len().cmp(&j).then_with(|| k[..].cmp(&p[..j])))
                 .is_ok()

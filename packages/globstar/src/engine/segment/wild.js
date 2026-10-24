@@ -1,7 +1,5 @@
 // In-segment wildcard matchers: what a segment with a wildcard compiles
-// to (`compileWild`) and how it takes a path segment (`wildConsumes`):
-// an affix, a suffix set or pieces here, the in-segment NFA in
-// `seg-nfa.js`. JS twin of `crates/globstar/src/engine/segment/wild.rs`.
+// to (`compileWild`) and how it takes a path segment (`wildConsumes`).
 
 import { N_ANYCHAR, N_BRACE, N_LITERAL, N_STAR, seq, N_CLASS } from "../../parse/ast.js";
 import { affixEq } from "../../bytes.js";
@@ -10,18 +8,34 @@ import { exact } from "./graph.js";
 import { compileSegNfa } from "./seg-nfa.js";
 import { byteSet, setEmpty, setHas } from "./bits.js";
 
-// In-segment wildcard kinds.
+// `lit (*|?)+ lit`, any part empty.
 export const WK_AFFIX = 0;
+// `lit (*|?)+ {lit,…}`.
 export const WK_SUFFIXES = 1;
+// Anything else: a brace around wildcards or classes, a product past its cap.
 export const WK_GENERIC = 2;
+// Literals, `?`s and classes between `*`s, no brace.
 export const WK_PIECES = 3;
 
-// The `minLen` of a segment no path segment can fill: one with an
-// escaped `\` on Windows, where a segment never holds a separator, or an
-// in-segment NFA that accepts nothing.
+// The `minLen` of a segment no path segment can fill.
 export const NEVER_LEN = 0x7fffffff;
 
-// ── compiling ───────────────────────────────────────────────────────
+// A product of braces (`{a,b}{c,d}…`) past this many suffixes stays an
+// NFA; a single list is enumerated whatever its length.
+const MAX_SUFFIX_PRODUCT = 1024;
+
+// The enumerated suffixes may not take more than this, or four times
+// their nodes.
+const MAX_SUFFIX_BYTES = 64 * 1024;
+
+// Where each suffix group starts while a set is built; one for all builds.
+const GROUP_SCRATCH = new Int32Array(65);
+
+// What a position of the pieces takes: a byte (0-255, folded when
+// case-insensitive), any byte (ANY), or class `k` of the pieces' classes
+// (CLASS + k).
+const ANY = 256;
+const CLASS = 257;
 
 // The bytes of the literal nodes `nodes[..to]`.
 export function concatLits(nodes, to) {
@@ -35,23 +49,25 @@ export function makeWild(kind, fields) {
     kind,
     prefixStr: flat(fields.prefixStr ?? ""),
     suffixStr: flat(fields.suffixStr ?? ""),
-    // A set's non-empty suffixes grouped by last character (`lastGroup`,
-    // one key per suffix in `suffixKeys`, ascending), each group in
-    // pattern order. The Rust twin scans a few in turn and indexes more
-    // by a table of group starts; a typed array costs V8 ~200 ns to
-    // allocate, so here a group is found by a binary search of the keys.
+    // A set's non-empty suffixes grouped by last character (`suffixKeys`,
+    // one key per suffix, ascending), each group in pattern order; a group
+    // is found by a binary search of the keys, as a typed array of group
+    // starts costs V8 ~200 ns to allocate.
     suffixSetStr: fields.suffixSetStr?.map(flat) ?? null,
     suffixKeys: fields.suffixKeys ?? null,
     // One suffix is empty: it ends anything.
     suffixEmpty: fields.suffixEmpty ?? false,
+    // The literal bytes and `?`s a segment needs; for a suffix set without
+    // the suffix; NEVER_LEN when nothing fits.
     minLen: fields.minLen ?? 0,
+    // Without a `*` the length is exactly `minLen`.
     variable: fields.variable ?? true,
+    // Rejects a dot-led segment (`dot = false`, nothing takes the `.` by name).
     dotProtect: fields.dotProtect ?? false,
     anychars: fields.anychars ?? 0,
     // The pieces (WK_PIECES) or the in-segment NFA (WK_GENERIC).
     matcher: fields.matcher ?? null,
-    // Its wildcards alone match every non-empty segment (`*`, `?*`,
-    // `{a,*}`); drives `matchDir`'s all-below bit.
+    // Its wildcards alone take every non-empty segment.
     anySeg: fields.anySeg ?? false,
   };
 }
@@ -69,9 +85,6 @@ export function compileWild(nodes, dot, ci) {
     else break;
     idx += 1;
   }
-  // A literal product after the wildcards (one empty suffix when nothing
-  // follows them) keeps the segment anchored at both ends; anything else
-  // is pieces, or with a brace runs the NFA.
   const suffixes = suffixProduct(nodes, idx);
   if (suffixes === null) {
     const pieces = compilePieces(nodes, dot, ci);
@@ -84,8 +97,6 @@ export function compileWild(nodes, dot, ci) {
     variable: hasStar,
     dotProtect: !dot && prefix.length === 0 && (hasStar || anychars > 0),
     anychars,
-    // `*` or `?*` with nothing literal around it, up to a suffix that
-    // may be empty.
     anySeg: prefix.length === 0 && hasStar && anychars <= 1 && suffixes.some((s) => s.length === 0),
   };
   if (suffixes.length === 1) {
@@ -116,26 +127,14 @@ export function compileWild(nodes, dot, ci) {
   return makeWild(WK_SUFFIXES, fields);
 }
 
-// The group of the suffixes ending in character `c`.
+// The group of the suffixes ending in character `c`: its low six bits.
 function lastGroup(c, ci) {
   if (ci && c >= 0x41 && c <= 0x5a) c += 32;
   return c & 63;
 }
 
-// Where each group starts while a set is built; one for all builds.
-const GROUP_SCRATCH = new Int32Array(65);
-
-// Literal suffix alternatives one segment enumerates (`*.{a,b,…}`, a
-// factored union of names). A product of alternatives (`{a,b}{c,d}…`)
-// past this many suffixes stays an NFA, which holds it without
-// multiplying it out; a single list is no product and is enumerated
-// whatever its length.
-const MAX_SUFFIX_PRODUCT = 1024;
-// The enumerated suffixes, one byte more each, may not take more than
-// this or four times their nodes: a long literal next to a product
-// would be copied into every suffix.
-const MAX_SUFFIX_BYTES = 64 * 1024;
-
+// The literal suffixes after the wildcards, enumerated; null when
+// something else follows or the product passes its caps.
 function suffixProduct(nodes, from) {
   if (from + 1 === nodes.length && nodes[from].tag === N_LITERAL) {
     return [nodes[from].str];
@@ -163,7 +162,6 @@ function suffixProduct(nodes, from) {
         branchBytes += lits[lits.length - 1].length + 1;
       }
       if (parts.length > 1 && parts.length * lits.length > MAX_SUFFIX_PRODUCT) return null;
-      // Σ (|p| + |l| + 1) over every pair.
       size = lits.length * (size - parts.length) + parts.length * branchBytes;
       source += branchBytes;
       if (!fits()) return null;
@@ -177,16 +175,12 @@ function suffixProduct(nodes, from) {
   return parts;
 }
 
-// ── matching ────────────────────────────────────────────────────────
-
-// On a path string (not `m.byteOnly`: the pattern is ASCII) the
-// literal parts compare as they are; `?` counts UTF-8 bytes, so the
-// length rules read the segment's UTF-8 length, and pieces or an
-// in-segment NFA that count run on the segment's bytes.
+// On a path string (not `m.byteOnly`) the literal parts compare as they
+// are; `?` counts UTF-8 bytes, so the length rules read the segment's
+// UTF-8 length, and pieces or an NFA that count run on its bytes.
 export function wildConsumes(m, w, str, s, t) {
   if (w.dotProtect && t > s && str.charCodeAt(s) === 0x2e) return false;
   const ci = m.ci;
-  // The in-segment NFA has none: it counts on its own.
   const len = w.anychars > 0 && !m.byteOnly ? utf8Length(str, s, t) : t - s;
   switch (w.kind) {
     case WK_AFFIX: {
@@ -200,15 +194,12 @@ export function wildConsumes(m, w, str, s, t) {
     }
     case WK_SUFFIXES: {
       const p = w.prefixStr;
-      // `minLen` holds the prefix and the `?`s, so `room` is what is
-      // left for a suffix.
       const room = len - w.minLen;
       if (room < 0 || (p.length > 0 && !affixEq(p, str, s, ci))) return false;
       if (w.suffixEmpty && (w.variable || room === 0)) return true;
       if (room === 0) return false;
       const g = lastGroup(str.charCodeAt(t - 1), ci);
       const keys = w.suffixKeys;
-      // The group's first suffix, by binary search of the keys.
       let lo = 0;
       let hi = keys.length;
       while (lo < hi) {
@@ -248,29 +239,9 @@ export function wildConsumes(m, w, str, s, t) {
   }
 }
 
-// ── pieces ──────────────────────────────────────────────────────────
-
-// Brace-free in-segment matcher — the `WK_PIECES` wild backend: a
-// segment of literals, `?`s and classes between `*`s (`a*b?[c-e]*f`) is
-// the pieces its `*`s cut, each of a fixed length. The first is matched
-// at the segment's start, the last at its end, and each one between at
-// its leftmost place after the one before, tried at each place in turn:
-// that leaves the most room to the rest, so no match is missed and no
-// place is tried twice. A segment costs O(n·m) at worst, as the
-// in-segment NFA does.
-
-// What a position takes, one code each: a byte (0-255, ASCII-lowercased
-// when case-insensitive), any byte (ANY, `?`), or class `k` of the
-// pieces' classes (CLASS + k).
-const ANY = 256;
-const CLASS = 257;
-
-// The segment's pieces and what the graph reads off them, as `makeWild`
-// fields, or null when it holds a brace (an NFA's). What the graph reads
-// is what the NFA's would be: NEVER_LEN when a class takes no byte, and
-// protected unless it starts with a literal `.` or a positive class
-// listing it; its wildcards alone take no segment, as a literal or a
-// class stands in each (only `?`s and `*`s are an affix).
+// A brace-free segment as the pieces its `*`s cut, as `makeWild` fields;
+// null when it holds a brace. What the graph reads off the pieces is what
+// it would read off the NFA.
 function compilePieces(nodes, dot, ci) {
   for (const n of nodes) {
     if (n.tag !== N_LITERAL && n.tag !== N_ANYCHAR && n.tag !== N_STAR && n.tag !== N_CLASS) {
@@ -281,8 +252,6 @@ function compilePieces(nodes, dot, ci) {
   const ends = [];
   const classes = [];
   const index = new Map();
-  // Only `?`s and negated classes see a difference between a path
-  // string's UTF-16 units and its UTF-8 bytes, as in the NFA.
   let countsBytes = false;
   let star = false;
   for (const node of nodes) {
@@ -326,29 +295,29 @@ function compilePieces(nodes, dot, ci) {
   };
 }
 
-// `bytes.js`'s `fold`, copied: the per-unit compare below would pay a
+// `bytes.js`'s `fold`, copied: the per-unit compare would pay a
 // module-cell load for an imported one.
 const fold = (c, ci) => (ci && c >= 0x41 && c <= 0x5a ? c | 0x20 : c);
 
-// Does a position take unit `c`? A unit past Latin-1 is no class's.
+// A unit past Latin-1 is no class's.
 function takes(code, c, classes, ci) {
   if (code < ANY) return fold(c, ci) === code;
   return code === ANY || (c <= 0xff && setHas(classes[code - CLASS], c));
 }
 
+// The first piece is matched at the segment's start, the last at its end,
+// and each between at its leftmost place after the one before, which
+// leaves the most room to the rest.
 class Pieces {
   constructor(at, ends, classes, countsBytes) {
-    // Every piece's positions, piece after piece; piece `k` ends at
-    // `ends[k]`, and starts where the one before ends (the first at 0).
+    // Piece `k` is `at[ends[k - 1]..ends[k]]`, the first from 0.
     this.at = exact(at);
     this.ends = exact(ends);
     this.classes = exact(classes);
     this.countsBytes = countsBytes;
   }
 
-  // Does `str[s, t)` match, its length checked against the pieces' (at
-  // least theirs, or theirs alone without a `*`)? The last piece first:
-  // where names differ most.
+  // The last piece first: where names differ most.
   matches(str, s, t, ci) {
     const ends = this.ends;
     const last = ends.length - 1;
@@ -367,8 +336,6 @@ class Pieces {
     return true;
   }
 
-  // Do the positions `at[lo, hi)` take the units from `p` on, the last
-  // first?
   fits(lo, hi, str, p, ci) {
     const at = this.at;
     for (let i = hi - 1; i >= lo; i--) {
@@ -377,8 +344,8 @@ class Pieces {
     return true;
   }
 
-  // Where the leftmost place of the piece `at[lo, hi)` within
-  // `str[from, to)` ends (-1: none), trying each in turn.
+  // Where the leftmost place of the piece `at[lo, hi)` within `str[from,
+  // to)` ends, or -1.
   scan(lo, hi, str, from, to, ci) {
     const m = hi - lo;
     for (let k = from; k + m <= to; k++) if (this.fits(lo, hi, str, k, ci)) return k + m;

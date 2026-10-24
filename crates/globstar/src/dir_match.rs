@@ -1,25 +1,12 @@
-/// What a pattern says about a directory: whether the directory's own
-/// path matches, and what can match below it.
+/// What a pattern says about a directory: whether the directory itself
+/// matches, whether something below it may, and whether everything
+/// below it does (GLOB_SPEC §15).
 ///
-/// The names read from the pattern's side: the pattern *matches* the
-/// directory, *descends* below it (something below may match), or is
-/// *pruned* there (nothing at or below can match). What a walker does
-/// with that depends on the role the pattern plays, so the walker reads
-/// the three facts, not the names:
-///
-/// - A pattern that *selects* files is worth walking into a directory
-///   while [`may_match_below`](Self::may_match_below) holds, and when
-///   [`matches_all_below`](Self::matches_all_below) holds every file
-///   below is a result without another test.
-/// - A pattern that *excludes* files lets the walker skip a directory
-///   whole once `matches_all_below` holds, and needs no more tests below
-///   a directory once `may_match_below` is `false`.
-/// - Whether the directory's own match ([`matches`](Self::matches))
-///   counts is the walker's call: it does for one that yields
-///   directories, or that takes a matched directory as excluded whole.
-///
-/// `matches_all_below` is a guarantee; `may_match_below` errs toward
-/// `true`.
+/// A consumer that selects files walks into a directory while
+/// [`may_match_below`](Self::may_match_below) holds; one that excludes
+/// files skips a directory whole once
+/// [`matches_all_below`](Self::matches_all_below) holds. `may_match_below`
+/// errs toward `true`; `matches_all_below` is a guarantee.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DirMatch {
@@ -38,9 +25,7 @@ pub enum DirMatch {
 }
 
 impl DirMatch {
-    /// The verdict with these three facts; `all_below` implies
-    /// `may_below`. For a consumer that combines verdicts of its own
-    /// (JS: `DirMatch.from`).
+    /// The verdict with these three facts; `all_below` implies `may_below`.
     pub fn new(matches: bool, may_below: bool, all_below: bool) -> Self {
         match (matches, may_below || all_below, all_below) {
             (true, false, _) => Self::Match,
@@ -61,17 +46,13 @@ impl DirMatch {
         )
     }
 
-    /// May some path below the directory match? `false` is a guarantee
-    /// that none does.
+    /// May some path below the directory match? `false` is a guarantee.
     #[inline]
     pub fn may_match_below(self) -> bool {
         !matches!(self, Self::Match | Self::Pruned)
     }
 
-    /// Does every path below the directory match: `is_match(dir + "/" +
-    /// s)` (just `s` when `dir` is the root `""`) for every `s` of one or
-    /// more non-empty segments? `true` is a guarantee; `false` means "not
-    /// all, or not provable".
+    /// Does every path below the directory match? `true` is a guarantee.
     #[inline]
     pub fn matches_all_below(self) -> bool {
         matches!(self, Self::DescendAll | Self::DescendAllAndMatch)
@@ -112,11 +93,9 @@ mod tests {
 
     #[test]
     fn the_two_roles_read_different_facts() {
-        // Selecting files: walk in unless nothing below can match.
         assert!(!Pruned.may_match_below());
         assert!(!Match.may_match_below());
         assert!(Descend.may_match_below());
-        // Excluding files: skip whole only when everything below is.
         assert!(!Descend.matches_all_below());
         assert!(!DescendAndMatch.matches_all_below());
         assert!(DescendAll.matches_all_below() && !DescendAll.matches());

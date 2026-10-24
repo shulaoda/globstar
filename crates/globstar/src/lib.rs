@@ -3,7 +3,7 @@
 //!
 //! The dialect is the standard glob family — `*`, `?`, `**`, character
 //! classes `[a-z]`/`[!a-z]`, braces `{a,b}`, `\` escapes, and leading
-//! `!` whole-pattern negation — specified precisely in the repository's
+//! `!` negation — specified in the repository's
 //! `references/spec/GLOB_SPEC.md`. `@globstar/core` (npm) is the
 //! behaviorally identical JS twin. The filesystem walker built on this
 //! crate lives in `globstar-walk`.
@@ -32,9 +32,7 @@
 //! ```
 //!
 //! Patterns are `&str` (their UTF-8 bytes are what match); paths are
-//! arbitrary `&[u8]`, so non-UTF-8 filenames compare byte-for-byte.
-//! Compilation picks one of two engines automatically (pure-literal or
-//! segment-structured).
+//! arbitrary `&[u8]`, so non-UTF-8 file names compare byte for byte.
 //!
 //! Only the items re-exported at the crate root are supported API; the
 //! `#[doc(hidden)]` modules are internal and may change shape in any
@@ -66,12 +64,10 @@ use union::factor_branches;
 #[non_exhaustive]
 pub struct CompileOptions {
     /// When `false`, wildcards (`*` `?` `[^x]`) cannot consume a leading
-    /// `.` — dotfile protection. `Glob` defaults to `true`, `Walk` to
-    /// `false` (GLOB_SPEC.md §3.1 / §12).
+    /// `.` (GLOB_SPEC §12). `Glob` defaults to `true`, `Walk` to `false`.
     pub dot: bool,
 
-    /// ASCII-only case folding, `false` by default; non-ASCII bytes
-    /// compare verbatim (GLOB_SPEC.md §13 / §14.3).
+    /// ASCII-only case folding, `false` by default (GLOB_SPEC §13).
     pub case_insensitive: bool,
 
     /// No anchored chains, so the graph NFA decides (test hook; JS
@@ -112,20 +108,38 @@ impl CompileOptions {
     }
 }
 
-/// A compiled glob pattern (or [`union`](Glob::union) of patterns).
+/// A compiled glob pattern, or [`union`](Glob::union) of patterns.
 ///
 /// Cheap to match against many paths; compile once and reuse. `Glob`
-/// is `Send + Sync + Clone`, so it can be shared across threads
-/// freely. See the [crate docs](crate) for an overview and the
-/// repository's `GLOB_SPEC.md` for the dialect.
+/// is `Send + Sync + Clone`. See the [crate docs](crate) for an overview
+/// and the repository's `GLOB_SPEC.md` for the dialect.
 #[derive(Clone)]
 pub struct Glob {
     engine: Engine,
     negated: bool,
 }
 
-/// The engine and the negation; the compiled tables are left out (a
-/// union's run to kilobytes).
+#[derive(Debug, Clone)]
+enum Engine {
+    Literal(LiteralMatcher),
+    Segment(Box<SegmentMatcher>),
+}
+
+/// The matcher surface, implemented by [`Glob`]. Object-safe, so a
+/// consumer can hold `Box<dyn Matcher>` when it mixes matcher sources.
+pub trait Matcher {
+    /// Whole-path match: is `path` in the pattern's language?
+    fn is_match(&self, path: &[u8]) -> bool;
+
+    /// Directory-level verdict for pruning (see [`DirMatch`]).
+    fn match_dir(&self, dir_path: &[u8]) -> DirMatch;
+
+    /// Literal path prefixes a walker can seed traversal from (see
+    /// [`Glob::static_prefixes`]).
+    fn static_prefixes(&self) -> Vec<Vec<u8>>;
+}
+
+/// The engine and the negation; the compiled tables are left out.
 impl std::fmt::Debug for Glob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let engine = match &self.engine {
@@ -137,14 +151,6 @@ impl std::fmt::Debug for Glob {
             .field("negated", &self.negated)
             .finish()
     }
-}
-
-#[derive(Debug, Clone)]
-enum Engine {
-    /// Pure literal byte comparison.
-    Literal(LiteralMatcher),
-    /// The segment-structured matcher for everything else.
-    Segment(Box<SegmentMatcher>),
 }
 
 impl Glob {
@@ -183,9 +189,6 @@ impl Glob {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        // The same pattern twice adds nothing to the union: it is parsed
-        // once. Members that only differ in spelling fold into one when
-        // factored.
         let patterns: Vec<S> = patterns.into_iter().collect();
         let mut seen = (patterns.len() > 1).then(|| HashSet::with_capacity(patterns.len()));
         let mut bodies: Vec<Node> = Vec::with_capacity(patterns.len());
@@ -237,8 +240,7 @@ impl Glob {
 
     /// How compilation laid the pattern out: its elements in order, its
     /// chains and the form of its graph NFA, or `literal`. A test hook
-    /// that pins the engine's routing (`fixtures/engine-shapes.tsv`),
-    /// where a slower path would still give the right answers.
+    /// that pins the engine's routing (`fixtures/engine-shapes.tsv`).
     #[doc(hidden)]
     pub fn shape(&self) -> String {
         match &self.engine {
@@ -274,8 +276,6 @@ impl Glob {
     /// directory without a trailing separator (`a`, not `a/`; GLOB_SPEC
     /// §15.3).
     pub fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        // Anything below may match a negated pattern; whether `dir_path`
-        // itself does is exact (§15.4).
         if self.negated {
             return DirMatch::new(self.is_match(dir_path), true, false);
         }
@@ -284,20 +284,6 @@ impl Glob {
             Engine::Segment(m) => m.match_dir(dir_path),
         }
     }
-}
-
-/// The matcher surface, implemented by [`Glob`]. Object-safe, so a
-/// consumer can hold `Box<dyn Matcher>` when it mixes matcher sources.
-pub trait Matcher {
-    /// Whole-path match: is `path` in the pattern's language?
-    fn is_match(&self, path: &[u8]) -> bool;
-
-    /// Directory-level verdict for pruning (see [`DirMatch`]).
-    fn match_dir(&self, dir_path: &[u8]) -> DirMatch;
-
-    /// Literal path prefixes a walker can seed traversal from (see
-    /// [`Glob::static_prefixes`]).
-    fn static_prefixes(&self) -> Vec<Vec<u8>>;
 }
 
 impl Matcher for Glob {

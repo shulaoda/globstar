@@ -1,18 +1,11 @@
-//! Bit sets. The NFA simulations' (`Bits`): one `u64` when the
-//! automaton has at most 64 states, a boxed word slice beyond. Both
-//! NFAs (the graph `Nfa` and the in-segment `SegNfa`) are generic over
-//! the trait so the common case is a plain register. `ByteSet`, a
-//! class as the bytes it takes, which the pieces and the in-segment
-//! NFA test a byte against. And `ByteSketch`, a set of bytes in 64
-//! slots that lets a scan be skipped: the prefilter's, a gate's, a
-//! suffix set's.
+//! Bit sets: the NFAs' state sets, a class as the bytes it takes, and a
+//! 64-slot sketch of a set of bytes.
 
 use crate::parse::ast::CharClass;
 
+/// A state set: one `u64` up to 64 states, a boxed word slice beyond.
 pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
-    /// The empty set over `words` words.
     fn zero(words: usize) -> Self;
-    /// Words needed for `n_bits` bits.
     fn words(n_bits: usize) -> usize;
     fn set(&mut self, i: usize);
     fn test(&self, i: usize) -> bool;
@@ -20,9 +13,7 @@ pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     fn clear(&mut self);
     fn or_with(&mut self, other: &Self);
     fn intersects(&self, other: &Self) -> bool;
-    /// Visit every set bit, ascending.
     fn for_each(&self, f: impl FnMut(usize));
-    /// The words, lowest bits first.
     fn words_mut(&mut self) -> &mut [u64];
 }
 
@@ -73,7 +64,6 @@ impl Bits for u64 {
     }
 }
 
-/// A set over more than 64 states.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Wide(Box<[u64]>);
 
@@ -128,13 +118,11 @@ impl Bits for Wide {
     }
 }
 
-/// A 64-slot sketch of a set of bytes (`b % 64`): a byte not in the
-/// sketch is not in the set, so a set scan can be skipped.
+/// A set of bytes by `b % 64`: a byte outside the sketch is outside the set.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ByteSketch(u64);
 
 impl ByteSketch {
-    /// Every byte: a string that ends with anything.
     pub(super) const ALL: ByteSketch = ByteSketch(u64::MAX);
 
     pub(super) fn of_last_bytes<'a>(strings: impl Iterator<Item = &'a [u8]>, ci: bool) -> Self {
@@ -168,10 +156,9 @@ impl ByteSketch {
     }
 }
 
-/// A class as the bytes it takes, one bit each, with its negation applied
-/// and the separators left out: a test is one lookup, however many items
-/// the class lists. `negated` stays for dot protection, where a negated
-/// class counts as a wildcard.
+/// A class as the bytes it takes, negation applied and separators left
+/// out. `negated` stays for dot protection, where a negated class is a
+/// wildcard.
 #[derive(Debug, Clone)]
 pub(super) struct ByteSet {
     pub(super) bits: [u64; 4],
@@ -179,14 +166,13 @@ pub(super) struct ByteSet {
 }
 
 impl ByteSet {
-    /// Case-insensitively (`ci`) a listed ASCII letter lists its other
-    /// case too, before the negation (§13).
+    /// Case-insensitively a listed ASCII letter lists its other case too,
+    /// before the negation (GLOB_SPEC §13).
     pub(super) fn of(cls: &CharClass, ci: bool) -> Self {
         let mut set = ByteSet {
             bits: [0; 4],
             negated: cls.negated,
         };
-        // A word at a time: a class costs its ranges, not the bytes they span.
         for &(lo, hi) in &cls.ranges {
             for w in lo >> 6..=hi >> 6 {
                 let from = if w == lo >> 6 { lo & 63 } else { 0 };
@@ -232,8 +218,6 @@ mod tests {
     use super::ByteSet;
     use crate::parse::ast::Node;
 
-    // The table takes exactly the bytes the class's ranges define, for
-    // every byte, negated or not, with ranges and repeats.
     #[test]
     fn a_byte_set_takes_what_its_class_does() {
         for pattern in [

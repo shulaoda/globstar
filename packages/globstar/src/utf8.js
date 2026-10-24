@@ -1,7 +1,12 @@
+// Paths and patterns in the byte space: one char per UTF-8 byte.
+
 const ENCODER = new TextEncoder();
 
-// How many UTF-8 bytes `str[s, t)` takes, without making them (what `?`
-// counts). A lone surrogate encodes as U+FFFD, three bytes.
+// `fromCharCode.apply` has an argument-count ceiling.
+const CHUNK = 4096;
+
+// The UTF-8 length of `str[s, t)`; a lone surrogate encodes as U+FFFD,
+// three bytes.
 export function utf8Length(str, s = 0, t = str.length) {
   let n = t - s;
   for (let i = s; i < t; i++) {
@@ -16,10 +21,6 @@ export function utf8Length(str, s = 0, t = str.length) {
   return n;
 }
 
-// Bytes (a Uint8Array or a plain array of bytes) → a Latin-1 string,
-// each byte one char code: the byte-space string `utf8Latin1` builds
-// when there is no `Buffer`, and the copy `flat` makes. `[]` yields `""`.
-const CHUNK = 4096; // `fromCharCode.apply` has an argument-count ceiling.
 function latin1(bytes) {
   const n = bytes.length;
   if (n <= CHUNK) return n === 0 ? "" : String.fromCharCode.apply(null, bytes);
@@ -30,9 +31,7 @@ function latin1(bytes) {
   return out;
 }
 
-// A path string in the byte space: one char per UTF-8 byte. ASCII is
-// already its own UTF-8, so it passes through with no allocation;
-// `Buffer` does the transcode in one native step where it exists.
+// ASCII is its own UTF-8: it passes through with no allocation.
 export function utf8Latin1(input) {
   const n = input.length;
   for (let i = 0; i < n; i++) {
@@ -45,9 +44,8 @@ export function utf8Latin1(input) {
   return input;
 }
 
-// `s` as a flat string of its own. V8 keeps a string of 13 or more chars
-// joined from parts as a tree of them, and a slice as a view that keeps
-// its source alive; the strings a matcher stores live as long as it does.
+// A flat copy: V8 keeps a string of 13 or more chars joined from parts as
+// a tree, and a slice as a view that keeps its source alive.
 export function flat(s) {
   if (s.length < 13) return s;
   const codes = [];
@@ -55,13 +53,11 @@ export function flat(s) {
   return latin1(codes);
 }
 
-// Is every char of `str[s, t)` ASCII?
 export function isAscii(str, s, t) {
   for (let i = s; i < t; i++) if (str.charCodeAt(i) > 0x7f) return false;
   return true;
 }
 
-// Inverse of `latin1`: a Latin-1 string back to its bytes.
 export function latin1Bytes(str) {
   const out = new Uint8Array(str.length);
   for (let i = 0; i < str.length; i++) out[i] = str.charCodeAt(i);

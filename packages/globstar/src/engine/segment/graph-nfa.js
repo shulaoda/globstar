@@ -1,7 +1,5 @@
 // The NFA over the graph: one state per position, stepped once per path
-// segment. One int32 of states up to 32, a sparse step beyond; it runs
-// when the chains cannot serve, and answers `matchDir` where it is kept.
-// JS twin of `crates/globstar/src/engine/segment/graph_nfa.rs`.
+// segment. One int32 of states up to 32, a sparse step beyond.
 
 import {
   EL_LIT,
@@ -20,7 +18,6 @@ import { asciiLower, cmpFolded, ctz32, litEq, nextSep } from "../../bytes.js";
 import { bitSet } from "./bits.js";
 import { wildConsumes } from "./wild.js";
 
-// Graph NFA kinds: dense int32 rows, sparse.
 export const NFA_SMALL = 0;
 export const NFA_SPARSE = 1;
 
@@ -29,11 +26,8 @@ export const NFA_SPARSE = 1;
 // provable" is a valid answer (GLOB_SPEC §15.5).
 const MAX_COVER_SEGMENTS = 64;
 
-// ── building ────────────────────────────────────────────────────────
-
-// The NFA over the graph's positions. A linear pattern's positions
-// follow one another; only the graph of a crossing brace has stored
-// edges. States are numbered by position; the accept state comes last.
+// States are numbered by position; the accept state comes last. A linear
+// pattern's positions follow one another.
 function layout(graph) {
   const elems = graph.elems;
   return {
@@ -44,27 +38,23 @@ function layout(graph) {
   };
 }
 
-// One int32 of states up to 32, sparse beyond, and for a graph with
-// pieces, which keeps their NFA (`graph.glue`) with it.
 export function anyNfa(graph, ci) {
   return graph.glue === null && graph.elems.length + 1 <= 32
     ? denseNfa(graph)
     : sparseNfa(graph, ci);
 }
 
-// Int32 active set: at most 32 states. `after` holds per state the
-// closure entered after consuming a segment there (a globstar's
-// includes itself); state `i` takes what `elems[i]` takes.
+// `after[s]`: the closure entered after consuming a segment at `s` (a
+// globstar's includes itself). `reach1`: the states that reach accept
+// through one or more segments.
 function denseNfa(graph) {
   const { elems, n, succs, start } = layout(graph);
   const accept = n;
   const after = [];
   for (let s = 0; s <= n; s++) after.push(0);
   let reach1 = 0;
-  // The closure a target adds, from the last position back: successors
-  // always lie ahead, so each is complete when needed, and a nullable
-  // successor contributes its own successors. A join is only those: it
-  // never takes a segment, so no set holds it.
+  // From the last position back: successors lie ahead, so each closure is
+  // complete when needed. A join is only its successors: no set holds it.
   const addTarget = (c, t) => {
     if (t === ACCEPT) return c | (1 << accept);
     if (elems[t].kind === EL_JOIN) return c | after[t];
@@ -76,10 +66,7 @@ function denseNfa(graph) {
     let c = 0;
     if (succs === null) c = addTarget(c, i + 1 < n ? i + 1 : ACCEPT);
     else for (const t of succs[i]) c = addTarget(c, t);
-    // A state reaches accept through ≥ 1 segment iff its element can
-    // consume one and what follows reaches accept.
     if (elemSatisfiable(el) && ((c & (1 << accept)) !== 0 || (c & reach1) !== 0)) reach1 |= 1 << i;
-    // A globstar stays after taking a segment.
     after[i] = isGlobstar(el) ? c | (1 << i) : c;
   }
   let init = 0;
@@ -87,42 +74,29 @@ function denseNfa(graph) {
   return { kind: NFA_SMALL, after: exact(after), init, accept, reach1 };
 }
 
-// Past 32 states the graph NFA is stepped sparsely. A position keeps
-// its successors, not a closure row (the start is the last position):
-// the literal ones sorted by literal (`litKeys` folded when
-// insensitive) at `lits[litAt[p]..litAt[p + 1]]`, and the others at
-// `others[otherAt[p]..otherAt[p + 1]]`, the nullable ones (`**/`) first,
-// up to `nullEnd[p]`. The active set holds states and whole positions;
-// see `nfaRunSparse`.
+// A position keeps its successors, not a closure row (the start is the
+// last position): the literal ones sorted by literal (`litKeys`, folded
+// when insensitive) at `lits[litAt[p]..litAt[p + 1]]`, the others at
+// `others[otherAt[p]..otherAt[p + 1]]`, the nullable ones (`**/`) first up
+// to `nullEnd[p]`. The active set holds states and whole positions.
 function sparseNfa(graph, ci) {
   const { elems, n, succs, start } = layout(graph);
   const glue = graph.glue;
   const succOf = (p) => (p === n ? start : succs === null ? null : succs[p]);
-  // The successors of `p` that start a segment: linear graphs store no
-  // edges, so position `p` is followed by `p + 1`; the pieces glued to
-  // `p` are the glue NFA's.
+  // The successors of `p` that start a segment; the pieces glued to `p`
+  // are the glue NFA's.
   const glued = (t) => elems[t].kind === EL_PIECE && elems[t].entry === INNER;
   const eachSucc = (p, f) => {
     const list = succOf(p);
     if (list === null) f(p + 1 < n ? p + 1 : ACCEPT);
     else for (const t of list) if (t === ACCEPT || !glued(t)) f(t);
   };
-  // State `p` is position `p`; the accept state is `n`.
   const accept = n;
 
-  // A position reaches accept through ≥ 1 segment iff its element can
-  // consume one and what it enters reaches accept: from the last
-  // position back, as successors always lie ahead.
-  // The flags are bytes (1 or 0) and the offsets int32: a plain array
-  // takes 8 bytes per entry, booleans included.
-  // (A nullable successor is a `**/`, which reaches accept through one
-  // segment whenever it reaches it at all, or a join, which takes none and
-  // reaches it as its successors do: no set holds a join's state, only its
-  // position, see `enterSparse`. A piece reaches it iff a segment takes
-  // it to an exit that does, see `GlueNfa.reach`.)
+  // Positions sit past the states, as the active set indexes them
+  // (`base + p`). A join reaches accept as its successors do; a piece iff
+  // a segment takes it to an exit that does.
   const base = n + 1;
-  // Positions sit past the states, as the sparse active set indexes them
-  // (`base + p`, see `nfaRunSparse`).
   const reach1 = new Uint8Array(2 * n + 2);
   let good = null;
   for (let i = n - 1; i >= 0; i--) {
@@ -186,41 +160,38 @@ function sparseNfa(graph, ci) {
     ends,
     reach1,
     accept,
-    // The glued pieces' NFA, when the graph has pieces, and the entries
-    // of those a step meets (see `stepSparse`).
     glue,
+    // The entries of the pieces a step meets.
     entries: null,
-    // Mark arrays reused across calls (see `nfaRunSparse`).
+    // The active sets, reused across calls.
     scratch: null,
   };
 }
 
-// ── running, int32 active set ───────────────────────────────────────
-
 // The active set after every segment of `str`.
 export function nfaRun(m, str) {
-  const g = m.nfa;
-  let active = g.init;
+  const nfa = m.nfa;
+  let active = nfa.init;
   let pos = 0;
   for (;;) {
     if (active === 0) return 0;
     let end = nextSep(str, pos);
     const last = end === -1;
     if (last) end = str.length;
-    active = nfaStep(m, g, active, str, pos, end);
+    active = nfaStep(m, nfa, active, str, pos, end);
     if (last) return active;
     pos = end + 1;
   }
 }
 
-function nfaStep(m, g, active, str, s0, e0) {
+function nfaStep(m, nfa, active, str, s0, e0) {
   const elems = m.elems;
-  const after = g.after;
+  const after = nfa.after;
   const ci = m.ci;
   let next = 0;
   const segDotLed = e0 !== s0 && str.charCodeAt(s0) === 0x2e;
   const absorbOk = m.dot || !segDotLed;
-  let bits = active & ~(1 << g.accept);
+  let bits = active & ~(1 << nfa.accept);
   while (bits !== 0) {
     const s = ctz32(bits);
     bits &= bits - 1;
@@ -241,14 +212,13 @@ function nfaStep(m, g, active, str, s0, e0) {
   return next;
 }
 
-// `nfaStep` over a non-empty segment that only wildcards consume: every
-// literal and class rejects it (`dot=true` only).
+// `nfaStep` over a non-empty segment only wildcards take (`dot=true` only).
 function nfaStepWild(m, active) {
-  const g = m.nfa;
+  const nfa = m.nfa;
   const elems = m.elems;
-  const after = g.after;
+  const after = nfa.after;
   let next = 0;
-  let bits = active & ~(1 << g.accept);
+  let bits = active & ~(1 << nfa.accept);
   while (bits !== 0) {
     const s = ctz32(bits);
     bits &= bits - 1;
@@ -258,17 +228,12 @@ function nfaStepWild(m, active) {
   return next;
 }
 
-// Does every path below the directory match? `active` is the state set
-// the directory's segments leave behind.
-//
-// Feeds wildcard-only segments until the set settles, requiring an
-// accept after each one. A real segment fires every transition a
-// wildcard-only one does, so `true` holds for all real paths; `false`
-// may only mean "not provable".
+// Does every path below the directory match? Feeds wildcard-only segments
+// until the set settles, requiring an accept after each one; a real
+// segment fires every transition a wildcard-only one does, so `true`
+// holds, and `false` may only mean "not provable".
 export function coversBelow(m, active) {
   const acceptBit = 1 << m.nfa.accept;
-  // Tokens only move forward or sit on a globstar, so the set settles
-  // within the number of states.
   const limit = Math.min(m.nfa.after.length, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
     const next = nfaStepWild(m, active);
@@ -279,19 +244,15 @@ export function coversBelow(m, active) {
   return false;
 }
 
-// ── running, sparse active set ──────────────────────────────────────
-
-// An active set over `stamp`'s indices: states first, then position `p`
-// at `g.n + 1 + p` (every successor of `p` entered). `items` lists
-// them; an index is in the set while its stamp is the set's `gen`, so
-// clearing it is one increment. The sets live on the NFA and are
-// reused: a match never nests another on the same matcher.
-function sparseScratch(g) {
-  if (g.scratch === null) g.scratch = { a: newSet(g), b: newSet(g) };
-  return g.scratch;
+// A sparse active set over `stamp`'s indices: states first, then position
+// `p` at `n + 1 + p` (every successor of `p` entered). An index is in the
+// set while its stamp is the set's `gen`, so clearing it is one increment.
+function sparseScratch(nfa) {
+  if (nfa.scratch === null) nfa.scratch = { a: newSet(nfa), b: newSet(nfa) };
+  return nfa.scratch;
 }
 
-const newSet = (g) => ({ items: [], len: 0, stamp: new Int32Array(2 * g.n + 2), gen: 1 });
+const newSet = (nfa) => ({ items: [], len: 0, stamp: new Int32Array(2 * nfa.n + 2), gen: 1 });
 
 function clearSet(set) {
   set.len = 0;
@@ -310,42 +271,38 @@ function addTo(set, i) {
 
 export const sparseHas = (set, i) => set.stamp[i] === set.gen;
 
-// Enter every successor of position `p`: the position stands for them,
-// and through a nullable one (`**/`) its successors are entered too. The
-// positions this adds are the work list: each is expanded once.
-function enterSparse(g, p, next) {
-  const base = g.n + 1;
+// Enter position `p`, and through its nullable successors (`**/`) theirs;
+// the positions added are the work list.
+function enterSparse(nfa, p, next) {
+  const base = nfa.n + 1;
   let i = next.len;
   if (!addTo(next, base + p)) return;
   while (i < next.len) {
     const item = next.items[i++];
     if (item < base) continue;
     const q = item - base;
-    if (g.ends[q]) addTo(next, g.accept);
-    for (let k = g.otherAt[q]; k < g.nullEnd[q]; k++) addTo(next, base + g.others[k]);
+    if (nfa.ends[q]) addTo(next, nfa.accept);
+    for (let k = nfa.otherAt[q]; k < nfa.nullEnd[q]; k++) addTo(next, base + nfa.others[k]);
   }
 }
 
-// State `s` took a segment: a globstar stays, and its position's
-// successors are entered.
-function fireSparse(m, g, s, next) {
+// State `s` took a segment: a globstar stays, and its position is entered.
+function fireSparse(m, nfa, s, next) {
   if (isGlobstar(m.elems[s])) addTo(next, s);
-  enterSparse(g, s, next);
+  enterSparse(nfa, s, next);
 }
 
-// The start's closure, in the first scratch set.
-export function initSparse(g) {
-  const { a } = sparseScratch(g);
+export function initSparse(nfa) {
+  const { a } = sparseScratch(nfa);
   clearSet(a);
-  enterSparse(g, g.n, a);
+  enterSparse(nfa, nfa.n, a);
   return a;
 }
 
-// The active set after every segment of `str`.
 export function nfaRunSparse(m, str) {
-  const g = m.nfa;
-  const scratch = sparseScratch(g);
-  let active = initSparse(g);
+  const nfa = m.nfa;
+  const scratch = sparseScratch(nfa);
+  let active = initSparse(nfa);
   let next = scratch.b;
   let pos = 0;
   for (;;) {
@@ -353,7 +310,7 @@ export function nfaRunSparse(m, str) {
     let end = nextSep(str, pos);
     const last = end === -1;
     if (last) end = str.length;
-    stepSparse(m, g, active, next, str, pos, end);
+    stepSparse(m, nfa, active, next, str, pos, end);
     const t = active;
     active = next;
     next = t;
@@ -362,47 +319,47 @@ export function nfaRunSparse(m, str) {
   }
 }
 
-function stepSparse(m, g, active, next, str, s0, e0) {
+function stepSparse(m, nfa, active, next, str, s0, e0) {
   clearSet(next);
   const ci = m.ci;
-  const base = g.n + 1;
+  const base = nfa.n + 1;
   const absorbOk = m.dot || e0 === s0 || str.charCodeAt(s0) !== 0x2e;
   const items = active.items;
   for (let k = 0, n = active.len; k < n; k++) {
     const item = items[k];
     if (item < base) {
-      if (item === g.accept) continue;
-      if (sparseConsumes(m, item, str, s0, e0, absorbOk)) fireSparse(m, g, item, next);
+      if (item === nfa.accept) continue;
+      if (sparseConsumes(m, item, str, s0, e0, absorbOk)) fireSparse(m, nfa, item, next);
       continue;
     }
     const p = item - base;
     // Equal literals sit together, one binary search away.
-    const hi = g.litAt[p + 1];
-    let lo = g.litAt[p];
+    const hi = nfa.litAt[p + 1];
+    let lo = nfa.litAt[p];
     let top = hi;
     while (lo < top) {
       const mid = (lo + top) >>> 1;
-      if (cmpFolded(g.litKeys[mid], str, s0, e0, ci) < 0) lo = mid + 1;
+      if (cmpFolded(nfa.litKeys[mid], str, s0, e0, ci) < 0) lo = mid + 1;
       else top = mid;
     }
-    for (; lo < hi && cmpFolded(g.litKeys[lo], str, s0, e0, ci) === 0; lo++) {
-      fireSparse(m, g, g.lits[lo], next);
+    for (; lo < hi && cmpFolded(nfa.litKeys[lo], str, s0, e0, ci) === 0; lo++) {
+      fireSparse(m, nfa, nfa.lits[lo], next);
     }
-    for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {
-      const s = g.others[k];
-      if (sparseConsumes(m, s, str, s0, e0, absorbOk)) fireSparse(m, g, s, next);
+    for (let k = nfa.otherAt[p]; k < nfa.otherAt[p + 1]; k++) {
+      const s = nfa.others[k];
+      if (sparseConsumes(m, s, str, s0, e0, absorbOk)) fireSparse(m, nfa, s, next);
     }
   }
   // The pieces' entries, matched together after the rest.
-  const entries = g.entries;
+  const entries = nfa.entries;
   if (entries !== null) {
-    g.entries = null;
-    g.glue.exits(entries, str, s0, e0, m.dot, m.byteOnly, (q) => fireSparse(m, g, q, next));
+    nfa.entries = null;
+    nfa.glue.exits(entries, str, s0, e0, m.dot, m.byteOnly, (q) => fireSparse(m, nfa, q, next));
   }
 }
 
-// Does state `s` take the segment `str[s0..e0]`? A piece notes its entry
-// for the glue NFA, which takes the segment once for all of them.
+// A piece notes its entry for the glue NFA, which takes the segment once
+// for all of them.
 function sparseConsumes(m, s, str, s0, e0, absorbOk) {
   const e = m.elems[s];
   switch (e.kind) {
@@ -413,8 +370,8 @@ function sparseConsumes(m, s, str, s0, e0, absorbOk) {
     case EL_JOIN:
       return false;
     case EL_PIECE: {
-      const g = m.nfa;
-      bitSet((g.entries ??= g.glue.set()), e.entry);
+      const nfa = m.nfa;
+      bitSet((nfa.entries ??= nfa.glue.set()), e.entry);
       return false;
     }
     default:
@@ -422,43 +379,39 @@ function sparseConsumes(m, s, str, s0, e0, absorbOk) {
   }
 }
 
-// May a state of the set still consume ≥ 1 segment on a path to accept?
-export function sparseReach1(g, set) {
-  for (let k = 0; k < set.len; k++) if (g.reach1[set.items[k]]) return true;
+export function sparseReach1(nfa, set) {
+  for (let k = 0; k < set.len; k++) if (nfa.reach1[set.items[k]]) return true;
   return false;
 }
 
-// As `coversBelow`, over the set `nfaRunSparse` or `initSparse` left. A
-// piece takes a segment to the nodes the glue NFA reaches, so it fires
-// those its wildcards alone take every segment to (`GlueNfa.anyExits`),
-// as the whole segments through it would.
+// As `coversBelow`. A piece fires the nodes its wildcards alone take every
+// segment to (`GlueNfa.anyExits`).
 export function coversBelowSparse(m, active) {
-  const g = m.nfa;
-  const scratch = sparseScratch(g);
+  const nfa = m.nfa;
+  const scratch = sparseScratch(nfa);
   let next = active === scratch.a ? scratch.b : scratch.a;
-  const base = g.n + 1;
+  const base = nfa.n + 1;
   const anySeg = (s) => elemAnySeg(m.elems[s]);
-  const limit = Math.min(g.n + 1, MAX_COVER_SEGMENTS);
+  const limit = Math.min(nfa.n + 1, MAX_COVER_SEGMENTS);
   for (let step = 0; step <= limit; step++) {
     clearSet(next);
     let entries = null;
     for (let k = 0; k < active.len; k++) {
       const item = active.items[k];
       if (item < base) {
-        if (item !== g.accept && anySeg(item)) fireSparse(m, g, item, next);
+        if (item !== nfa.accept && anySeg(item)) fireSparse(m, nfa, item, next);
         continue;
       }
-      // Literals never take a wildcard-only segment.
       const p = item - base;
-      for (let k = g.otherAt[p]; k < g.otherAt[p + 1]; k++) {
-        const s = g.others[k];
+      for (let k = nfa.otherAt[p]; k < nfa.otherAt[p + 1]; k++) {
+        const s = nfa.others[k];
         const e = m.elems[s];
-        if (elemAnySeg(e)) fireSparse(m, g, s, next);
-        else if (e.kind === EL_PIECE) bitSet((entries ??= g.glue.set()), e.entry);
+        if (elemAnySeg(e)) fireSparse(m, nfa, s, next);
+        else if (e.kind === EL_PIECE) bitSet((entries ??= nfa.glue.set()), e.entry);
       }
     }
-    if (entries !== null) g.glue.anyExits(entries, (node) => fireSparse(m, g, node, next));
-    if (!sparseHas(next, g.accept)) return false;
+    if (entries !== null) nfa.glue.anyExits(entries, (node) => fireSparse(m, nfa, node, next));
+    if (!sparseHas(next, nfa.accept)) return false;
     if (next.len === active.len && sameSet(next, active)) return true;
     const t = active;
     active = next;

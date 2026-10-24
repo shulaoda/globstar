@@ -1,5 +1,3 @@
-// The longest pattern accepted, in bytes (`TooLong`), and how deep braces
-// may nest (`BraceNestingTooDeep`).
 export const MAX_PATTERN_LEN = 64 * 1024;
 export const MAX_BRACE_NESTING = 32;
 
@@ -11,8 +9,8 @@ export class GlobError extends Error {
     if (info) Object.assign(this, info);
   }
 
+  // `message` is not enumerable, so JSON would drop it.
   toJSON() {
-    // `message` is not enumerable, so JSON would drop it.
     const out = { name: this.name, kind: this.kind, message: this.message };
     for (const key of ["at", "len", "max", "low", "high", "index"]) {
       if (this[key] !== undefined) out[key] = this[key];
@@ -46,9 +44,7 @@ function formatMessage(kind, info) {
   }
 }
 
-// A byte as the user wrote it, or as `\xHH` when it is not a printable ASCII
-// character (a class range is byte-based, so this may be one byte of a
-// multi-byte character).
+// A byte as written, or as `\xHH` when it is not printable ASCII.
 function show(byte) {
   return byte > 0x20 && byte < 0x7f
     ? String.fromCharCode(byte)

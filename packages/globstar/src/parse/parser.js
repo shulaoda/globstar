@@ -28,16 +28,16 @@ const COMMA = 0x2c;
 const BANG = 0x21;
 const CARET = 0x5e;
 const DASH = 0x2d;
-// The bytes `parseSequence` has a case for (`,` and `}` only in a brace):
-// a run of any other bytes joins the text as one slice.
+
+// The bytes `parseSequence` has a case for; a run of any other joins the
+// text as one slice.
 const SPECIAL = new Uint8Array(256);
 for (const b of [BACKSLASH, SLASH, QUESTION, STAR, LBRACK, LBRACE, COMMA, RBRACE]) SPECIAL[b] = 1;
 
-// The pattern is read as its UTF-8 bytes, one char per byte (see
-// `utf8Latin1`), and a literal keeps its bytes as such a string.
+// The pattern is read as its UTF-8 bytes, one char per byte (`utf8Latin1`).
 export function parse(input) {
-  // UTF-8 is never shorter than the UTF-16 string, so a string past the
-  // limit is refused before it is copied.
+  // UTF-8 is never shorter than UTF-16: a string past the limit is refused
+  // before it is copied.
   if (input.length > MAX_PATTERN_LEN) {
     throw new GlobError("TooLong", { len: utf8Length(input), max: MAX_PATTERN_LEN });
   }
@@ -46,20 +46,18 @@ export function parse(input) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
   }
 
-  // Past the end `charCodeAt` is NaN, which ends the run.
+  // Past the end `charCodeAt` is NaN, which ends a run.
   let negations = 0;
   while (bytes.charCodeAt(negations) === BANG) negations++;
-  // Nothing is empty, and so are `!` and `!!`: they negate nothing (§6.1).
   if (negations === bytes.length) throw new GlobError("Empty");
 
   const state = { input: bytes, pos: negations };
   const body = parseSequence(state, 0);
-  // `ascii`: no byte past ASCII anywhere, so none in a literal or a class.
   return { body, isNegated: (negations & 1) === 1, ascii: bytes === input };
 }
 
-// The sequence up to the end, or (`depth` > 0, inside that many braces)
-// up to the `,` or `}` that ends its branch.
+// The sequence up to the end, or inside a brace (`depth > 0`) up to the
+// `,` or `}` that ends its branch.
 function parseSequence(state, depth) {
   const inBrace = depth > 0;
   const { input } = state;
@@ -74,7 +72,6 @@ function parseSequence(state, depth) {
 
   while (state.pos < input.length) {
     const b = input.charCodeAt(state.pos);
-
     if (inBrace && (b === COMMA || b === RBRACE)) break;
 
     switch (b) {
@@ -105,7 +102,6 @@ function parseSequence(state, depth) {
           run++;
           state.pos++;
         }
-        // A run of exactly two is a `**`; any other run is a star.
         if (run === 2) doubleStar(state, nodes, inBrace);
         else nodes.push(STAR_NODE);
         break;
@@ -121,10 +117,9 @@ function parseSequence(state, depth) {
           nodes.push(brace(branches));
           break;
         }
-        // One branch is no brace (§10.4): its text, braces included.
+        // A brace of one branch is literal text (GLOB_SPEC §10.4).
         text += "{";
-        const single = branches[0];
-        for (const node of seq(single)) {
+        for (const node of seq(branches[0])) {
           if (node.tag === N_LITERAL) text += node.str;
           else {
             flush();
@@ -143,24 +138,20 @@ function parseSequence(state, depth) {
     }
   }
 
-  // Most brace branches are one literal, which needs no node list.
   if (nodes.length === 0 && text.length > 0) return lit(text);
   flush();
-
   if (nodes.length === 1) return nodes[0];
   return concat(nodes);
 }
 
-// A `**` is a globstar with a separator, or the edge of the pattern, on both
-// sides, and a star beside any other token (§9.1): read beside text, it is a
-// star. Beside a brace, or at the edge of a branch, what it meets depends on
-// the expansion, and the graph walk decides it in each. A `**/**` that is two
-// globstars in every expansion is one (§9.6).
+// A `**` beside text is a star; beside a separator, a brace or an edge of
+// the pattern it is a `Globstar` node, which the graph walk decides per
+// expansion (GLOB_SPEC §9.1). A `**/**` that is two globstars in every
+// expansion is one (§9.6).
 function doubleStar(state, nodes, inBrace) {
   const n = nodes.length;
   const last = n > 0 ? nodes[n - 1].tag : -1;
   const textBefore = last !== -1 && last !== N_SEPARATOR && last !== N_BRACE;
-  // Past the end `charCodeAt` is NaN.
   const next = state.input.charCodeAt(state.pos);
   const end = Number.isNaN(next) || next === SLASH;
   const textAfter = !end && next !== LBRACE && !(inBrace && (next === COMMA || next === RBRACE));
@@ -168,7 +159,6 @@ function doubleStar(state, nodes, inBrace) {
     nodes.push(STAR_NODE);
     return;
   }
-  // Is a separator surely right before `nodes[at]`?
   const surelySepBefore = (at) => (at === 0 ? !inBrace : nodes[at - 1].tag === N_SEPARATOR);
   if (
     end &&
@@ -196,12 +186,9 @@ function parseClass(state) {
   }
 
   const ranges = [];
-  // A `]` first is a member (§8.5), and like any member it can start a
-  // range: `[]-a]` is `]..=a`.
+  // A `]` first is a member (GLOB_SPEC §8.5), and can start a range.
   let first = true;
   while (true) {
-    // Past the end `charCodeAt` is NaN, and `parseClassByte` finds the
-    // class unterminated.
     if (input.charCodeAt(state.pos) === RBRACK && !first) {
       state.pos++;
       return klass(negated, ranges);
@@ -232,7 +219,6 @@ function parseClassByte(state, classStart) {
   return resolved;
 }
 
-// The brace at `pos`, the `depth`th one open.
 function parseBrace(state, depth) {
   const { input } = state;
   const startPos = state.pos;

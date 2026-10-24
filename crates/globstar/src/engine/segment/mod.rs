@@ -1,22 +1,6 @@
-//! The segment engine: a pattern becomes a graph of per-segment
-//! elements (literals, in-segment wildcard matchers, globstars) and a
-//! path is matched segment by segment. A path through the graph with
-//! at most one globstar, or two around a block, is matched by anchored
-//! compares, the literal-only paths by one search of a sorted set, and
-//! a union of many paths asks only those its path's segments pick;
-//! everything else runs an NFA whose active set grows with the
-//! pattern, so no pattern is too big for it. A segment a brace cuts is
-//! a run of glued pieces, which one in-segment NFA matches together.
-//! The graph is linear in the pattern: every pattern compiles.
-//!
-//! `graph` holds the graph's elements and builds the graph; `chain`
-//! and `graph_nfa` match over it, and `chain_index` picks a big union's
-//! chains. `wild` matches inside a segment, and `seg_nfa` is the
-//! in-segment NFA, of a wildcard segment and across glued pieces.
-//! `literal_ends` reads the literal suffixes and prefixes off the AST,
-//! and `bits` holds the bit sets (the NFAs', the byte sketches); the
-//! byte comparisons are `crate::bytes`. The layers, the thresholds that
-//! pick them and what each buys: `references/theory/03-segment-engine.md`.
+//! The segment engine: a pattern as a graph of per-segment elements,
+//! matched segment by segment. The design and its thresholds:
+//! `references/theory/03-segment-engine.md`.
 
 mod bits;
 mod chain;
@@ -39,41 +23,31 @@ use graph::{Elem, Graph};
 use graph_nfa::{AnyNfa, any_nfa};
 use wild::WildKind;
 
-/// A byte string the matcher keeps: literals, affixes, suffixes,
-/// static prefixes.
 type Bytes = Box<[u8]>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SegmentMatcher {
-    /// The graph's nodes, in emission order.
     elems: Box<[Elem]>,
-    /// The paths through the graph, tried in order (the literal ones as
-    /// one set, first); none past the chain module's caps.
+    /// The literal set first, when there is one; empty when the NFA
+    /// answers alone.
     chains: Box<[Chain]>,
-    /// What a lone line does without: the NFA over the graph, which
-    /// serves `match_dir` (and `is_match` when the chains cannot), and
-    /// what picks the chains to try.
+    /// What a lone line does without: the NFA, and the picker of chains.
     union: Option<Box<Union>>,
-    /// Prefilter: literal suffixes one of which every match ends
-    /// with (empty: none known), sketched by last byte.
+    /// Literal suffixes one of which every match ends with (empty: none
+    /// known), sketched by last byte.
     suffixes: Box<[Bytes]>,
     suffix_last: ByteSketch,
-    /// Literal path prefixes a walker can seed traversal from.
     prefixes: Box<[Bytes]>,
     case_insensitive: bool,
     dot: bool,
 }
 
-/// What a matcher keeps beyond a lone line: the NFA over the graph, and
-/// what picks the chains `is_match` tries.
 #[derive(Debug, Clone)]
 struct Union {
     nfa: AnyNfa,
     pick: Pick,
 }
 
-/// A few chains are all tried, each after its gate; many, only those the
-/// chain index picks.
 #[derive(Debug, Clone)]
 enum Pick {
     Gates(Box<[Gate]>),
@@ -89,20 +63,17 @@ impl SegmentMatcher {
         let suffixes = literal_ends::suffixes(&body);
         let prefixes = literal_ends::static_prefixes(&body, survey.weight);
         let mut graph = Graph::build(&mut body, survey, dot, ci);
-        // The test hook keeps no chain.
         let mut chains = if opts.force_nfa {
             Box::default()
         } else {
             graph.chains(ci)
         };
         let index = ChainIndex::new(&chains, &graph, ci);
-        // Past `MAX_CHAINS` only the index keeps a call's walks few;
-        // without one the NFA serves.
+        // Past `MAX_CHAINS` only the index keeps a call's walks few.
         let set = matches!(chains.first().map(|c| &c.shape), Some(Shape::Set(_)));
         if index.is_none() && chains.len() - usize::from(set) > MAX_CHAINS {
             chains = Box::default();
         }
-        // A lone line serves `match_dir` too; anything else needs the NFA.
         let union = match &chains[..] {
             [c] if matches!(c.shape, Shape::Line(_)) => None,
             _ => Some(Box::new(Union {
@@ -125,7 +96,6 @@ impl SegmentMatcher {
         })
     }
 
-    /// Every matching path starts with one of these.
     pub(crate) fn static_prefixes(&self) -> Vec<Vec<u8>> {
         self.prefixes.iter().map(|p| p.to_vec()).collect()
     }
@@ -136,13 +106,19 @@ impl SegmentMatcher {
             return false;
         }
         match &self.union {
-            // A lone line.
             None => self.chain_matches(&self.chains[0], path),
             Some(u) if self.chains.is_empty() => u.nfa.is_match(self, path),
             Some(u) => match &u.pick {
                 Pick::Index(index) => self.indexed_chain_matches(index, path),
                 Pick::Gates(gates) => self.any_chain_matches(gates, path),
             },
+        }
+    }
+
+    pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
+        match &self.union {
+            Some(u) => u.nfa.match_dir(self, dir_path),
+            None => self.chain_dir(dir_path),
         }
     }
 
@@ -165,7 +141,6 @@ impl SegmentMatcher {
                 Elem::Piece(_) => "P",
             })
             .collect();
-        // A run of one kind as `L(200)`.
         let mut runs: Vec<String> = Vec::new();
         let mut i = 0;
         while i < elems.len() {
@@ -183,7 +158,6 @@ impl SegmentMatcher {
             Some(AnyNfa::Wide(_)) => "wide",
             Some(AnyNfa::Sparse(_)) => "sparse",
         };
-        // The literal paths' set is counted apart from the chains.
         let (chains, literals) = match self.chains.first().map(|c| &c.shape) {
             Some(Shape::Set(set)) => (self.chains.len() - 1, format!(" | literals {}", set.len())),
             _ => (self.chains.len(), String::new()),
@@ -191,16 +165,7 @@ impl SegmentMatcher {
         format!("{} | chains {chains}{literals} | nfa {nfa}", runs.join(" "))
     }
 
-    pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        match &self.union {
-            Some(u) => u.nfa.match_dir(self, dir_path),
-            None => self.chain_dir(dir_path),
-        }
-    }
-}
-
-impl SegmentMatcher {
-    /// The suffix prefilter: `false` means the path cannot match.
+    /// `false`: the path cannot match.
     #[inline]
     fn prefilter(&self, path: &[u8]) -> bool {
         let ends = |s: &Bytes| bytes::ends_with_pattern(path, s, self.case_insensitive);

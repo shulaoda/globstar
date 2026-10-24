@@ -1,8 +1,4 @@
-// Bit sets over Int32Array words for the in-segment NFA when it outgrows
-// one int32 (the small case stays a plain int32 in the callers), and a
-// class as the bytes it takes, which the pieces and the in-segment NFA
-// test a byte against. JS twin of
-// `crates/globstar/src/engine/segment/bits.rs`.
+// Bit sets over Int32Array words, and a class as the bytes it takes.
 
 import { IS_WINDOWS_SEP } from "../../bytes.js";
 
@@ -19,15 +15,11 @@ export function bitsIsZero(a) {
   return true;
 }
 
-// A class as the bytes it takes, one bit each in eight int32 words, with
-// its negation applied and the separators left out: a test is one
-// lookup, however many items the class lists. `neg` stays for dot
-// protection, where a negated class counts as a wildcard.
-// Case-insensitively (`ci`) a listed ASCII letter lists its other case
-// too, before the negation (§13).
+// The negation applied and the separators left out; `neg` stays for dot
+// protection. Under `ci` a listed ASCII letter lists its other case too,
+// before the negation (GLOB_SPEC §13).
 export function byteSet(cls, ci) {
   const bits = [0, 0, 0, 0, 0, 0, 0, 0];
-  // A word at a time: a class costs its ranges, not the bytes they span.
   for (const { lo, hi } of cls.ranges) {
     for (let w = lo >> 5; w <= hi >> 5; w++) {
       const from = w === lo >> 5 ? lo & 31 : 0;

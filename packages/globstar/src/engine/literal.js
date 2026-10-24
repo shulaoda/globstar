@@ -1,15 +1,13 @@
 // The engine for a pattern without wildcards: one compare against the
-// literal, separators and case read as `patByteEq` does. JS twin of
-// `crates/globstar/src/engine/literal.rs`.
+// literal, separators and case read as `patByteEq` does.
 
 import { IS_WINDOWS_SEP, endsWithPattern, hasEscapedSep, patByteEq } from "../bytes.js";
 import { DirMatch } from "../dir-match.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../utf8.js";
 
 export class LiteralMatcher {
-  // `litStr` holds the literal's bytes, one char each (see `utf8Latin1`).
-  // An ASCII literal is compared against the raw path string: a
-  // non-ASCII char equals no ASCII byte either way.
+  // An ASCII literal compares against the path string itself: a non-ASCII
+  // char equals no ASCII byte either way.
   constructor(litStr, caseInsensitive, ascii) {
     this.caseInsensitive = caseInsensitive;
     this.litStr = flat(litStr);
@@ -17,7 +15,6 @@ export class LiteralMatcher {
     this.exact = this.ascii && !caseInsensitive && !IS_WINDOWS_SEP;
   }
 
-  // See `SegmentMatcher.shape` (a test hook).
   shape() {
     return "literal";
   }
@@ -25,7 +22,6 @@ export class LiteralMatcher {
   isMatch(path) {
     if (this.exact) return path === this.litStr;
     const str = this.ascii ? path : utf8Latin1(path);
-    // The same length and, last char first, the same chars.
     return (
       str.length === this.litStr.length && endsWithPattern(str, this.litStr, this.caseInsensitive)
     );
@@ -44,8 +40,6 @@ export class LiteralMatcher {
 
   staticPrefixes() {
     const lit = this.litStr;
-    // An escaped `\` on Windows is a separator the literal can never
-    // match (§4.2): nothing to seed.
     if (hasEscapedSep(lit)) return [];
     let end = lit.length;
     while (end > 0 && lit.charCodeAt(end - 1) === 0x2f) end--;
@@ -53,7 +47,6 @@ export class LiteralMatcher {
   }
 }
 
-// How many leading chars of `str` the literal takes.
 function prefixLen(lit, str, ci) {
   const end = lit.length < str.length ? lit.length : str.length;
   let n = 0;

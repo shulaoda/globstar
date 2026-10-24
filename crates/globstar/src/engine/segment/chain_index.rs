@@ -1,11 +1,7 @@
-//! The chain index: which chains of a big union a path may match, by
-//! what its segments are, end with, start with or hold. Each chain is
-//! filed under the literal strings one of its anchored segments must
-//! have — its last (a tail), else its first (a head), else a block's
-//! first — read off that segment's nodes when the graph is built; the
-//! literal paths' set under their first segments. A path looks up its
-//! own last, first and inner segments and walks only the chains they
-//! pick: the walk decides, the index only chooses which chains to ask.
+//! The chain index: which chains of a big union a path may match, by the
+//! literal strings one of its anchored segments must have. A path looks
+//! up its last, first and inner segments and walks only the chains they
+//! pick.
 
 use crate::bytes::{fold, seg_end, seg_start};
 use crate::parse::ast::Node;
@@ -13,39 +9,35 @@ use crate::parse::ast::Node;
 use super::chain::{Chain, MAX_CHAINS, Shape};
 use super::graph::{Elem, Graph};
 
-/// A union of at most this many chains (the literal set aside) tries
-/// them in turn after their gates, which costs less than the lookups.
+/// A union of at most this many chains tries them in turn after their
+/// gates, which costs less than the lookups.
 pub(super) const LINEAR_CHAINS: usize = 10;
 
-/// A segment's strings multiply past this many no more: a product of
-/// alternatives (`[._]s[a-v][a-z]`) is cut to the nodes that fit; a
-/// single list (a merged set of names) is kept up to the key room.
+/// A product of alternatives (`[._]s[a-v][a-z]`) is cut to the nodes
+/// whose strings fit this many; a single list is kept up to the key room.
 const MAX_KEY_PRODUCT: usize = 64;
 
-/// The keys a union's segments may give, and the entries its index may
-/// file: one per unit of the pattern's weight, never fewer than 4096,
-/// so the index grows with the pattern, not with its chains times their
-/// keys. A segment whose keys pass what is left has none; an index past
-/// it is not built.
+/// A key compares this many outer bytes of a segment at most; the walk
+/// checks the rest. Past 64 chains an exact key compares the whole
+/// segment by its hash.
+const KEY_BYTES: usize = 4;
+
+/// The base of `Key::whole`.
+const BASE: u32 = 0x0100_0193;
+
+/// An infix is at most this many first bytes of a literal.
+const MAX_INFIX: usize = 16;
+
+/// The lookups of one role: an exact key (0), a suffix of each length up
+/// to `KEY_BYTES` (1 to 4), a prefix of each (5 to 8).
+const LOOKUPS: usize = 1 + 2 * KEY_BYTES;
+
+/// The keys a union's segments may give and the entries its index may
+/// file: one per unit of the pattern's weight, at least 4,096.
 pub(super) fn key_room(weight: usize) -> usize {
     weight.max(4096)
 }
 
-/// A key compares this many outer bytes of a segment at most (the last
-/// of a suffix, the first of a prefix): the walk checks the rest. Past
-/// 64 chains an exact key compares the whole segment, by its hash.
-const KEY_BYTES: usize = 4;
-
-/// The base of `Key::whole`, a polynomial in it over the bytes.
-const BASE: u32 = 0x0100_0193;
-
-/// An infix is at most this many first bytes of a literal: the search
-/// for it costs at most that many compares per byte of a path's last
-/// segment, and the walk checks the rest.
-const MAX_INFIX: usize = 16;
-
-/// How a segment's strings bind it: every match is one of them, ends
-/// with one, or starts with one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
     Exact,
@@ -53,10 +45,9 @@ pub(super) enum Kind {
     Prefix,
 }
 
-/// A string by its length and bytes, folded when case-insensitive:
-/// `back` holds its last `KEY_BYTES` (the last lowest), `front` its
-/// first (the first lowest), `whole` all of them (`whole_of`), and
-/// `pow` is `BASE` to its length, to join it to another.
+/// A string by its length and bytes, folded when case-insensitive: `back`
+/// holds its last `KEY_BYTES` (the last lowest), `front` its first (the
+/// first lowest), `whole` a hash of all, `pow` `BASE` to its length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Key {
     len: usize,
@@ -64,6 +55,50 @@ pub(super) struct Key {
     front: u32,
     whole: u32,
     pow: u32,
+}
+
+#[derive(Debug)]
+pub(super) enum SegKeys {
+    Strings(Vec<(Kind, Key)>),
+    /// Every match holds this literal (`*.so.*` holds `.so.`).
+    Infix(Box<[u8]>),
+}
+
+#[derive(Debug, Default)]
+pub(super) struct KeyScratch {
+    suffixes: Vec<Key>,
+    prefixes: Vec<Key>,
+    alts: Vec<Key>,
+    next: Vec<Key>,
+}
+
+/// Which segment of a path a chain's key is looked up in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Role {
+    /// The last: the chain's last element takes it.
+    Last = 0,
+    /// The first: the chain's first element takes it.
+    First = 1,
+    /// Any but the last: a block's first element takes one of them.
+    Inner = 2,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ChainIndex {
+    /// Open addressing by `hash`, at most one entry in two slots: a tag of
+    /// the key's hash above the chain id (`id_bits`), 0 where there is none.
+    slots: Box<[u32]>,
+    shift: u32,
+    /// 6 for a union of at most 64 chains, whose picks are bits of a word.
+    id_bits: u32,
+    /// Per role, the lookups that find something, and per lookup a sketch
+    /// of the outer bytes filed.
+    lookups: [u16; 3],
+    sketch: [[u64; LOOKUPS]; 3],
+    /// The chains a literal anywhere in their last segment picks.
+    infix: Box<[(u32, Box<[u8]>)]>,
+    /// The chains no key files: tried on every call, last.
+    rest: Box<[u32]>,
 }
 
 impl Key {
@@ -85,7 +120,6 @@ impl Key {
         }
     }
 
-    /// `self` then `next`.
     fn then(self, next: Key) -> Key {
         let back = if next.len >= KEY_BYTES {
             next.back
@@ -107,16 +141,6 @@ impl Key {
     }
 }
 
-/// What a segment binds its matches to: strings, each by how it binds,
-/// or a literal.
-#[derive(Debug)]
-pub(super) enum SegKeys {
-    Strings(Vec<(Kind, Key)>),
-    /// Every match holds this literal (`*.so.*` holds `.so.`): its first
-    /// `MAX_INFIX` bytes, folded.
-    Infix(Box<[u8]>),
-}
-
 impl SegKeys {
     /// What it takes of the key room.
     pub(super) fn len(&self) -> usize {
@@ -127,20 +151,9 @@ impl SegKeys {
     }
 }
 
-/// Buffers `segment_keys` reuses from one segment to the next.
-#[derive(Debug, Default)]
-pub(super) struct KeyScratch {
-    suffixes: Vec<Key>,
-    prefixes: Vec<Key>,
-    alts: Vec<Key>,
-    next: Vec<Key>,
-}
-
-/// The keys of a segment's nodes (`one_kind`), none when they are more
-/// than `room`. A segment that is one brace its branches bind apart — a
-/// union's members of one segment, `{Makefile,inc.*,*.pc}` — is bound
-/// by all their keys, each its own kind; a branch without strings
-/// leaves it none.
+/// The keys of a segment's nodes, none when they pass `room`. A segment
+/// that is one brace bound apart by its branches (`{Makefile,inc.*,*.pc}`)
+/// is bound by all their keys, each its own kind.
 pub(super) fn segment_keys(
     nodes: &[&Node],
     ci: bool,
@@ -162,12 +175,10 @@ pub(super) fn segment_keys(
     Some(SegKeys::Strings(out))
 }
 
-/// One kind of keys for a segment's nodes: its strings when it is
-/// literal (`.DS_Store`, `[Dd]ebug`, `{dist,out}`); else those of the
-/// literal nodes that end it or that start it, whichever bind more
-/// bytes (`*.py[cod]` ends with `.pyc`, `.pyo` or `.pyd`; `._*` starts
-/// with `._`); else the start of its longest literal. None when it has
-/// no literal, or a string may be empty.
+/// One kind of keys: the segment's strings when it is literal; else those
+/// of the literal nodes that end it or start it, whichever bind more
+/// bytes; else the start of its longest literal. None when it has no
+/// literal, or a string may be empty.
 fn one_kind(nodes: &[&Node], ci: bool, room: usize, k: &mut KeyScratch) -> Option<SegKeys> {
     let KeyScratch {
         suffixes,
@@ -209,11 +220,9 @@ fn strings(kind: Kind, keys: &[Key]) -> Option<SegKeys> {
         .then(|| SegKeys::Strings(keys.iter().map(|&k| (kind, k)).collect()))
 }
 
-/// The strings of the literal nodes `nodes` yields from one end, as
-/// many as fit `MAX_KEY_PRODUCT`, into `out`; how many nodes they took.
-/// `back`: the nodes come last first, and each one's strings go in
-/// front. A node of one string waits in `fixed` for the next choice, so
-/// a run after a long list passes over the list once.
+/// The strings of the literal nodes `nodes` yields from one end, as many
+/// as fit `MAX_KEY_PRODUCT`, into `out`; how many nodes they took. A
+/// node of one string waits in `fixed` for the next choice.
 fn literal_run<'a>(
     nodes: impl Iterator<Item = &'a Node>,
     back: bool,
@@ -223,9 +232,7 @@ fn literal_run<'a>(
     alts: &mut Vec<Key>,
     next: &mut Vec<Key>,
 ) -> usize {
-    // `key`, then the string of the node read after it.
     let join = |key: Key, node: Key| if back { node.then(key) } else { key.then(node) };
-    // The strings so far, then the ones waiting.
     let flush = |out: &mut Vec<Key>, fixed: &mut Key| {
         if fixed.len > 0 {
             for o in out.iter_mut() {
@@ -262,10 +269,9 @@ fn literal_run<'a>(
     taken
 }
 
-/// The strings one literal node matches, into `out`: a literal, an
-/// ASCII class that is not negated (its bytes), a brace of literal
-/// branches. `false` for any other node, and for a brace of more than
-/// `room` strings.
+/// The strings one literal node matches: a literal, a positive ASCII
+/// class, a brace of literal branches. `false` for any other node, and
+/// for a brace of more than `room` strings.
 fn alternatives(node: &Node, ci: bool, room: usize, out: &mut Vec<Key>) -> bool {
     match node {
         Node::Literal(bytes) => out.push(Key::of(bytes, ci)),
@@ -283,8 +289,6 @@ fn alternatives(node: &Node, ci: bool, room: usize, out: &mut Vec<Key>) -> bool 
             for branch in branches {
                 match branch.seq() {
                     [Node::Literal(bytes)] => out.push(Key::of(bytes, ci)),
-                    // A branch of several nodes: rare, so it gets its own
-                    // buffers.
                     seq => {
                         let (mut keys, mut alts, mut next) = (Vec::new(), Vec::new(), Vec::new());
                         let taken = literal_run(
@@ -312,52 +316,9 @@ fn alternatives(node: &Node, ci: bool, room: usize, out: &mut Vec<Key>) -> bool 
     true
 }
 
-/// Which segment of a path a chain's key is looked up in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Role {
-    /// The last segment: the chain's last element takes it.
-    Last = 0,
-    /// The first: the chain's first element takes it.
-    First = 1,
-    /// Any but the last: a block's first element takes one of them.
-    Inner = 2,
-}
-
-/// The lookups of one role: an exact key of the segment's length (0),
-/// a suffix of each length up to `KEY_BYTES` (1 to 4), a prefix of
-/// each (5 to 8).
-const LOOKUPS: usize = 1 + 2 * KEY_BYTES;
-
-/// The chains of a union filed by their keys.
-#[derive(Debug, Clone)]
-pub(super) struct ChainIndex {
-    /// Open addressing by `hash`, at most one entry in two slots: per
-    /// entry a tag of its key's hash above the chain (`id_bits`), `0`
-    /// where there is none. A key is the role and the lookup, an exact
-    /// key's length and what it compares (`lookup_key`); two keys sharing
-    /// a tag pick a chain more, which its walk turns down.
-    slots: Box<[u32]>,
-    shift: u32,
-    /// The low bits of a slot that name its chain: 6 for a union of at
-    /// most 64, whose picks are bits of a word, more for a bigger one.
-    id_bits: u32,
-    /// Per role, the lookups that find something (a bit each), and per
-    /// lookup a sketch of the outer bytes filed (`b % 64`): a segment
-    /// whose outer byte misses it skips the lookup.
-    lookups: [u16; 3],
-    sketch: [[u64; LOOKUPS]; 3],
-    /// The chains a literal anywhere in their last segment picks.
-    infix: Box<[(u32, Box<[u8]>)]>,
-    /// The chains no key files: tried on every call, last.
-    rest: Box<[u32]>,
-}
-
 impl ChainIndex {
-    /// The index of a union's chains over `graph`, `None` when they are
-    /// few or their entries pass the key room, and past 64 when a call
-    /// may walk more than `MAX_CHAINS` of them by one key or without
-    /// any. The graph's keys are the wildcard elements'; a literal
-    /// element's key is itself.
+    /// `None` when the chains are few, their entries pass the key room, or
+    /// past 64 chains a call could walk more than `MAX_CHAINS` of them.
     pub(super) fn new(chains: &[Chain], graph: &Graph, ci: bool) -> Option<Box<Self>> {
         let (elems, keys) = (&graph.elems, &graph.keys);
         let set = match &chains.first()?.shape {
@@ -380,7 +341,6 @@ impl ChainIndex {
         let mut entries = Vec::new();
         let mut infix = Vec::new();
         let mut rest = Vec::new();
-        // The literal paths, by their first segments.
         if let Some(set) = set {
             for path in set.iter() {
                 let first = path.split(|&b| b == b'/').next().unwrap_or_default();
@@ -410,7 +370,6 @@ impl ChainIndex {
                                     }
                                     filed = true;
                                 }
-                                // Only a last segment is searched for a literal.
                                 SegKeys::Infix(lit) if role == Role::Last => {
                                     infix.push((c as u32, lit.clone()));
                                     filed = true;
@@ -434,9 +393,6 @@ impl ChainIndex {
         }
         entries.sort_unstable();
         entries.dedup();
-        // Past a word's bits a call walks what one key picks, and those
-        // no key files or a literal search picks, each up to what a scan
-        // would try.
         if index.id_bits > 6
             && (rest.len() + infix.len() > MAX_CHAINS
                 || entries
@@ -465,11 +421,8 @@ impl ChainIndex {
         Some(Box::new(index))
     }
 
-    /// File chain `c` under `key` for `role`.
     fn file(&mut self, role: Role, kind: Kind, key: Key, c: usize, entries: &mut Vec<(u64, u32)>) {
         let short = key.len.min(KEY_BYTES);
-        // The lookup, the length it holds, the outer bytes the sketch
-        // reads, what it compares.
         let (lookup, len, outer, compared) = match kind {
             Kind::Exact => (
                 0,
@@ -486,9 +439,8 @@ impl ChainIndex {
         entries.push((lookup_key(role, lookup, len, compared), c as u32));
     }
 
-    /// What an exact key of `len` bytes ending in `back` compares: those
-    /// bytes, or past 64 chains the whole string (`whole`), as names that
-    /// differ only inside (`n17.js`, `n27.js`) would crowd one key.
+    /// What an exact key compares: its outer bytes, or past 64 chains the
+    /// whole string, so that `n17.js` and `n27.js` file apart.
     #[inline]
     fn exact(&self, back: u32, len: usize, whole: impl FnOnce() -> u32) -> u32 {
         if self.id_bits > 6 {
@@ -498,18 +450,17 @@ impl ChainIndex {
         }
     }
 
-    /// A key's first slot, and its tag: the bits of its hash the slot
-    /// does not use, as many as the chain leaves, the top one set.
+    /// A key's first slot, and its tag: the hash bits the slot does not
+    /// use, the top one set.
     fn hash(&self, key: u64) -> (usize, u32) {
         let h = key.wrapping_mul(0x9e37_79b9_7f4a_7c15);
         let tag = ((h >> 8) as u32 | 1 << (31 - self.id_bits)) << self.id_bits;
         ((h >> self.shift) as usize, tag)
     }
 
-    /// Does a chain the path picks match it (`matches` decides for each)?
-    /// The chains its last segment picks are tried first, then those of
-    /// its first, of its inner ones, then those without a key; each
-    /// chain once, in chain order within a step.
+    /// Does a chain the path picks match it? The last segment's picks are
+    /// tried first, then the first's, the inner ones', then the chains
+    /// without a key; each chain once.
     pub(super) fn any(
         &self,
         path: &[u8],
@@ -519,7 +470,6 @@ impl ChainIndex {
         if self.id_bits > 6 {
             return self.any_of_many(path, ci, matches);
         }
-        // The chains tried so far: a chain two steps pick runs once.
         let mut tried = 0u64;
         macro_rules! try_picked {
             ($picked:expr) => {
@@ -559,14 +509,10 @@ impl ChainIndex {
                 start = end + 1;
             }
         }
-        // No key picks these, so no step tried them.
         self.rest.iter().any(|&c| matches(c as usize))
     }
 
-    /// `any` past 64 chains: the chains a step picks gathered, then
-    /// tried once each, in chain order. A chain is filed for one role,
-    /// which its key holds, so another step picks it only by a shared
-    /// tag, and walks it again.
+    /// `any` past 64 chains: each step's picks sorted and tried once.
     fn any_of_many(&self, path: &[u8], ci: bool, mut matches: impl FnMut(usize) -> bool) -> bool {
         let mut try_picked = |picked: &mut Vec<u32>| {
             picked.sort_unstable();
@@ -591,8 +537,6 @@ impl ChainIndex {
                 return true;
             }
         }
-        // The inner segments' picks at once: a chain many of them pick
-        // is walked once.
         if self.lookups[Role::Inner as usize] != 0 {
             let mut start = 0;
             while start < last_start {
@@ -605,7 +549,6 @@ impl ChainIndex {
         try_picked(&mut picked)
     }
 
-    /// The chains whose literal the last segment holds.
     fn infix_picks<'a>(&'a self, last: &'a [u8], ci: bool) -> impl Iterator<Item = u32> + 'a {
         self.infix
             .iter()
@@ -616,13 +559,12 @@ impl ChainIndex {
             .map(|&(c, _)| c)
     }
 
-    /// Hand `pick` the chains `seg` picks for keys of `role`.
+    /// Hands `pick` the chains `seg` picks for keys of `role`.
     #[inline]
     fn probe(&self, role: Role, seg: &[u8], ci: bool, mut pick: impl FnMut(u32)) {
         let r = role as usize;
         let n = seg.len();
         let mut todo = self.lookups[r];
-        // A segment's start is packed only for a prefix lookup.
         let back = pack(seg.iter().rev().copied(), ci);
         let front = if todo >> (KEY_BYTES + 1) != 0 {
             pack(seg.iter().copied(), ci)
@@ -633,7 +575,6 @@ impl ChainIndex {
         while todo != 0 {
             let lookup = todo.trailing_zeros() as usize;
             todo &= todo - 1;
-            // The bytes the key compares, and its end.
             let (compared, outer) = if lookup == 0 {
                 (n, back)
             } else if lookup <= KEY_BYTES {
@@ -665,14 +606,13 @@ impl ChainIndex {
     }
 }
 
-/// A role, a lookup, the length an exact key holds (past 255 as 255)
-/// and what it compares, in one word.
+/// A role, a lookup, an exact key's length (past 255 as 255) and what it
+/// compares, in one word.
 fn lookup_key(role: Role, lookup: usize, len: usize, compared: u32) -> u64 {
     (role as u64) << 48 | (lookup as u64) << 40 | (len.min(255) as u64) << 32 | u64::from(compared)
 }
 
-/// The bytes, folded, as a polynomial in `BASE` (the last byte its
-/// constant term): what an exact key compares.
+/// The folded bytes as a polynomial in `BASE`, the last byte its constant term.
 fn whole_of(bytes: &[u8], ci: bool) -> u32 {
     bytes.iter().fold(0, |h: u32, &b| {
         h.wrapping_mul(BASE).wrapping_add(u32::from(fold(b, ci)))
@@ -688,7 +628,6 @@ fn pack(bytes: impl Iterator<Item = u8>, ci: bool) -> u32 {
     w
 }
 
-/// The low `len` bytes of a word.
 fn mask(len: usize) -> u32 {
     if len >= KEY_BYTES {
         u32::MAX
