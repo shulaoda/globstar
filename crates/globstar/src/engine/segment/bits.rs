@@ -1,7 +1,9 @@
-//! Bit sets for the NFA simulations: one `u64` when the automaton has
-//! at most 64 states, a boxed word slice beyond. Both NFAs (the graph
-//! `Nfa` and the in-segment `SegNfa`) are generic over this trait so
-//! the common case is a plain register.
+//! Bit sets. The NFA simulations' (`Bits`): one `u64` when the
+//! automaton has at most 64 states, a boxed word slice beyond. Both
+//! NFAs (the graph `Nfa` and the in-segment `SegNfa`) are generic over
+//! the trait so the common case is a plain register. And `ByteSketch`,
+//! a set of bytes in 64 slots that lets a scan be skipped: the
+//! prefilter's, a gate's, a suffix set's.
 
 pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     /// The empty set over `words` words.
@@ -138,5 +140,45 @@ impl Bits for Wide {
     #[inline]
     fn words_mut(&mut self) -> &mut [u64] {
         &mut self.0
+    }
+}
+
+/// A 64-slot sketch of a set of bytes (`b % 64`): a byte not in the
+/// sketch is not in the set, so a set scan can be skipped.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ByteSketch(u64);
+
+impl ByteSketch {
+    /// Every byte: a string that ends with anything.
+    pub(super) const ALL: ByteSketch = ByteSketch(u64::MAX);
+
+    pub(super) fn of_last_bytes<'a>(strings: impl Iterator<Item = &'a [u8]>, ci: bool) -> Self {
+        let mut bits = 0u64;
+        for s in strings {
+            match s.last() {
+                // The empty string ends with anything.
+                None => return ByteSketch::ALL,
+                Some(&b) => {
+                    bits |= 1 << (b & 63);
+                    if ci {
+                        bits |= 1 << (b.to_ascii_lowercase() & 63);
+                        bits |= 1 << (b.to_ascii_uppercase() & 63);
+                    }
+                    // A trailing `/` stands for any separator.
+                    if b == b'/' {
+                        bits |= 1 << (b'\\' & 63);
+                    }
+                }
+            }
+        }
+        ByteSketch(bits)
+    }
+
+    #[inline]
+    pub(super) fn may_end(self, s: &[u8]) -> bool {
+        match s.last() {
+            None => self.0 == ByteSketch::ALL.0,
+            Some(&b) => self.0 & (1 << (b & 63)) != 0,
+        }
     }
 }

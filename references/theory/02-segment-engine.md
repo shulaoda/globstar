@@ -427,5 +427,5 @@ search of their keys: a typed table costs V8 more to allocate (about
 | `engine/segment/wild.rs`        | `engine/segment/wild.js`        | affixes, suffix sets, `Lens` (§7)                   |
 | `engine/segment/seg_nfa.rs`     | `engine/segment/seg-nfa.js`     | the in-segment NFA and the glue NFA (§7.2–7.4)      |
 | `engine/segment/facts.rs`       | `engine/segment/facts.js`       | suffix prefilter (§03), static prefixes (§04)       |
-| `engine/segment/bits.rs`        | `engine/segment/bits.js`        | bit sets                                            |
+| `engine/segment/bits.rs`        | `engine/segment/bits.js`        | bit sets; in Rust, the byte sketch too              |
 | `union.rs`                      | `union.js`                      | factoring a union's members (§8)                    |

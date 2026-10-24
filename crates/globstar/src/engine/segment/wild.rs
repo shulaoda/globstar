@@ -5,50 +5,11 @@
 use crate::bytes::{affix_eq, fold};
 use crate::parse::ast::Node;
 
+use super::bits::ByteSketch;
 use super::seg_nfa::SegNfa;
 use super::{Bytes, SegmentMatcher};
 
 // ── the wildcard matchers ─────────────────────────────────────────────────
-
-/// A 64-slot sketch of a set of bytes (`b % 64`): a byte not in the
-/// sketch is not in the set, so a set scan can be skipped.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct ByteSketch(u64);
-
-impl ByteSketch {
-    /// Every byte: a string that ends with anything.
-    pub(super) const ALL: ByteSketch = ByteSketch(u64::MAX);
-
-    pub(super) fn of_last_bytes<'a>(strings: impl Iterator<Item = &'a [u8]>, ci: bool) -> Self {
-        let mut bits = 0u64;
-        for s in strings {
-            match s.last() {
-                // The empty string ends with anything.
-                None => return ByteSketch::ALL,
-                Some(&b) => {
-                    bits |= 1 << (b & 63);
-                    if ci {
-                        bits |= 1 << (b.to_ascii_lowercase() & 63);
-                        bits |= 1 << (b.to_ascii_uppercase() & 63);
-                    }
-                    // A trailing `/` stands for any separator.
-                    if b == b'/' {
-                        bits |= 1 << (b'\\' & 63);
-                    }
-                }
-            }
-        }
-        ByteSketch(bits)
-    }
-
-    #[inline]
-    pub(super) fn may_end(self, s: &[u8]) -> bool {
-        match s.last() {
-            None => self.0 == ByteSketch::ALL.0,
-            Some(&b) => self.0 & (1 << (b & 63)) != 0,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct Wild {
