@@ -2,7 +2,7 @@
 
 The matcher composes a fast prefilter with the exact engine (`SegmentMatcher`). The prefilter rejects byte strings that cannot match the pattern by checking a guaranteed literal suffix; it is sound (no false negatives) and approximate (some false positives).
 
-Implementations: `crates/globstar/src/engine/segment/facts.rs` and `packages/globstar/src/engine/segment/facts.js`.
+Implementations: `crates/globstar/src/engine/segment/literal_ends.rs` and `packages/globstar/src/engine/segment/literal-ends.js`.
 
 ## 0. Pipeline
 
@@ -220,15 +220,15 @@ The 11-byte anchor is more selective than the 3-byte ".ts" / ".tsx" / ".js" of �
 
 Rust, `crates/globstar/src/engine/segment/`:
 
-- `facts.rs::suffixes(body)` — entry; returns the suffix list (`Box<[Bytes]>`), empty when there is no prefilter. Runs `trailing`, falls back to `suffix_set` if the single suffix is empty.
-- `facts.rs::trailing` / `facts.rs::suffix_set` — internal helpers; `MAX_SUFFIX_SET = 16`.
+- `literal_ends.rs::suffixes(body)` — entry; returns the suffix list (`Box<[Bytes]>`), empty when there is no prefilter. Runs `trailing`, falls back to `suffix_set` if the single suffix is empty.
+- `literal_ends.rs::trailing` / `literal_ends.rs::suffix_set` — internal helpers; `MAX_SUFFIX_SET = 16`.
 - `segment/mod.rs::SegmentMatcher::prefilter(path)` — separator-aware end-anchored comparison (single suffix or set), the first step of `is_match`.
 - `bytes.rs::ends_with_pattern` (in `crates/globstar/src/`) — the separator-aware `ends_with`.
 
 JS, `packages/globstar/src/engine/segment/`:
 
-- `facts.js::suffixes(body)` — entry; returns a string array (one char per byte), empty when there is no prefilter.
-- `facts.js::trailing` / `facts.js::suffixSet` — internal helpers; `MAX_SUFFIX_SET = 16`.
+- `literal-ends.js::suffixes(body)` — entry; returns a string array (one char per byte), empty when there is no prefilter.
+- `literal-ends.js::trailing` / `literal-ends.js::suffixSet` — internal helpers; `MAX_SUFFIX_SET = 16`.
 - `bytes.js::endsWithPattern` (in `packages/globstar/src/`) — the separator-aware `ends_with`.
 - `index.js::SegmentMatcher._prefilter(str)` — the check, the first step of `_isMatch`.
 

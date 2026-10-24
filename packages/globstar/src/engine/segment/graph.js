@@ -20,6 +20,9 @@
 // A `**` is a globstar where a boundary is on both sides and a star
 // elsewhere, in each brace expansion on its own (GLOB_SPEC §9.1): the walk
 // reads it per group, as the expansions reach it.
+//
+// The graph's elements come first: the vocabulary the compiler, the
+// matcher and the executor share.
 
 import {
   brace,
@@ -35,10 +38,46 @@ import {
 } from "../../parse/ast.js";
 import { hasEscapedSep } from "../../bytes.js";
 import { flat } from "../../utf8.js";
-import { EL_LIT, EL_WILD, EL_G0, EL_G1, EL_JOIN, WK_AFFIX, NEVER_LEN, exact } from "./elem.js";
+import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild } from "./wild.js";
 import { GlueNfa } from "./seg-nfa.js";
-import { compileWild, concatLits, makeWild } from "./wild.js";
 import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain-index.js";
+
+// ── the elements ────────────────────────────────────────────────────
+
+// Element kinds.
+export const EL_LIT = 0;
+export const EL_WILD = 1;
+export const EL_G0 = 2;
+export const EL_G1 = 3;
+// Takes no segment: it stands for its successors, which the tails of a
+// group share through it instead of an edge from each (see `graph.js`).
+export const EL_JOIN = 4;
+// A piece of a segment a brace cuts, or a join among pieces: the glue NFA
+// matches it with the pieces glued to it (see `GlueNfa`). Its `entry` is
+// its entry state there when a segment may start in it, else INNER.
+export const EL_PIECE = 5;
+
+// The entry of a piece no segment starts in.
+export const INNER = -1;
+
+export const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
+// Absorbs zero segments too.
+export const elemNullable = (e) => e.kind === EL_G0 || e.kind === EL_JOIN;
+
+// Can the element take some segment? (A piece's answer is the glue
+// NFA's, `GlueNfa.reach`.)
+export const elemSatisfiable = (e) =>
+  e.kind === EL_WILD ? e.wild.minLen !== NEVER_LEN : e.kind !== EL_JOIN && e.kind !== EL_PIECE;
+// Takes every non-empty segment (`matchDir`'s all-below).
+export const elemAnySeg = (e) =>
+  e.kind === EL_WILD ? e.wild.anySeg : e.kind === EL_G0 || e.kind === EL_G1;
+
+// `a` copied to its length. V8 grows an array that `push` fills by half
+// again plus 16 slots and never gives the room back; a matcher keeps its
+// arrays as long as it lives, so the ones it stores are copied once.
+export function exact(a) {
+  return a.slice();
+}
 
 // Successor marker for "the pattern ends here".
 export const ACCEPT = -1;

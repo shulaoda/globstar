@@ -11,8 +11,7 @@ use crate::bytes::{fold, seg_end, seg_start};
 use crate::parse::ast::Node;
 
 use super::chain::{Chain, MAX_CHAINS, Shape};
-use super::elem::Elem;
-use super::graph::Graph;
+use super::graph::{Elem, Graph};
 
 /// A union of at most this many chains (the literal set aside) tries
 /// them in turn after their gates, which costs less than the lookups.

@@ -9,13 +9,16 @@
 //! step ORs per-state closures while they fit `MAX_CLOSURE_BYTES`; past
 //! that (a dense set per state is quadratic in the states) it closes its
 //! set as it goes, so memory stays linear in the pattern.
+//!
+//! The glued pieces' NFA (`GlueNfa`) is built of the same states, by
+//! the same builder, and closed, stepped and measured by the same
+//! passes.
 
-use crate::parse::ast::{CharClass, Node};
+use crate::parse::ast::Node;
 
-use super::bits::{Bits, Wide};
-use super::elem::{Elem, INNER, NEVER};
-use super::graph::{ACCEPT, Edges};
-use super::wild::{Lens, Wild, WildKind};
+use super::bits::{Bits, ByteSet, Wide};
+use super::graph::{ACCEPT, Edges, Elem, INNER};
+use super::wild::{Lens, NEVER, Wild, WildKind};
 
 const UNSET: u32 = u32::MAX;
 
@@ -123,65 +126,6 @@ impl SegNfa {
             SegNfa::Small(n) => n.lens,
             SegNfa::Wide(n) => n.lens,
         }
-    }
-}
-
-/// A class as the bytes it takes, one bit each, with its negation applied
-/// and the separators left out: a test is one lookup, however many items
-/// the class lists. `negated` stays for dot protection, where a negated
-/// class counts as a wildcard.
-#[derive(Debug, Clone)]
-pub(super) struct ByteSet {
-    pub(super) bits: [u64; 4],
-    negated: bool,
-}
-
-impl ByteSet {
-    /// Case-insensitively (`ci`) a listed ASCII letter lists its other
-    /// case too, before the negation (§13).
-    pub(super) fn of(cls: &CharClass, ci: bool) -> Self {
-        let mut set = ByteSet {
-            bits: [0; 4],
-            negated: cls.negated,
-        };
-        // A word at a time: a class costs its ranges, not the bytes they span.
-        for &(lo, hi) in &cls.ranges {
-            for w in lo >> 6..=hi >> 6 {
-                let from = if w == lo >> 6 { lo & 63 } else { 0 };
-                let to = if w == hi >> 6 { hi & 63 } else { 63 };
-                set.bits[usize::from(w)] |= (u64::MAX >> (63 - (to - from))) << from;
-            }
-        }
-        if ci {
-            for b in b'A'..=b'Z' {
-                if set.has(b) || set.has(b | 0x20) {
-                    set.add(b);
-                    set.add(b | 0x20);
-                }
-            }
-        }
-        if cls.negated {
-            set.bits = set.bits.map(|w| !w);
-        }
-        for &b in b"/\\" {
-            if crate::bytes::is_sep(b) {
-                set.bits[usize::from(b >> 6)] &= !(1 << (b & 63));
-            }
-        }
-        set
-    }
-
-    fn add(&mut self, b: u8) {
-        self.bits[usize::from(b >> 6)] |= 1 << (b & 63);
-    }
-
-    #[inline]
-    pub(super) fn has(&self, b: u8) -> bool {
-        self.bits[usize::from(b >> 6)] >> (b & 63) & 1 != 0
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.bits == [0; 4]
     }
 }
 
@@ -813,7 +757,7 @@ impl SegBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::{ByteSet, Lens, SegNfa};
+    use super::{Lens, SegNfa};
     use crate::parse::ast::Node;
 
     // What the wildcards alone take, found in one pass over the states,
@@ -842,39 +786,5 @@ mod tests {
         let joined = |stars: usize| format!("{{{},{}*}}", run("{?,}", 80), run("?", stars));
         assert_eq!(lens(&joined(60)), Lens::ALL);
         assert_eq!(lens(&joined(70)), of(!1, 0));
-    }
-
-    // The table takes exactly the bytes the class's ranges define, for
-    // every byte, negated or not, with ranges and repeats.
-    #[test]
-    fn a_byte_set_takes_what_its_class_does() {
-        for pattern in [
-            "[a]",
-            "[!a]",
-            "[a-c]",
-            "[!a-c]",
-            "[]a]",
-            "[]-]",
-            "[a-]",
-            "[\\]]",
-            "[\\\\]",
-            "[\x01-\x7f]",
-            "[!\x01-\x7f]",
-            "[\x1f-\x21]",
-            "[?-A]",
-            "[bbbbbb]",
-            "[a-cb-dz]",
-            "[!\u{e9}]",
-            "[\u{e9}-\u{ff}]",
-        ] {
-            let ast = crate::parse::parse(pattern.as_bytes()).unwrap();
-            let Node::Class(cls) = &ast.body else {
-                panic!("{pattern} is not one class: {:?}", ast.body);
-            };
-            let set = ByteSet::of(cls, false);
-            for b in 0..=255u8 {
-                assert_eq!(set.has(b), cls.matches(b), "{pattern} at byte {b:#04x}");
-            }
-        }
     }
 }

@@ -13,7 +13,7 @@
 import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
-import { buildGraph } from "./graph.js";
+import { buildGraph, EL_LIT, EL_WILD, EL_G0, EL_JOIN, EL_PIECE, exact } from "./graph.js";
 import { MAX_CHAINS, SET_G, chains, chainMatches, chainDir, hasLiteral } from "./chain.js";
 import {
   anyNfa,
@@ -24,8 +24,10 @@ import {
   sparseReach1,
   coversBelow,
   coversBelowSparse,
+  NFA_SMALL,
+  NFA_SPARSE,
 } from "./graph-nfa.js";
-import { computeStaticPrefixes, suffixes } from "./facts.js";
+import { computeStaticPrefixes, suffixes } from "./literal-ends.js";
 import {
   R_FIRST,
   R_INNER,
@@ -35,19 +37,7 @@ import {
   probeMany,
   probeInfix,
 } from "./chain-index.js";
-import {
-  NFA_SMALL,
-  NFA_SPARSE,
-  EL_LIT,
-  EL_WILD,
-  EL_G0,
-  EL_JOIN,
-  EL_PIECE,
-  WK_AFFIX,
-  WK_PIECES,
-  WK_SUFFIXES,
-  exact,
-} from "./elem.js";
+import { WK_AFFIX, WK_PIECES, WK_SUFFIXES } from "./wild.js";
 
 export class SegmentMatcher {
   // `opts.forceNfa` bypasses the chains (a test hook); `opts.byteOnly`

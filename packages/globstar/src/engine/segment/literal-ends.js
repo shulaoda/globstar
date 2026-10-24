@@ -1,6 +1,7 @@
-// Literal facts read off the AST at compile time: the suffix prefilter
-// and the static prefixes a walker seeds from. JS twin of
-// `crates/globstar/src/engine/segment/facts.rs`.
+// The literal ends every match shares, read off the AST at compile
+// time: the suffixes the prefilter checks and the static prefixes a
+// walker seeds from. JS twin of
+// `crates/globstar/src/engine/segment/literal_ends.rs`.
 
 import { hasEscapedSep } from "../../bytes.js";
 import { N_BRACE, N_LITERAL, N_SEPARATOR, endsInGlobstar, seq } from "../../parse/ast.js";

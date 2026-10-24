@@ -9,7 +9,7 @@
 // chains they pick (`_indexedChainMatches`); the chain walk decides.
 
 import { N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";
-import { EL_LIT, EL_WILD } from "./elem.js";
+import { EL_LIT, EL_WILD } from "./graph.js";
 import { MAX_CHAINS } from "./chain.js";
 import { fold } from "../../bytes.js";
 

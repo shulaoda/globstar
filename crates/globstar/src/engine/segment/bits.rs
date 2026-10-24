@@ -1,9 +1,13 @@
 //! Bit sets. The NFA simulations' (`Bits`): one `u64` when the
 //! automaton has at most 64 states, a boxed word slice beyond. Both
 //! NFAs (the graph `Nfa` and the in-segment `SegNfa`) are generic over
-//! the trait so the common case is a plain register. And `ByteSketch`,
-//! a set of bytes in 64 slots that lets a scan be skipped: the
-//! prefilter's, a gate's, a suffix set's.
+//! the trait so the common case is a plain register. `ByteSet`, a
+//! class as the bytes it takes, which the pieces and the in-segment
+//! NFA test a byte against. And `ByteSketch`, a set of bytes in 64
+//! slots that lets a scan be skipped: the prefilter's, a gate's, a
+//! suffix set's.
+
+use crate::parse::ast::CharClass;
 
 pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     /// The empty set over `words` words.
@@ -179,6 +183,105 @@ impl ByteSketch {
         match s.last() {
             None => self.0 == ByteSketch::ALL.0,
             Some(&b) => self.0 & (1 << (b & 63)) != 0,
+        }
+    }
+}
+
+/// A class as the bytes it takes, one bit each, with its negation applied
+/// and the separators left out: a test is one lookup, however many items
+/// the class lists. `negated` stays for dot protection, where a negated
+/// class counts as a wildcard.
+#[derive(Debug, Clone)]
+pub(super) struct ByteSet {
+    pub(super) bits: [u64; 4],
+    pub(super) negated: bool,
+}
+
+impl ByteSet {
+    /// Case-insensitively (`ci`) a listed ASCII letter lists its other
+    /// case too, before the negation (§13).
+    pub(super) fn of(cls: &CharClass, ci: bool) -> Self {
+        let mut set = ByteSet {
+            bits: [0; 4],
+            negated: cls.negated,
+        };
+        // A word at a time: a class costs its ranges, not the bytes they span.
+        for &(lo, hi) in &cls.ranges {
+            for w in lo >> 6..=hi >> 6 {
+                let from = if w == lo >> 6 { lo & 63 } else { 0 };
+                let to = if w == hi >> 6 { hi & 63 } else { 63 };
+                set.bits[usize::from(w)] |= (u64::MAX >> (63 - (to - from))) << from;
+            }
+        }
+        if ci {
+            for b in b'A'..=b'Z' {
+                if set.has(b) || set.has(b | 0x20) {
+                    set.add(b);
+                    set.add(b | 0x20);
+                }
+            }
+        }
+        if cls.negated {
+            set.bits = set.bits.map(|w| !w);
+        }
+        for &b in b"/\\" {
+            if crate::bytes::is_sep(b) {
+                set.bits[usize::from(b >> 6)] &= !(1 << (b & 63));
+            }
+        }
+        set
+    }
+
+    pub(super) fn add(&mut self, b: u8) {
+        self.bits[usize::from(b >> 6)] |= 1 << (b & 63);
+    }
+
+    #[inline]
+    pub(super) fn has(&self, b: u8) -> bool {
+        self.bits[usize::from(b >> 6)] >> (b & 63) & 1 != 0
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.bits == [0; 4]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ByteSet;
+    use crate::parse::ast::Node;
+
+    // The table takes exactly the bytes the class's ranges define, for
+    // every byte, negated or not, with ranges and repeats.
+    #[test]
+    fn a_byte_set_takes_what_its_class_does() {
+        for pattern in [
+            "[a]",
+            "[!a]",
+            "[a-c]",
+            "[!a-c]",
+            "[]a]",
+            "[]-]",
+            "[a-]",
+            "[\\]]",
+            "[\\\\]",
+            "[\x01-\x7f]",
+            "[!\x01-\x7f]",
+            "[\x1f-\x21]",
+            "[?-A]",
+            "[bbbbbb]",
+            "[a-cb-dz]",
+            "[!\u{e9}]",
+            "[\u{e9}-\u{ff}]",
+        ] {
+            let ast = crate::parse::parse(pattern.as_bytes()).unwrap();
+            let Node::Class(cls) = &ast.body else {
+                panic!("{pattern} is not one class: {:?}", ast.body);
+            };
+            let set = ByteSet::of(cls, false);
+            for b in 0..=255u8 {
+                assert_eq!(set.has(b), cls.matches(b), "{pattern} at byte {b:#04x}");
+            }
         }
     }
 }

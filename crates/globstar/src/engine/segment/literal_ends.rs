@@ -1,5 +1,6 @@
-//! Literal facts read off the AST at compile time: the suffix
-//! prefilter and the static prefixes a walker seeds from.
+//! The literal ends every match shares, read off the AST at compile
+//! time: the suffixes the prefilter checks and the static prefixes a
+//! walker seeds from.
 
 use crate::bytes::has_escaped_sep;
 use crate::parse::ast::{Node, ends_in_globstar};

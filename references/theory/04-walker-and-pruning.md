@@ -7,7 +7,7 @@ The matcher exposes two outputs that drive directory-level pruning:
 
 Implementation:
 
-- `engine/segment/facts.rs::static_prefixes` — the prefix extraction pass.
+- `engine/segment/literal_ends.rs::static_prefixes` — the prefix extraction pass.
 - `engine/segment/mod.rs::SegmentMatcher::match_dir` — the realization.
 - `dir_match.rs` — the `DirMatch` algebraic datatype.
 
@@ -70,7 +70,7 @@ The segment-boundary requirement matters because the walker uses `SP(P)` to seed
 
 Re-reading the continuation once per branch is what could cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal copies it once per branch. So every byte read and every branch taken costs one unit of a budget of `4096 + 2·weight(P)`, and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment — a shorter prefix, still sound. Reading every node once costs at most its weight, so the budget only ever cuts heads that re-read what a brace shares. Recording a head costs every byte read to reach it, the head and what was cut back from it (the JS slice copies them all), while its branch pays one unit, so these could still add up to the square of the budget: past 64 budgets of such bytes, the reading starts again as if at the depth limit, and the one head before the first brace, which every expansion shares, is the list.
 
-When there are several prefixes, a dedupe step (`facts.rs::dedupe`) sorts them by (length, bytes) and drops any prefix that a shorter kept one already covers (`src` covers `src/a`); an empty prefix covers all.
+When there are several prefixes, a dedupe step (`literal_ends.rs::dedupe`) sorts them by (length, bytes) and drops any prefix that a shorter kept one already covers (`src` covers `src/a`); an empty prefix covers all.
 
 The work and the output are `O(weight(P))` before the dedupe. Output is `Box<[Box<[u8]>]>`, cached on the matcher.
 
@@ -362,13 +362,13 @@ Under `dot: true` the walker also asks `ignore.match_dir(d)` for each directory 
 
 ## 6. Source map
 
-| Symbol                                                                              | File                                                                     |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `static_prefixes`                                                                   | `engine/segment/facts.rs`                                                |
-| `SegmentMatcher::match_dir`                                                         | `engine/segment/mod.rs`                                                  |
-| `Nfa::match_dir`, `Nfa::covers_below`, `SegmentMatcher::chain_dir`                  | `engine/segment/graph_nfa.rs`, `engine/segment/chain.rs`                 |
+| Symbol                                                                                      | File                                                                     |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `static_prefixes`                                                                           | `engine/segment/literal_ends.rs`                                         |
+| `SegmentMatcher::match_dir`                                                                 | `engine/segment/mod.rs`                                                  |
+| `Nfa::match_dir`, `Nfa::covers_below`, `SegmentMatcher::chain_dir`                          | `engine/segment/graph_nfa.rs`, `engine/segment/chain.rs`                 |
 | `DirMatch`, `DirMatch::matches`, `DirMatch::may_match_below`, `DirMatch::matches_all_below` | `dir_match.rs`                                                           |
-| Walker glue (JS)                                                                    | `packages/globstar-walk/src/walk.js::initFromPrefixes`, `processDirents` |
+| Walker glue (JS)                                                                            | `packages/globstar-walk/src/walk.js::initFromPrefixes`, `processDirents` |
 
 ## 7. References
 

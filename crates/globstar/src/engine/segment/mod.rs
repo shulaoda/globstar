@@ -9,23 +9,21 @@
 //! a run of glued pieces, which one in-segment NFA matches together.
 //! The graph is linear in the pattern: every pattern compiles.
 //!
-//! `elem` holds the graph's elements, `graph` builds the graph,
-//! `chain` and `graph_nfa` match over it, `chain_index` picks a big
-//! union's chains, `wild` (with `pieces` and `seg_nfa`) matches inside
-//! a segment, `seg_nfa` also across glued pieces, `facts` reads the
-//! literal facts off the AST, `bits` holds the bit sets (the NFAs', the
-//! byte sketches); the byte comparisons are `crate::bytes`. The layers, the
-//! thresholds that pick them and what each buys:
-//! `references/theory/02-segment-engine.md`.
+//! `graph` holds the graph's elements and builds the graph; `chain`
+//! and `graph_nfa` match over it, and `chain_index` picks a big union's
+//! chains. `wild` matches inside a segment, and `seg_nfa` is the
+//! in-segment NFA, of a wildcard segment and across glued pieces.
+//! `literal_ends` reads the literal suffixes and prefixes off the AST,
+//! and `bits` holds the bit sets (the NFAs', the byte sketches); the
+//! byte comparisons are `crate::bytes`. The layers, the thresholds that
+//! pick them and what each buys: `references/theory/02-segment-engine.md`.
 
 mod bits;
 mod chain;
 mod chain_index;
-mod elem;
-mod facts;
 mod graph;
 mod graph_nfa;
-mod pieces;
+mod literal_ends;
 mod seg_nfa;
 mod wild;
 
@@ -37,8 +35,7 @@ use crate::bytes;
 use bits::ByteSketch;
 use chain::{Chain, Gate, MAX_CHAINS, Shape};
 use chain_index::ChainIndex;
-use elem::Elem;
-use graph::Graph;
+use graph::{Elem, Graph};
 use graph_nfa::{AnyNfa, any_nfa};
 use wild::WildKind;
 
@@ -86,11 +83,11 @@ enum Pick {
 impl SegmentMatcher {
     pub(crate) fn build(mut body: Node, opts: CompileOptions) -> Box<Self> {
         let (dot, ci) = (opts.dot, opts.case_insensitive);
-        // The facts read the pattern as written; the graph walk
-        // regroups it.
+        // The survey, the suffixes and the prefixes read the pattern as
+        // written; the graph walk regroups it.
         let survey = graph::survey(body.seq());
-        let suffixes = facts::suffixes(&body);
-        let prefixes = facts::static_prefixes(&body, survey.weight);
+        let suffixes = literal_ends::suffixes(&body);
+        let prefixes = literal_ends::static_prefixes(&body, survey.weight);
         let mut graph = Graph::build(&mut body, survey, dot, ci);
         // The test hook keeps no chain.
         let mut chains = if opts.force_nfa {

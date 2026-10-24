@@ -10,8 +10,7 @@ use crate::dir_match::DirMatch;
 
 use super::SegmentMatcher;
 use super::bits::{Bits, Wide};
-use super::elem::{Elem, INNER};
-use super::graph::{ACCEPT, Edges};
+use super::graph::{ACCEPT, Edges, Elem, INNER};
 use super::seg_nfa::GlueNfa;
 use super::wild::Lens;
 

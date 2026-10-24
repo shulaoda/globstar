@@ -9,18 +9,20 @@ import {
   EL_JOIN,
   EL_PIECE,
   INNER,
-  NFA_SMALL,
-  NFA_SPARSE,
   elemAnySeg,
   elemSatisfiable,
   exact,
   isGlobstar,
-  nullable,
-} from "./elem.js";
+  elemNullable,
+  ACCEPT,
+} from "./graph.js";
 import { asciiLower, cmpFolded, ctz32, litEq, nextSep, popcnt32 } from "../../bytes.js";
-import { ACCEPT } from "./graph.js";
 import { bitSet } from "./bits.js";
 import { wildConsumes, wildLenBits, wildLenFrom } from "./wild.js";
+
+// Graph NFA kinds: dense int32 rows, sparse.
+export const NFA_SMALL = 0;
+export const NFA_SPARSE = 1;
 
 // The wildcard-only segments `coversBelow` feeds before it gives up: a
 // pattern needs about one more than its longest run of them, and "not
@@ -108,7 +110,7 @@ function denseNfa(graph) {
   const addTarget = (c, t) => {
     if (t === ACCEPT) return c | (1 << accept);
     if (elems[t].kind === EL_JOIN) return c | after[t];
-    if (nullable(elems[t])) c |= after[t];
+    if (elemNullable(elems[t])) c |= after[t];
     return c | (1 << t);
   };
   for (let i = n - 1; i >= 0; i--) {
@@ -212,7 +214,7 @@ function sparseNfa(graph, ci) {
       }
       if (reach1[t]) reach1[base + p] = 1;
       if (elems[t].kind === EL_LIT) litPos.push(t);
-      else if (nullable(elems[t])) others.push(t);
+      else if (elemNullable(elems[t])) others.push(t);
       else rest.push(t);
     });
     nullEnd[p] = others.length;

@@ -18,8 +18,7 @@ use crate::dir_match::DirMatch;
 use super::SegmentMatcher;
 use super::bits::ByteSketch;
 use super::chain_index::{ChainIndex, Role};
-use super::elem::Elem;
-use super::graph::{ACCEPT, Graph};
+use super::graph::{ACCEPT, Elem, Graph};
 use super::wild::WildKind;
 
 // ── the chains ──────────────────────────────────────────────────────────

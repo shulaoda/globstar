@@ -11,11 +11,11 @@ These notes record the formal foundations of the engine modules under `crates/gl
 
 ## Engine map
 
-| Source file               | Theory note | Role                                                       |
-| ------------------------- | ----------- | ---------------------------------------------------------- |
-| `engine/literal.rs`       | —           | Byte-equality matcher for pure-literal patterns.           |
-| `engine/segment/`         | §02         | The segment engine, for every non-literal pattern.         |
-| `engine/segment/facts.rs` | §03, §04    | Suffix prefilter (§03) and static-prefix analysis (§04).   |
+| Source file                      | Theory note | Role                                                     |
+| -------------------------------- | ----------- | -------------------------------------------------------- |
+| `engine/literal.rs`              | —           | Byte-equality matcher for pure-literal patterns.         |
+| `engine/segment/`                | §02         | The segment engine, for every non-literal pattern.       |
+| `engine/segment/literal_ends.rs` | §03, §04    | Suffix prefilter (§03) and static-prefix analysis (§04). |
 
 ## Notation
 

@@ -8,13 +8,13 @@ import {
   EL_WILD,
   EL_G0,
   EL_JOIN,
-  WK_AFFIX,
-  WK_SUFFIXES,
   elemAnySeg,
   elemSatisfiable,
   exact,
   isGlobstar,
-} from "./elem.js";
+  ACCEPT,
+} from "./graph.js";
+import { WK_AFFIX, WK_SUFFIXES, wildConsumes } from "./wild.js";
 import {
   IS_WINDOWS_SEP,
   affixEq,
@@ -27,8 +27,6 @@ import {
 } from "../../bytes.js";
 import { flat } from "../../utf8.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
-import { ACCEPT } from "./graph.js";
-import { wildConsumes } from "./wild.js";
 
 // ── the chains ──────────────────────────────────────────────────────────
 

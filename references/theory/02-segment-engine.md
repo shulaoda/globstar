@@ -39,8 +39,8 @@ Compiling is one pass per layer, each linear in the pattern:
 
 1. **Parse** (`parse/`): the AST. A union's members are factored into
    one body first (`union.rs`, §8).
-2. **Facts** (`facts.rs`): the suffix prefilter (§03) and the static
-   prefixes (§04), read off the AST as written.
+2. **Literal ends** (`literal_ends.rs`): the suffix prefilter (§03)
+   and the static prefixes (§04), read off the AST as written.
 3. **Graph walk** (`graph.rs`): the AST to the element graph (§3).
    Each closed segment is compiled to its element (`wild.rs`, §7); the
    segments a brace cuts into pieces become one `GlueNfa`
@@ -364,26 +364,26 @@ Every threshold picks a representation; none rejects a pattern. The
 only limits are the parser's: 64 KiB of pattern and 32 levels of brace
 nesting.
 
-| Threshold                           | Value                                     | Past it                                      |
-| ----------------------------------- | ----------------------------------------- | -------------------------------------------- |
-| copy room (`graph.rs`)              | 1 per weight, ≥ 16,384                    | segments are cut into glued pieces           |
-| wildcard chains (`MAX_CHAINS`)      | 64; more while nodes ≤ 4·weight           | no chains: the NFA answers                   |
-| chains past 64, per index lookup    | 64 by a key, 64 unkeyed or searched       | no chains: the NFA answers                   |
-| literal paths (`MAX_LITERAL_BYTES`) | bytes + paths ≤ max(64 KiB, 4·weight)     | no chains: the NFA answers                   |
-| gated chains (`LINEAR_CHAINS`)      | 10                                        | the chain index picks                        |
-| index keys (`key_room`)             | 1 per weight, ≥ 4,096                     | a segment gives none; gates, past 64 the NFA |
-| tail compares (`MAX_TAIL_CHECKS`)   | 4,096                                     | `chain_dir` gives the safe answer            |
-| `Small` NFA                         | 64 states (JS 32)                         | `Wide` (Rust) or `Sparse`                    |
-| `Wide` NFA (Rust)                   | 4 KiB of rows, 48 literals per position   | `Sparse`                                     |
-| suffix product                      | 1,024 suffixes, 64 KiB or 4·nodes         | `Generic`                                    |
-| suffix scan                         | 4 suffixes                                | grouped by last byte                         |
-| piece scan                          | 32 positions                              | shift-and                                    |
-| kept closures                       | 128 KiB                                   | the step closes its set                      |
-| in-segment `u64`                    | 64 states (JS 32)                         | a word slice                                 |
-| wildcard-only cover steps           | 64                                        | all-below: `false`                           |
-| cover sets, firings                 | 64 sets, 512 firings, 64 states per state | all-below: `false`                           |
-| union merge reads                   | 16 per node, ≥ 4,096                      | the members stay apart                       |
-| suffix prefilter set (`facts.rs`)   | 16 branches                               | no prefilter                                 |
+| Threshold                                | Value                                     | Past it                                      |
+| ---------------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| copy room (`graph.rs`)                   | 1 per weight, ≥ 16,384                    | segments are cut into glued pieces           |
+| wildcard chains (`MAX_CHAINS`)           | 64; more while nodes ≤ 4·weight           | no chains: the NFA answers                   |
+| chains past 64, per index lookup         | 64 by a key, 64 unkeyed or searched       | no chains: the NFA answers                   |
+| literal paths (`MAX_LITERAL_BYTES`)      | bytes + paths ≤ max(64 KiB, 4·weight)     | no chains: the NFA answers                   |
+| gated chains (`LINEAR_CHAINS`)           | 10                                        | the chain index picks                        |
+| index keys (`key_room`)                  | 1 per weight, ≥ 4,096                     | a segment gives none; gates, past 64 the NFA |
+| tail compares (`MAX_TAIL_CHECKS`)        | 4,096                                     | `chain_dir` gives the safe answer            |
+| `Small` NFA                              | 64 states (JS 32)                         | `Wide` (Rust) or `Sparse`                    |
+| `Wide` NFA (Rust)                        | 4 KiB of rows, 48 literals per position   | `Sparse`                                     |
+| suffix product                           | 1,024 suffixes, 64 KiB or 4·nodes         | `Generic`                                    |
+| suffix scan                              | 4 suffixes                                | grouped by last byte                         |
+| piece scan                               | 32 positions                              | shift-and                                    |
+| kept closures                            | 128 KiB                                   | the step closes its set                      |
+| in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
+| wildcard-only cover steps                | 64                                        | all-below: `false`                           |
+| cover sets, firings                      | 64 sets, 512 firings, 64 states per state | all-below: `false`                           |
+| union merge reads                        | 16 per node, ≥ 4,096                      | the members stay apart                       |
+| suffix prefilter set (`literal_ends.rs`) | 16 branches                               | no prefilter                                 |
 
 ## 10. What each layer buys
 
@@ -452,17 +452,15 @@ search of their keys: a typed table costs V8 more to allocate (about
 
 ## 13. Source map
 
-| Rust (`crates/globstar/src/`)   | JS (`packages/globstar/src/`)   | Role                                                |
-| ------------------------------- | ------------------------------- | --------------------------------------------------- |
-| `engine/segment/mod.rs`         | `engine/segment/index.js`       | the matcher: build, what a call runs (§2)           |
-| `engine/segment/elem.rs`        | `engine/segment/elem.js`        | the elements (§1)                                   |
-| `engine/segment/graph.rs`       | `engine/segment/graph.js`       | the graph walk (§3)                                 |
-| `engine/segment/chain.rs`       | `engine/segment/chain.js`       | chains, gates, `match_dir` off a lone line (§4, §5) |
-| `engine/segment/chain_index.rs` | `engine/segment/chain-index.js` | the chain index (§5)                                |
-| `engine/segment/graph_nfa.rs`   | `engine/segment/graph-nfa.js`   | the graph NFA and the all-below search (§6)         |
-| `engine/segment/wild.rs`        | `engine/segment/wild.js`        | affixes, suffix sets, `Lens` (§7)                   |
-| `engine/segment/pieces.rs`      | `engine/segment/pieces.js`      | pieces (§7.2)                                       |
-| `engine/segment/seg_nfa.rs`     | `engine/segment/seg-nfa.js`     | the in-segment NFA and the glue NFA (§7.3–7.5)      |
-| `engine/segment/facts.rs`       | `engine/segment/facts.js`       | suffix prefilter (§03), static prefixes (§04)       |
-| `engine/segment/bits.rs`        | `engine/segment/bits.js`        | bit sets; in Rust, the byte sketch too              |
-| `union.rs`                      | `union.js`                      | factoring a union's members (§8)                    |
+| Rust (`crates/globstar/src/`)    | JS (`packages/globstar/src/`)    | Role                                                         |
+| -------------------------------- | -------------------------------- | ------------------------------------------------------------ |
+| `engine/segment/mod.rs`          | `engine/segment/index.js`        | the matcher: build, what a call runs (§2)                    |
+| `engine/segment/graph.rs`        | `engine/segment/graph.js`        | the elements (§1), the graph walk (§3)                       |
+| `engine/segment/chain.rs`        | `engine/segment/chain.js`        | chains, gates, `match_dir` off a lone line (§4, §5)          |
+| `engine/segment/chain_index.rs`  | `engine/segment/chain-index.js`  | the chain index (§5)                                         |
+| `engine/segment/graph_nfa.rs`    | `engine/segment/graph-nfa.js`    | the graph NFA and the all-below search (§6)                  |
+| `engine/segment/wild.rs`         | `engine/segment/wild.js`         | affixes, suffix sets, pieces, `Lens` (§7)                    |
+| `engine/segment/seg_nfa.rs`      | `engine/segment/seg-nfa.js`      | the in-segment NFA and the glue NFA (§7.3–7.5)               |
+| `engine/segment/literal_ends.rs` | `engine/segment/literal-ends.js` | suffix prefilter (§03), static prefixes (§04)                |
+| `engine/segment/bits.rs`         | `engine/segment/bits.js`         | bit sets, byte sets of classes; in Rust, the byte sketch too |
+| `union.rs`                       | `union.js`                       | factoring a union's members (§8)                             |

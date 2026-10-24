@@ -21,6 +21,10 @@
 //! A `**` is a globstar where a boundary is on both sides and a star
 //! elsewhere, in each brace expansion on its own (GLOB_SPEC §9.1): the
 //! walk reads it per group, as the expansions reach it.
+//!
+//! The graph's elements (`Elem`) come first: what each node takes of a
+//! path segment (§1 of `references/theory/02-segment-engine.md`).
+//! JS twin: `packages/globstar/src/engine/segment/graph.js`.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
@@ -30,9 +34,89 @@ use crate::parse::ast::Node;
 
 use super::Bytes;
 use super::chain_index::{KeyScratch, LINEAR_CHAINS, SegKeys, key_room, segment_keys};
-use super::elem::{Elem, NEVER};
 use super::seg_nfa::GlueNfa;
-use super::wild::{Affix, Wild, WildKind, compile_wild, concat_lits};
+use super::wild::{Affix, Lens, NEVER, Wild, WildKind, compile_wild, concat_lits};
+
+// ── the elements ──────────────────────────────────────────────────────────
+
+/// The entry of an `Elem::Piece` no segment starts in.
+pub(super) const INNER: u32 = u32::MAX;
+
+#[derive(Debug, Clone)]
+pub(super) enum Elem {
+    /// Literal segment (possibly empty; never contains a separator).
+    Lit(Bytes),
+    /// In-segment wildcard matcher.
+    Wild(Wild),
+    /// Globstar absorbing ≥ 0 segments, empty ones included.
+    G0,
+    /// Globstar absorbing ≥ 1 segment (trailing `/**`: `a/**`
+    /// matches `a/` but not `a`).
+    G1,
+    /// Takes no segment: it stands for its successors, which the tails
+    /// of a group share through it instead of an edge from each (see
+    /// `graph.rs`).
+    Join,
+    /// A piece of a segment a brace cuts, or a join among pieces: the
+    /// glue NFA matches it with the pieces glued to it. Holds its entry
+    /// state there when a segment may start in it, else `INNER`.
+    Piece(u32),
+}
+
+impl Elem {
+    #[inline]
+    pub(super) fn is_globstar(&self) -> bool {
+        matches!(self, Elem::G0 | Elem::G1)
+    }
+
+    #[inline]
+    pub(super) fn as_lit(&self) -> &[u8] {
+        match self {
+            Elem::Lit(lit) => lit,
+            _ => unreachable!("not a literal"),
+        }
+    }
+
+    /// Absorbs zero segments too.
+    #[inline]
+    pub(super) fn nullable(&self) -> bool {
+        matches!(self, Elem::G0 | Elem::Join)
+    }
+
+    /// Takes every non-empty segment (`match_dir`'s all-below).
+    #[inline]
+    pub(super) fn any_seg(&self) -> bool {
+        match self {
+            Elem::Lit(_) | Elem::Join | Elem::Piece(_) => false,
+            Elem::Wild(w) => w.any_seg,
+            Elem::G0 | Elem::G1 => true,
+        }
+    }
+
+    /// What it takes through its wildcards alone (dot=true), by
+    /// segment length (`match_dir`'s all-below).
+    #[inline]
+    pub(super) fn lens(&self) -> Lens {
+        match self {
+            Elem::Lit(_) | Elem::Join | Elem::Piece(_) => Lens::default(),
+            Elem::Wild(w) => w.lens(),
+            Elem::G0 | Elem::G1 => Lens::ALL,
+        }
+    }
+
+    /// Can the element consume some segment? (A piece's answer is the
+    /// glue NFA's, `GlueNfa::reach`.)
+    #[inline]
+    pub(super) fn satisfiable(&self) -> bool {
+        match self {
+            Elem::Wild(w) => w.min_len != NEVER,
+            Elem::Join | Elem::Piece(_) => false,
+            _ => true,
+        }
+    }
+}
+
+// ── the graph ─────────────────────────────────────────────────────────────
 
 /// Successor marker for "the pattern ends here".
 pub(super) const ACCEPT: u32 = u32::MAX;
