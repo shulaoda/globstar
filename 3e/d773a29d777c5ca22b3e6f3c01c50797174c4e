@@ -1,0 +1,23 @@
+crates/globstar/src/parse/ast.rs
+  s_b3b8b1e69bfa07::t_624e4c5894de88 1,4
+crates/globstar/src/parse/mod.rs
+  s_b3b8b1e69bfa07::t_0a9ef127b9e6b9 16,185-186,193
+packages/globstar/src/parse/parser.js
+  s_b3b8b1e69bfa07::t_d31b4e873806ee 14,52,127,203-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3ed773a29d777c5ca22b3e6f3c01c50797174c4e",
+  "prompts": {},
+  "sessions": {
+    "s_b3b8b1e69bfa07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "013c118d-3f12-4652-8633-b611e890a786",
+        "model": "unknown"
+      },
+      "human_author": "shulaoda <165626830+shulaoda@users.noreply.github.com>"
+    }
+  }
+}
