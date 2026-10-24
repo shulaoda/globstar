@@ -1,27 +1,28 @@
-# Theory Notes — Index
+# Theory Notes
 
-These notes record the formal foundations of the engine modules under `crates/globstar/src/engine/`. They cover the algorithms in the current code only.
+These notes give the formal foundations of the implementation under `crates/globstar/src/engine/` and its JS twin under `packages/globstar/src/engine/`. The specifications in `references/spec/` state what the implementations must do; the notes state how they do it and why the methods are correct. They describe the current code only.
 
 ## Reading order
 
-1. [01-glob-as-regular-language.md](01-glob-as-regular-language.md) — the glob dialect specified in `references/spec/GLOB_SPEC.md` is a regular language under the closure operations of union, concatenation, and Kleene star. The leading `!` and the absence of `!(...)` extglobs are discussed.
-2. [02-segment-engine.md](02-segment-engine.md) — the segment engine, the one engine for every non-literal pattern: patterns as a graph of per-segment elements; the layers that match it (chains, the pickers of a union's chains, the NFA over the graph, the in-segment matchers) and which one a call runs; the thresholds that pick them and what each layer was measured to buy; and the JS string/byte dual-mode execution.
-3. [03-literal-prefilter.md](03-literal-prefilter.md) — the suffix-anchored literal prefilter used to short-circuit the matcher; its correctness invariant.
-4. [04-walker-and-pruning.md](04-walker-and-pruning.md) — static-prefix extraction and the six-valued `match_dir` predicate, which together drive directory-level pruning.
+1. [01-glob-as-regular-language.md](01-glob-as-regular-language.md). The language of GLOB_SPEC.md is regular. The note gives the translation of each construct into the closure operations, the treatment of the leading `!` as predicate inversion, and the reason extglob negation is excluded.
+2. [02-segment-engine.md](02-segment-engine.md). The engine: a pattern as a graph of per-segment elements, the layers that match it, the thresholds that choose between them, their measured cost, and the JS execution over strings.
+3. [03-literal-prefilter.md](03-literal-prefilter.md). The suffix prefilter that rejects a path before the engine runs, and its soundness.
+4. [04-walker-and-pruning.md](04-walker-and-pruning.md). Static prefixes and the directory predicate `match_dir`, which together let a walker skip directories, and the soundness of both.
 
-## Engine map
+## Source map
 
-| Source file                      | Theory note | Role                                                     |
-| -------------------------------- | ----------- | -------------------------------------------------------- |
-| `engine/literal.rs`              | —           | Byte-equality matcher for pure-literal patterns.         |
-| `engine/segment/`                | §02         | The segment engine, for every non-literal pattern.       |
-| `engine/segment/literal_ends.rs` | §03, §04    | Suffix prefilter (§03) and static-prefix analysis (§04). |
+| Source                           | Note    | Role                                                  |
+| -------------------------------- | ------- | ----------------------------------------------------- |
+| `engine/literal.rs`              |         | byte-equality matcher for pure-literal patterns       |
+| `engine/segment/`                | 02      | the segment engine, for every other pattern           |
+| `engine/segment/literal_ends.rs` | 03, 04  | the suffix prefilter and the static prefixes          |
 
 ## Notation
 
-- `Σ` denotes the input alphabet (the set `{0, 1, ..., 255}` of bytes) unless stated otherwise.
-- `Σ*` is the set of finite byte strings, including the empty string `ε`.
-- An NFA is a 5-tuple `(Q, Σ, δ, q₀, F)`: states, alphabet, transition relation, initial state, accepting set.
-- For a regular expression `r`, `L(r) ⊆ Σ*` is its language. `|r|` is its size (count of grammar symbols).
+- Σ is the alphabet, the set of bytes `{0, …, 255}`. Σ* is the set of finite byte strings and ε the empty string.
+- `u · v` is the concatenation of `u` and `v`; `L₁ · L₂ = { u · v : u ∈ L₁, v ∈ L₂ }`.
+- For a pattern `P`, `L(P) ⊆ Σ*` is its language as GLOB_SPEC §2.4 defines it.
+- An NFA is a tuple `(Q, Σ, δ, q₀, F)`: states, alphabet, transition relation, initial state, accepting states.
+- `Seps ⊆ Σ` is the separator set of GLOB_SPEC §2.2.
 
-References to the implementation use the source-file path and identifier name (`segment/graph.rs::Graph::build`, etc.).
+Source code is cited by file path and identifier, as `segment/graph.rs::Graph::build`.

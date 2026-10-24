@@ -1,88 +1,72 @@
-# 01 — Glob as a Regular Language
+# 01. Glob as a Regular Language
 
-## 1. The dialect under study
+## 1. The language
 
-Let Σ = `{0, 1, ..., 255}` be the byte alphabet. The glob dialect defined in `references/spec/GLOB_SPEC.md` denotes a language `L(P) ⊆ Σ*` for every well-formed pattern `P`. This note shows that the dialect is regular and identifies the consequences for the matcher implementation.
+Let Σ = `{0, …, 255}` be the byte alphabet. GLOB_SPEC.md assigns to every well-formed pattern `P` a language `L(P) ⊆ Σ*`. This note shows that every such language is regular and draws the consequences for the matcher.
 
-## 2. The closure operations
+## 2. Regular languages
 
-A class of languages is _regular_ if it contains the singletons `{a}` for every `a ∈ Σ`, the empty language `∅`, and the language `{ε}`, and is closed under
+The class of regular languages over Σ is the smallest class that contains the empty language ∅, the language `{ε}` and every singleton `{a}` for `a ∈ Σ`, and is closed under
 
-- finite union (`L₁ ∪ L₂`),
-- concatenation (`L₁ · L₂ := { uv : u ∈ L₁, v ∈ L₂ }`), and
-- Kleene closure (`L* := ⋃_{n ≥ 0} Lⁿ`).
+- finite union, `L₁ ∪ L₂`;
+- concatenation, `L₁ · L₂ = { u · v : u ∈ L₁, v ∈ L₂ }`;
+- Kleene closure, `L* = ⋃ₙ₌₀ Lⁿ`.
 
-By the Kleene–Rabin–Scott equivalence, the class so defined coincides with the languages accepted by finite automata.
+By the theorem of Kleene, and of Rabin and Scott, this class is exactly the class of languages that finite automata accept. It is also closed under complement and intersection.
 
-## 3. Translation table
+## 3. Translation
 
-Each glob construct denotes a regular operation on Σ. Letting `Sep ⊆ Σ` denote the platform separator set (`{0x2f}` always; on Windows additionally `{0x5c}`; see `references/spec/GLOB_SPEC.md` §14.2), we have:
+Let `Sep ⊆ Σ` be the separator set of GLOB_SPEC §2.2 (`{0x2f}` on every platform; on Windows `{0x2f, 0x5c}`). Each construct of the dialect denotes a regular language:
 
-| Construct        | Language                                   |
-| ---------------- | ------------------------------------------ |
-| literal byte `a` | `{a}`                                      |
-| `?`              | `Σ \ Sep`                                  |
-| `*`              | `(Σ \ Sep)*`                               |
-| `[abc]`          | `{a, b, c}`                                |
-| `[!abc]`         | `Σ \ (Sep ∪ {a, b, c})`                    |
-| `**`             | `Σ*`                                       |
-| `**/X` (lead)    | `(Sep \| (Σ \ Sep)⁺ · Sep)* · L(X)`       |
-| `a/**/b` (mid)   | `L(a) · Sep · (Σ* · Sep)? · L(b)`          |
-| `a/**` (trail)   | `L(a) · Sep · Σ*`                          |
-| `{r₁, ..., rₙ}`  | `⋃ᵢ L(rᵢ)`                                 |
-| `\X`             | `{X}`                                      |
+| Construct        | Language                                  |
+| ---------------- | ----------------------------------------- |
+| literal byte `a` | `{a}`                                     |
+| `?`              | `Σ \ Sep`                                 |
+| `*`              | `(Σ \ Sep)*`                              |
+| `[abc]`          | `{a, b, c}`                               |
+| `[!abc]`         | `Σ \ (Sep ∪ {a, b, c})`                   |
+| `**`             | `Σ*`                                      |
+| `**/X` (leading) | `(Sep ∪ (Σ \ Sep)⁺ · Sep)* · L(X)`        |
+| `a/**/b`         | `L(a) · Sep · (Σ* · Sep ∪ {ε}) · L(b)`    |
+| `a/**`           | `L(a) · Sep · Σ*`                         |
+| `{r₁, …, rₙ}`    | `⋃ᵢ L(rᵢ)`                                |
+| `\X`             | `{X}`                                     |
 
-Each row uses only union, concatenation, complement-of-finite-set, and Kleene closure. The complement of a finite set (`Σ \ Sep`, `Σ \ (Sep ∪ {a,b,c})`) is regular because finite sets are regular and the regular class is closed under complement; here the complement is taken against a fixed alphabet, so no DFA construction is required.
+Every row uses union, concatenation, Kleene closure and the complement of a finite set within the fixed alphabet Σ. The complement of a finite set is regular, as the class is closed under complement; since the alphabet is fixed, no automaton construction is needed to form it.
 
 **Proposition 1.** For every well-formed pattern `P`, `L(P)` is regular.
 
-_Proof sketch._ By induction on the parse tree. Atomic nodes denote finite or co-finite sets, hence regular. Concatenation, brace alternation, and the Kleene-style globstar are exactly the closure operations. The leading `!` is a top-level boolean inversion of the matching predicate; it is not part of the language definition (see §5). ∎
+*Proof.* By induction on the parse tree. An atom denotes a finite or cofinite set, which is regular. Concatenation, brace alternation and the globstar are the closure operations. The leading `!` inverts the matching predicate and is not part of the language (§5). ∎
 
-## 4. The exclusion of bash extglobs
+Dot protection (GLOB_SPEC §12) intersects each wildcard's language at a segment start with `Σ* \ ({.} · Σ*)`, and case folding (§13) replaces each ASCII letter by the two-element set of its cases. Both preserve regularity.
 
-Bash extglobs
+## 4. Extglobs are excluded
 
-```
-@(p)   ?(p)   *(p)   +(p)   !(p)
-```
+The bash extglobs `@(p)`, `?(p)`, `*(p)` and `+(p)` denote `L(p)`, `L(p) ∪ {ε}`, `L(p)*` and `L(p) · L(p)*`, all available through the closure operations.
 
-are out of scope. The first four denote `L(p)`, `L(p) ∪ {ε}`, `L(p)*`, and `L(p) · L(p)*` respectively, all of which are regular operations already in our toolkit.
+`!(p)` denotes the complement `Σ* \ L(p)`. The class is closed under complement, but the construction passes through a deterministic automaton: the NFA of `p` is determinized by the subset construction and its accepting set inverted. The bound of `2^{|p|}` states is attained by short patterns: `(a|b)*a(a|b)^{n−1}`, "the n-th byte from the end is `a`", has an NFA of `n + 1` states and a minimal DFA of `2ⁿ` states. One occurrence of `!(...)` can therefore exceed any fixed budget at compile time.
 
-`!(p)` is the language complement `Σ* \ L(p)`. Regularity is preserved: the regular class is closed under complement. The construction proceeds via subset construction followed by toggling the accepting set:
+The matcher represents the positive structure of a pattern directly and simulates a nondeterministic automaton over it. Supporting `!(...)` would require determinization before the complement, with the exponential blow-up above. The dialect therefore keeps union, concatenation and Kleene closure as its only operations, and reserves the complement for the whole pattern (§5).
 
-```
-NFA(p) ─subset─→ DFA(p) ─toggle accept set─→ DFA(¬p)
-```
+## 5. Whole-pattern negation
 
-The cost is a tight upper bound of `2^{|p|}` DFA states. This bound is reached by short patterns: `(a|b)*a(a|b)^{n-1}` ("the n-th byte from the end is `a`") has an NFA of n+1 states and a minimal DFA of 2^n (while `(a|b)^n` itself needs only n+2); a single occurrence of `!(...)` therefore suffices to push the compile-time state count past any reasonable matcher budget.
-
-The production architecture deliberately avoids complement construction: SegmentMatcher represents positive glob structure directly and simulates a positive NFA over it. Supporting `!(...)` would require determinization (or a different total representation) before complementing the accepting set, with a potential exponential state blow-up. Excluding it preserves the bounded compile model; leading whole-pattern `!` is instead handled by boolean inversion outside the engine.
-
-The dialect therefore restricts to union, concatenation, and Kleene closure as primitives; the complement is reserved for the top-level predicate inversion described next.
-
-## 5. Whole-pattern negation by predicate inversion
-
-The leading `!` (`references/spec/GLOB_SPEC.md` §11.1) is interpreted at the matching predicate level rather than at the language level:
+The leading `!` (GLOB_SPEC §11.1) is read at the level of the matching predicate:
 
 ```
-match(!P, w) := ¬match(P, w)         for all w ∈ Σ*
+match(!P, w) := ¬ match(P, w)        for every w ∈ Σ*
 ```
 
-The matcher computes `match(P, w)` and inverts the boolean. No automaton over `Σ* \ L(P)` is constructed; the language definition of `P` is unchanged.
+The matcher computes `match(P, w)` and inverts the result. No automaton for `Σ* \ L(P)` is built, and the language of `P` is unchanged. A run of `!` of even length cancels and one of odd length negates once; the parser counts the run (`parse/mod.rs::parse`) and `Ast::negated` holds its parity.
 
-Even-numbered runs of leading `!` cancel; odd-numbered runs negate once. This is the parity rule formalized in `references/spec/GLOB_SPEC.md` §11.1 and implemented in the parser: `parse/mod.rs::parse` counts the run, and `Ast::negated` holds the parity.
+## 6. Three empty things
 
-## 6. Empty pattern; empty string; the empty language
-
-Three distinct notions:
-
-- **Empty pattern.** The input string of length zero is rejected at parse time (`GlobError::Empty`). It denotes nothing in the language.
-- **Empty string ε.** A member of `L(*)`, of `L(**)`, of `L({a,})`, and of every Kleene-starred language. Several patterns admit it.
-- **Empty language `∅`.** Not denotable by any well-formed pattern, with one exception on Windows: there `\` is a separator, and a literal or class `\` never matches a separator, so `\\` and `[\\]` match nothing (`references/spec/GLOB_SPEC.md` §4.2, §8.2, §14.4). A pattern that needs one of them denotes `∅`. Apart from that, the matcher never compiles to a `Match`-unreachable NFA from a legal source input.
+- **The empty pattern.** The string of length zero is rejected when parsed (`GlobError::Empty`). It denotes no language.
+- **The empty string ε.** A member of `L(*)`, `L(**)`, `L({a,})` and every Kleene closure. Many patterns admit it.
+- **The empty language ∅.** No well-formed pattern denotes it, with one exception: on Windows, where `\ ∈ Sep`, a literal or class `\` never matches a separator, so `\\` and `[\\]` match nothing (GLOB_SPEC §4.2, §8.2, §14.4). A pattern that requires one of them denotes ∅. Otherwise every compiled automaton has a reachable accepting state.
 
 ## 7. References
 
-- Kleene, S. C. (1951). Representation of events in nerve nets and finite automata. In _Automata Studies_, Princeton.
-- Rabin, M. O. and Scott, D. (1959). Finite automata and their decision problems. _IBM J. Res. Dev._ 3(2):114–125.
-- Hopcroft, J. E., Motwani, R., and Ullman, J. D. _Introduction to Automata Theory, Languages, and Computation_, ch. 2–4.
-- Cox, R. (2007). Regular Expression Matching Can Be Simple And Fast. https://swtch.com/~rsc/regexp/regexp1.html.
+- Kleene, S. C. (1951). Representation of events in nerve nets and finite automata. In *Automata Studies*, Princeton University Press.
+- Rabin, M. O. and Scott, D. (1959). Finite automata and their decision problems. *IBM Journal of Research and Development* 3(2), 114–125.
+- Hopcroft, J. E., Motwani, R. and Ullman, J. D. (2006). *Introduction to Automata Theory, Languages, and Computation*, 3rd ed., chapters 2–4.
+- Cox, R. (2007). Regular expression matching can be simple and fast. https://swtch.com/~rsc/regexp/regexp1.html.
