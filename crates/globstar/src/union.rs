@@ -4,7 +4,7 @@ const MERGE_READS_PER_NODE: usize = 16;
 const MIN_MERGE_READS: usize = 4096;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Member {
+enum Part {
     Free,
     Head,
     Absorbed,
@@ -116,26 +116,26 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
         e.1 = hash_without(&seqs[e.2], e.3);
     }
     entries.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    let mut state = vec![Member::Free; seqs.len()];
+    let mut state = vec![Part::Free; seqs.len()];
     for alike in entries.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
-        let Some(&(_, _, h, h_at)) = alike.iter().find(|e| state[e.2] == Member::Free) else {
+        let Some(&(_, _, h, h_at)) = alike.iter().find(|e| state[e.2] == Part::Free) else {
             continue;
         };
         let mut lits = Vec::new();
         for &(_, _, i, at) in alike {
-            if i != h && state[i] == Member::Free && same_but(&seqs[h], &seqs[i], h_at) {
-                state[i] = Member::Absorbed;
+            if i != h && state[i] == Part::Free && same_but(&seqs[h], &seqs[i], h_at) {
+                state[i] = Part::Absorbed;
                 lits.push(std::mem::replace(&mut seqs[i][at], Node::Separator));
             }
         }
         if !lits.is_empty() {
-            state[h] = Member::Head;
+            state[h] = Part::Head;
             lits.insert(0, std::mem::replace(&mut seqs[h][h_at], Node::Separator));
             seqs[h][h_at] = Node::Brace(lits);
         }
     }
     let mut st = state.iter();
-    seqs.retain(|_| *st.next().unwrap() != Member::Absorbed);
+    seqs.retain(|_| *st.next().unwrap() != Part::Absorbed);
 }
 
 fn hash_without(s: &[Node], skip: usize) -> u64 {
