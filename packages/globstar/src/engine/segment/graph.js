@@ -11,7 +11,6 @@ import {
   seq,
 } from "../../parse/ast.js";
 import { hasEscapedSep } from "../bytes.js";
-import { flat } from "../../utf8.js";
 import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild, GlueNfa } from "./wild.js";
 import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain.js";
 
@@ -51,7 +50,7 @@ export function exact(a) {
 }
 
 function makeElem(kind, litStr, wild) {
-  return { kind, litStr: litStr === null ? null : flat(litStr), wild };
+  return { kind, litStr, wild };
 }
 const G0_ELEM = makeElem(EL_G0, null, null);
 const G1_ELEM = makeElem(EL_G1, null, null);

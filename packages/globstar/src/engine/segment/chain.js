@@ -21,7 +21,6 @@ import {
   lastSepBefore,
   fold,
 } from "../bytes.js";
-import { flat } from "../../utf8.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";
 
@@ -91,7 +90,7 @@ export function pathsOf(graph, ci) {
   let literals = null;
   if (literalPaths.length > 0) {
     literalPaths.sort();
-    literals = literalPaths.filter((s, i) => i === 0 || s !== literalPaths[i - 1]).map(flat);
+    literals = literalPaths.filter((s, i) => i === 0 || s !== literalPaths[i - 1]);
   }
   return { literals, chains };
 }

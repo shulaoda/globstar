@@ -5,7 +5,7 @@ import {
   nextSep,
   hasEscapedSep,
 } from "../bytes.js";
-import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
+import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import {
   buildGraph,
@@ -68,9 +68,9 @@ export class SegmentMatcher {
     this.ci = ci;
     this.dot = dot;
     this.byteOnly = opts.byteOnly;
-    this.prefixes = prefixes.map(flat);
+    this.prefixes = prefixes;
     this.plain = !this.ci && !IS_WINDOWS_SEP;
-    this.suffixes = ends.length > 0 ? ends.map(flat) : null;
+    this.suffixes = ends.length > 0 ? ends : null;
   }
 
   shape() {

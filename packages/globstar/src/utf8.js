@@ -38,13 +38,6 @@ export function utf8Latin1(input) {
   return input;
 }
 
-export function flat(s) {
-  if (s.length < 13) return s;
-  const codes = [];
-  for (let i = 0; i < s.length; i++) codes.push(s.charCodeAt(i));
-  return latin1(codes);
-}
-
 export function isAscii(str, s, t) {
   for (let i = s; i < t; i++) if (str.charCodeAt(i) > 0x7f) return false;
   return true;

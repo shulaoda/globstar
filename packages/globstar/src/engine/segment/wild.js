@@ -1,6 +1,6 @@
 import { N_ANYCHAR, N_BRACE, N_LITERAL, N_STAR, seq, N_CLASS, lit } from "../../parse/ast.js";
 import { affixEq, ctz32 } from "../bytes.js";
-import { flat, isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
+import { isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
 import { exact, EL_JOIN, EL_LIT, EL_PIECE, EL_WILD, INNER, ACCEPT } from "./graph.js";
 import { byteSet, setEmpty, setHas, wordsFor, bitTest, bitSet, bitsIsZero } from "./bits.js";
 
@@ -29,9 +29,9 @@ export function concatLits(nodes, to) {
 export function makeWild(kind, fields) {
   return {
     kind,
-    prefixStr: flat(fields.prefixStr ?? ""),
-    suffixStr: flat(fields.suffixStr ?? ""),
-    suffixSetStr: fields.suffixSetStr?.map(flat) ?? null,
+    prefixStr: fields.prefixStr ?? "",
+    suffixStr: fields.suffixStr ?? "",
+    suffixSetStr: fields.suffixSetStr ?? null,
     suffixKeys: fields.suffixKeys ?? null,
     suffixEmpty: fields.suffixEmpty ?? false,
     minLen: fields.minLen ?? 0,

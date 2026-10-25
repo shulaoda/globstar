@@ -1,11 +1,11 @@
 import { IS_WINDOWS_SEP, endsWithPattern, hasEscapedSep, patByteEq } from "./bytes.js";
 import { DirMatch } from "../dir-match.js";
-import { flat, latin1Bytes, utf8Latin1 } from "../utf8.js";
+import { latin1Bytes, utf8Latin1 } from "../utf8.js";
 
 export class LiteralMatcher {
   constructor(litStr, caseInsensitive, ascii) {
     this.caseInsensitive = caseInsensitive;
-    this.litStr = flat(litStr);
+    this.litStr = litStr;
     this.ascii = ascii;
     this.exact = this.ascii && !caseInsensitive && !IS_WINDOWS_SEP;
   }
