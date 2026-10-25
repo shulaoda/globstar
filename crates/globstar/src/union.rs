@@ -18,10 +18,8 @@ enum Member {
 }
 
 /// The tokens all members start or end with are lifted out of the brace,
-/// then the bytes their first or last literals share (only behind a
-/// lifted token, so the static prefixes are kept), and members that
-/// differ only in the literal ending one segment are merged into one
-/// with a brace there. Members left within one segment share a brace
+/// and members that differ only in the literal ending one segment are
+/// merged into one with a brace there. Members left within one segment share a brace
 /// only when it is a set (literal branches) or holds no literal at all;
 /// a mix would be one in-segment NFA, so the tokens go back and the
 /// members stay apart.
@@ -59,10 +57,6 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
         out.clear();
         suffix.clear();
     }
-    let bytes = !out.is_empty();
-    let head = bytes.then(|| lift_bytes(&mut seqs, true)).flatten();
-    let tail = bytes.then(|| lift_bytes(&mut seqs, false)).flatten();
-
     merge_segments(
         &mut seqs,
         out.iter()
@@ -91,12 +85,10 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
         Node::Brace(branches)
     };
 
-    out.extend(head);
     match inner {
         Node::Concat(xs) => out.extend(xs),
         other => out.push(other),
     }
-    out.extend(tail);
     out.append(&mut suffix);
     Node::of_seq(out)
 }
@@ -270,42 +262,4 @@ fn lift_tokens(seqs: &mut [Vec<Node>], front: bool) -> Vec<Node> {
         }
     }
     lifted
-}
-
-/// The bytes every member's first (or last) literal shares, taken out of
-/// them as one literal.
-fn lift_bytes(seqs: &mut [Vec<Node>], front: bool) -> Option<Node> {
-    let edge_lit = |s| match at(s, 0, front) {
-        Some(Node::Literal(b)) => Some(b.as_slice()),
-        _ => None,
-    };
-    let lits: Vec<&[u8]> = seqs.iter().map(|s| edge_lit(s)).collect::<Option<_>>()?;
-    let byte = |l: &[u8], i: usize| if front { l[i] } else { l[l.len() - 1 - i] };
-    let min = lits.iter().map(|l| l.len()).min().unwrap_or(0);
-    let n = (0..min)
-        .take_while(|&i| lits.iter().all(|l| byte(l, i) == byte(lits[0], i)))
-        .count();
-    if n == 0 {
-        return None;
-    }
-    let shared = if front {
-        lits[0][..n].to_vec()
-    } else {
-        lits[0][lits[0].len() - n..].to_vec()
-    };
-    for s in seqs.iter_mut() {
-        let k = if front { 0 } else { s.len() - 1 };
-        let Node::Literal(b) = &mut s[k] else {
-            unreachable!("every edge is a literal")
-        };
-        if front {
-            b.drain(..n);
-        } else {
-            b.truncate(b.len() - n);
-        }
-        if b.is_empty() {
-            s.remove(k);
-        }
-    }
-    Some(Node::Literal(shared))
 }

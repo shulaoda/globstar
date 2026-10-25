@@ -66,9 +66,8 @@ The JS `compileMatcher` accepts negated members: the positive members are factor
 
 1. **Lift tokens.** The whole tokens every member starts with are moved before the brace, and the tokens every member ends with after it (`lift_tokens`). A `**/`, `/**/` or `/**` is lifted whole or not at all (`group`).
 2. **Take back.** When what is left of several members lies within one segment, the lifted tokens would make those members one in-segment brace. That is kept when the brace is a set (literal branches, no wildcard after them in the segment) or holds no literal at all (`?` with `??*`, whose in-segment NFA is exact). A mixed brace would be one in-segment NFA over all of them, so the tokens go back into the members and the members stay apart.
-3. **Lift bytes.** When tokens were lifted in front, the bytes every member's first literal shares are lifted as one literal, and the same at the back (`lift_bytes`). Bytes are lifted only behind a lifted token, so the static prefixes of the members are kept: `{src/**,spec/**}` stays, `s{rc,pec}/**` would lose `src` and `spec`.
-4. **Merge segments.** Members that differ only in the literal ending one segment become one member with a brace there (`merge_segments`, §5.3).
-5. **Assemble.** Members that are left empty are one empty branch (a union of equal members is that member); one member is no brace; the result is the lifted head, the brace, and the lifted tail.
+3. **Merge segments.** Members that differ only in the literal ending one segment become one member with a brace there (`merge_segments`, §5.3).
+4. **Assemble.** Members that are left empty are one empty branch (a union of equal members is that member); one member is no brace; the result is the lifted tokens, the brace, and the lifted tail.
 
 ### 5.3 Merging segments
 
@@ -89,5 +88,5 @@ Parsing is one pass, linear in the pattern. Factoring reads each member a bounde
 | `parse`, `Parser::parse_sequence`, `double_star`, `parse_class`, `parse_brace` | `parse/mod.rs`   |
 | `Node`, `CharClass`, `Ast`, `Node::to_literal_bytes`              | `parse/ast.rs`              |
 | `Glob::new_with`, `Glob::union_with`, `Glob::from_body`           | `lib.rs`                    |
-| `factor_branches`, `lift_tokens`, `lift_bytes`, `merge_segments`, `hash_without`, `same_but` | `union.rs` |
+| `factor_branches`, `lift_tokens`, `merge_segments`, `hash_without`, `same_but` | `union.rs` |
 | `compileMatcher`, `buildEngine`, `makeMatcher`                    | `packages/globstar/src/glob.js` |

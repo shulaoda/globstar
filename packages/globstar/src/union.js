@@ -11,7 +11,6 @@ import {
   STAR_NODE,
   brace,
   concat,
-  lit,
 } from "./parse/ast.js";
 
 // What merging may read: this many nodes per node of the members, at
@@ -29,10 +28,8 @@ const ABSORBED = 2;
 const isWildcard = (n) => n === STAR_NODE || n === GLOBSTAR_NODE || n === ANYCHAR_NODE;
 
 // The tokens all members start or end with are lifted out of the brace,
-// then the bytes their first or last literals share (only behind a lifted
-// token, so the static prefixes are kept), and members that differ only
-// in the literal ending one segment are merged into one with a brace
-// there. Members left within one segment share a brace only when it is a
+// and members that differ only in the literal ending one segment are
+// merged into one with a brace there. Members left within one segment share a brace only when it is a
 // set (literal branches) or holds no literal at all; a mix would be one
 // in-segment NFA, so the tokens go back and the members stay apart.
 export function factorBranches(branches) {
@@ -61,9 +58,6 @@ export function factorBranches(branches) {
     prefix = [];
     suffix = [];
   }
-  const bytes = prefix.length > 0;
-  const head = bytes ? liftBytes(seqs, true) : null;
-  const tail = bytes ? liftBytes(seqs, false) : null;
   const liftedWild = prefix.some(isWildcard) || suffix.some(isWildcard);
 
   // Members that differ only in spelling leave nothing behind: one empty
@@ -82,10 +76,8 @@ export function factorBranches(branches) {
 
   // Loops, not spreads: ~64k lifted nodes would overflow the argument limit.
   const out = prefix;
-  if (head !== null) out.push(head);
   if (inner.tag === N_CONCAT) for (const child of inner.children) out.push(child);
   else out.push(inner);
-  if (tail !== null) out.push(tail);
   for (const node of suffix) out.push(node);
   return out.length === 1 ? out[0] : concat(out);
 }
@@ -234,26 +226,4 @@ function liftTokens(seqs, front) {
     }
   }
   return lifted;
-}
-
-// The bytes every member's first (or last) literal shares, taken out of
-// them as one literal.
-function liftBytes(seqs, front) {
-  if (!seqs.every((s) => s.length > 0 && at(s, 0, front).tag === N_LITERAL)) return null;
-  const lits = seqs.map((s) => at(s, 0, front).str);
-  const min = lits.reduce((m, l) => Math.min(m, l.length), Infinity);
-  const byte = (l, i) => l.charCodeAt(front ? i : l.length - 1 - i);
-  let n = 0;
-  while (n < min && lits.every((l) => byte(l, n) === byte(lits[0], n))) n++;
-  if (n === 0) return null;
-  for (const s of seqs) {
-    const b = at(s, 0, front).str;
-    const rest = front ? b.slice(n) : b.slice(0, b.length - n);
-    const k = front ? 0 : s.length - 1;
-    if (rest.length > 0) s[k] = lit(rest);
-    else if (front) s.shift();
-    else s.pop();
-  }
-  const ref = lits[0];
-  return lit(front ? ref.slice(0, n) : ref.slice(ref.length - n));
 }
