@@ -1,5 +1,5 @@
-//! The chains: the paths through the graph, each matched by anchored
-//! compares; the literal-only paths as one sorted set.
+//! The chains: the wildcard paths through the graph, each matched by
+//! anchored compares; the literal paths as one sorted set.
 
 use std::cmp::Ordering;
 use std::ops::Range;
@@ -25,10 +25,16 @@ const MAX_TAIL_CHECKS: usize = 4096;
 
 const NO_HEAD: u8 = 0;
 
+/// The graph's paths: the literal ones as one set, the others as chains.
+#[derive(Default)]
+pub(super) struct Paths {
+    pub(super) literals: Option<Box<Literals>>,
+    pub(super) chains: Box<[Chain]>,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct Chain {
-    /// Empty for a linear pattern's lone path (`0..elems.len()`) and
-    /// for the literal set.
+    /// Empty for a linear pattern's lone path (`0..elems.len()`).
     pub(super) nodes: Box<[u32]>,
     pub(super) shape: Shape,
 }
@@ -37,7 +43,6 @@ pub(super) struct Chain {
 pub(super) enum Shape {
     Line(Line),
     Block { g1: u32, g2: u32 },
-    Set(Box<Literals>),
 }
 
 /// A globstar at `g` (past the end: none). From `open_from` every
@@ -66,14 +71,16 @@ pub(super) struct Gate {
 }
 
 impl Graph {
-    /// Every path as a chain, the literal ones as one `Shape::Set` first;
-    /// none past the caps or when a brace cut a segment into pieces.
-    pub(super) fn chains(&self, ci: bool) -> Box<[Chain]> {
+    /// `None` past the caps or when a brace cut a segment into pieces.
+    pub(super) fn paths(&self, ci: bool) -> Option<Paths> {
         if self.glue.is_some() {
-            return Box::default();
+            return None;
         }
         let Some(edges) = &self.edges else {
-            return self.chain_of(None, true).into_iter().collect();
+            return Some(Paths {
+                literals: None,
+                chains: self.chain_of(None, true).into_iter().collect(),
+            });
         };
         let mut wild_paths: Vec<Vec<u32>> = Vec::new();
         let mut wild_nodes = 0;
@@ -108,7 +115,7 @@ impl Graph {
                     || literal_bytes.len() + literal_bounds.len()
                         > MAX_LITERAL_BYTES.max(4 * self.weight)
                 {
-                    return Box::default();
+                    return None;
                 }
                 continue;
             }
@@ -116,15 +123,13 @@ impl Graph {
             stack.push((edges.succ(id as usize), 0));
         }
         let lone = wild_paths.len() == 1 && literal_bounds.len() == 1;
-        let set = (literal_bounds.len() > 1).then(|| Chain {
-            nodes: Box::default(),
-            shape: Shape::Set(Box::new(Literals::new(&literal_bytes, &literal_bounds, ci))),
-        });
-        set.into_iter()
-            .map(Some)
-            .chain(wild_paths.into_iter().map(|p| self.chain_of(Some(p), lone)))
-            .collect::<Option<_>>()
-            .unwrap_or_default()
+        let chains = wild_paths
+            .into_iter()
+            .map(|p| self.chain_of(Some(p), lone))
+            .collect::<Option<_>>()?;
+        let literals = (literal_bounds.len() > 1)
+            .then(|| Box::new(Literals::new(&literal_bytes, &literal_bounds, ci)));
+        Some(Paths { literals, chains })
     }
 
     fn literal_path(&self, path: &[u32], out: &mut Vec<u8>) {
@@ -174,7 +179,6 @@ impl Chain {
         let (head, tail, block) = match self.shape {
             Shape::Line(line) => (line.g as usize, (line.g as usize + 1).min(n), None),
             Shape::Block { g1, g2 } => (g1 as usize, g2 as usize + 1, Some(g1 as usize + 1)),
-            Shape::Set(_) => (0, n, None),
         };
         let last = (tail < n || head == n && n > 0).then(|| (Role::Last, self.nodes[n - 1]));
         let first = (head > 0).then(|| (Role::First, self.nodes[0]));
@@ -183,12 +187,6 @@ impl Chain {
     }
 
     pub(super) fn gate(&self, elems: &[Elem], ci: bool) -> Gate {
-        if matches!(self.shape, Shape::Set(_)) {
-            return Gate {
-                last: ByteSketch::ALL,
-                head: NO_HEAD,
-            };
-        }
         let first = self.nodes.first().map_or(0, |&n| n as usize);
         let last = self.nodes.last().map_or(elems.len() - 1, |&n| n as usize);
         let last = match &elems[last] {
@@ -293,37 +291,41 @@ impl ChainElems for Indexed<'_> {
 impl SegmentMatcher {
     /// Out of line: keeps `is_match` small for the other matchers.
     #[inline(never)]
-    pub(super) fn any_chain_matches(&self, gates: &[Gate], path: &[u8]) -> bool {
-        let from = match &self.chains[0].shape {
-            Shape::Set(set) => {
-                if set.contains(path, self.case_insensitive) {
-                    return true;
-                }
-                1
-            }
-            _ => 0,
-        };
+    pub(super) fn any_chain_matches(
+        &self,
+        gates: &[Gate],
+        literals: Option<&Literals>,
+        path: &[u8],
+    ) -> bool {
+        if literals.is_some_and(|set| set.contains(path, self.case_insensitive)) {
+            return true;
+        }
         let first = path
             .first()
             .map_or(NO_HEAD, |&b| fold(b, self.case_insensitive));
         let mut last_start = None;
-        self.chains[from..]
-            .iter()
-            .zip(&gates[from..])
-            .any(|(chain, gate)| {
-                gate.last.may_end(path)
-                    && (gate.head == NO_HEAD || gate.head == first)
-                    && self.ends_like(chain, path, &mut last_start)
-                    && self.chain_matches(chain, path)
-            })
+        self.chains.iter().zip(gates).any(|(chain, gate)| {
+            gate.last.may_end(path)
+                && (gate.head == NO_HEAD || gate.head == first)
+                && self.ends_like(chain, path, &mut last_start)
+                && self.chain_matches(chain, path)
+        })
     }
 
+    /// The index names the literal set id 0 and the chains the ids after
+    /// it, so a step's picks try the set first.
     #[inline(never)]
-    pub(super) fn indexed_chain_matches(&self, index: &ChainIndex, path: &[u8]) -> bool {
+    pub(super) fn indexed_chain_matches(
+        &self,
+        index: &ChainIndex,
+        literals: Option<&Literals>,
+        path: &[u8],
+    ) -> bool {
         let ci = self.case_insensitive;
-        index.any(path, ci, |c| match &self.chains[c].shape {
-            Shape::Set(set) => set.contains(path, ci),
-            _ => self.chain_matches(&self.chains[c], path),
+        index.any(path, ci, |id| match literals {
+            None => self.chain_matches(&self.chains[id], path),
+            Some(set) if id == 0 => set.contains(path, ci),
+            Some(_) => self.chain_matches(&self.chains[id - 1], path),
         })
     }
 
@@ -405,7 +407,6 @@ impl SegmentMatcher {
                 };
                 self.block_between(elems, g1, g2, path, mid_start, split)
             }
-            Shape::Set(_) => unreachable!("the set is searched on its own"),
         }
     }
 

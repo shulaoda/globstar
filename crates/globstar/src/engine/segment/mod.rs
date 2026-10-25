@@ -17,7 +17,7 @@ use crate::parse::ast::Node;
 
 use crate::bytes;
 use bits::ByteSketch;
-use chain::{Chain, Gate, MAX_CHAINS, Shape};
+use chain::{Chain, Gate, Literals, MAX_CHAINS, Paths, Shape};
 use chain_index::ChainIndex;
 use graph::{Elem, Graph};
 use graph_nfa::{AnyNfa, any_nfa};
@@ -28,10 +28,9 @@ type Bytes = Box<[u8]>;
 #[derive(Debug, Clone)]
 pub(crate) struct SegmentMatcher {
     elems: Box<[Elem]>,
-    /// The literal set first, when there is one; empty when the NFA
-    /// answers alone.
+    /// The wildcard paths; empty when the NFA answers alone.
     chains: Box<[Chain]>,
-    /// What a lone line does without: the NFA, and the picker of chains.
+    /// What a lone line does without.
     union: Option<Box<Union>>,
     /// Literal suffixes one of which every match ends with (empty: none
     /// known), sketched by last byte.
@@ -44,12 +43,17 @@ pub(crate) struct SegmentMatcher {
 
 #[derive(Debug, Clone)]
 struct Union {
+    /// The literal paths, searched first.
+    literals: Option<Box<Literals>>,
     nfa: AnyNfa,
-    pick: Pick,
+    route: Route,
 }
 
+/// How a union's call finds its chain.
 #[derive(Debug, Clone)]
-enum Pick {
+enum Route {
+    /// No chains and no literals: the NFA alone.
+    Nfa,
     Gates(Box<[Gate]>),
     Index(Box<ChainIndex>),
 }
@@ -63,26 +67,35 @@ impl SegmentMatcher {
         let suffixes = literal_ends::suffixes(&body);
         let prefixes = literal_ends::static_prefixes(&body, survey.weight);
         let mut graph = Graph::build(&mut body, survey, dot, ci);
-        let mut chains = if opts.force_nfa {
-            Box::default()
+        let paths = if opts.force_nfa {
+            None
         } else {
-            graph.chains(ci)
+            graph.paths(ci)
         };
-        let index = ChainIndex::new(&chains, &graph, ci);
+        let Paths {
+            mut literals,
+            mut chains,
+        } = paths.unwrap_or_default();
+        let index = ChainIndex::new(literals.as_deref(), &chains, &graph, ci);
         // Past `MAX_CHAINS` only the index keeps a call's walks few.
-        let set = matches!(chains.first().map(|c| &c.shape), Some(Shape::Set(_)));
-        if index.is_none() && chains.len() - usize::from(set) > MAX_CHAINS {
+        if index.is_none() && chains.len() > MAX_CHAINS {
+            literals = None;
             chains = Box::default();
         }
-        let union = match &chains[..] {
-            [c] if matches!(c.shape, Shape::Line(_)) => None,
-            _ => Some(Box::new(Union {
-                nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref(), graph.glue.take()),
-                pick: match index {
-                    Some(index) => Pick::Index(index),
-                    None => Pick::Gates(chains.iter().map(|c| c.gate(&graph.elems, ci)).collect()),
-                },
-            })),
+        let union = match (&literals, &chains[..]) {
+            (None, [c]) if matches!(c.shape, Shape::Line(_)) => None,
+            _ => {
+                let route = match index {
+                    Some(index) => Route::Index(index),
+                    None if literals.is_none() && chains.is_empty() => Route::Nfa,
+                    None => Route::Gates(chains.iter().map(|c| c.gate(&graph.elems, ci)).collect()),
+                };
+                Some(Box::new(Union {
+                    literals,
+                    nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref(), graph.glue.take()),
+                    route,
+                }))
+            }
         };
         Box::new(SegmentMatcher {
             suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
@@ -107,10 +120,12 @@ impl SegmentMatcher {
         }
         match &self.union {
             None => self.chain_matches(&self.chains[0], path),
-            Some(u) if self.chains.is_empty() => u.nfa.is_match(self, path),
-            Some(u) => match &u.pick {
-                Pick::Index(index) => self.indexed_chain_matches(index, path),
-                Pick::Gates(gates) => self.any_chain_matches(gates, path),
+            Some(u) => match &u.route {
+                Route::Nfa => u.nfa.is_match(self, path),
+                Route::Index(index) => {
+                    self.indexed_chain_matches(index, u.literals.as_deref(), path)
+                }
+                Route::Gates(gates) => self.any_chain_matches(gates, u.literals.as_deref(), path),
             },
         }
     }
@@ -152,17 +167,21 @@ impl SegmentMatcher {
             });
             i += n;
         }
-        let nfa = match self.union.as_deref().map(|u| &u.nfa) {
+        let union = self.union.as_deref();
+        let nfa = match union.map(|u| &u.nfa) {
             None => "none",
             Some(AnyNfa::Small(_)) => "small",
             Some(AnyNfa::Wide(_)) => "wide",
             Some(AnyNfa::Sparse(_)) => "sparse",
         };
-        let (chains, literals) = match self.chains.first().map(|c| &c.shape) {
-            Some(Shape::Set(set)) => (self.chains.len() - 1, format!(" | literals {}", set.len())),
-            _ => (self.chains.len(), String::new()),
-        };
-        format!("{} | chains {chains}{literals} | nfa {nfa}", runs.join(" "))
+        let literals = union
+            .and_then(|u| u.literals.as_ref())
+            .map_or(String::new(), |set| format!(" | literals {}", set.len()));
+        format!(
+            "{} | chains {}{literals} | nfa {nfa}",
+            runs.join(" "),
+            self.chains.len()
+        )
     }
 
     /// `false`: the path cannot match.

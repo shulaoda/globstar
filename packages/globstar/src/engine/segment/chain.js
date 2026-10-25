@@ -1,6 +1,6 @@
-// The chains: each path through the graph, matched by anchored compares
-// when it has at most one globstar or two around a block; the literal-only
-// paths as one sorted set; `matchDir` read off a lone chain.
+// The chains: the wildcard paths through the graph, each matched by
+// anchored compares; the literal paths as one sorted set; `matchDir` read
+// off a lone chain.
 
 import {
   EL_LIT,
@@ -35,9 +35,8 @@ export const MAX_CHAINS = 64;
 // pattern's weight.
 const MAX_LITERAL_BYTES = 64 * 1024;
 
-// `chain.globstar` when the chain has none, or is the literal paths' set.
+// `chain.globstar` when the chain has none.
 const NO_G = -1;
-export const SET_G = -2;
 
 // Element compares `chainDir` spends on tail tokens; past them it answers
 // what is safe. Tails of up to 90 elements stay exact.
@@ -48,14 +47,15 @@ const MAX_TAIL_CHECKS = 4096;
 const elemAt = (elems, ids, i) => (ids === null ? elems[i] : elems[ids[i]]);
 const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 
-// Every path through the graph as a chain, in pattern order, the literal
-// ones as one SET_G chain first; none when they pass the caps, a path has
-// more than two globstars, or a brace cuts a segment.
-export function chainsOf(graph, ci) {
-  if (graph.glue !== null) return [];
+// The literal paths as one sorted set (`literals`, or null) and every
+// other path as a chain, in pattern order; none when they pass the caps,
+// a path has more than two globstars, or a brace cuts a segment.
+export function pathsOf(graph, ci) {
+  const none = { literals: null, chains: [] };
+  if (graph.glue !== null) return none;
   if (graph.linear) {
     const chain = chainOf(graph, null, true, ci);
-    return chain === null ? [] : [chain];
+    return chain === null ? none : { literals: null, chains: [chain] };
   }
   // Depth-first along one path: a level per node on it (the start's below
   // them) and the successor it tries next.
@@ -89,7 +89,7 @@ export function chainsOf(graph, ci) {
         (paths.length > MAX_CHAINS && pathNodes > 4 * graph.weight) ||
         literalChars + literalPaths.length > Math.max(MAX_LITERAL_BYTES, 4 * graph.weight)
       ) {
-        return [];
+        return none;
       }
       continue;
     }
@@ -97,19 +97,19 @@ export function chainsOf(graph, ci) {
     stack.push(graph.succs[id]);
     nextAt.push(0);
   }
-  const out = [];
-  if (literalPaths.length > 0) {
-    literalPaths.sort();
-    const set = literalPaths.filter((s, i) => i === 0 || s !== literalPaths[i - 1]);
-    out.push({ nodes: null, globstar: SET_G, literals: set.map(flat) });
-  }
   const lone = paths.length === 1 && literalPaths.length === 0;
+  const chains = [];
   for (const nodes of paths) {
     const chain = chainOf(graph, nodes, lone, ci);
-    if (chain === null) return [];
-    out.push(chain);
+    if (chain === null) return none;
+    chains.push(chain);
   }
-  return out;
+  let literals = null;
+  if (literalPaths.length > 0) {
+    literalPaths.sort();
+    literals = literalPaths.filter((s, i) => i === 0 || s !== literalPaths[i - 1]).map(flat);
+  }
+  return { literals, chains };
 }
 
 // The chain of a path, or null when it has more than two globstars, or
@@ -177,8 +177,6 @@ export function chainMatches(m, chain, str) {
   switch (chain.globstar) {
     case NO_G:
       return fixedRun(m, ids, 0, chainLen(m.elems, ids), str, 0);
-    case SET_G:
-      return hasLiteral(m, chain.literals, str);
     default: {
       const g = chain.globstar;
       const midStart = run(m, ids, 0, g, str, 0);

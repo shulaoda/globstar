@@ -6,7 +6,7 @@
 use crate::bytes::{fold, seg_end, seg_start};
 use crate::parse::ast::Node;
 
-use super::chain::{Chain, MAX_CHAINS, Shape};
+use super::chain::{Chain, Literals, MAX_CHAINS};
 use super::graph::{Elem, Graph};
 
 /// A union of at most this many chains tries them in turn after their
@@ -319,20 +319,23 @@ fn alternatives(node: &Node, ci: bool, room: usize, out: &mut Vec<Key>) -> bool 
 impl ChainIndex {
     /// `None` when the chains are few, their entries pass the key room, or
     /// past 64 chains a call could walk more than `MAX_CHAINS` of them.
-    pub(super) fn new(chains: &[Chain], graph: &Graph, ci: bool) -> Option<Box<Self>> {
+    pub(super) fn new(
+        literals: Option<&Literals>,
+        chains: &[Chain],
+        graph: &Graph,
+        ci: bool,
+    ) -> Option<Box<Self>> {
         let (elems, keys) = (&graph.elems, &graph.keys);
-        let set = match &chains.first()?.shape {
-            Shape::Set(set) => Some(set),
-            _ => None,
-        };
-        let from = usize::from(set.is_some());
-        if chains.len() - from <= LINEAR_CHAINS {
+        if chains.len() <= LINEAR_CHAINS {
             return None;
         }
+        // The literal set is filed as id 0, chain `c` as `c + first_chain`.
+        let first_chain = usize::from(literals.is_some());
+        let ids = chains.len() + first_chain;
         let mut index = ChainIndex {
             slots: Box::default(),
             shift: 0,
-            id_bits: (usize::BITS - (chains.len() - 1).leading_zeros()).max(6),
+            id_bits: (usize::BITS - (ids - 1).leading_zeros()).max(6),
             lookups: [0; 3],
             sketch: [[0; LOOKUPS]; 3],
             infix: Box::default(),
@@ -341,7 +344,7 @@ impl ChainIndex {
         let mut entries = Vec::new();
         let mut infix = Vec::new();
         let mut rest = Vec::new();
-        if let Some(set) = set {
+        if let Some(set) = literals {
             for path in set.iter() {
                 let first = path.split(|&b| b == b'/').next().unwrap_or_default();
                 index.file(
@@ -353,12 +356,13 @@ impl ChainIndex {
                 );
             }
         }
-        for (c, chain) in chains.iter().enumerate().skip(from) {
+        for (c, chain) in chains.iter().enumerate() {
+            let id = c + first_chain;
             let mut filed = false;
             for (role, node) in chain.anchors() {
                 match &elems[node as usize] {
                     Elem::Lit(lit) if !lit.is_empty() => {
-                        index.file(role, Kind::Exact, Key::of(lit, ci), c, &mut entries);
+                        index.file(role, Kind::Exact, Key::of(lit, ci), id, &mut entries);
                         filed = true;
                     }
                     Elem::Wild(_) => {
@@ -366,12 +370,12 @@ impl ChainIndex {
                             match &keys[i].1 {
                                 SegKeys::Strings(strings) => {
                                     for &(kind, key) in strings {
-                                        index.file(role, kind, key, c, &mut entries);
+                                        index.file(role, kind, key, id, &mut entries);
                                     }
                                     filed = true;
                                 }
                                 SegKeys::Infix(lit) if role == Role::Last => {
-                                    infix.push((c as u32, lit.clone()));
+                                    infix.push((id as u32, lit.clone()));
                                     filed = true;
                                 }
                                 SegKeys::Infix(_) => {}
@@ -385,7 +389,7 @@ impl ChainIndex {
                 }
             }
             if !filed {
-                rest.push(c as u32);
+                rest.push(id as u32);
             }
             if entries.len() > key_room(graph.weight) {
                 return None;

@@ -6,7 +6,7 @@ import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../../b
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph, EL_LIT, EL_WILD, EL_G0, EL_JOIN, EL_PIECE, exact } from "./graph.js";
-import { MAX_CHAINS, SET_G, chainsOf, chainMatches, chainDir, hasLiteral } from "./chain.js";
+import { MAX_CHAINS, pathsOf, chainMatches, chainDir, hasLiteral } from "./chain.js";
 import {
   anyNfa,
   nfaRun,
@@ -41,13 +41,17 @@ export class SegmentMatcher {
     const prefixes = literalEnds.staticPrefixes(body);
     const suffixes = literalEnds.suffixes(body);
     const graph = buildGraph(body, dot, ci);
-    let chains = opts.forceNfa ? [] : chainsOf(graph, ci);
-    const index = chainIndex(chains, graph, ci);
+    let { literals, chains } = opts.forceNfa ? { literals: null, chains: [] } : pathsOf(graph, ci);
+    const index = chainIndex(literals, chains, graph, ci);
     // Past MAX_CHAINS only the index keeps a call's walks few.
-    const set = chains.length > 0 && chains[0].globstar === SET_G;
-    if (index === null && chains.length - (set ? 1 : 0) > MAX_CHAINS) chains = [];
-    const line = chains.length === 1 && chains[0].globstar !== SET_G && chains[0].g2 < 0;
+    if (index === null && chains.length > MAX_CHAINS) {
+      literals = null;
+      chains = [];
+    }
+    const line = literals === null && chains.length === 1 && chains[0].g2 < 0;
     this.elems = graph.elems;
+    // The literal paths, searched first; the wildcard paths.
+    this.literals = literals;
     this.chains = exact(chains);
     // What a lone line does without: the NFA, and the index of many chains.
     this.nfa = line ? null : anyNfa(graph, ci);
@@ -87,10 +91,8 @@ export class SegmentMatcher {
     }
     const g = this.nfa;
     const nfa = g === null ? "none" : g.kind === NFA_SMALL ? "small" : "sparse";
-    const first = this.chains[0];
-    const set = first !== undefined && first.globstar === SET_G;
-    const literals = set ? ` | literals ${first.literals.length}` : "";
-    return `${runs.join(" ")} | chains ${this.chains.length - (set ? 1 : 0)}${literals} | nfa ${nfa}`;
+    const literals = this.literals === null ? "" : ` | literals ${this.literals.length}`;
+    return `${runs.join(" ")} | chains ${this.chains.length}${literals} | nfa ${nfa}`;
   }
 
   staticPrefixes() {
@@ -108,13 +110,14 @@ export class SegmentMatcher {
   _isMatch(str) {
     if (!this._prefilter(str)) return false;
     const chains = this.chains;
-    if (chains.length === 0) return this._nfaMatch(str);
-    if (chains.length === 1) return chainMatches(this, chains[0], str);
+    if (this.literals === null && chains.length <= 1) {
+      return chains.length === 0 ? this._nfaMatch(str) : chainMatches(this, chains[0], str);
+    }
     return this._anyChainMatches(chains, str);
   }
 
-  // Each chain runs after its gate. Its own method: `_isMatch` stays small
-  // for the one-chain and NFA matchers.
+  // The literal set first, then each chain after its gate. Its own method:
+  // `_isMatch` stays small for the one-chain and NFA matchers.
   _anyChainMatches(chains, str) {
     // In one method with the walk up to 64 chains, the walk past 64 kept
     // `_tryPicked` from being inlined.
@@ -122,16 +125,13 @@ export class SegmentMatcher {
     if (ix !== null) {
       return ix.stamp === null ? this._indexedChainMatches(str) : this._manyChainMatches(str);
     }
-    let from = 0;
-    if (chains[0].globstar === SET_G) {
-      if (hasLiteral(this, chains[0].literals, str)) return true;
-      from = 1;
-    }
+    if (this.literals !== null && hasLiteral(this, this.literals, str)) return true;
+    if (chains.length === 0) return false;
     const len = str.length;
     const first = len > 0 ? str.charCodeAt(0) : -1;
     const last = len > 0 ? str.charCodeAt(len - 1) & 63 : 64;
     let lastStart = -1;
-    for (let k = from; k < chains.length; k++) {
+    for (let k = 0; k < chains.length; k++) {
       const chain = chains[k];
       const suffix = chain.gateSuffix;
       if (suffix.length > 0) {
@@ -190,14 +190,22 @@ export class SegmentMatcher {
     while (lo !== 0) {
       const c = 31 - Math.clz32(lo & -lo);
       lo &= lo - 1;
-      if (chainMatches(this, this.chains[c], str)) return true;
+      if (this._picked(c, str)) return true;
     }
     while (hi !== 0) {
       const c = 31 - Math.clz32(hi & -hi);
       hi &= hi - 1;
-      if (chainMatches(this, this.chains[c + 32], str)) return true;
+      if (this._picked(c + 32, str)) return true;
     }
     return false;
+  }
+
+  // The index names the literal set id 0 and the chains the ids after it,
+  // so a step's picks try the set first.
+  _picked(id, str) {
+    if (this.literals === null) return chainMatches(this, this.chains[id], str);
+    if (id === 0) return hasLiteral(this, this.literals, str);
+    return chainMatches(this, this.chains[id - 1], str);
   }
 
   // `_indexedChainMatches` past 64 chains: each step's picks listed once a
@@ -236,7 +244,7 @@ export class SegmentMatcher {
   _tryListed(str) {
     const ix = this.index;
     while (ix.tried < ix.listed) {
-      if (chainMatches(this, this.chains[ix.list[ix.tried++]], str)) return true;
+      if (this._picked(ix.list[ix.tried++], str)) return true;
     }
     return false;
   }

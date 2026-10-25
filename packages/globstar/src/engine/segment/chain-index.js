@@ -219,15 +219,15 @@ function anchors(chain) {
 }
 
 // Null when the chains are few, their entries pass the key room, or past
-// 64 chains a call could walk more than MAX_CHAINS of them.
-export function chainIndex(chains, graph, ci) {
-  if (chains.length === 0) return null;
+// 64 chains a call could walk more than MAX_CHAINS of them. The literal
+// set is filed as id 0, chain `c` as `c + firstChain`.
+export function chainIndex(literals, chains, graph, ci) {
+  if (chains.length <= LINEAR_CHAINS) return null;
   const { elems, keys } = graph;
-  const set = chains[0].literals !== undefined;
-  const from = set ? 1 : 0;
-  if (chains.length - from <= LINEAR_CHAINS) return null;
-  // 6 for a union of at most 64 chains, whose picks are bits of two words.
-  const idBits = Math.max(6, 32 - Math.clz32(chains.length - 1));
+  const firstChain = literals !== null ? 1 : 0;
+  const ids = chains.length + firstChain;
+  // 6 for a union of at most 64 ids, whose picks are bits of two words.
+  const idBits = Math.max(6, 32 - Math.clz32(ids - 1));
   const many = idBits > 6;
   const ix = {
     // Open addressing, at most one entry in two slots: a tag of the key's
@@ -251,42 +251,44 @@ export function chainIndex(chains, graph, ci) {
     // Past 64: the chains a call picks, in order; how many, and how many
     // walked; and the call that last listed each (`epoch`), so a chain is
     // listed once a call.
-    list: many ? new Int32Array(chains.length) : null,
+    list: many ? new Int32Array(ids) : null,
     listed: 0,
     tried: 0,
-    stamp: many ? new Int32Array(chains.length) : null,
+    stamp: many ? new Int32Array(ids) : null,
     epoch: 0,
   };
   const entries = [];
-  if (set) {
-    for (const path of chains[0].literals) {
+  if (literals !== null) {
+    for (const path of literals) {
       const slash = path.indexOf("/");
-      file(ix, R_FIRST, K_EXACT, keyOf(slash < 0 ? path : path.slice(0, slash), ci), 0, entries);
+      const key = keyOf(slash < 0 ? path : path.slice(0, slash), ci);
+      file(ix, R_FIRST, K_EXACT, key, 0, entries);
     }
   }
-  for (let c = from; c < chains.length; c++) {
+  for (let c = 0; c < chains.length; c++) {
+    const id = c + firstChain;
     let filed = false;
     for (const [role, node] of anchors(chains[c])) {
       const e = elems[node];
       if (e.kind === EL_LIT && e.litStr.length > 0) {
-        file(ix, role, K_EXACT, keyOf(e.litStr, ci), c, entries);
+        file(ix, role, K_EXACT, keyOf(e.litStr, ci), id, entries);
         filed = true;
       } else if (e.kind === EL_WILD && keys !== null && keys[node] !== undefined) {
         const k = keys[node];
         if (k.infix === null) {
-          for (const [kind, key] of k.keys) file(ix, role, kind, key, c, entries);
+          for (const [kind, key] of k.keys) file(ix, role, kind, key, id, entries);
           filed = true;
         } else if (role === R_LAST) {
-          ix.infix.push([c, k.infix]);
+          ix.infix.push([id, k.infix]);
           filed = true;
         }
       }
       if (filed) break;
     }
     if (!filed) {
-      if (many) ix.rest.push(c);
-      else if (c < 32) ix.restLo |= 1 << c;
-      else ix.restHi |= 1 << (c - 32);
+      if (many) ix.rest.push(id);
+      else if (id < 32) ix.restLo |= 1 << id;
+      else ix.restHi |= 1 << (id - 32);
     }
     if (entries.length > keyRoom(graph.weight)) return null;
   }
