@@ -62,8 +62,13 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let bytes = !out.is_empty();
     let head = bytes.then(|| lift_bytes(&mut seqs, true)).flatten();
     let tail = bytes.then(|| lift_bytes(&mut seqs, false)).flatten();
-    let lifted_wild = out.iter().chain(&suffix).any(is_wildcard);
-    merge_segments(&mut seqs, lifted_wild);
+
+    merge_segments(
+        &mut seqs,
+        out.iter()
+            .chain(&suffix)
+            .any(|n| matches!(n, Node::Star | Node::AnyChar | Node::Globstar)),
+    );
 
     // Members that differ only in spelling leave nothing behind: one
     // empty branch stands for them all.
@@ -94,10 +99,6 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     out.extend(tail);
     out.append(&mut suffix);
     Node::of_seq(out)
-}
-
-fn is_wildcard(n: &Node) -> bool {
-    matches!(n, Node::Star | Node::AnyChar | Node::Globstar)
 }
 
 /// Members that differ only in the literal ending one segment become one
