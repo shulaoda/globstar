@@ -15,7 +15,7 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches.into_iter().map(Node::into_seq).collect();
     let mut out = lift_tokens(&mut seqs, true);
     let mut suffix = lift_tokens(&mut seqs, false);
-    let (mut single, mut literals, mut some_literal) = (0, true, false);
+    let (mut single, mut some_literal) = (0, false);
     'members: for s in &seqs {
         let mut has_literal = false;
         for n in s {
@@ -26,15 +26,11 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
             }
         }
         single += 1;
-        literals &= s.len() <= 1 && (s.is_empty() || has_literal);
         some_literal |= has_literal;
     }
-    let a_set = literals
-        && suffix
-            .iter()
-            .take_while(|n| !matches!(n, Node::Separator))
-            .all(|n| matches!(n, Node::Literal(_)));
-    if single > 1 && !a_set && some_literal && !(out.is_empty() && suffix.is_empty()) {
+    // Members left within one segment share a brace only when none holds a
+    // literal; names go back whole, into the literal set.
+    if single > 1 && some_literal && !(out.is_empty() && suffix.is_empty()) {
         for s in &mut seqs {
             let mut whole = out.clone();
             whole.append(s);

@@ -25,7 +25,6 @@ export function factorBranches(branches) {
   let prefix = liftTokens(seqs, true);
   let suffix = liftTokens(seqs, false);
   let single = 0;
-  let literals = true;
   let someLiteral = false;
   members: for (const s of seqs) {
     let hasLiteral = false;
@@ -34,14 +33,9 @@ export function factorBranches(branches) {
       if (n.tag === N_LITERAL) hasLiteral = true;
     }
     single++;
-    literals &&= s.length <= 1 && (s.length === 0 || hasLiteral);
     someLiteral ||= hasLiteral;
   }
-  let aSet = literals;
-  for (let i = 0; aSet && i < suffix.length && suffix[i] !== SEP_NODE; i++) {
-    aSet = suffix[i].tag === N_LITERAL;
-  }
-  if (single > 1 && !aSet && someLiteral && (prefix.length > 0 || suffix.length > 0)) {
+  if (single > 1 && someLiteral && (prefix.length > 0 || suffix.length > 0)) {
     for (let i = 0; i < seqs.length; i++) seqs[i] = prefix.concat(seqs[i], suffix);
     prefix = [];
     suffix = [];
