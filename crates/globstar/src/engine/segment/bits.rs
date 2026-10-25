@@ -192,7 +192,7 @@ impl ByteSet {
             set.bits = set.bits.map(|w| !w);
         }
         for &b in b"/\\" {
-            if crate::bytes::is_sep(b) {
+            if crate::engine::bytes::is_sep(b) {
                 set.bits[usize::from(b >> 6)] &= !(1 << (b & 63));
             }
         }
@@ -216,7 +216,7 @@ impl ByteSet {
 #[cfg(test)]
 mod tests {
     use super::ByteSet;
-    use crate::bytes::is_sep;
+    use crate::engine::bytes::is_sep;
     use crate::parse::ast::{CharClass, Node};
 
     /// What the class takes, read off its ranges: never a separator.

@@ -1,8 +1,8 @@
 //! The NFA over the graph: one state per position, stepped once per path
 //! segment. Dense rows up to `MAX_ROW_BYTES`, a sparse step beyond.
 
-use crate::bytes::{cmp_folded, seg_end};
 use crate::dir_match::DirMatch;
+use crate::engine::bytes::{cmp_folded, seg_end};
 
 use super::SegmentMatcher;
 use super::bits::{Bits, Wide};

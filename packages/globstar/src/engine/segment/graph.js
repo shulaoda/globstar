@@ -15,7 +15,7 @@ import {
   STAR_NODE,
   seq,
 } from "../../parse/ast.js";
-import { hasEscapedSep } from "../../bytes.js";
+import { hasEscapedSep } from "../bytes.js";
 import { flat } from "../../utf8.js";
 import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild, GlueNfa } from "./wild.js";
 import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain.js";

@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::bytes::{affix_eq, fold};
+use crate::engine::bytes::{affix_eq, fold};
 use crate::parse::ast::Node;
 
 use super::bits::{Bits, ByteSet, ByteSketch, Wide};

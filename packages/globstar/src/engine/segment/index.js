@@ -8,7 +8,7 @@ import {
   lastSepBefore,
   nextSep,
   hasEscapedSep,
-} from "../../bytes.js";
+} from "../bytes.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import {

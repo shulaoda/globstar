@@ -44,5 +44,5 @@ The literal without its trailing `/`s is its own prefix; a literal that holds a 
 | Symbol                                                                     | File                                |
 | -------------------------------------------------------------------------- | ----------------------------------- |
 | `LiteralMatcher`, `is_match`, `match_dir`, `prefix_len`, `static_prefixes` | `engine/literal.rs`                 |
-| `pat_byte_eq`, `ends_with_pattern`, `has_escaped_sep`                      | `bytes.rs`                          |
+| `pat_byte_eq`, `ends_with_pattern`, `has_escaped_sep`                      | `engine/bytes.rs`                   |
 | `LiteralMatcher`, `prefixLen`                                              | `packages/globstar/src/engine/literal.js` |

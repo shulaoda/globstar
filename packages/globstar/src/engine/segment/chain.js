@@ -24,7 +24,7 @@ import {
   nextSep,
   lastSepBefore,
   fold,
-} from "../../bytes.js";
+} from "../bytes.js";
 import { flat } from "../../utf8.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";

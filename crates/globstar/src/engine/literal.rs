@@ -1,8 +1,5 @@
-//! The engine for a pattern without wildcards: one compare against the
-//! literal, separators and case read as `bytes::pat_byte_eq` does.
-
-use crate::bytes::{ends_with_pattern, has_escaped_sep, pat_byte_eq};
 use crate::dir_match::DirMatch;
+use crate::engine::bytes::{ends_with_pattern, has_escaped_sep, pat_byte_eq};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiteralMatcher {

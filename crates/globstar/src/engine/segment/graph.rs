@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
-use crate::bytes::has_escaped_sep;
+use crate::engine::bytes::has_escaped_sep;
 use crate::parse::ast::Node;
 
 use super::Bytes;

@@ -12,7 +12,7 @@ use crate::CompileOptions;
 use crate::dir_match::DirMatch;
 use crate::parse::ast::{Node, ends_in_globstar};
 
-use crate::bytes::{self, has_escaped_sep};
+use crate::engine::bytes::{self, has_escaped_sep};
 use bits::ByteSketch;
 use chain::{Chain, ChainIndex, Gate, Literals, MAX_CHAINS, Paths, Shape};
 use graph::{Elem, Graph, node_weight};

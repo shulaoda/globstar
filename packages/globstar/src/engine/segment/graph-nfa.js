@@ -14,7 +14,7 @@ import {
   elemNullable,
   ACCEPT,
 } from "./graph.js";
-import { asciiLower, cmpFolded, ctz32, litEq, nextSep } from "../../bytes.js";
+import { asciiLower, cmpFolded, ctz32, litEq, nextSep } from "../bytes.js";
 import { bitSet } from "./bits.js";
 import { wildConsumes } from "./wild.js";
 

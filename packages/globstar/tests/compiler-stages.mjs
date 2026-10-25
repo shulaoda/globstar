@@ -339,7 +339,7 @@ console.log("✓ engine shapes");
 // A class's byte table takes exactly what its ranges define (ASCII: a
 // path string holds no lone byte past 0x7f).
 {
-  const { isPathSep } = await import("../src/bytes.js");
+  const { isPathSep } = await import("../src/engine/bytes.js");
   const inClass = (ranges, b) => !isPathSep(b) && ranges.some(({ lo, hi }) => b >= lo && b <= hi);
   for (const pattern of [
     "[a]",

@@ -5,8 +5,8 @@
 use std::cmp::Ordering;
 use std::ops::Range;
 
-use crate::bytes::{cmp_folded, fold, is_sep, seg_end, seg_start};
 use crate::dir_match::DirMatch;
+use crate::engine::bytes::{cmp_folded, fold, is_sep, seg_end, seg_start};
 
 use super::SegmentMatcher;
 use super::bits::ByteSketch;

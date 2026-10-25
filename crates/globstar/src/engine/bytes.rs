@@ -5,25 +5,25 @@ use std::cmp::Ordering;
 
 /// `/`, and `\` on Windows (GLOB_SPEC §2.2).
 #[inline(always)]
-pub(crate) fn is_sep(b: u8) -> bool {
+pub(super) fn is_sep(b: u8) -> bool {
     std::path::is_separator(char::from(b))
 }
 
 /// On Windows an escaped `\` is a separator no segment holds, so the
 /// literal matches nothing (GLOB_SPEC §4.2).
-pub(crate) fn has_escaped_sep(lit: &[u8]) -> bool {
+pub(super) fn has_escaped_sep(lit: &[u8]) -> bool {
     cfg!(windows) && lit.contains(&b'\\')
 }
 
 #[inline(always)]
-pub(crate) fn fold(b: u8, ci: bool) -> u8 {
+pub(super) fn fold(b: u8, ci: bool) -> u8 {
     if ci { b.to_ascii_lowercase() } else { b }
 }
 
 /// A pattern `/` takes any separator, a separator byte of the pattern
 /// takes nothing, and letters fold under `ci`.
 #[inline(always)]
-pub(crate) fn pat_byte_eq(pat: u8, b: u8, ci: bool) -> bool {
+pub(super) fn pat_byte_eq(pat: u8, b: u8, ci: bool) -> bool {
     if pat == b'/' {
         is_sep(b)
     } else if is_sep(pat) {
@@ -37,7 +37,7 @@ pub(crate) fn pat_byte_eq(pat: u8, b: u8, ci: bool) -> bool {
 
 /// Byte-wise, so short runs stay inline rather than calling `bcmp`.
 #[inline(always)]
-pub(crate) fn affix_eq(part: &[u8], seg_part: &[u8], ci: bool) -> bool {
+pub(super) fn affix_eq(part: &[u8], seg_part: &[u8], ci: bool) -> bool {
     debug_assert_eq!(part.len(), seg_part.len());
     if ci {
         part.iter()
@@ -50,7 +50,7 @@ pub(crate) fn affix_eq(part: &[u8], seg_part: &[u8], ci: bool) -> bool {
 
 /// Last byte first: where extensions differ.
 #[inline]
-pub(crate) fn ends_with_pattern(path: &[u8], suffix: &[u8], ci: bool) -> bool {
+pub(super) fn ends_with_pattern(path: &[u8], suffix: &[u8], ci: bool) -> bool {
     path.len() >= suffix.len()
         && suffix
             .iter()
@@ -61,7 +61,7 @@ pub(crate) fn ends_with_pattern(path: &[u8], suffix: &[u8], ci: bool) -> bool {
 
 /// The order sorted literals are kept in: bytes as they are, unless
 /// case-insensitive (folded) or on Windows (a path's separators as `/`).
-pub(crate) fn cmp_folded(lit: &[u8], path: &[u8], ci: bool) -> Ordering {
+pub(super) fn cmp_folded(lit: &[u8], path: &[u8], ci: bool) -> Ordering {
     if !ci && !cfg!(windows) {
         return lit.cmp(path);
     }
@@ -73,7 +73,7 @@ pub(crate) fn cmp_folded(lit: &[u8], path: &[u8], ci: bool) -> Ordering {
 
 /// Just past the segment that starts at `pos`.
 #[inline]
-pub(crate) fn seg_end(path: &[u8], pos: usize) -> usize {
+pub(super) fn seg_end(path: &[u8], pos: usize) -> usize {
     let mut i = pos;
     while i < path.len() && !is_sep(path[i]) {
         i += 1;
@@ -83,7 +83,7 @@ pub(crate) fn seg_end(path: &[u8], pos: usize) -> usize {
 
 /// The start of the segment that ends at `end`.
 #[inline]
-pub(crate) fn seg_start(path: &[u8], end: usize) -> usize {
+pub(super) fn seg_start(path: &[u8], end: usize) -> usize {
     let mut s = end;
     while s > 0 && !is_sep(path[s - 1]) {
         s -= 1;
