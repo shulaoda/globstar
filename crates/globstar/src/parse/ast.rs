@@ -22,17 +22,6 @@ pub struct CharClass {
     pub ranges: Vec<(u8, u8)>,
 }
 
-#[cfg(test)]
-impl CharClass {
-    pub fn matches(&self, b: u8) -> bool {
-        if crate::bytes::is_sep(b) {
-            return false;
-        }
-        let listed = self.ranges.iter().any(|&(lo, hi)| lo <= b && b <= hi);
-        listed ^ self.negated
-    }
-}
-
 impl Node {
     pub fn to_literal_bytes(&self) -> Option<Vec<u8>> {
         let mut len = 0;

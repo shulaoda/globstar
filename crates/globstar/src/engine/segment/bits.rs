@@ -216,7 +216,13 @@ impl ByteSet {
 #[cfg(test)]
 mod tests {
     use super::ByteSet;
-    use crate::parse::ast::Node;
+    use crate::bytes::is_sep;
+    use crate::parse::ast::{CharClass, Node};
+
+    /// What the class takes, read off its ranges: never a separator.
+    fn class_takes(cls: &CharClass, b: u8) -> bool {
+        !is_sep(b) && (cls.ranges.iter().any(|&(lo, hi)| lo <= b && b <= hi) ^ cls.negated)
+    }
 
     #[test]
     fn a_byte_set_takes_what_its_class_does() {
@@ -245,7 +251,11 @@ mod tests {
             };
             let set = ByteSet::of(cls, false);
             for b in 0..=255u8 {
-                assert_eq!(set.has(b), cls.matches(b), "{pattern} at byte {b:#04x}");
+                assert_eq!(
+                    set.has(b),
+                    class_takes(cls, b),
+                    "{pattern} at byte {b:#04x}"
+                );
             }
         }
     }
