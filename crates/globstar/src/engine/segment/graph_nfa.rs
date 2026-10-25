@@ -250,24 +250,26 @@ impl<B: Bits> Nfa<B> {
     }
 
     pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
-        self.run(m, path).test(self.accept())
+        self.run(m, path).0.test(self.accept())
     }
 
     pub(super) fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
         let root = dir_path.is_empty();
-        let (mut active, exact) = if root {
-            (self.init.clone(), m.is_match(dir_path))
+        let (mut active, mut next, exact) = if root {
+            let next = B::zero(B::words(self.after.len()));
+            (self.init.clone(), next, m.is_match(dir_path))
         } else {
-            let active = self.run(m, dir_path);
+            let (active, next) = self.run(m, dir_path);
             let exact = active.test(self.accept());
-            (active, exact)
+            (active, next, exact)
         };
         let prefix = root || active.intersects(&self.reach1);
-        let all = m.dot && prefix && self.covers_below(m, &mut active);
+        let all = m.dot && prefix && self.covers_below(m, &mut active, &mut next);
         DirMatch::new(exact, prefix, all)
     }
 
-    fn run(&self, m: &SegmentMatcher, path: &[u8]) -> B {
+    /// The set after every segment of `path`, and the scratch set.
+    fn run(&self, m: &SegmentMatcher, path: &[u8]) -> (B, B) {
         let mut active = self.init.clone();
         let mut next = B::zero(B::words(self.after.len()));
         let mut pos = 0;
@@ -280,7 +282,7 @@ impl<B: Bits> Nfa<B> {
             }
             pos = end + 1;
         }
-        active
+        (active, next)
     }
 
     fn step(&self, m: &SegmentMatcher, active: &B, seg: &[u8], next: &mut B) {
@@ -318,17 +320,16 @@ impl<B: Bits> Nfa<B> {
     /// Feeds wildcard-only segments until the set settles, requiring an
     /// accept after each: a real segment fires at least what one does, so
     /// `true` holds for every path below.
-    fn covers_below(&self, m: &SegmentMatcher, active: &mut B) -> bool {
-        let mut next = B::zero(B::words(self.after.len()));
+    fn covers_below(&self, m: &SegmentMatcher, active: &mut B, next: &mut B) -> bool {
         for _ in 0..=self.after.len().min(MAX_COVER_SEGMENTS) {
-            self.step_wild(m, active, &mut next);
+            self.step_wild(m, active, next);
             if !next.test(self.accept()) {
                 return false;
             }
-            if next == *active {
+            if next == active {
                 return true;
             }
-            std::mem::swap(active, &mut next);
+            std::mem::swap(active, next);
         }
         false
     }
@@ -394,20 +395,20 @@ impl SparseNfa {
     }
 
     pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
-        self.run(m, path).has(self.accept())
+        self.run(m, path).0.has(self.accept())
     }
 
     pub(super) fn match_dir(&self, m: &SegmentMatcher, dir_path: &[u8]) -> DirMatch {
         let root = dir_path.is_empty();
-        let (mut active, exact) = if root {
-            (self.init(), m.is_match(dir_path))
+        let (mut active, mut next, exact) = if root {
+            (self.init(), Active::new(self), m.is_match(dir_path))
         } else {
-            let active = self.run(m, dir_path);
+            let (active, next) = self.run(m, dir_path);
             let exact = active.has(self.accept());
-            (active, exact)
+            (active, next, exact)
         };
         let prefix = root || active.items.iter().any(|&i| self.reach1.test(i as usize));
-        let all = m.dot && prefix && self.covers_below(m, &mut active);
+        let all = m.dot && prefix && self.covers_below(m, &mut active, &mut next);
         DirMatch::new(exact, prefix, all)
     }
 
@@ -417,7 +418,8 @@ impl SparseNfa {
         active
     }
 
-    fn run(&self, m: &SegmentMatcher, path: &[u8]) -> Active {
+    /// The set after every segment of `path`, and the scratch set.
+    fn run(&self, m: &SegmentMatcher, path: &[u8]) -> (Active, Active) {
         let mut active = self.init();
         let mut next = Active::new(self);
         let mut pos = 0;
@@ -430,7 +432,7 @@ impl SparseNfa {
             }
             pos = end + 1;
         }
-        active
+        (active, next)
     }
 
     fn step(&self, m: &SegmentMatcher, active: &Active, seg: &[u8], next: &mut Active) {
@@ -510,8 +512,7 @@ impl SparseNfa {
 
     /// As `Nfa::covers_below`; a piece fires the exits the glue NFA
     /// reaches through wildcards alone.
-    fn covers_below(&self, m: &SegmentMatcher, active: &mut Active) -> bool {
-        let mut next = Active::new(self);
+    fn covers_below(&self, m: &SegmentMatcher, active: &mut Active, next: &mut Active) -> bool {
         let accept = self.accept();
         let any_seg = |s: u32| m.elems[s as usize].any_seg();
         for _ in 0..=(self.n as usize + 1).min(MAX_COVER_SEGMENTS) {
@@ -520,13 +521,13 @@ impl SparseNfa {
             for &item in &active.items {
                 let Some(p) = item.checked_sub(self.n + 1) else {
                     if item != accept && any_seg(item) {
-                        self.fire(m, item, &mut next);
+                        self.fire(m, item, next);
                     }
                     continue;
                 };
                 for &s in self.succ(p as usize, 1, 3) {
                     if any_seg(s) {
-                        self.fire(m, s, &mut next);
+                        self.fire(m, s, next);
                     } else {
                         self.note_piece(m, s, &mut entries);
                     }
@@ -534,7 +535,7 @@ impl SparseNfa {
             }
             if let Some(entries) = entries {
                 self.glue()
-                    .any_exits(&entries, |node| self.fire(m, node as u32, &mut next));
+                    .any_exits(&entries, |node| self.fire(m, node as u32, next));
             }
             if !next.has(accept) {
                 return false;
@@ -542,7 +543,7 @@ impl SparseNfa {
             if next.same(active) {
                 return true;
             }
-            std::mem::swap(active, &mut next);
+            std::mem::swap(active, next);
         }
         false
     }
