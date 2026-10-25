@@ -161,7 +161,6 @@ fn dir_token(d: DirMatch) -> String {
         DirMatch::DescendAll => "descend-all",
         DirMatch::DescendAllAndMatch => "descend-all-match",
         // Never a JS token.
-        _ => "unknown-dir-match",
     }
     .to_string()
 }
