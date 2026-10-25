@@ -448,17 +448,37 @@ impl<'a> Builder<'a> {
 
     /// A node for `elem` after `tails`, or the existing one.
     fn emit(&mut self, elem: Elem, tails: &[u32], glued: bool) -> u32 {
-        let id = self.elems.len() as u32;
         if self.linear {
             self.elems.push(elem);
-            return id;
+            return self.elems.len() as u32 - 1;
         }
         let key = Self::key(&elem, tails, glued);
-        if let Some(&found) = key.and_then(|k| self.memo.get(&k))
-            && self.same(found, &elem, tails, glued)
-        {
-            return found;
+        match self.reuse(key, tails, glued) {
+            Some(found) if self.same_elem(found, &elem) => found,
+            _ => self.push(elem, key, tails, glued),
         }
+    }
+
+    /// A node for the literal segment `lit`, built only when it is new.
+    fn emit_lit(&mut self, lit: &[u8], tails: &[u32], glued: bool) -> u32 {
+        let key = Some(Self::key_of(0, lit, tails, glued));
+        match self.reuse(key, tails, glued) {
+            Some(found) if matches!(&self.elems[found as usize], Elem::Lit(have) if **have == *lit) => {
+                found
+            }
+            _ => self.push(Elem::Lit(lit.into()), key, tails, glued),
+        }
+    }
+
+    /// The memo's node for `key`, when `tails` are its predecessors.
+    fn reuse(&self, key: Option<u64>, tails: &[u32], glued: bool) -> Option<u32> {
+        let found = *self.memo.get(&key?)?;
+        let i = found as usize;
+        (self.is_glued(i) == glued && self.preds_of(i) == tails).then_some(found)
+    }
+
+    fn push(&mut self, elem: Elem, key: Option<u64>, tails: &[u32], glued: bool) -> u32 {
+        let id = self.elems.len() as u32;
         self.elems.push(elem);
         if glued {
             self.glued.resize(id as usize + 1, false);
@@ -475,34 +495,33 @@ impl<'a> Builder<'a> {
     /// The reuse key of a literal, globstar or join; a wildcard is never
     /// shared.
     fn key(elem: &Elem, tails: &[u32], glued: bool) -> Option<u64> {
-        let mut h = Fnv::default();
-        match elem {
-            Elem::Lit(lit) => {
-                h.write(&[0]);
-                h.write(lit);
-            }
-            Elem::G0 => h.write(&[1]),
-            Elem::G1 => h.write(&[2]),
-            Elem::Join => h.write(&[3]),
+        let (tag, bytes): (u8, &[u8]) = match elem {
+            Elem::Lit(lit) => (0, lit),
+            Elem::G0 => (1, &[]),
+            Elem::G1 => (2, &[]),
+            Elem::Join => (3, &[]),
             Elem::Wild(_) | Elem::Piece(_) => return None,
-        }
+        };
+        Some(Self::key_of(tag, bytes, tails, glued))
+    }
+
+    fn key_of(tag: u8, bytes: &[u8], tails: &[u32], glued: bool) -> u64 {
+        let mut h = Fnv::default();
+        h.write(&[tag]);
+        h.write(bytes);
         h.write(&[glued as u8]);
         for &t in tails {
             h.write(&t.to_le_bytes());
         }
-        Some(h.finish())
+        h.finish()
     }
 
     fn is_glued(&self, i: usize) -> bool {
         self.glued.get(i).copied().unwrap_or(false)
     }
 
-    fn same(&self, id: u32, elem: &Elem, tails: &[u32], glued: bool) -> bool {
-        let i = id as usize;
-        if self.is_glued(i) != glued || self.preds_of(i) != tails {
-            return false;
-        }
-        match (&self.elems[i], elem) {
+    fn same_elem(&self, id: u32, elem: &Elem) -> bool {
+        match (&self.elems[id as usize], elem) {
             (Elem::Lit(a), Elem::Lit(b)) => a == b,
             (Elem::G0, Elem::G0) | (Elem::G1, Elem::G1) | (Elem::Join, Elem::Join) => true,
             _ => false,
@@ -731,9 +750,16 @@ impl<'a> Builder<'a> {
     /// last cut; a wildcard piece keeps its nodes, a wildcard segment of
     /// a crossing brace its keys.
     fn segment(&mut self, g: &Group<'a>, cut: bool) -> u32 {
+        let glued = g.state == Boundary::Glue;
+        if !self.linear
+            && let [node] = g.buf[..]
+            && let Node::Literal(lit) = node
+            && !has_escaped_sep(lit)
+        {
+            return self.emit_lit(lit, &g.tails, glued);
+        }
         let elem = self.close(&g.buf);
         let wild = matches!(elem, Elem::Wild(_));
-        let glued = g.state == Boundary::Glue;
         let id = self.emit(elem, &g.tails, glued);
         if wild && (glued || cut) {
             self.pieces.resize(id as usize + 1, Vec::new());
