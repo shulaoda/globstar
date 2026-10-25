@@ -4,6 +4,26 @@ import vm from "node:vm";
 import { Worker } from "node:worker_threads";
 import { compileMatcher, DirMatch } from "../src/index.js";
 
+const REFERENCE_UNIT_MS = 53;
+const machineSlowness = (() => {
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const start = performance.now();
+    let h = 0;
+    for (let i = 0; i < 20_000_000; i++) h = (Math.imul(h ^ i, 0x9e3779b1) + (h >>> 7)) | 0;
+    const a = Array.from({ length: 200_000 }, (_, i) => (Math.imul(i, 0x9e3779b1) >>> 0) % 1000003);
+    a.sort((x, y) => x - y);
+    if (h === 0 && a[0] === -1) throw new Error("unreachable");
+    best = Math.min(best, performance.now() - start);
+  }
+  return Math.max(1, best / REFERENCE_UNIT_MS);
+})();
+const within = (ms, bound, what) =>
+  assert.ok(
+    ms < bound * machineSlowness,
+    `${what}: ${ms.toFixed(0)} ms, bound ${(bound * machineSlowness).toFixed(0)} ms at machine slowness ${machineSlowness.toFixed(1)}`,
+  );
+
 const lib = JSON.stringify(new URL("../src/index.js", import.meta.url).href);
 
 function onWorker(body, resourceLimits) {
@@ -57,7 +77,7 @@ for (const [name, ms, hit] of await onWorker(
   { maxOldGenerationSizeMb: 64 },
 )) {
   assert.ok(hit, name);
-  assert.ok(ms < 300, `${name}: ${ms.toFixed(0)} ms to compile`);
+  within(ms, 300, `${name} to compile`);
 }
 
 console.log("✓ long heads before many branches stay small");
@@ -268,7 +288,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   const start = performance.now();
   compileMatcher(`x{?${",".repeat(60_000)}}`);
   const ms = performance.now() - start;
-  assert.ok(ms < 1000, `60,000 branches took ${ms.toFixed(0)} ms to compile`);
+  within(ms, 1000, `60,000 branches to compile`);
 }
 
 {
@@ -279,7 +299,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   const dir = `x/${"a".repeat(9_000)}/d`;
   for (let i = 0; i < 100; i++) assert.ok(DirMatch.matchesAllBelow(m.matchDir(dir)));
   const ms = performance.now() - start;
-  assert.ok(ms < 2000, `one-pass lengths took ${ms.toFixed(0)} ms`);
+  within(ms, 2000, `one-pass lengths`);
 }
 
 {
@@ -289,7 +309,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.equal(m.match(`${middle}.h/y`), false);
   assert.equal(m.match(`${middle}y`), true);
   const ms = performance.now() - start;
-  assert.ok(ms < 300, `a block between globstars over 64,000 bytes took ${ms.toFixed(0)} ms`);
+  within(ms, 300, `a block between globstars over 64,000 bytes`);
 }
 
 {
@@ -305,7 +325,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
     const start = performance.now();
     const union = compileMatcher(members);
     const ms = performance.now() - start;
-    assert.ok(ms < 300, `${members.length} long members took ${ms.toFixed(0)} ms to compile`);
+    within(ms, 300, `${members.length} long members to compile`);
     assert.ok(union.match(hit) && !union.match(miss));
   }
 }
@@ -323,7 +343,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
     const start = performance.now();
     const union = compileMatcher(members);
     const ms = performance.now() - start;
-    assert.ok(ms < 1000, `${hit}: ${ms.toFixed(0)} ms to compile`);
+    within(ms, 1000, `${hit} to compile`);
     assert.ok(union.match(hit) && !union.match("b/zzx"), hit);
   }
 }
@@ -349,7 +369,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
     const start = performance.now();
     const union = compileMatcher(members);
     const ms = performance.now() - start;
-    assert.ok(ms < 500, `${members.length} members: ${ms.toFixed(0)} ms to compile`);
+    within(ms, 500, `${members.length} members to compile`);
     for (const hit of hits) assert.ok(union.match(hit), hit);
     for (const miss of misses) assert.ok(!union.match(miss), miss);
   }
@@ -361,7 +381,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   const start = performance.now();
   const m = compileMatcher(`{${heads.join(",")}}${"[x]a".repeat(5000)}{${names.join(",")}}`);
   const ms = performance.now() - start;
-  assert.ok(ms < 200, `a run after 6,000 names took ${ms.toFixed(0)} ms to compile`);
+  within(ms, 200, `a run after 6,000 names to compile`);
   assert.ok(m.match(`p3/${"xa".repeat(5000)}176f`));
 }
 
@@ -374,7 +394,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
     const start = performance.now();
     assert.ok(!m.match(far));
     const ms = performance.now() - start;
-    assert.ok(ms < 200, `caseInsensitive=${caseInsensitive}: ${ms.toFixed(0)} ms`);
+    within(ms, 200, `caseInsensitive=${caseInsensitive}`);
     assert.ok(m.match(`x3/${lit}q3`));
     assert.ok(!m.match(`x3/${lit.slice(1)}q3`));
   }
@@ -387,7 +407,7 @@ await evenSteps("graph NFA", (k) => `**/a${"/**/a".repeat(k)}`, 1, 14);
   assert.equal(m.match(path), false);
   assert.equal(m.match(path + "b"), true);
   const ms = performance.now() - start;
-  assert.ok(ms < 300, `a 30,000-item class over 65,000 bytes took ${ms.toFixed(0)} ms`);
+  within(ms, 300, `a 30,000-item class over 65,000 bytes`);
 }
 
 for (const [pattern, path] of [
@@ -399,7 +419,7 @@ for (const [pattern, path] of [
   const start = performance.now();
   const m = compileMatcher(pattern);
   const ms = performance.now() - start;
-  assert.ok(ms < 200, `${pattern.slice(0, 7)} x${pattern.length}: ${ms.toFixed(0)} ms to compile`);
+  within(ms, 200, `${pattern.slice(0, 7)} x${pattern.length} to compile`);
   assert.ok(m.match(path), pattern.slice(0, 7));
 }
 
@@ -410,7 +430,7 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
   assert.ok(m.match(path), unit);
   assert.ok(DirMatch.matches(m.matchDir(path)), unit);
   const ms = performance.now() - start;
-  assert.ok(ms < 500, `${unit} x8192: ${ms.toFixed(0)} ms`);
+  within(ms, 500, `${unit} x8192`);
 }
 
 {
@@ -422,12 +442,12 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
     let start = performance.now();
     const m = compileMatcher(pattern);
     let ms = performance.now() - start;
-    assert.ok(ms < 200, `${unit} x800: ${ms.toFixed(0)} ms to compile`);
+    within(ms, 200, `${unit} x800 to compile`);
     start = performance.now();
     assert.ok(m.match(path), unit);
     assert.ok(DirMatch.mayMatchBelow(m.matchDir(path.slice(0, path.lastIndexOf("/")))), unit);
     ms = performance.now() - start;
-    assert.ok(ms < 500, `${unit} x800 on a long path: ${ms.toFixed(0)} ms`);
+    within(ms, 500, `${unit} x800 on a long path`);
   }
 }
 
@@ -436,11 +456,11 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
   let start = performance.now();
   const m = compileMatcher(patterns);
   const compileMs = performance.now() - start;
-  assert.ok(compileMs < 1000, `20,000 members took ${compileMs.toFixed(0)} ms to compile`);
+  within(compileMs, 1000, `20,000 members to compile`);
   start = performance.now();
   for (let i = 0; i < 10_000; i++) assert.ok(m.match(`dir${i}/file${i}`));
   const ms = performance.now() - start;
-  assert.ok(ms < 500, `10,000 matches took ${ms.toFixed(0)} ms`);
+  within(ms, 500, `10,000 matches`);
 }
 
 {
@@ -469,11 +489,11 @@ for (const unit of ["{**,a}/", "{**,*}/"]) {
   for (const shape of shapes) {
     const n = Math.floor(65_536 / shape(1).length);
     const ms = took(shape(n));
-    assert.ok(ms < 500, `${shape(1)} x${n}: ${ms.toFixed(0)} ms`);
+    within(ms, 500, `${shape(1)} x${n}`);
   }
   for (const pattern of [lists(2048), "{a,b,c,d,e,f,g,h,/}".repeat(3421)]) {
     const ms = took(pattern);
-    assert.ok(ms < 1000, `${pattern.slice(0, 7)}: ${ms.toFixed(0)} ms`);
+    within(ms, 1000, `${pattern.slice(0, 7)}`);
   }
 }
 
@@ -503,7 +523,7 @@ for (const [name, ms, ok] of await onWorker(
   { maxOldGenerationSizeMb: 64 },
 )) {
   assert.ok(ok, name);
-  assert.ok(ms < 300, `${name}: ${ms.toFixed(0)} ms`);
+  within(ms, 300, `${name}`);
 }
 
 {
@@ -514,7 +534,7 @@ for (const [name, ms, ok] of await onWorker(
   const shallow = union.matchDir("a");
   const long = chain.matchDir(deep);
   const ms = performance.now() - start;
-  assert.ok(ms < 1000, `matchDir took ${ms.toFixed(0)} ms`);
+  within(ms, 1000, `matchDir`);
   for (const dm of [shallow, long]) assert.ok(DirMatch.matches(dm) && DirMatch.mayMatchBelow(dm));
 }
 
@@ -523,7 +543,7 @@ for (const [name, ms, ok] of await onWorker(
   const start = performance.now();
   const union = compileMatcher([x, y]);
   const ms = performance.now() - start;
-  assert.ok(ms < 1000, `2 x 64 KB members took ${ms.toFixed(0)} ms`);
+  within(ms, 1000, `2 x 64 KB members`);
   assert.ok(union.match(x) && union.match(y) && !union.match("a/".repeat(32_000) + "z"));
 }
 
@@ -532,7 +552,7 @@ for (const [name, ms, ok] of await onWorker(
   const start = performance.now();
   for (let i = 0; i < 10_000; i++) assert.ok(m.match(`src/file${(i * 7) % 20_000}.ts`));
   const ms = performance.now() - start;
-  assert.ok(ms < 1000, `10,000 matches took ${ms.toFixed(0)} ms`);
+  within(ms, 1000, `10,000 matches`);
 }
 
 console.log("✓ large patterns stay small and fast");
