@@ -1,12 +1,7 @@
-// Paths and patterns in the byte space: one char per UTF-8 byte.
-
 const ENCODER = new TextEncoder();
 
-// `fromCharCode.apply` has an argument-count ceiling.
 const CHUNK = 4096;
 
-// The UTF-8 length of `str[s, t)`; a lone surrogate encodes as U+FFFD,
-// three bytes.
 export function utf8Length(str, s = 0, t = str.length) {
   let n = t - s;
   for (let i = s; i < t; i++) {
@@ -31,7 +26,6 @@ function latin1(bytes) {
   return out;
 }
 
-// ASCII is its own UTF-8: it passes through with no allocation.
 export function utf8Latin1(input) {
   const n = input.length;
   for (let i = 0; i < n; i++) {
@@ -44,8 +38,6 @@ export function utf8Latin1(input) {
   return input;
 }
 
-// A flat copy: V8 keeps a string of 13 or more chars joined from parts as
-// a tree, and a slice as a view that keeps its source alive.
 export function flat(s) {
   if (s.length < 13) return s;
   const codes = [];

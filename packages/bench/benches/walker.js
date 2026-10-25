@@ -1,6 +1,3 @@
-// The walkers on three tree scales: globstar against fast-glob, globby
-// and tinyglobby; `scripts/bench.mjs` reads the output.
-
 import { bench, run, group, summary, do_not_optimize } from "mitata";
 import fastGlob from "fast-glob";
 import { globby } from "globby";
@@ -98,20 +95,14 @@ const PATTERNS_HUGE = [
   "**/*.md",
 ];
 
-// The others take `onlyFiles` for what globstar always does; it refuses
-// options it does not have.
 const opts = (root) => ({ cwd: root, dot: true, onlyFiles: true });
 const ownOpts = (root) => ({ cwd: root, dot: true });
 
 const trees = TREES.map((s) => ({ name: s.name, root: buildTree(s) }));
 
 for (const { name, root } of trees) {
-  /** @type {Array<[string, string[]]>} */
-  const sets = [
-    ["multi-small", PATTERNS_SMALL],
-    ["multi-huge", PATTERNS_HUGE],
-  ];
-  for (const [label, patterns] of sets) {
+  const sets = { "multi-small": PATTERNS_SMALL, "multi-huge": PATTERNS_HUGE };
+  for (const [label, patterns] of Object.entries(sets)) {
     group(`walk_${name}_${label}`, () => {
       summary(() => {
         bench("globstar", async () => do_not_optimize(await glob(patterns, ownOpts(root))));

@@ -8,8 +8,6 @@ const DEFAULTS = {
 
 export const typeName = (v) => (v === null ? "null" : typeof v);
 
-// Only own keys count, `undefined` keeps the default, an unknown key or a
-// value of the wrong type is a TypeError.
 export function normalizeOptions(input) {
   input ??= {};
   if (typeof input !== "object" || Array.isArray(input)) {

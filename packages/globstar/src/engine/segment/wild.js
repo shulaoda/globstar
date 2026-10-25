@@ -1,43 +1,25 @@
-// In-segment wildcard matchers: what a segment with a wildcard compiles
-// to (`compileWild`) and how it takes a path segment (`wildConsumes`); the
-// in-segment NFA and the glue NFA.
-
 import { N_ANYCHAR, N_BRACE, N_LITERAL, N_STAR, seq, N_CLASS, lit } from "../../parse/ast.js";
 import { affixEq, ctz32 } from "../bytes.js";
 import { flat, isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
 import { exact, EL_JOIN, EL_LIT, EL_PIECE, EL_WILD, INNER, ACCEPT } from "./graph.js";
 import { byteSet, setEmpty, setHas, wordsFor, bitTest, bitSet, bitsIsZero } from "./bits.js";
 
-// `lit (*|?)+ lit`, any part empty.
 export const WK_AFFIX = 0;
-// `lit (*|?)+ {lit,…}`.
 export const WK_SUFFIXES = 1;
-// Anything else: a brace around wildcards or classes, a product past its cap.
 export const WK_GENERIC = 2;
-// Literals, `?`s and classes between `*`s, no brace.
 export const WK_PIECES = 3;
 
-// The `minLen` of a segment no path segment can fill.
 export const NEVER_LEN = 0x7fffffff;
 
-// A product of braces (`{a,b}{c,d}…`) past this many suffixes stays an
-// NFA; a single list is enumerated whatever its length.
 const MAX_SUFFIX_PRODUCT = 1024;
 
-// The enumerated suffixes may not take more than this, or four times
-// their nodes.
 const MAX_SUFFIX_BYTES = 64 * 1024;
 
-// Where each suffix group starts while a set is built; one for all builds.
 const GROUP_SCRATCH = new Int32Array(65);
 
-// What a position of the pieces takes: a byte (0-255, folded when
-// case-insensitive), any byte (ANY), or class `k` of the pieces' classes
-// (CLASS + k).
 const ANY = 256;
 const CLASS = 257;
 
-// The bytes of the literal nodes `nodes[..to]`.
 export function concatLits(nodes, to) {
   let s = "";
   for (let i = 0; i < to; i++) s += nodes[i].str;
@@ -49,25 +31,14 @@ export function makeWild(kind, fields) {
     kind,
     prefixStr: flat(fields.prefixStr ?? ""),
     suffixStr: flat(fields.suffixStr ?? ""),
-    // A set's non-empty suffixes grouped by last character (`suffixKeys`,
-    // one key per suffix, ascending), each group in pattern order; a group
-    // is found by a binary search of the keys, as a typed array of group
-    // starts costs V8 ~200 ns to allocate.
     suffixSetStr: fields.suffixSetStr?.map(flat) ?? null,
     suffixKeys: fields.suffixKeys ?? null,
-    // One suffix is empty: it ends anything.
     suffixEmpty: fields.suffixEmpty ?? false,
-    // The literal bytes and `?`s a segment needs; for a suffix set without
-    // the suffix; NEVER_LEN when nothing fits.
     minLen: fields.minLen ?? 0,
-    // Without a `*` the length is exactly `minLen`.
     variable: fields.variable ?? true,
-    // Rejects a dot-led segment (`dot = false`, nothing takes the `.` by name).
     dotProtect: fields.dotProtect ?? false,
     anychars: fields.anychars ?? 0,
-    // The pieces (WK_PIECES) or the in-segment NFA (WK_GENERIC).
     matcher: fields.matcher ?? null,
-    // Its wildcards alone take every non-empty segment.
     anySeg: fields.anySeg ?? false,
   };
 }
@@ -104,7 +75,6 @@ export function compileWild(nodes, dot, ci) {
     fields.minLen += suffixes[0].length;
     return makeWild(WK_AFFIX, fields);
   }
-  // A counting sort by group keeps the pattern's order within one.
   const starts = GROUP_SCRATCH.fill(0);
   let empty = false;
   for (const s of suffixes) {
@@ -127,20 +97,16 @@ export function compileWild(nodes, dot, ci) {
   return makeWild(WK_SUFFIXES, fields);
 }
 
-// The group of the suffixes ending in character `c`: its low six bits.
 function lastGroup(c, ci) {
   if (ci && c >= 0x41 && c <= 0x5a) c += 32;
   return c & 63;
 }
 
-// The literal suffixes after the wildcards, enumerated; null when
-// something else follows or the product passes its caps.
 function suffixProduct(nodes, from) {
   if (from + 1 === nodes.length && nodes[from].tag === N_LITERAL) {
     return [nodes[from].str];
   }
   let parts = [""];
-  // Σ (part + 1) bytes, and what the nodes themselves hold.
   let size = 1;
   let source = 1;
   const fits = () => size <= Math.max(MAX_SUFFIX_BYTES, source * 4);
@@ -175,9 +141,6 @@ function suffixProduct(nodes, from) {
   return parts;
 }
 
-// On a path string (not `m.byteOnly`) the literal parts compare as they
-// are; `?` counts UTF-8 bytes, so the length rules read the segment's
-// UTF-8 length, and pieces or an NFA that count run on its bytes.
 export function wildConsumes(m, w, str, s, t) {
   if (w.dotProtect && t > s && str.charCodeAt(s) === 0x2e) return false;
   const ci = m.ci;
@@ -239,9 +202,6 @@ export function wildConsumes(m, w, str, s, t) {
   }
 }
 
-// A brace-free segment as the pieces its `*`s cut, as `makeWild` fields;
-// null when it holds a brace. What the graph reads off the pieces is what
-// it would read off the NFA.
 function compilePieces(nodes, dot, ci) {
   for (const n of nodes) {
     if (n.tag !== N_LITERAL && n.tag !== N_ANYCHAR && n.tag !== N_STAR && n.tag !== N_CLASS) {
@@ -275,7 +235,6 @@ function compilePieces(nodes, dot, ci) {
       }
       at.push(CLASS + k);
     } else if (!star) {
-      // A run of `*`s is one: no empty piece between.
       ends.push(at.length);
     }
     star = tag === N_STAR;
@@ -295,29 +254,21 @@ function compilePieces(nodes, dot, ci) {
   };
 }
 
-// `bytes.js`'s `fold`, copied: the per-unit compare would pay a
-// module-cell load for an imported one.
 const fold = (c, ci) => (ci && c >= 0x41 && c <= 0x5a ? c | 0x20 : c);
 
-// A unit past Latin-1 is no class's.
 function takes(code, c, classes, ci) {
   if (code < ANY) return fold(c, ci) === code;
   return code === ANY || (c <= 0xff && setHas(classes[code - CLASS], c));
 }
 
-// The first piece is matched at the segment's start, the last at its end,
-// and each between at its leftmost place after the one before, which
-// leaves the most room to the rest.
 class Pieces {
   constructor(at, ends, classes, countsBytes) {
-    // Piece `k` is `at[ends[k - 1]..ends[k]]`, the first from 0.
     this.at = exact(at);
     this.ends = exact(ends);
     this.classes = exact(classes);
     this.countsBytes = countsBytes;
   }
 
-  // The last piece first: where names differ most.
   matches(str, s, t, ci) {
     const ends = this.ends;
     const last = ends.length - 1;
@@ -344,8 +295,6 @@ class Pieces {
     return true;
   }
 
-  // Where the leftmost place of the piece `at[lo, hi)` within `str[from,
-  // to)` ends, or -1.
   scan(lo, hi, str, from, to, ci) {
     const m = hi - lo;
     for (let k = from; k + m <= to; k++) if (this.fits(lo, hi, str, k, ci)) return k + m;
@@ -353,37 +302,23 @@ class Pieces {
   }
 }
 
-// The in-segment NFA (WK_GENERIC): a Thompson NFA over the segment's
-// nodes, simulated with a bit set (one int32 up to 32 states, Int32Array
-// words beyond). Every ε-edge points to a later state, so one ascending
-// sweep closes a set. The glue NFA of the pieces a brace cuts is built of
-// the same states.
-
 const S_BYTE = 0;
 const S_CLASS = 1;
-// Takes any unit. A `?` moves to `nexts[s]`; a `*` is its own `nexts[s]`
-// and leaves by `splitBs[s]`. One kind keeps the hot loop at three arms.
 const S_ANY = 2;
 const S_SPLIT = 3;
 const S_JUMP = 4;
 const S_MATCH = 5;
-// A glued piece's segment may end here, at graph node `nexts[s]`.
 const S_EXIT = 6;
 
 const UNSET = -1;
 
-// The most the per-state closures may take (about 1,000 states); past it
-// a step closes its set as it goes, which keeps memory linear.
 const MAX_CLOSURE_BYTES = 128 * 1024;
 
-// The lengths of up to this many states, one set for all builds: a typed
-// array costs more to make than such a pass.
 const LENS_SCRATCH = 64;
 const LENS_LO = new Int32Array(LENS_SCRATCH);
 const LENS_HI = new Int32Array(LENS_SCRATCH);
 const LENS_TAIL = new Float64Array(LENS_SCRATCH);
 
-// The segment's NFA and what the graph reads off it, as `makeWild` fields.
 export function compileSegNfa(nodes, dot, ci) {
   const builder = new SegBuilder(ci);
   const entry = builder.compileNodes(nodes);
@@ -400,8 +335,6 @@ export function compileSegNfa(nodes, dot, ci) {
   };
 }
 
-// A letter as the class of both its cases, or null. Its own function:
-// `litState` stays small enough to inline into the build loop.
 function letterClass(b) {
   const lower = b | 0x20;
   if (lower < 0x61 || lower > 0x7a) return null;
@@ -410,7 +343,6 @@ function letterClass(b) {
   return { neg: false, bits };
 }
 
-// Can something take a protected leading `.` by name?
 function takesLitDot(builder, initDotBlocked, test) {
   const n = builder.kinds.length;
   for (let s = 0; s < n; s++) {
@@ -421,7 +353,6 @@ function takesLitDot(builder, initDotBlocked, test) {
   return false;
 }
 
-// Can the entry reach S_MATCH through consumers some byte fires?
 function satisfiable(builder, entry) {
   const n = builder.kinds.length;
   const reach = new Uint8Array(n);
@@ -442,10 +373,6 @@ function closeSmall(nfa, set, block) {
   return one[0];
 }
 
-// Close `set` under ε-edges, keeping consumers, S_MATCH and S_EXIT. The
-// word being swept stays in a local, where most edges land. `block`: the
-// entry set of a protected leading `.` (`*`, `?` and negated classes
-// dropped, no `*` passed).
 function closeWide(nfa, set, block) {
   const kinds = nfa.kinds;
   const nexts = nfa.nexts;
@@ -492,15 +419,11 @@ function closeWide(nfa, set, block) {
 
 class SegNfaSmall {
   constructor(builder, entry, dot) {
-    // Plain arrays: at this size a typed array costs more to make than it
-    // saves.
     this.kinds = exact(builder.kinds);
     this.byteVals = exact(builder.byteVals);
     this.nexts = exact(builder.nexts);
     this.clsRefs = exact(builder.clsRefs);
     const n = builder.kinds.length;
-    // Each state's closure, in one backward pass: every ε-edge points to a
-    // later state, whose closure is done.
     const closures = [];
     for (let s = 0; s < n; s++) closures.push(0);
     for (let s = n - 1; s >= 0; s--) {
@@ -549,7 +472,6 @@ class SegNfaSmall {
   }
 }
 
-// Do the wildcards alone take every non-empty segment?
 function anySeg(builder, entry, init, test) {
   const kinds = builder.kinds;
   const n = kinds.length;
@@ -565,11 +487,6 @@ function anySeg(builder, entry, init, test) {
   return allNonEmpty(lo[n - 1], hi[n - 1], tail[n - 1]);
 }
 
-// The lengths of the segments the wildcards alone take from the states
-// `lo` holds length 0 for to each state, in one pass in state order: one
-// bit each below 64 (`lo` 0-31, `hi` 32-63), and every length from `tail`
-// on (Infinity: none). Lengths past 63 below the tail are left out, which
-// keeps out lengths only.
 function wildLengths(nfa, lo, hi, tail) {
   const kinds = nfa.kinds;
   const nexts = nfa.nexts;
@@ -586,12 +503,10 @@ function wildLengths(nfa, lo, hi, tail) {
     } else if (k === S_JUMP) {
       addLens(lo, hi, tail, nexts[s], l, h, f);
     } else if (k === S_ANY && nexts[s] === s) {
-      // A `*`: every length from the least on.
       const least = l !== 0 ? ctz32(l) : h !== 0 ? 32 + ctz32(h) : f;
       if (least < f) f = tail[s] = least;
       addLens(lo, hi, tail, splitBs[s], l, h, f);
     } else if (k === S_ANY) {
-      // One wildcard more.
       addLens(lo, hi, tail, nexts[s], l << 1, (h << 1) | (l >>> 31), f + 1);
     }
   }
@@ -612,8 +527,6 @@ function allNonEmpty(lo, hi, tail) {
   return tail <= 64 && (lo | 1) === -1 && hi === -1;
 }
 
-// More than 32 states: the closures are one flat table, `words` words
-// per state.
 class SegNfaWide {
   constructor(builder, entry, dot) {
     this.kinds = Uint8Array.from(builder.kinds);
@@ -644,8 +557,6 @@ class SegNfaWide {
   }
 }
 
-// `active` after every code unit of `str[s0..e0]`: through the kept
-// closures, or closing each step's set when there are none.
 function runWide(nfa, active, str, s0, e0) {
   let next = new Int32Array(active.length);
   for (let i = s0; i < e0; i++) {
@@ -705,8 +616,6 @@ function stepKept(nfa, active, next, c) {
   }
 }
 
-// Each state's closure, `words` words each, within MAX_CLOSURE_BYTES,
-// else null.
 function wideClosures(builder, words) {
   const n = builder.kinds.length;
   if (n * words * 4 > MAX_CLOSURE_BYTES) return null;
@@ -729,21 +638,13 @@ function wideClosures(builder, words) {
   return closures;
 }
 
-// The pieces of the segments a brace cuts, as one NFA: a piece's states,
-// then a fan of ε-edges to the pieces glued after it and an S_EXIT where
-// its segment may end. A piece is glued only to later ones, so every
-// ε-edge still points to a later state.
 export class GlueNfa {
-  // Of the nodes glued to their predecessors or with a successor glued to
-  // them, each of which becomes an EL_PIECE.
   constructor(elems, succs, glued, pieces, ci) {
     const n = elems.length;
     const gluedTo = (t) => t !== ACCEPT && glued[t] === 1;
     const builder = new SegBuilder(ci);
-    // Per graph node, the range of its states.
     const spanLo = new Int32Array(n);
     const spanHi = new Int32Array(n);
-    // The fan states that wait for a later piece's first state.
     const waiting = [];
     for (let i = 0; i < n; i++) {
       const succ = succs[i];
@@ -762,7 +663,6 @@ export class GlueNfa {
       const exit = succ.some((t) => !gluedTo(t));
       const glues = succ.filter(gluedTo);
       const ways = (exit ? 1 : 0) + glues.length;
-      // Split `k` takes leaf `k` or the rest, as a brace's do.
       const fan = builder.kinds.length;
       for (let k = 1; k < ways; k++) builder.alloc(S_SPLIT, 0, UNSET);
       const leaves = [];
@@ -792,7 +692,6 @@ export class GlueNfa {
     this.countsBytes = builder.countsBytes;
     this.spanLo = spanLo;
     this.spanHi = spanHi;
-    // The lengths `anyExits` finds, one set for all its calls.
     this.lengths = null;
   }
 
@@ -800,9 +699,6 @@ export class GlueNfa {
     return new Int32Array(this.words);
   }
 
-  // Calls `exit` with each node whose piece ends a match of `str[s0..e0]`
-  // from the entry states in `active`, which it takes. A non-ASCII segment
-  // runs on its UTF-8 bytes when a state counts them.
   exits(active, str, s0, e0, dot, byteOnly, exit) {
     if (this.countsBytes && !byteOnly && !isAscii(str, s0, e0)) {
       str = utf8Latin1(str.slice(s0, e0));
@@ -819,8 +715,6 @@ export class GlueNfa {
     }
   }
 
-  // Calls `exit` with each node at which the wildcards alone, from the
-  // entry states in `entries`, end every non-empty segment.
   anyExits(entries, exit) {
     const n = this.kinds.length;
     this.lengths ??= { lo: new Int32Array(n), hi: new Int32Array(n), tail: new Float64Array(n) };
@@ -837,9 +731,6 @@ export class GlueNfa {
     }
   }
 
-  // Adds to `good` the states of `node` from which some segment reaches
-  // an exit in `good` (`node`'s own when `exitOn`); whether its entry is
-  // one. Called from the last node back.
   reach(node, exitOn, good) {
     const lo = this.spanLo[node];
     const hi = this.spanHi[node];
@@ -879,9 +770,6 @@ class SegBuilder {
     this.clsRefs = [];
     this.tails = [];
     this.ci = ci;
-    // Only `?` and negated classes see a difference between a path
-    // string's UTF-16 units and its UTF-8 bytes; only then a non-ASCII
-    // segment runs on its bytes.
     this.countsBytes = false;
   }
 
@@ -894,8 +782,6 @@ class SegBuilder {
     return this.kinds.length - 1;
   }
 
-  // Point the dangling edge of `state` at `target`: a `*`'s exit, or the
-  // `next` of anything else.
   patch(state, target) {
     if (this.kinds[state] === S_SPLIT) throw new Error("patch: unreachable Split");
     if (this.kinds[state] === S_ANY && this.nexts[state] === state) this.splitBs[state] = target;
@@ -904,7 +790,6 @@ class SegBuilder {
 
   compileNodes(nodes) {
     if (nodes.length === 0) {
-      // An empty branch: a jump that waits for what follows.
       const s = this.alloc(S_JUMP, 0, UNSET);
       this.tails.push(s);
       return s;
@@ -949,8 +834,6 @@ class SegBuilder {
         return [s, [s]];
       }
       case N_BRACE: {
-        // The splits come before the branches, so every ε-edge points to a
-        // later state.
         const first = this.kinds.length;
         for (let i = 1; i < node.branches.length; i++) this.alloc(S_SPLIT, 0, UNSET);
         const entries = [];
@@ -960,7 +843,6 @@ class SegBuilder {
           for (const t of this.tails) tails.push(t);
           this.tails = [];
         }
-        // Split `i` picks branch `i` or the rest.
         const last = entries.length - 1;
         for (let i = 0; i < last; i++) {
           this.nexts[first + i] = entries[i];

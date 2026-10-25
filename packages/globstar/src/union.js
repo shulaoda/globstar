@@ -1,5 +1,3 @@
-// A union's members factored into one body.
-
 import {
   ANYCHAR_NODE,
   GLOBSTAR_NODE,
@@ -13,25 +11,15 @@ import {
   concat,
 } from "./parse/ast.js";
 
-// What merging may read: this many nodes per node of the members, at
-// least MIN_MERGE_READS.
 const MERGE_READS_PER_NODE = 16;
 const MIN_MERGE_READS = 4096;
 
-// A member's part in a merge (`state`, a Uint8Array).
 const FREE = 0;
-// Its trailing literal became the brace.
 const HEAD = 1;
-// Joined a head's brace: dropped at the end.
 const ABSORBED = 2;
 
 const isWildcard = (n) => n === STAR_NODE || n === GLOBSTAR_NODE || n === ANYCHAR_NODE;
 
-// The tokens all members start or end with are lifted out of the brace,
-// and members that differ only in the literal ending one segment are
-// merged into one with a brace there. Members left within one segment share a brace only when it is a
-// set (literal branches) or holds no literal at all; a mix would be one
-// in-segment NFA, so the tokens go back and the members stay apart.
 export function factorBranches(branches) {
   const seqs = branches.map((n) => (n.tag === N_CONCAT ? n.children.slice() : [n]));
   let prefix = liftTokens(seqs, true);
@@ -60,8 +48,6 @@ export function factorBranches(branches) {
   }
   const liftedWild = prefix.some(isWildcard) || suffix.some(isWildcard);
 
-  // Members that differ only in spelling leave nothing behind: one empty
-  // branch stands for them all.
   const residual = [];
   let empty = false;
   for (const s of mergeSegments(seqs, liftedWild)) {
@@ -74,7 +60,6 @@ export function factorBranches(branches) {
   }
   const inner = residual.length === 1 ? residual[0] : brace(residual);
 
-  // Loops, not spreads: ~64k lifted nodes would overflow the argument limit.
   const out = prefix;
   if (inner.tag === N_CONCAT) for (const child of inner.children) out.push(child);
   else out.push(inner);
@@ -82,14 +67,7 @@ export function factorBranches(branches) {
   return out.length === 1 ? out[0] : concat(out);
 }
 
-// Members that differ only in the literal ending one segment become one
-// member with a brace there: `**/a/**` and `**/b/**` are `**/{a,b}/**`.
-// Members with a wildcard take part (in the member or lifted). They are
-// grouped by segment and a hash of everything but that literal, then
-// compared node by node, from the last segment back; a member joins the
-// deepest group it fits.
 function mergeSegments(seqs, liftedWild) {
-  // [segment, hash, member, node] per literal ending a segment.
   const entries = [];
   let reads = 0;
   let nodes = 0;
@@ -118,7 +96,6 @@ function mergeSegments(seqs, liftedWild) {
     return seqs;
   }
   for (const e of entries) e[1] = hashWithout(seqs[e[2]], e[3]);
-  // A comparator sort costs V8 more than the rest of a small union's merge.
   const order = (x, y) => y[0] - x[0] || x[1] - y[1] || x[2] - y[2];
   if (entries.length > 8) entries.sort(order);
   else {
@@ -158,7 +135,6 @@ function mergeSegments(seqs, liftedWild) {
   return absorbed === 0 ? seqs : seqs.filter((_, i) => state[i] !== ABSORBED);
 }
 
-// FNV-1a of `s`, with a marker in place of node `skip`.
 function hashWithout(s, skip) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -180,15 +156,12 @@ function sameBut(a, b, at) {
   return true;
 }
 
-// The `k`th node of `s` from the front, or from the back.
 const at = (s, k, front) => (front ? s[k] : s[s.length - 1 - k]);
 
 function nodeEq(a, b) {
   return a === b || (a.tag === N_LITERAL && b.tag === N_LITERAL && a.str === b.str);
 }
 
-// How many nodes from the `k`th on stay together: `**/`, `/**/` and `/**`
-// are lifted whole or not at all.
 function group(s, k, front) {
   const a = at(s, k, front);
   const b = at(s, k + 1, front);
@@ -200,7 +173,6 @@ function group(s, k, front) {
   return 1;
 }
 
-// The whole tokens every member starts (or ends) with, taken out of them.
 function liftTokens(seqs, front) {
   const first = seqs[0];
   let n = 0;

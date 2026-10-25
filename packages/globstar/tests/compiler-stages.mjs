@@ -20,7 +20,6 @@ import { factorBranches } from "../src/union.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const cases = readFileSync(resolve(here, "../../../fixtures/compiler-stages.tsv"), "utf8");
 
-// `value`: byte values, or a string holding bytes one char each.
 function bytes(value) {
   let out = "";
   for (let b of value) {
@@ -75,7 +74,6 @@ const prefixesOf = (patterns) =>
     .staticPrefixes()
     .map((b) => new TextDecoder().decode(b))
     .sort();
-// `fixtures/static-prefixes.tsv`: the patterns, `=>`, the sorted prefixes.
 const prefixRows = readFileSync(resolve(here, "../../../fixtures/static-prefixes.tsv"), "utf8");
 for (const line of prefixRows.split("\n")) {
   if (!line || line.startsWith("#")) continue;
@@ -85,11 +83,8 @@ for (const line of prefixRows.split("\n")) {
   const got = prefixesOf(patterns.length === 1 ? patterns[0] : patterns);
   assert.deepEqual(got, cols.slice(at + 1), JSON.stringify(patterns));
 }
-// A negated member means matches can fall anywhere: one empty prefix,
-// never an empty list.
 assert.deepEqual(prefixesOf(["src/*.ts", "!x"]), [""]);
 assert.deepEqual(prefixesOf(["!x"]), [""]);
-// Eight doubling braces give 256 heads; sixteen pass the budget.
 assert.equal(prefixesOf("{a,b}".repeat(8) + "/x").length, 256);
 assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
 {
@@ -99,8 +94,6 @@ assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
   assert.equal(px.length, 1000);
   assert.ok(px.reduce((n, p) => n + p.length, 0) <= 4 * pattern.length, "prefixes stay linear");
 }
-// A head costs the bytes read to reach it: a file list keeps its heads;
-// 4,096 names behind a 16 KB folder pass 64 budgets and keep the folder.
 {
   const pad = (i) => String(i).padStart(4, "0");
   const files = Array.from(
@@ -114,8 +107,6 @@ assert.deepEqual(prefixesOf("{a,b}".repeat(16) + "/x"), [""]);
 }
 console.log("✓ static prefix extraction");
 
-// Factoring lifts all of one body under two spellings and keeps one empty
-// branch.
 for (const [a, b] of [
   ["**", "**/**"],
   ["a/**", "a/**/**"],
@@ -138,7 +129,6 @@ const ciSet = buildEngine(
 assert.ok(ciSet.shape().includes("literals 2"), ciSet.shape());
 console.log("✓ members spelled differently fold into one");
 
-// Only a literal set's bytes are bounded, not how many paths it holds.
 {
   const files = Array.from({ length: 10_000 }, (_, i) => `src/m${i % 100}/f${i}.ts`);
   const engine = buildEngine(
@@ -151,9 +141,6 @@ console.log("✓ members spelled differently fold into one");
 }
 console.log("✓ a union of many file names keeps its literal set");
 
-// Past 64 chains the index alone picks them, while no call walks more
-// than 64 by one key or without any, and their nodes stay within four
-// times the pattern's weight; else the NFA serves.
 {
   const keyed = Array.from({ length: 5000 }, (_, i) => `d${i}/*/n${i}.js`);
   const keyless = Array.from({ length: 100 }, (_, i) => `*${i}*/**`);
@@ -191,8 +178,6 @@ console.log("✓ a union of many file names keeps its literal set");
 }
 console.log("✓ a union of many wildcard members keeps its chains while indexed");
 
-// Booleans only, own keys only, no unknown keys, the engine hook one of
-// its two values; `undefined` keeps the default.
 for (const bad of [
   { caseInsensitive: "false" },
   { dot: 0 },
@@ -224,7 +209,6 @@ console.log("✓ matcher options are checked");
     }
     throw new Error("no error");
   };
-  // A list member's error names its index, counting every member given.
   const member = thrown(() => compileMatcher(["src/**", "src/**", "lib/[a"]));
   assert.ok(member instanceof GlobError);
   assert.equal(member.kind, "UnterminatedClass");
@@ -232,7 +216,6 @@ console.log("✓ matcher options are checked");
   assert.equal(member.at, 4);
   assert.ok(member.message.startsWith("pattern 2: "), member.message);
   assert.equal(thrown(() => compileMatcher("lib/[a")).index, undefined);
-  // `{a,b,/}` repeated cuts its segments into glued pieces.
   const heavy = "{a,b,/}".repeat(100);
   const each = "{a,b,/}".repeat(28);
   for (const members of [
@@ -249,7 +232,6 @@ console.log("✓ matcher options are checked");
       );
     }
   }
-  // No budget is shared between members.
   const each10 = "{,/}".repeat(10) + "**/f";
   const members = Array.from({ length: 10 }, (_, i) => `${each10}${i}`);
   const union = compileMatcher(members);
@@ -262,7 +244,6 @@ console.log("✓ matcher options are checked");
     );
   }
   assert.ok(union.match("a/f3") && !union.match("f"));
-  // `at` of InvalidRange is the range; JSON keeps the message.
   const range = thrown(() => compileMatcher("src/[abcz-a].ts"));
   assert.equal(range.at, 8);
   const json = JSON.parse(JSON.stringify(range));
@@ -274,7 +255,6 @@ console.log("✓ matcher options are checked");
 }
 console.log("✓ errors and API surface");
 
-// The length limit is exact, in bytes.
 {
   const { MAX_PATTERN_LEN } = await import("../src/index.js");
   compileMatcher("a".repeat(MAX_PATTERN_LEN));
@@ -285,8 +265,6 @@ console.log("✓ errors and API surface");
   });
   compileMatcher("é".repeat(MAX_PATTERN_LEN / 2));
   assert.throws(() => compileMatcher("é".repeat(MAX_PATTERN_LEN / 2) + "a"), { kind: "TooLong" });
-  // A string longer than the limit is refused before it is encoded, and
-  // `len` still counts its UTF-8 bytes.
   for (const [unit, bytes] of [
     ["é", 2],
     ["😀", 4],
@@ -302,7 +280,6 @@ console.log("✓ errors and API surface");
   const grew = process.memoryUsage().arrayBuffers - before;
   assert.ok(grew < 1 << 20, `refusing a 16 MB pattern allocated ${grew} bytes`);
 }
-// A lone surrogate has no UTF-8 form (GLOB_SPEC §2.1).
 for (const [pattern, at] of [
   ["\ud800", 0],
   ["a\udc00", 1],
@@ -317,8 +294,6 @@ for (const [pattern, at] of [
 assert.equal(compileMatcher("😀*").match("😀x"), true);
 console.log("✓ limits");
 
-// What each pattern of `fixtures/engine-shapes.tsv` compiles to: a slower
-// routing still answers right, so only this sees it.
 {
   const shapes = readFileSync(resolve(here, "../../../fixtures/engine-shapes.tsv"), "utf8");
   let rows = 0;
@@ -336,8 +311,6 @@ console.log("✓ limits");
 }
 console.log("✓ engine shapes");
 
-// A class's byte table takes exactly what its ranges define (ASCII: a
-// path string holds no lone byte past 0x7f).
 {
   const { isPathSep } = await import("../src/engine/bytes.js");
   const inClass = (ranges, b) => !isPathSep(b) && ranges.some(({ lo, hi }) => b >= lo && b <= hi);
@@ -364,8 +337,6 @@ console.log("✓ engine shapes");
       const m = compileMatcher("x" + pattern, { caseInsensitive: ci });
       for (let b = 1; b < 0x80; b++) {
         if (b === 0x2f || (process.platform === "win32" && b === 0x5c)) continue;
-        // Case folding adds each listed letter's other case, then the
-        // class is negated.
         const listed = (c) => inClass(cls.ranges, c);
         const letter = /[a-z]/i.test(String.fromCharCode(b));
         const want = (listed(b) || (ci && letter && listed(b ^ 0x20))) !== cls.neg;

@@ -1,5 +1,3 @@
-// Bit sets over Int32Array words, and a class as the bytes it takes.
-
 import { IS_WINDOWS_SEP } from "../bytes.js";
 
 export const wordsFor = (nBits) => Math.max(1, (nBits + 31) >>> 5);
@@ -15,9 +13,6 @@ export function bitsIsZero(a) {
   return true;
 }
 
-// The negation applied and the separators left out; `neg` stays for dot
-// protection. Under `ci` a listed ASCII letter lists its other case too,
-// before the negation (GLOB_SPEC §13).
 export function byteSet(cls, ci) {
   const bits = [0, 0, 0, 0, 0, 0, 0, 0];
   for (const { lo, hi } of cls.ranges) {

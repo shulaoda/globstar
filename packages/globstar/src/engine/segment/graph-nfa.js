@@ -1,6 +1,3 @@
-// The NFA over the graph: one state per position, stepped once per path
-// segment. One int32 of states up to 32, a sparse step beyond.
-
 import {
   EL_LIT,
   EL_WILD,
@@ -21,13 +18,8 @@ import { wildConsumes } from "./wild.js";
 export const NFA_SMALL = 0;
 export const NFA_SPARSE = 1;
 
-// The wildcard-only segments `coversBelow` feeds before it gives up: a
-// pattern needs about one more than its longest run of them, and "not
-// provable" is a valid answer (GLOB_SPEC §15.5).
 const MAX_COVER_SEGMENTS = 64;
 
-// States are numbered by position; the accept state comes last. A linear
-// pattern's positions follow one another.
 function layout(graph) {
   const elems = graph.elems;
   return {
@@ -44,17 +36,12 @@ export function anyNfa(graph, ci) {
     : sparseNfa(graph, ci);
 }
 
-// `after[s]`: the closure entered after consuming a segment at `s` (a
-// globstar's includes itself). `reach1`: the states that reach accept
-// through one or more segments.
 function denseNfa(graph) {
   const { elems, n, succs, start } = layout(graph);
   const accept = n;
   const after = [];
   for (let s = 0; s <= n; s++) after.push(0);
   let reach1 = 0;
-  // From the last position back: successors lie ahead, so each closure is
-  // complete when needed. A join is only its successors: no set holds it.
   const addTarget = (c, t) => {
     if (t === ACCEPT) return c | (1 << accept);
     if (elems[t].kind === EL_JOIN) return c | after[t];
@@ -74,17 +61,10 @@ function denseNfa(graph) {
   return { kind: NFA_SMALL, after: exact(after), init, accept, reach1 };
 }
 
-// A position keeps its successors, not a closure row (the start is the
-// last position): the literal ones sorted by literal (`litKeys`, folded
-// when insensitive) at `lits[litAt[p]..litAt[p + 1]]`, the others at
-// `others[otherAt[p]..otherAt[p + 1]]`, the nullable ones (`**/`) first up
-// to `nullEnd[p]`. The active set holds states and whole positions.
 function sparseNfa(graph, ci) {
   const { elems, n, succs, start } = layout(graph);
   const glue = graph.glue;
   const succOf = (p) => (p === n ? start : succs === null ? null : succs[p]);
-  // The successors of `p` that start a segment; the pieces glued to `p`
-  // are the glue NFA's.
   const glued = (t) => elems[t].kind === EL_PIECE && elems[t].entry === INNER;
   const eachSucc = (p, f) => {
     const list = succOf(p);
@@ -93,9 +73,6 @@ function sparseNfa(graph, ci) {
   };
   const accept = n;
 
-  // Positions sit past the states, as the active set indexes them
-  // (`base + p`). A join reaches accept as its successors do; a piece iff
-  // a segment takes it to an exit that does.
   const base = n + 1;
   const reach1 = new Uint8Array(2 * n + 2);
   let good = null;
@@ -161,14 +138,11 @@ function sparseNfa(graph, ci) {
     reach1,
     accept,
     glue,
-    // The entries of the pieces a step meets.
     entries: null,
-    // The active sets, reused across calls.
     scratch: null,
   };
 }
 
-// The active set after every segment of `str`.
 export function nfaRun(m, str) {
   const nfa = m.nfa;
   let active = nfa.init;
@@ -212,7 +186,6 @@ function nfaStep(m, nfa, active, str, s0, e0) {
   return next;
 }
 
-// `nfaStep` over a non-empty segment only wildcards take (`dot=true` only).
 function nfaStepWild(m, active) {
   const nfa = m.nfa;
   const elems = m.elems;
@@ -228,10 +201,6 @@ function nfaStepWild(m, active) {
   return next;
 }
 
-// Does every path below the directory match? Feeds wildcard-only segments
-// until the set settles, requiring an accept after each one; a real
-// segment fires every transition a wildcard-only one does, so `true`
-// holds, and `false` may only mean "not provable".
 export function coversBelow(m, active) {
   const acceptBit = 1 << m.nfa.accept;
   const limit = Math.min(m.nfa.after.length, MAX_COVER_SEGMENTS);
@@ -244,9 +213,6 @@ export function coversBelow(m, active) {
   return false;
 }
 
-// A sparse active set over `stamp`'s indices: states first, then position
-// `p` at `n + 1 + p` (every successor of `p` entered). An index is in the
-// set while its stamp is the set's `gen`, so clearing it is one increment.
 function sparseScratch(nfa) {
   if (nfa.scratch === null) nfa.scratch = { a: newSet(nfa), b: newSet(nfa) };
   return nfa.scratch;
@@ -271,8 +237,6 @@ function addTo(set, i) {
 
 export const sparseHas = (set, i) => set.stamp[i] === set.gen;
 
-// Enter position `p`, and through its nullable successors (`**/`) theirs;
-// the positions added are the work list.
 function enterSparse(nfa, p, next) {
   const base = nfa.n + 1;
   let i = next.len;
@@ -286,7 +250,6 @@ function enterSparse(nfa, p, next) {
   }
 }
 
-// State `s` took a segment: a globstar stays, and its position is entered.
 function fireSparse(m, nfa, s, next) {
   if (isGlobstar(m.elems[s])) addTo(next, s);
   enterSparse(nfa, s, next);
@@ -333,7 +296,6 @@ function stepSparse(m, nfa, active, next, str, s0, e0) {
       continue;
     }
     const p = item - base;
-    // Equal literals sit together, one binary search away.
     const hi = nfa.litAt[p + 1];
     let lo = nfa.litAt[p];
     let top = hi;
@@ -350,7 +312,6 @@ function stepSparse(m, nfa, active, next, str, s0, e0) {
       if (sparseConsumes(m, s, str, s0, e0, absorbOk)) fireSparse(m, nfa, s, next);
     }
   }
-  // The pieces' entries, matched together after the rest.
   const entries = nfa.entries;
   if (entries !== null) {
     nfa.entries = null;
@@ -358,8 +319,6 @@ function stepSparse(m, nfa, active, next, str, s0, e0) {
   }
 }
 
-// A piece notes its entry for the glue NFA, which takes the segment once
-// for all of them.
 function sparseConsumes(m, s, str, s0, e0, absorbOk) {
   const e = m.elems[s];
   switch (e.kind) {
@@ -384,8 +343,6 @@ export function sparseReach1(nfa, set) {
   return false;
 }
 
-// As `coversBelow`. A piece fires the nodes its wildcards alone take every
-// segment to (`GlueNfa.anyExits`).
 export function coversBelowSparse(m, active) {
   const nfa = m.nfa;
   const scratch = sparseScratch(nfa);

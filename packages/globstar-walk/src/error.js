@@ -1,5 +1,3 @@
-// `InvalidPattern` at compile time; `Io` during the walk (sync throws,
-// async rejects).
 export class WalkError extends Error {
   constructor(kind, info) {
     super(formatMessage(kind, info ?? {}));
@@ -8,7 +6,6 @@ export class WalkError extends Error {
     if (info) Object.assign(this, info);
   }
 
-  // `message` kept, the raw `cause` dropped.
   toJSON() {
     const out = { name: this.name, kind: this.kind, message: this.message };
     if (this.pattern !== undefined) out.pattern = this.pattern;

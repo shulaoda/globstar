@@ -1,12 +1,3 @@
-// Every pattern of a fixed segment alphabet (14 tokens at 1–2 segments, 8
-// at 3) against every path of a fixed universe, for the properties that
-// define matchDir relative to match: the match flag is match(dir); a
-// directory with a matching path strictly below it descends; Pruned means
-// no descendant matches; the anchored chains and the NFA agree on every
-// match; the all-below flag is set exactly when every path up to three
-// levels below matches (deeper than any pattern, so such a path matches
-// only through a `**`).
-
 import assert from "node:assert/strict";
 import { compileMatcher } from "../src/glob.js";
 import { DirMatch } from "../src/dir-match.js";
@@ -28,7 +19,6 @@ const SEGMENTS = [
   ".*",
 ];
 const CORE = ["a", "b", "*", "?", "[ab]", ".a", "{a,b}", "**"];
-// `c` matches nothing literal in the alphabet.
 const PSEG = ["a", "b", "ab", "c", ".a"];
 
 function enumerate(segs, depth) {
@@ -48,12 +38,10 @@ function enumerate(segs, depth) {
 }
 
 const patterns = [...enumerate(SEGMENTS, 1), ...enumerate(SEGMENTS, 2), ...enumerate(CORE, 3)];
-// Every path of 1..=3 PSEG segments, shallowest first.
 const universe = [...enumerate(PSEG, 1), ...enumerate(PSEG, 2), ...enumerate(PSEG, 3)];
 
 const allBelow = (matcher, dir, set = universe) => set.every((s) => matcher.match(`${dir}/${s}`));
 
-// Every match starts with one of the static prefixes, byte for byte.
 function assertPrefixesCover(matcher, paths, matched) {
   const prefixes = matcher.staticPrefixes().map((b) => new TextDecoder().decode(b));
   paths.forEach((path, i) => {
@@ -66,8 +54,6 @@ function assertPrefixesCover(matcher, paths, matched) {
 const isBelow = (child, dir) =>
   child.length > dir.length && child[dir.length] === "/" && child.startsWith(dir);
 
-// `pats` are patterns, or arrays of patterns for union matchers; `set` is
-// the suffixes all-below is judged on.
 function check(pats, paths, dot, ci, set = universe) {
   const below = paths.map((d) => {
     const out = [];
@@ -82,7 +68,6 @@ function check(pats, paths, dot, ci, set = universe) {
     const nfa = compileMatcher(pattern, { ...opts, __engine: "nfa" });
 
     const matched = paths.map((p) => def.match(p));
-    // Under caseInsensitive a match may differ in case from its prefix.
     if (!ci) assertPrefixesCover(def, paths, matched);
 
     for (let i = 0; i < paths.length; i++) {
@@ -118,7 +103,6 @@ let total = 0;
 total += check(patterns, universe, false, false);
 total += check(patterns, universe, true, false);
 
-// Every ordered pair of eight patterns, every ordered triple of four.
 const UNION_PATTERNS = ["a/b", "a/*", "*/b", "**/b", "a/**", "{a,b}/c", ".a/*", "?"];
 const UNION_CORE = ["a/*", "**/b", ".a/*", "?"];
 const unionSets = [];
@@ -128,8 +112,6 @@ for (const a of UNION_CORE)
 total += check(unionSets, universe, false, false);
 total += check(unionSets, universe, true, false);
 
-// A globstar, then three elements: the chain's tail tokens take one or two
-// of them. Paths go four deep, all-below three.
 {
   const SEG = ["a", "b", ".a"];
   const pats = ["", "a/", "*/"].flatMap((h) =>

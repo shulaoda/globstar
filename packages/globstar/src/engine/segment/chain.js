@@ -1,7 +1,3 @@
-// The chains: the wildcard paths through the graph, each matched by
-// anchored compares; the literal paths as one sorted set; `matchDir` read
-// off a lone chain; the index that picks a big union's chains.
-
 import {
   EL_LIT,
   EL_WILD,
@@ -29,29 +25,17 @@ import { flat } from "../../utf8.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
 import { N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";
 
-// Wildcard chains kept without an index; more while their nodes fit four
-// times the pattern's weight.
 export const MAX_CHAINS = 64;
 
-// The literal paths' set: this many characters, or four times the
-// pattern's weight.
 const MAX_LITERAL_BYTES = 64 * 1024;
 
-// `chain.globstar` when the chain has none.
 const NO_G = -1;
 
-// Element compares `chainDir` spends on tail tokens; past them it answers
-// what is safe. Tails of up to 90 elements stay exact.
 const MAX_TAIL_CHECKS = 4096;
 
-// `ids === null`: the lone path of a linear pattern, whose nodes are
-// `0..elems.length`.
 const elemAt = (elems, ids, i) => (ids === null ? elems[i] : elems[ids[i]]);
 const chainLen = (elems, ids) => (ids === null ? elems.length : ids.length);
 
-// The literal paths as one sorted set (`literals`, or null) and every
-// other path as a chain, in pattern order; none when they pass the caps,
-// a path has more than two globstars, or a brace cuts a segment.
 export function pathsOf(graph, ci) {
   const none = { literals: null, chains: [] };
   if (graph.glue !== null) return none;
@@ -59,8 +43,6 @@ export function pathsOf(graph, ci) {
     const chain = chainOf(graph, null, true, ci);
     return chain === null ? none : { literals: null, chains: [chain] };
   }
-  // Depth-first along one path: a level per node on it (the start's below
-  // them) and the successor it tries next.
   const paths = [];
   let pathNodes = 0;
   const literalPaths = [];
@@ -114,10 +96,6 @@ export function pathsOf(graph, ci) {
   return { literals, chains };
 }
 
-// The chain of a path, or null when it has more than two globstars, or
-// two with nothing between. A lone chain carries what `chainDir` reads
-// off it; a union's chains carry their gate, exact tests a
-// case-insensitive chain does without.
 function chainOf(graph, nodes, lone, ci) {
   const elems = graph.elems;
   const n = chainLen(elems, nodes);
@@ -131,8 +109,6 @@ function chainOf(graph, nodes, lone, ci) {
     else return null;
   }
   if (lone) {
-    // Every element from `openFrom` on takes some segment, from `anyFrom`
-    // on any non-empty one.
     const firstFrom = (ok) => {
       let i = n;
       while (i > 0 && ok(elem(i - 1))) i--;
@@ -151,8 +127,6 @@ function chainOf(graph, nodes, lone, ci) {
   const gateHead = !ci && first.kind === EL_LIT ? first.litStr.charCodeAt(0) : -1;
   let gateSuffix = "";
   let gatePrefix = "";
-  // A 64-slot sketch of a set's last characters (two int32s, by
-  // `code & 63`); all ones when a suffix is empty.
   let gateLastLo = -1;
   let gateLastHi = -1;
   if (!ci && last.kind === EL_LIT) gateSuffix = last.litStr;
@@ -190,8 +164,6 @@ export function chainMatches(m, chain, str) {
   }
 }
 
-// Compared as the keys were folded: letters lowercased when
-// case-insensitive, separators as `/`.
 export function hasLiteral(m, literals, str) {
   const plain = !m.ci && !IS_WINDOWS_SEP;
   let lo = 0;
@@ -213,9 +185,6 @@ export function hasLiteral(m, literals, str) {
   return false;
 }
 
-// Element `e` on the segment at `pos`, the path's last one iff `last`: the
-// index just past it, or -1. The segment is bounded before a literal is
-// compared in place.
 function consumeAt(m, e, str, pos, last) {
   if (e.kind === EL_LIT) {
     const end = pos + e.litStr.length;
@@ -235,15 +204,11 @@ function elemConsumes(m, e, str, s, t) {
   return false;
 }
 
-// Do the elements `from..to` take the segments from `pos` to the end, one
-// each?
 function fixedRun(m, ids, from, to, str, pos) {
   pos = run(m, ids, from, to - 1, str, pos);
   return pos >= 0 && consumeAt(m, elemAt(m.elems, ids, to - 1), str, pos, true) >= 0;
 }
 
-// The elements `from..to` on the segments from `pos`, one each, each
-// followed by a separator: where the segment after them starts, or -1.
 function run(m, ids, from, to, str, pos) {
   const elems = m.elems;
   for (let i = from; i < to; i++) {
@@ -259,9 +224,6 @@ function tailAndGlobstar(m, ids, g, str, midStart) {
   return split >= 0 && absorbs(m, elemAt(m.elems, ids, g).kind, str, midStart, split);
 }
 
-// The tail after element `g` on the last segments, found backward: where
-// it starts, past the end when there is none; -1 when it does not fit
-// after `midStart`.
 function tailSplit(m, ids, g, str, midStart) {
   const elems = m.elems;
   const n = chainLen(elems, ids);
@@ -279,10 +241,6 @@ function tailSplit(m, ids, g, str, midStart) {
   return split;
 }
 
-// The block between the globstars `g1` and `g2` on some run of the
-// segments between the head and the tail, each globstar on what is left
-// on its side. Under `dot=false` a globstar takes no dot segment, so the
-// block must start at or before the first one and none may follow it.
 function blockBetween(m, ids, g1, g2, str, midStart, split) {
   if (split === midStart) return false;
   const midEnd = split - 1;
@@ -306,9 +264,6 @@ function blockBetween(m, ids, g1, g2, str, midStart, split) {
   }
 }
 
-// The elements `from..to` on the segments from `pos`, the first of which
-// ends at `end`, one each, the last ending at a separator or at `midEnd`:
-// the index just past it, or -1.
 function blockFrom(m, ids, from, to, str, pos, end, midEnd) {
   const elems = m.elems;
   if (!elemConsumes(m, elemAt(elems, ids, from), str, pos, end)) return -1;
@@ -322,17 +277,12 @@ function blockFrom(m, ids, from, to, str, pos, end, midEnd) {
   return midEnd === str.length ? consumeAt(m, last, str, p, true) : -1;
 }
 
-// Can the globstar `kind` take the segments from `from` to the tail at
-// `split`? `split === from`: no segment at all. `dotAt`, when given, is
-// `firstDot(m, str, from)`.
 function absorbs(m, kind, str, from, split, dotAt) {
   if (split === from) return kind === EL_G0;
   const to = split - 1;
   return m.dot || (dotAt === undefined ? firstDot(m, str, from, to) : dotAt) >= to;
 }
 
-// Where the first dot-led segment of `str[from, to)` starts; Infinity
-// when none does, and under `dot`.
 function firstDot(m, str, from, to) {
   if (m.dot) return Infinity;
   if (from < to && str.charCodeAt(from) === 0x2e) return from;
@@ -343,8 +293,6 @@ function firstDot(m, str, from, to) {
   }
 }
 
-// `matchDir` through a lone chain: the tokens the NFA would hold after
-// `str`, read off the chain.
 export function chainDir(m, str) {
   const elems = m.elems;
   const chain = m.chains[0];
@@ -365,7 +313,6 @@ export function chainDir(m, str) {
     if (end < 0) {
       end = consumeAt(m, e, str, midStart, true);
       if (end < 0) return PRUNED;
-      // `str` is the chain's first `k` segments.
       const k = i + 1;
       const all = m.dot && g < n && k === g && tailLen <= 1 && tailAny;
       return DirMatch.from(k === n, k < n && k >= openFrom, all);
@@ -378,9 +325,6 @@ export function chainDir(m, str) {
   const globstarAlive = absorbs(m, kind, str, midStart, str.length + 1);
   let mayBelow = globstarAlive && g + 1 >= openFrom;
   let all = m.dot && globstarAlive && tailAny;
-  // Tail tokens: the tail's first `j` elements on the last `j` segments,
-  // the globstar released before them. Each `j` is its own alignment, so
-  // the compares are budgeted.
   if ((!mayBelow || all) && tailLen > 1) {
     const dotAt = firstDot(m, str, midStart, str.length);
     let checks = MAX_TAIL_CHECKS;
@@ -409,57 +353,32 @@ export function chainDir(m, str) {
   return DirMatch.from(matched, mayBelow, all);
 }
 
-// The chain index: which chains of a big union a path may match, by the
-// literal strings one of its anchored segments must have. A path looks up
-// its last, first and inner segments and walks only the chains they pick.
-
-// A union of at most this many chains tries them in turn after their
-// gates, which costs less than the lookups.
 export const LINEAR_CHAINS = 10;
 
-// A product of alternatives (`[._]s[a-v][a-z]`) is cut to the nodes whose
-// strings fit this many; a single list is kept up to the key room.
 const MAX_KEY_PRODUCT = 64;
 
-// A key compares this many outer characters of a segment at most; the
-// walk checks the rest. Past 64 chains an exact key compares the whole
-// segment by its hash.
 const KEY_BYTES = 4;
 
-// The base of a key's `whole`.
 const BASE = 0x01000193;
 
-// An infix is at most this many first characters of a literal.
 const MAX_INFIX = 16;
 
-// How a segment's strings bind it: every match is one of them, ends with
-// one, or starts with one.
 const K_EXACT = 0;
 const K_SUFFIX = 1;
 const K_PREFIX = 2;
 
-// Which segment of a path a chain's key is looked up in: the last (the
-// chain's last element takes it), the first (its first element), any but
-// the last (a block's first element takes one of them).
 export const R_LAST = 0;
 export const R_FIRST = 1;
 export const R_INNER = 2;
 
-// The lookups of one role: an exact key (0), a suffix of each length up
-// to KEY_BYTES (1 to 4), a prefix of each (5 to 8).
 const LOOKUPS = 1 + 2 * KEY_BYTES;
 
 const EMPTY_KEY = { len: 0, back: 0, front: 0, whole: 0, pow: 1 };
 
-// The keys a union's segments may give and the entries its index may
-// file: one per unit of the pattern's weight, at least 4096.
 export function keyRoom(weight) {
   return Math.max(weight, 4096);
 }
 
-// A string by its length and characters, folded when case-insensitive:
-// `back` holds its last KEY_BYTES (the last lowest), `front` its first
-// (the first lowest), `whole` a hash of all, `pow` BASE to its length.
 function keyOf(str, ci) {
   let pow = 1;
   for (let i = 0; i < str.length; i++) pow = Math.imul(pow, BASE);
@@ -484,15 +403,10 @@ function then(a, b) {
   };
 }
 
-// What a segment's keys take of the key room.
 export function segKeysLen(k) {
   return k.keys === null ? 1 : k.keys.length;
 }
 
-// The keys of a segment's nodes: `{ keys }`, a list of [kind, key], or
-// `{ infix }`; null when they pass `room`. A segment that is one brace
-// bound apart by its branches (`{Makefile,inc.*,*.pc}`) is bound by all
-// their keys, each its own kind.
 export function segmentKeys(nodes, ci, room) {
   const keys = oneKind(nodes, ci, room);
   if (keys !== null || nodes.length !== 1 || nodes[0].tag !== N_BRACE)
@@ -506,10 +420,6 @@ export function segmentKeys(nodes, ci, room) {
   return { keys: out, infix: null };
 }
 
-// One kind of keys: the segment's strings when it is literal; else those
-// of the literal nodes that end it or start it, whichever bind more
-// characters; else the start of its longest literal. Null when it has no
-// literal, or a string may be empty.
 function oneKind(nodes, ci, room) {
   const suffixes = [];
   const taken = literalRun(nodes, true, ci, room, suffixes);
@@ -544,10 +454,6 @@ function strings(kind, keys) {
   return { keys: keys.map((k) => [kind, k]), infix: null };
 }
 
-// The strings of the literal nodes at one end of `nodes` (`back`: from the
-// last on), as many as fit MAX_KEY_PRODUCT, appended to `out`; how many
-// nodes they took. A node of one string waits in `fixed` for the next
-// choice.
 function literalRun(nodes, back, ci, room, out) {
   const join = back ? (key, node) => then(node, key) : then;
   let cur = [EMPTY_KEY];
@@ -576,9 +482,6 @@ function literalRun(nodes, back, ci, room, out) {
   return taken;
 }
 
-// The strings one literal node matches: a literal, a positive ASCII
-// class, a brace of literal branches. Null for any other node, and for a
-// brace of more than `room` strings.
 function alternatives(node, ci, room) {
   if (node.tag === N_LITERAL) return [keyOf(node.str, ci)];
   if (node.tag === N_CLASS) {
@@ -603,9 +506,6 @@ function alternatives(node, ci, room) {
   return null;
 }
 
-// The elements whose segment a chain's shape pins, as [role, node] in the
-// order they are tried: the last when a tail ends the path, the first when
-// a head starts it, a block's first.
 function anchors(chain) {
   const ids = chain.nodes;
   const n = ids.length;
@@ -624,39 +524,25 @@ function anchors(chain) {
   return out;
 }
 
-// Null when the chains are few, their entries pass the key room, or past
-// 64 chains a call could walk more than MAX_CHAINS of them. The literal
-// set is filed as id 0, chain `c` as `c + firstChain`.
 export function chainIndex(literals, chains, graph, ci) {
   if (chains.length <= LINEAR_CHAINS) return null;
   const { elems, keys } = graph;
   const firstChain = literals !== null ? 1 : 0;
   const ids = chains.length + firstChain;
-  // 6 for a union of at most 64 ids, whose picks are bits of two words.
   const idBits = Math.max(6, 32 - Math.clz32(ids - 1));
   const many = idBits > 6;
   const ix = {
-    // Open addressing, at most one entry in two slots: a tag of the key's
-    // hash above the chain id, 0 where there is none.
     slots: null,
     bits: 0,
     idBits,
-    // Per role, the lookups that find something, and per lookup a sketch
-    // of the outer characters filed.
     lookups: [0, 0, 0],
     sketchLo: new Int32Array(3 * LOOKUPS),
     sketchHi: new Int32Array(3 * LOOKUPS),
-    // The chains a literal anywhere in their last segment picks.
     infix: [],
-    // The chains no key files: bits for chains 0–31, 32–63, or past 64 a list.
     restLo: 0,
     restHi: 0,
     rest: [],
-    // What one probe picks: chains 0–31, 32–63.
     picked: new Int32Array(2),
-    // Past 64: the chains a call picks, in order; how many, and how many
-    // walked; and the call that last listed each (`epoch`), so a chain is
-    // listed once a call.
     list: many ? new Int32Array(ids) : null,
     listed: 0,
     tried: 0,
@@ -728,8 +614,6 @@ export function chainIndex(literals, chains, graph, ci) {
 
 function file(ix, role, kind, key, c, entries) {
   const short = Math.min(key.len, KEY_BYTES);
-  // The lookup, the length it holds, the outer characters the sketch
-  // reads, what it compares.
   let lookup = 0;
   let len = 0;
   let outer = key.back;
@@ -752,11 +636,8 @@ function file(ix, role, kind, key, c, entries) {
   entries.push([lookupHi(role, lookup, len) * 2 ** 32 + cmp, c]);
 }
 
-// A key's high bits: its role, its lookup, an exact key's length (past
-// 255 as 255).
 const lookupHi = (role, lookup, len) => (role << 16) | (lookup << 8) | Math.min(len, 255);
 
-// The slot is the hash's top bits.
 function hashKey(hi, lo) {
   let h = Math.imul(lo ^ Math.imul(hi, 0x9e3779b1), 0x85ebca6b);
   h ^= h >>> 13;
@@ -764,15 +645,11 @@ function hashKey(hi, lo) {
   return h ^ (h >>> 16);
 }
 
-// The bits of another mix of the hash above the chain's `idBits`, the top
-// one set, so a slot is never 0.
 function tagOf(h, idBits) {
   const top = 1 << (31 - idBits);
   return ((Math.imul(h, 0x2c1b3c6d) >>> idBits) & (top - 1)) | top;
 }
 
-// Mark chain `c` picked: a bit of `ix.picked`, or past 64 on the call's
-// list, once a call.
 function mark(ix, c) {
   if (ix.stamp === null) {
     if (c < 32) ix.picked[0] |= 1 << c;
@@ -783,7 +660,6 @@ function mark(ix, c) {
   }
 }
 
-// Marks in `ix.picked` the chains `str[s, t)` picks for keys of `role`.
 export function probe(ix, role, str, s, t, ci) {
   const n = t - s;
   let todo = ix.lookups[role];
@@ -824,9 +700,6 @@ export function probe(ix, role, str, s, t, ci) {
   }
 }
 
-// `probe` past 64 chains: each chain listed once a call, an exact key
-// compared by the whole segment's hash. A function of its own, so that
-// `probe` stays as lean as one word of bits allows.
 export function probeMany(ix, role, str, s, t, ci) {
   const n = t - s;
   let todo = ix.lookups[role];
@@ -886,7 +759,6 @@ function holds(str, s, t, lit, ci) {
   return false;
 }
 
-// The last KEY_BYTES characters of `str[s, t)`, folded, the last lowest.
 function packBack(str, s, t, ci) {
   let w = 0;
   if (t - s >= KEY_BYTES) {
@@ -901,7 +773,6 @@ function packBack(str, s, t, ci) {
   return ci ? foldWord(w) : w >>> 0;
 }
 
-// The first KEY_BYTES characters of `str[s, t)`, folded, the first lowest.
 function packFront(str, s, t, ci) {
   let w = 0;
   if (t - s >= KEY_BYTES) {
@@ -916,7 +787,6 @@ function packFront(str, s, t, ci) {
   return ci ? foldWord(w) : w >>> 0;
 }
 
-// The folded characters as a polynomial in BASE, the last the constant term.
 function wholeOf(str, s, t, ci) {
   let h = 0;
   for (let i = s; i < t; i++) h = (Math.imul(h, BASE) + fold(str.charCodeAt(i) & 0xff, ci)) | 0;

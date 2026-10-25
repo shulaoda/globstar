@@ -9,7 +9,6 @@ export class GlobError extends Error {
     if (info) Object.assign(this, info);
   }
 
-  // `message` is not enumerable, so JSON would drop it.
   toJSON() {
     const out = { name: this.name, kind: this.kind, message: this.message };
     for (const key of ["at", "len", "max", "low", "high", "index"]) {
@@ -44,7 +43,6 @@ function formatMessage(kind, info) {
   }
 }
 
-// A byte as written, or as `\xHH` when it is not printable ASCII.
 function show(byte) {
   return byte > 0x20 && byte < 0x7f
     ? String.fromCharCode(byte)

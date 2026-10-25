@@ -1,13 +1,8 @@
-// The engine for a pattern without wildcards: one compare against the
-// literal, separators and case read as `patByteEq` does.
-
 import { IS_WINDOWS_SEP, endsWithPattern, hasEscapedSep, patByteEq } from "./bytes.js";
 import { DirMatch } from "../dir-match.js";
 import { flat, latin1Bytes, utf8Latin1 } from "../utf8.js";
 
 export class LiteralMatcher {
-  // An ASCII literal compares against the path string itself: a non-ASCII
-  // char equals no ASCII byte either way.
   constructor(litStr, caseInsensitive, ascii) {
     this.caseInsensitive = caseInsensitive;
     this.litStr = flat(litStr);

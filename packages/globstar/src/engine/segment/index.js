@@ -1,7 +1,3 @@
-// The segment engine: a pattern as a graph of per-segment elements,
-// matched segment by segment. The design and its thresholds:
-// `references/theory/03-segment-engine.md`.
-
 import {
   IS_WINDOWS_SEP,
   endsWithPattern,
@@ -51,31 +47,22 @@ import { WK_AFFIX, WK_PIECES, WK_SUFFIXES } from "./wild.js";
 import { N_BRACE, N_LITERAL, N_SEPARATOR, endsInGlobstar, seq } from "../../parse/ast.js";
 
 export class SegmentMatcher {
-  // `opts.forceNfa`: no anchored chains (a test hook). `opts.byteOnly`: the
-  // path's UTF-8 bytes are matched, not the string (a pattern with a byte
-  // past ASCII, and a test hook).
   constructor(body, dot, ci, opts) {
-    // The prefixes and the suffixes read the pattern as written; the graph
-    // walk regroups it.
     const prefixes = staticPrefixes(body);
     const ends = suffixes(body);
     const graph = buildGraph(body, dot, ci);
     let { literals, chains } = opts.forceNfa ? { literals: null, chains: [] } : pathsOf(graph, ci);
     const index = chainIndex(literals, chains, graph, ci);
-    // Past MAX_CHAINS only the index keeps a call's walks few.
     if (index === null && chains.length > MAX_CHAINS) {
       literals = null;
       chains = [];
     }
     const line = literals === null && chains.length === 1 && chains[0].g2 < 0;
     this.elems = graph.elems;
-    // The literal paths, searched first; the wildcard paths.
     this.literals = literals;
     this.chains = exact(chains);
-    // What a lone line does without: the NFA, and the index of many chains.
     this.nfa = line ? null : anyNfa(graph, ci);
     this.index = index;
-    // The chains the current indexed call tried: 0–31, 32–63.
     this.triedLo = 0;
     this.triedHi = 0;
     this.ci = ci;
@@ -86,8 +73,6 @@ export class SegmentMatcher {
     this.suffixes = ends.length > 0 ? ends.map(flat) : null;
   }
 
-  // A test hook: the elements in order, the chains and the NFA's form
-  // (`fixtures/engine-shapes.tsv`).
   shape() {
     const elems = this.elems.map((e) => {
       if (e.kind === EL_LIT) return "L";
@@ -135,11 +120,7 @@ export class SegmentMatcher {
     return this._anyChainMatches(chains, str);
   }
 
-  // The literal set first, then each chain after its gate. Its own method:
-  // `_isMatch` stays small for the one-chain and NFA matchers.
   _anyChainMatches(chains, str) {
-    // In one method with the walk up to 64 chains, the walk past 64 kept
-    // `_tryPicked` from being inlined.
     const ix = this.index;
     if (ix !== null) {
       return ix.stamp === null ? this._indexedChainMatches(str) : this._manyChainMatches(str);
@@ -171,8 +152,6 @@ export class SegmentMatcher {
     return false;
   }
 
-  // The chains the path's last segment picks first, then its first's, its
-  // inner ones', then the chains without a key; each chain once.
   _indexedChainMatches(str) {
     const ix = this.index;
     const ci = this.ci;
@@ -219,16 +198,12 @@ export class SegmentMatcher {
     return false;
   }
 
-  // The index names the literal set id 0 and the chains the ids after it,
-  // so a step's picks try the set first.
   _picked(id, str) {
     if (this.literals === null) return chainMatches(this, this.chains[id], str);
     if (id === 0) return hasLiteral(this, this.literals, str);
     return chainMatches(this, this.chains[id - 1], str);
   }
 
-  // `_indexedChainMatches` past 64 chains: each step's picks listed once a
-  // call, the inner segments' at once.
   _manyChainMatches(str) {
     const ix = this.index;
     const ci = this.ci;
@@ -295,8 +270,6 @@ export class SegmentMatcher {
       }
       return DirMatch.from(this.isMatch(str), true, all);
     }
-    // `dot=false` never covers a subtree: no wildcard takes the dot-led
-    // names below.
     let matches;
     let mayBelow;
     let all;
@@ -315,22 +288,12 @@ export class SegmentMatcher {
   }
 }
 
-// The literal ends every match shares, read off the AST: the suffixes
-// the prefilter checks and the static prefixes a walker seeds from.
-
-// A pattern that ends in a brace of more branches gets one suffix: the
-// one they all share.
 const MAX_SUFFIX_SET = 16;
 
-// How deep braces may nest along one head, the budget every pattern gets
-// for reading heads, and how many budgets of bytes recording them may cost.
 const MAX_HEAD_DEPTH = 64;
 const HEAD_BUDGET_FLOOR = 4096;
 const HEAD_COPY_FACTOR = 64;
 
-// Literal suffixes one of which every match ends with: the trailing
-// literal run, or one per branch of a trailing brace. Empty when nothing
-// is guaranteed.
 function suffixes(body) {
   const nodes = seq(body);
   const suffix = trailing(nodes, nodes.length, false);
@@ -338,9 +301,6 @@ function suffixes(body) {
   return suffixSet(nodes);
 }
 
-// The literal/separator run that ends `nodes[..end]`. The `/` of a `**/`
-// is not part of it, nor one a brace that may be empty parts from a `**`:
-// `**/b` and `**{,a}/b` match `b` alone.
 function trailing(nodes, end, afterGlobstar) {
   let acc = "";
   for (let i = end - 1; i >= 0; i--) {
@@ -352,9 +312,6 @@ function trailing(nodes, end, afterGlobstar) {
   return acc;
 }
 
-// One suffix per branch of a trailing brace, or past MAX_SUFFIX_SET
-// branches the suffix the branches' own tails share; none when a branch
-// guarantees nothing.
 function suffixSet(nodes) {
   if (nodes.length === 0) return [];
   const last = nodes[nodes.length - 1];
@@ -367,8 +324,6 @@ function suffixSet(nodes) {
   for (const branch of last.branches) {
     const b = seq(branch);
     let own = trailing(b, b.length, afterGlobstar);
-    // The common tail joins a branch only when the branch is all literal;
-    // otherwise it would claim more than the branch does.
     if (!many && b.every((n) => n.tag === N_LITERAL || n.tag === N_SEPARATOR)) own = common + own;
     if (own.length === 0) return [];
     if (!many) {
@@ -391,12 +346,6 @@ function suffixSet(nodes) {
   return shared.length === 0 ? [] : [shared];
 }
 
-// The deepest segment-bounded literal head of each brace expansion,
-// deduplicated. Every byte read and branch taken costs one unit of a
-// budget; past it, or past MAX_HEAD_DEPTH, a head ends at its last whole
-// segment, a shorter prefix that still holds. Past HEAD_COPY_FACTOR
-// budgets of bytes copied into heads, the reading starts again at the
-// depth limit, which gives the one head before the first brace.
 function staticPrefixes(body) {
   const nodes = seq(body);
   let heads = readAt(nodes, 0);
@@ -417,9 +366,6 @@ function readAt(nodes, depth) {
   return heads;
 }
 
-// Read `nodes` from `at`, then `then` (`{ nodes, at, next }`), after `acc`
-// (whose last whole segment ends at `boundary`), and record the head each
-// expansion reaches.
 function readHeads(heads, nodes, at, then, acc, boundary, depth) {
   let i = at;
   let end;
@@ -435,8 +381,6 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
       continue;
     }
     const node = nodes[i++];
-    // An expansion through an escaped `\` on Windows matches nothing
-    // (GLOB_SPEC §4.2): no head to seed.
     if (node.tag === N_LITERAL && hasEscapedSep(node.str)) return;
     if (node.tag === N_LITERAL && afford(heads, node.str.length)) {
       acc += node.str;
@@ -455,7 +399,6 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
       }
       return;
     } else {
-      // Every branch opening a new segment leaves what came before whole.
       end = node.tag === N_BRACE && opensSegment(node) ? acc.length : boundary;
       break;
     }
@@ -466,7 +409,6 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
   else heads.out = [""];
 }
 
-// An empty head covers every other one.
 const covered = (heads) => heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0;
 
 function afford(heads, n) {
@@ -475,8 +417,6 @@ function afford(heads, n) {
   return true;
 }
 
-// The limit is the floor until `used` passes it; the pattern's weight is
-// added only then.
 function within(heads, used, factor) {
   if (used > factor * heads.limit && !heads.weighed) {
     heads.weighed = true;
@@ -489,7 +429,6 @@ function opensSegment(node) {
   return node.branches.every((b) => seq(b)[0]?.tag === N_SEPARATOR);
 }
 
-// Drops the prefixes a shorter one covers; an empty one covers all.
 function dedupe(prefixes) {
   if (prefixes.length <= 1) return prefixes;
   prefixes.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));

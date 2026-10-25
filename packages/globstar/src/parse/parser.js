@@ -29,15 +29,10 @@ const BANG = 0x21;
 const CARET = 0x5e;
 const DASH = 0x2d;
 
-// The bytes `parseSequence` has a case for; a run of any other joins the
-// text as one slice.
 const SPECIAL = new Uint8Array(256);
 for (const b of [BACKSLASH, SLASH, QUESTION, STAR, LBRACK, LBRACE, COMMA, RBRACE]) SPECIAL[b] = 1;
 
-// The pattern is read as its UTF-8 bytes, one char per byte (`utf8Latin1`).
 export function parse(input) {
-  // UTF-8 is never shorter than UTF-16: a string past the limit is refused
-  // before it is copied.
   if (input.length > MAX_PATTERN_LEN) {
     throw new GlobError("TooLong", { len: utf8Length(input), max: MAX_PATTERN_LEN });
   }
@@ -46,7 +41,6 @@ export function parse(input) {
     throw new GlobError("TooLong", { len: bytes.length, max: MAX_PATTERN_LEN });
   }
 
-  // Past the end `charCodeAt` is NaN, which ends a run.
   let negations = 0;
   while (bytes.charCodeAt(negations) === BANG) negations++;
   if (negations === bytes.length) throw new GlobError("Empty");
@@ -56,8 +50,6 @@ export function parse(input) {
   return { body, isNegated: (negations & 1) === 1, ascii: bytes === input };
 }
 
-// The sequence up to the end, or inside a brace (`depth > 0`) up to the
-// `,` or `}` that ends its branch.
 function parseSequence(state, depth) {
   const inBrace = depth > 0;
   const { input } = state;
@@ -117,7 +109,6 @@ function parseSequence(state, depth) {
           nodes.push(brace(branches));
           break;
         }
-        // A brace of one branch is literal text (GLOB_SPEC §10.4).
         text += "{";
         for (const node of seq(branches[0])) {
           if (node.tag === N_LITERAL) text += node.str;
@@ -144,10 +135,6 @@ function parseSequence(state, depth) {
   return concat(nodes);
 }
 
-// A `**` beside text is a star; beside a separator, a brace or an edge of
-// the pattern it is a `Globstar` node, which the graph walk decides per
-// expansion (GLOB_SPEC §9.1). A `**/**` that is two globstars in every
-// expansion is one (§9.6).
 function doubleStar(state, nodes, inBrace) {
   const n = nodes.length;
   const last = n > 0 ? nodes[n - 1].tag : -1;
@@ -184,7 +171,6 @@ function parseClass(state) {
   }
 
   const ranges = [];
-  // A `]` first is a member (GLOB_SPEC §8.5), and can start a range.
   let first = true;
   while (true) {
     if (input.charCodeAt(state.pos) === RBRACK && !first) {

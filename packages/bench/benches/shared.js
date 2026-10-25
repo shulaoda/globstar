@@ -1,13 +1,7 @@
-// What the two matcher benches share: the bench corpus, the answer
-// checks, and the bench itself.
-
 import { readFileSync } from "node:fs";
 import { GCProfiler } from "node:v8";
 import { bench, run, group, summary, do_not_optimize } from "mitata";
 
-// Matchers built per trial, and the members they may hold between them:
-// the regex libraries compile a RegExp per member, and V8's code space
-// holds about that many, so a wide union is measured from fewer matchers.
 const N_TRIAL = 1000;
 const MEMBERS_PER_TRIAL = 50_000;
 const TRIALS = 5;
@@ -18,14 +12,11 @@ const fixture = (name) =>
     .split("\n")
     .filter((l) => l !== "" && !l.startsWith("#"));
 
-// The same files the Rust benches read, so the rows line up.
 export const PATHS = fixture("bench-paths.txt");
-/** @type {Array<[string, string]>} */
 export const PATTERNS = fixture("bench-single.tsv").map((l) => {
   const [label, pattern] = l.split("\t");
   return [label, pattern];
 });
-/** @type {Array<[string, string[]]>} */
 export const PATTERN_SETS = [
   ...fixture("bench-sets.tsv").map((l) => {
     const [label, ...patterns] = l.split("\t");
@@ -35,7 +26,6 @@ export const PATTERN_SETS = [
   ["file-list-100", fixture("bench-file-list.txt")],
   ["gitignore-89", fixture("bench-gitignore-list.txt")],
 ];
-// Every pattern of the bench but the three real .gitignore sets, each once.
 const ALL_CASES = [
   ...new Set([...PATTERNS.map(([, p]) => p), ...PATTERN_SETS.flatMap(([, ps]) => ps)]),
 ];
@@ -48,17 +38,11 @@ PATTERN_SETS.push(
 
 let count = 0;
 
-// A pattern this process has not compiled yet, of the row's shape: a short
-// literal tag on the end, or inside a trailing brace. V8 caches a RegExp
-// by its source and compiles it on first use, so rebuilding one string
-// made the regex libraries look nearly free.
 export function fresh(pattern) {
   const tag = "q" + (count++).toString(36);
   return pattern.endsWith("}") ? pattern.slice(0, -1) + tag + "}" : pattern + tag;
 }
 
-// A path no row matches: a first call on it runs every part a matcher left
-// for its first use, and every member of a list matched one at a time.
 export const MISS = "crates/core/src/foo";
 
 export function assertMisses(libs, inputs, path) {
@@ -70,8 +54,6 @@ export function assertMisses(libs, inputs, path) {
   }
 }
 
-// Every library gives the first one's answer on every (input, path), so
-// the rows time the same answers.
 export function assertAgree(libs, inputs, paths) {
   for (const input of inputs) {
     const [[first, build0, run0], ...rest] = libs;
@@ -88,11 +70,6 @@ export function assertAgree(libs, inputs, paths) {
   }
 }
 
-// mitata groups per row for the build, the build and first non-match, and
-// the match of a prebuilt matcher, then the memory table `bench.mjs`
-// parses (`header` is its hint); with `--peak`, the peak memory table
-// alone. `rows` are `[label, input]`; `freshen(input)` gives an input not
-// built before, of the same shape.
 export async function matcherBench(header, rows, libs, freshen) {
   if (!global.gc) {
     console.error("Run with --expose-gc");
@@ -104,7 +81,6 @@ export async function matcherBench(header, rows, libs, freshen) {
 
   if (process.argv.includes("--peak")) {
     console.log(`===== PEAK MEMORY (median of ${PEAK_TRIALS}, B/build) =====\n`);
-    // An empty build's peak: what the trial's own reading allocates.
     const bias = peakOf(
       () => null,
       () => false,
@@ -160,7 +136,6 @@ export async function matcherBench(header, rows, libs, freshen) {
   );
 }
 
-// One line per row and a cell per library, in the form `bench.mjs` parses.
 function memoryTable(header, rows, libs, cell) {
   const widths = [22, 12, 16, 12, 12, 12];
   const head = [header, ...libs.map(([n]) => n)]
@@ -186,8 +161,6 @@ function snapHeap() {
   return heap(process.memoryUsage());
 }
 
-// What N_TRIAL matchers for distinct inputs keep once each has matched
-// every bench path.
 function trialMem(build, call, input, freshen) {
   const members = Array.isArray(input) ? input.length : 1;
   const n = Math.min(N_TRIAL, Math.max(20, Math.floor(MEMBERS_PER_TRIAL / members)));
@@ -204,10 +177,6 @@ function trialMem(build, call, input, freshen) {
   return Math.max(0, (after - before) / n);
 }
 
-// The heap's growth across one build and its matches of every bench path,
-// with no GC in between, so every byte allocated counts, garbage too; a
-// try a GC cut into runs again (`bench.mjs` runs this in a process whose
-// young generation holds a whole build).
 function trialPeak(build, call, input, freshen) {
   for (let tries = 0; tries < 10; tries++) {
     const fresh = freshen(input);
@@ -223,8 +192,6 @@ function trialPeak(build, call, input, freshen) {
   throw new Error("a GC ran in every try: raise --min-semi-space-size");
 }
 
-// The median of PEAK_TRIALS trials once the build, its calls and the trial
-// are warm (a cold one allocates as it tiers up).
 function peakOf(build, call, input, freshen) {
   for (let i = 0; i < 100; i++) call(build(freshen(input)), PATHS[0]);
   const trial = () => trialPeak(build, call, input, freshen);

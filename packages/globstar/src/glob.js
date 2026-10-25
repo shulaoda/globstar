@@ -6,8 +6,6 @@ import { factorBranches } from "./union.js";
 import { GlobError } from "./error.js";
 import { DirMatch } from "./dir-match.js";
 
-// Only own keys count, `undefined` keeps the default. `__engine` is a test
-// hook: `"nfa"` leaves the anchored chains out, `"bytes"` the string mode.
 const MATCHER_DEFAULTS = { dot: true, caseInsensitive: false, __engine: undefined };
 
 export function globstar(patterns, options) {
@@ -33,7 +31,6 @@ export function compileMatcher(patterns, options) {
         `pattern must be a string, got ${pattern === null ? "null" : typeof pattern}`,
       );
     }
-    // A lone surrogate has no UTF-8 form (GLOB_SPEC §2.1).
     if (!pattern.isWellFormed()) {
       throw new TypeError(
         `pattern must be well-formed UTF-16, got a lone surrogate at index ${pattern.search(/\p{Cs}/u)}`,
@@ -90,7 +87,6 @@ function matcherOptions(input) {
   return { dot: flag("dot"), caseInsensitive: flag("caseInsensitive"), __engine: engine };
 }
 
-// Exported for the tests, which read how a pattern compiled.
 export function buildEngine(asts, opts) {
   const body = asts.length === 1 ? asts[0].body : factorBranches(asts.map((a) => a.body));
   const ascii = asts.every((a) => a.ascii);
@@ -121,7 +117,6 @@ function makeMatcher(positiveEngine, negativeEngines) {
     return false;
   };
 
-  // Anything below may match a negated member (GLOB_SPEC §15.4).
   const matchDir = (input) => {
     requireStringInput(input);
     if (!hasNegatives) return positiveEngine.matchDir(input);

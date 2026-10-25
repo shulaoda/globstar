@@ -1,13 +1,8 @@
-// String mode against byte mode (`__engine: "bytes"`, the reference) on
-// random patterns × paths, multi-byte text and `?`-vs-bytes traps
-// included: the two must agree. `node string-mode.mjs [count]`.
-
 import { compileMatcher } from "../src/glob.js";
 import { GlobError } from "../src/error.js";
 
 const COUNT = Number(process.argv[2] ?? 200000);
 
-// mulberry32
 function rng(seed) {
   let a = seed >>> 0;
   return () => {
@@ -101,7 +96,6 @@ for (let i = 0; i < COUNT; i++) {
     if (!(e instanceof GlobError)) throw e;
     continue;
   }
-  // The same front end: if one mode compiles, so does the other.
   const ref = compileMatcher(pat, { dot, caseInsensitive: ci, __engine: "bytes" });
   const path = genPath();
   tried++;
@@ -130,7 +124,6 @@ if (bad > 0) {
   console.error(`✗ ${bad} divergences over ${tried} cases`);
   process.exit(1);
 }
-// A run that loses many patterns to parse errors has stopped testing.
 if (tried < COUNT * 0.9) {
   console.error(`✗ only ${tried} of ${COUNT} cases ran`);
   process.exit(1);

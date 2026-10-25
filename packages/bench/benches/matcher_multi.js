@@ -1,16 +1,9 @@
-// globstar's union against picomatch, minimatch and micromatch, each
-// matching a set the way it offers to; `scripts/bench.mjs` reads the
-// output.
-
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
 import { globstar } from "@globstar/core";
 import { PATTERN_SETS, fresh, matcherBench } from "./shared.js";
 
-// picomatch and micromatch take a list themselves (the members in order,
-// stopping at the first hit); minimatch has no list form, so its column
-// loops one matcher per pattern the same way.
 function buildPerPattern(compileSingle) {
   return (patterns) => patterns.map(compileSingle);
 }
@@ -23,7 +16,6 @@ function runPerPattern(matchOne) {
   };
 }
 
-// As globstar's default, and as the Rust bench sets for all.
 const DOT = { dot: true };
 
 await matcherBench(
