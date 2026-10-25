@@ -19,10 +19,9 @@ pub fn parse(input: &[u8]) -> Result<Ast, GlobError> {
         input,
         pos: negations,
     };
-    let body = p.parse_sequence(0)?;
     Ok(Ast {
+        body: p.parse_sequence(0)?,
         negated: negations % 2 == 1,
-        body,
     })
 }
 
@@ -36,17 +35,15 @@ impl<'a> Parser<'a> {
         self.input.get(self.pos).copied()
     }
 
-    /// The sequence up to the end, or inside a brace (`depth > 0`) up to
-    /// the `,` or `}` that ends its branch.
     fn parse_sequence(&mut self, depth: usize) -> Result<Node, GlobError> {
         let in_brace = depth > 0;
         let remaining = self.input.len() - self.pos;
+        let mut lit_buf: Vec<u8> = Vec::with_capacity(remaining.min(32));
         let mut nodes: Vec<Node> = if in_brace {
             Vec::new()
         } else {
             Vec::with_capacity(remaining / 2 + 1)
         };
-        let mut lit_buf: Vec<u8> = Vec::with_capacity(remaining.min(32));
 
         while self.pos < self.input.len() {
             let b = self.input[self.pos];
@@ -94,7 +91,6 @@ impl<'a> Parser<'a> {
                     nodes.push(Node::Class(class));
                 }
                 b'{' => match <[Node; 1]>::try_from(self.parse_brace(depth + 1)?) {
-                    // A brace of one branch is literal text (GLOB_SPEC §10.4).
                     Ok([single]) => {
                         lit_buf.push(b'{');
                         for node in single.into_seq() {
@@ -127,10 +123,6 @@ impl<'a> Parser<'a> {
         Ok(Node::of_seq(nodes))
     }
 
-    /// A `**` beside text is a star; beside a separator, a brace or an
-    /// edge of the pattern it is a `Globstar` node, which the graph walk
-    /// decides per expansion (GLOB_SPEC §9.1). A `**/**` that is two
-    /// globstars in every expansion is one (§9.6).
     fn double_star(&self, nodes: &mut Vec<Node>, in_brace: bool) {
         let text_before = nodes
             .last()
@@ -171,7 +163,6 @@ impl<'a> Parser<'a> {
         }
 
         let mut ranges = Vec::with_capacity(4);
-        // A `]` first is a member (GLOB_SPEC §8.5), and can start a range.
         let mut first = true;
         loop {
             if self.peek() == Some(b']') && !first {
