@@ -1,6 +1,6 @@
 # Pattern syntax
 
-This page lists every construct a globstar pattern can use, what each one matches, and which characters you need to escape. The `**` wildcard, character classes, and braces each have their own page with more detail: see [The `**` wildcard](./globstar.md), [Character classes](./character-classes.md), and [Brace expansion](./braces.md).
+This page lists every construct of a pattern, what each one matches, and which characters must be escaped. The `**` wildcard, character classes, and braces each have their own page with more detail: see [The `**` wildcard](./globstar.md), [Character classes](./character-classes.md), and [Brace expansion](./braces.md).
 
 All examples use the default options (`dot: true`, `caseInsensitive: false`). See [How a path is matched](./matching.md) for how `dot` and case-insensitivity change the results.
 
@@ -18,9 +18,13 @@ All examples use the default options (`dot: true`, `caseInsensitive: false`). Se
 | `\X`                  | the character `X` itself                          | `\*.md`       |
 | `!` at the very start | everything the rest of the pattern does not match | `!*.test.ts`  |
 
-## Three rules behind every example
+## Three rules
 
-A pattern must match the whole path, never just a part of it; matching is byte by byte in UTF-8, so `?` and a class take one byte and a character outside ASCII is a plain literal (`docs/日本語.md` matches only that path); and inside a pattern `/` is the only separator on every platform, while `\` is always an escape. [How a path is matched](./matching.md) explains each rule with examples, and what `\` means on the path side.
+- A pattern matches the whole path, never a part of it.
+- Matching is byte by byte in UTF-8: `?` and a class take one byte, and a character outside ASCII is a literal (`docs/日本語.md` matches only that path).
+- In a pattern, `/` is the only separator on every platform, and `\` is always an escape.
+
+[How a path is matched](./matching.md) explains each rule with examples, and what `\` means on the path side.
 
 ## Meta-characters
 
@@ -38,7 +42,7 @@ These characters can have a special meaning: `*` `?` `[` `]` `{` `}` `,` `\`, pl
 | `!`                      | it is at the very start of the pattern      | literal   |
 | `(`, `)`, `@`, `+`, `\|` | never                                       | literal   |
 
-So a stray closer is fine: `a]b` matches the path `a]b`, and `a}b` matches `a}b`. An opener with no closer is an error: `[a` and `{a` both fail to compile. See [Compile-time errors](./errors.md).
+A closer with nothing open is literal: `a]b` matches the path `a]b`, and `a}b` matches `a}b`. An opener with no closer is an error: `[a` and `{a` both fail to compile. See [Compile-time errors](./errors.md).
 
 Spec: [GLOB_SPEC §4.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -54,10 +58,10 @@ Any character that is not a meta-character matches itself, exactly once. `README
 
 | Pattern     | Path         | Match? |
 | ----------- | ------------ | ------ |
-| `file?.txt` | `file1.txt`  | ✅     |
-| `file?.txt` | `file10.txt` | ❌     |
-| `file?.txt` | `file.txt`   | ❌     |
-| `a?b`       | `a/b`        | ❌     |
+| `file?.txt` | `file1.txt`  | yes    |
+| `file?.txt` | `file10.txt` | no     |
+| `file?.txt` | `file.txt`   | no     |
+| `a?b`       | `a/b`        | no     |
 
 ### `*` — anything inside one segment
 
@@ -65,11 +69,11 @@ Any character that is not a meta-character matches itself, exactly once. `README
 
 | Pattern    | Path            | Match? |
 | ---------- | --------------- | ------ |
-| `foo*bar`  | `foobar`        | ✅     |
-| `foo*bar`  | `foo-bar`       | ✅     |
-| `foo*bar`  | `foo/bar`       | ❌     |
-| `src/*.ts` | `src/main.ts`   | ✅     |
-| `src/*.ts` | `src/util/x.ts` | ❌     |
+| `foo*bar`  | `foobar`        | yes    |
+| `foo*bar`  | `foo-bar`       | yes    |
+| `foo*bar`  | `foo/bar`       | no     |
+| `src/*.ts` | `src/main.ts`   | yes    |
+| `src/*.ts` | `src/util/x.ts` | no     |
 
 With `dot: false`, `?` and `*` do not match a `.` at the start of a segment, so `*.ts` no longer matches `.ts`. See [How a path is matched](./matching.md).
 
@@ -79,9 +83,9 @@ With `dot: false`, `?` and `*` do not match a `.` at the start of a segment, so 
 
 | Pattern       | Path         | Match? |
 | ------------- | ------------ | ------ |
-| `src/**/*.ts` | `src/a.ts`   | ✅     |
-| `src/**/*.ts` | `src/a/b.ts` | ✅     |
-| `src/**.ts`   | `src/a/b.ts` | ❌     |
+| `src/**/*.ts` | `src/a.ts`   | yes    |
+| `src/**/*.ts` | `src/a/b.ts` | yes    |
+| `src/**.ts`   | `src/a/b.ts` | no     |
 
 ### The empty pattern
 
@@ -91,7 +95,7 @@ Spec: [GLOB_SPEC §7](https://github.com/shulaoda/globstar/blob/main/references/
 
 ## What is not supported
 
-Some popular syntax from shells and other glob libraries is not part of globstar. Extglobs, brace ranges, `~`, and `$VAR` still compile, but they mean something else.
+The following shell and glob-library syntax is not part of the dialect. Each form still compiles, with a plain meaning.
 
 - **Extglobs** such as `@(a|b)`, `+(x)`, `*(x)`, `?(x)`, `!(x)`. The parentheses, `@`, and `+` are plain characters. A `*` or `?` inside still works as a wildcard. Use a brace like `{foo,bar}.js` instead.
 - **POSIX classes** such as `[[:alpha:]]`. This is not a "letter" class, so it does not match `a`. Write `[a-zA-Z]` instead.
@@ -101,14 +105,14 @@ Some popular syntax from shells and other glob libraries is not part of globstar
 
 | Pattern       | Path          | Match? |
 | ------------- | ------------- | ------ |
-| `+(foo).js`   | `foo.js`      | ❌     |
-| `+(foo).js`   | `+(foo).js`   | ✅     |
-| `*(x).js`     | `abc(x).js`   | ✅     |
-| `[[:alpha:]]` | `a`           | ❌     |
-| `{1..3}.txt`  | `1.txt`       | ❌     |
-| `{1..3}.txt`  | `{1..3}.txt`  | ✅     |
-| `file(1).txt` | `file(1).txt` | ✅     |
-| `~/x`         | `~/x`         | ✅     |
+| `+(foo).js`   | `foo.js`      | no     |
+| `+(foo).js`   | `+(foo).js`   | yes    |
+| `*(x).js`     | `abc(x).js`   | yes    |
+| `[[:alpha:]]` | `a`           | no     |
+| `{1..3}.txt`  | `1.txt`       | no     |
+| `{1..3}.txt`  | `{1..3}.txt`  | yes    |
+| `file(1).txt` | `file(1).txt` | yes    |
+| `~/x`         | `~/x`         | yes    |
 
 Spec: [GLOB_SPEC §1.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -121,15 +125,15 @@ A backslash makes the next character literal. This works on any character: `\*` 
 
 | Pattern        | Path         | Match? |
 | -------------- | ------------ | ------ |
-| `\*.md`        | `*.md`       | ✅     |
-| `\*.md`        | `README.md`  | ❌     |
-| `what\?.txt`   | `what?.txt`  | ✅     |
-| `what\?.txt`   | `whatx.txt`  | ❌     |
-| `\[draft\].md` | `[draft].md` | ✅     |
-| `[draft].md`   | `d.md`       | ✅     |
-| `\\`           | `\`          | ✅     |
+| `\*.md`        | `*.md`       | yes    |
+| `\*.md`        | `README.md`  | no     |
+| `what\?.txt`   | `what?.txt`  | yes    |
+| `what\?.txt`   | `whatx.txt`  | no     |
+| `\[draft\].md` | `[draft].md` | yes    |
+| `[draft].md`   | `d.md`       | yes    |
+| `\\`           | `\`          | yes    |
 
-Note the last two rows: without escapes, `[draft]` is a class that matches one letter.
+In the last two rows, `[draft]` without escapes is a class that matches one letter.
 
 ### What needs escaping, and where
 
@@ -155,21 +159,21 @@ A `!` at the very start of a pattern flips the result: the pattern matches every
 
 | Pattern            | Path           | Match? |
 | ------------------ | -------------- | ------ |
-| `!*.test.ts`       | `app.test.ts`  | ❌     |
-| `!*.test.ts`       | `app.ts`       | ✅     |
-| `!!*.ts`           | `a.ts`         | ✅     |
-| `!!!*.ts`          | `a.ts`         | ❌     |
-| `!node_modules/**` | `src/index.js` | ✅     |
+| `!*.test.ts`       | `app.test.ts`  | no     |
+| `!*.test.ts`       | `app.ts`       | yes    |
+| `!!*.ts`           | `a.ts`         | yes    |
+| `!!!*.ts`          | `a.ts`         | no     |
+| `!node_modules/**` | `src/index.js` | yes    |
 
 Negation always applies to the whole pattern. There is no way to negate just one segment, and a `!` anywhere else is a plain character:
 
 | Pattern             | Path                | Match? |
 | ------------------- | ------------------- | ------ |
-| `src/!important.md` | `src/!important.md` | ✅     |
-| `!(foo)`            | `foo`               | ✅     |
-| `!(foo)`            | `(foo)`             | ❌     |
-| `\!foo`             | `!foo`              | ✅     |
-| `[\!]foo`           | `!foo`              | ✅     |
+| `src/!important.md` | `src/!important.md` | yes    |
+| `!(foo)`            | `foo`               | yes    |
+| `!(foo)`            | `(foo)`             | no     |
+| `\!foo`             | `!foo`              | yes    |
+| `[\!]foo`           | `!foo`              | yes    |
 
 `!(foo)` is not an extglob: it is "not the literal path `(foo)`". To match a name that starts with `!`, escape it (`\!foo`) or put it in a class (`[\!]foo`). Do not write `[!]foo`: there the `]` is a class member, the class never closes, and the pattern fails to compile.
 

@@ -16,16 +16,16 @@ All examples use the default options (`dot: true`, `caseInsensitive: false`) unl
 
 | Pattern         | Path         | Match? |
 | --------------- | ------------ | ------ |
-| `*.[ch]`        | `main.c`     | ✅     |
-| `*.[ch]`        | `util.h`     | ✅     |
-| `*.[ch]`        | `main.cpp`   | ❌     |
-| `*.[jt]s`       | `app.ts`     | ✅     |
-| `[Rr]EADME.md`  | `README.md`  | ✅     |
-| `[Rr]EADME.md`  | `ReadMe.md`  | ❌     |
-| `file[0-9].txt` | `file1.txt`  | ✅     |
-| `file[0-9].txt` | `file10.txt` | ❌     |
-| `[a]`           | `a`          | ✅     |
-| `[a]`           | `[a]`        | ❌     |
+| `*.[ch]`        | `main.c`     | yes    |
+| `*.[ch]`        | `util.h`     | yes    |
+| `*.[ch]`        | `main.cpp`   | no     |
+| `*.[jt]s`       | `app.ts`     | yes    |
+| `[Rr]EADME.md`  | `README.md`  | yes    |
+| `[Rr]EADME.md`  | `ReadMe.md`  | no     |
+| `file[0-9].txt` | `file1.txt`  | yes    |
+| `file[0-9].txt` | `file10.txt` | no     |
+| `[a]`           | `a`          | yes    |
+| `[a]`           | `[a]`        | no     |
 
 A class always matches exactly one character, never zero and never two. `file[0-9].txt` does not match `file10.txt`.
 
@@ -56,12 +56,12 @@ A `!` or `^` right after the `[` flips the class: it matches one character that 
 
 | Pattern    | Path           | Match? |
 | ---------- | -------------- | ------ |
-| `[!abc]`   | `d`            | ✅     |
-| `[!abc]`   | `a`            | ❌     |
-| `[^abc]`   | `d`            | ✅     |
-| `[^abc]`   | `a`            | ❌     |
-| `[!_]*.ts` | `index.ts`     | ✅     |
-| `[!_]*.ts` | `_internal.ts` | ❌     |
+| `[!abc]`   | `d`            | yes    |
+| `[!abc]`   | `a`            | no     |
+| `[^abc]`   | `d`            | yes    |
+| `[^abc]`   | `a`            | no     |
+| `[!_]*.ts` | `index.ts`     | yes    |
+| `[!_]*.ts` | `_internal.ts` | no     |
 
 ### Negated classes and `dot`
 
@@ -69,11 +69,11 @@ With `dot: false`, a negated class at the start of a segment does not match a le
 
 | Pattern        | Path             | `dot: true` | `dot: false` |
 | -------------- | ---------------- | ----------- | ------------ |
-| `[^x]*`        | `.env`           | ✅          | ❌           |
-| `src/[^_]*.ts` | `src/.hidden.ts` | ✅          | ❌           |
-| `src/[^_]*.ts` | `src/main.ts`    | ✅          | ✅           |
-| `[.]*`         | `.env`           | ✅          | ✅           |
-| `x[^_]`        | `x.`             | ✅          | ✅           |
+| `[^x]*`        | `.env`           | yes         | no           |
+| `src/[^_]*.ts` | `src/.hidden.ts` | yes         | no           |
+| `src/[^_]*.ts` | `src/main.ts`    | yes         | yes          |
+| `[.]*`         | `.env`           | yes         | yes          |
+| `x[^_]`        | `x.`             | yes         | yes          |
 
 Spec: [GLOB_SPEC §8.4](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -83,8 +83,8 @@ A class lives inside one path segment. It never matches a separator, not even a 
 
 | Pattern  | Path  | Match? |
 | -------- | ----- | ------ |
-| `a[!x]b` | `ayb` | ✅     |
-| `a[!x]b` | `a/b` | ❌     |
+| `a[!x]b` | `ayb` | yes    |
+| `a[!x]b` | `a/b` | no     |
 
 Because of this, a `/` inside the brackets is a compile error, `UnterminatedClass`. A `/` ends the segment, so the class never sees its `]`. This holds for `[/]`, `[a/b]`, `[^/]`, and the escaped form `[\/]`. An error here is better than a pattern that compiles but can never match.
 
@@ -107,13 +107,13 @@ Inside the brackets, most meta-characters lose their meaning. Only these are spe
 
 | Pattern  | Path | Match? |
 | -------- | ---- | ------ |
-| `[?*!(]` | `?`  | ✅     |
-| `[?*!(]` | `*`  | ✅     |
-| `[?*!(]` | `a`  | ❌     |
-| `[-abc]` | `-`  | ✅     |
-| `[abc-]` | `-`  | ✅     |
-| `[a-]`   | `-`  | ✅     |
-| `[!abc]` | `!`  | ✅     |
+| `[?*!(]` | `?`  | yes    |
+| `[?*!(]` | `*`  | yes    |
+| `[?*!(]` | `a`  | no     |
+| `[-abc]` | `-`  | yes    |
+| `[abc-]` | `-`  | yes    |
+| `[a-]`   | `-`  | yes    |
+| `[!abc]` | `!`  | yes    |
 
 ### Escapes inside a class
 
@@ -121,14 +121,14 @@ A `\` makes the next character a plain member, so `\-` is a dash and not a range
 
 | Pattern   | Path | Match? |
 | --------- | ---- | ------ |
-| `[a\-z]`  | `-`  | ✅     |
-| `[a\-z]`  | `b`  | ❌     |
-| `[\!abc]` | `!`  | ✅     |
-| `[\!abc]` | `d`  | ❌     |
-| `[\?]`    | `?`  | ✅     |
-| `[\]]`    | `]`  | ✅     |
+| `[a\-z]`  | `-`  | yes    |
+| `[a\-z]`  | `b`  | no     |
+| `[\!abc]` | `!`  | yes    |
+| `[\!abc]` | `d`  | no     |
+| `[\?]`    | `?`  | yes    |
+| `[\]]`    | `]`  | yes    |
 
-Be careful with `[\]`: the `\` escapes the `]`, so the class never closes and you get `UnterminatedClass`.
+`[\]` is an error: the `\` escapes the `]`, so the class never closes (`UnterminatedClass`).
 
 Spec: [GLOB_SPEC §8.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -158,10 +158,10 @@ You can put a class inside a brace branch, and both work as usual.
 
 | Pattern         | Path      | Match? |
 | --------------- | --------- | ------ |
-| `{[0-9],x}.log` | `1.log`   | ✅     |
-| `{[0-9],x}.log` | `x.log`   | ✅     |
-| `{[0-9],x}.log` | `10.log`  | ❌     |
-| `*.[jt]s{,x}`   | `app.tsx` | ✅     |
+| `{[0-9],x}.log` | `1.log`   | yes    |
+| `{[0-9],x}.log` | `x.log`   | yes    |
+| `{[0-9],x}.log` | `10.log`  | no     |
+| `*.[jt]s{,x}`   | `app.tsx` | yes    |
 
 Inside a class, `{`, `}`, and `,` are plain characters, so `[{]}` matches the path `{}`. Whichever bracket opens first owns the text until its own closer. In `{[}]`, the class swallows the `}`, the brace is never closed, and the pattern fails with `UnterminatedBrace`. See [Compile-time errors](./errors.md).
 

@@ -30,17 +30,17 @@ Spec: [GLOB_SPEC §10.1, §10.5](https://github.com/shulaoda/globstar/blob/main/
 
 | Pattern                 | Path           | Match? |
 | ----------------------- | -------------- | ------ |
-| `*.{js,ts}`             | `app.js`       | ✅     |
-| `*.{js,ts}`             | `app.ts`       | ✅     |
-| `*.{js,ts}`             | `app.css`      | ❌     |
-| `*.{js,ts}`             | `src/app.js`   | ❌     |
-| `{README,CHANGELOG}.md` | `CHANGELOG.md` | ✅     |
-| `{README,CHANGELOG}.md` | `LICENSE.md`   | ❌     |
-| `*.{spec,test}.{js,ts}` | `a.spec.js`    | ✅     |
-| `*.{spec,test}.{js,ts}` | `a.test.ts`    | ✅     |
-| `*.{spec,test}.{js,ts}` | `a.js`         | ❌     |
-| `{src,test}/**/*.ts`    | `test/x.ts`    | ✅     |
-| `{src,test}/**/*.ts`    | `docs/x.ts`    | ❌     |
+| `*.{js,ts}`             | `app.js`       | yes    |
+| `*.{js,ts}`             | `app.ts`       | yes    |
+| `*.{js,ts}`             | `app.css`      | no     |
+| `*.{js,ts}`             | `src/app.js`   | no     |
+| `{README,CHANGELOG}.md` | `CHANGELOG.md` | yes    |
+| `{README,CHANGELOG}.md` | `LICENSE.md`   | no     |
+| `*.{spec,test}.{js,ts}` | `a.spec.js`    | yes    |
+| `*.{spec,test}.{js,ts}` | `a.test.ts`    | yes    |
+| `*.{spec,test}.{js,ts}` | `a.js`         | no     |
+| `{src,test}/**/*.ts`    | `test/x.ts`    | yes    |
+| `{src,test}/**/*.ts`    | `docs/x.ts`    | no     |
 
 The `src/app.js` row fails because each expansion is a normal pattern: `*.js` does not cross `/`.
 
@@ -48,28 +48,28 @@ Spec: [GLOB_SPEC §10.2](https://github.com/shulaoda/globstar/blob/main/referenc
 
 ## Nesting
 
-A branch can contain another brace. Nesting is handy when several paths share a prefix.
+A branch may contain another brace. Nesting shortens a list of paths with a common prefix.
 
 | Pattern                              | Path                        | Match? |
 | ------------------------------------ | --------------------------- | ------ |
-| `{src/{components,pages},lib}/*.tsx` | `src/components/Button.tsx` | ✅     |
-| `{src/{components,pages},lib}/*.tsx` | `src/pages/Home.tsx`        | ✅     |
-| `{src/{components,pages},lib}/*.tsx` | `lib/x.tsx`                 | ✅     |
-| `{src/{components,pages},lib}/*.tsx` | `src/x.tsx`                 | ❌     |
+| `{src/{components,pages},lib}/*.tsx` | `src/components/Button.tsx` | yes    |
+| `{src/{components,pages},lib}/*.tsx` | `src/pages/Home.tsx`        | yes    |
+| `{src/{components,pages},lib}/*.tsx` | `lib/x.tsx`                 | yes    |
+| `{src/{components,pages},lib}/*.tsx` | `src/x.tsx`                 | no     |
 
 ## Empty branches
 
-A branch can be empty. `{a,}` means "`a` or nothing". This is the easy way to make part of a name optional.
+A branch may be empty. `{a,}` means `a` or nothing, which makes part of a name optional.
 
 | Pattern                     | Path           | Match? |
 | --------------------------- | -------------- | ------ |
-| `app{,.min}.js`             | `app.js`       | ✅     |
-| `app{,.min}.js`             | `app.min.js`   | ✅     |
-| `.env{,.local,.production}` | `.env`         | ✅     |
-| `.env{,.local,.production}` | `.env.local`   | ✅     |
-| `.env{,.local,.production}` | `.env.test`    | ❌     |
-| `{,src/}index.ts`           | `index.ts`     | ✅     |
-| `{,src/}index.ts`           | `src/index.ts` | ✅     |
+| `app{,.min}.js`             | `app.js`       | yes    |
+| `app{,.min}.js`             | `app.min.js`   | yes    |
+| `.env{,.local,.production}` | `.env`         | yes    |
+| `.env{,.local,.production}` | `.env.local`   | yes    |
+| `.env{,.local,.production}` | `.env.test`    | no     |
+| `{,src/}index.ts`           | `index.ts`     | yes    |
+| `{,src/}index.ts`           | `src/index.ts` | yes    |
 
 The empty pattern `""` is a compile error, but an empty branch is fine: it just adds "nothing" as one of the choices.
 
@@ -81,11 +81,11 @@ A brace with no comma is not a brace. `{a}` is just the three characters `{`, `a
 
 | Pattern      | Path         | Match? |
 | ------------ | ------------ | ------ |
-| `{src}/*.ts` | `{src}/a.ts` | ✅     |
-| `{src}/*.ts` | `src/a.ts`   | ❌     |
-| `{1..3}.txt` | `1.txt`      | ❌     |
-| `{1..3}.txt` | `{1..3}.txt` | ✅     |
-| `\{a,b\}`    | `{a,b}`      | ✅     |
+| `{src}/*.ts` | `{src}/a.ts` | yes    |
+| `{src}/*.ts` | `src/a.ts`   | no     |
+| `{1..3}.txt` | `1.txt`      | no     |
+| `{1..3}.txt` | `{1..3}.txt` | yes    |
+| `\{a,b\}`    | `{a,b}`      | yes    |
 
 To match a name that has a comma inside braces, escape the `{`: `\{a,b\}` (or just `\{a,b}`) is plain text. Instead of `{1..3}`, write `{1,2,3}` or the class `[1-3]`.
 
@@ -93,7 +93,7 @@ Spec: [GLOB_SPEC §10.4](https://github.com/shulaoda/globstar/blob/main/referenc
 
 ## Unclosed braces are errors
 
-A `{` always opens a brace, and the brace must be closed. `{a,b` and `src/{a,b/*.ts` fail with `UnterminatedBrace`. globstar does not guess what you meant. See [Compile-time errors](./errors.md).
+A `{` always opens a brace, and the brace must be closed. `{a,b` and `src/{a,b/*.ts` fail with `UnterminatedBrace`. See [Compile-time errors](./errors.md).
 
 A `}` with no open brace is fine. It is a plain character, so `{a,b}}` matches `a}` and `b}`.
 
@@ -109,9 +109,9 @@ A branch may contain its own `**`. Each branch is separate, so the `**` in one b
 
 | Pattern                     | Path         | Match? |
 | --------------------------- | ------------ | ------ |
-| `{src/**/*.ts,lib/**/*.js}` | `src/a/b.ts` | ✅     |
-| `{src/**/*.ts,lib/**/*.js}` | `lib/c.js`   | ✅     |
-| `{src/**/*.ts,lib/**/*.js}` | `lib/c.ts`   | ❌     |
+| `{src/**/*.ts,lib/**/*.js}` | `src/a/b.ts` | yes    |
+| `{src/**/*.ts,lib/**/*.js}` | `lib/c.js`   | yes    |
+| `{src/**/*.ts,lib/**/*.js}` | `lib/c.ts`   | no     |
 
 A `**` right next to a brace, or at the edge of a branch, is judged on each expansion: `{**,dist}/*.js` expands to `**/*.js`, where `**` owns a segment, while `src{**,x}.ts` expands to `src**.ts`, where it acts as `*`. See [`**` next to a brace](./globstar.md#next-to-a-brace).
 
@@ -129,6 +129,6 @@ Brace patterns have no size limit but the pattern's length: the number of branch
 
 ### Nesting depth: 32
 
-Braces may be nested up to 32 levels deep. One more level fails with `BraceNestingTooDeep`. Every `{` counts as it opens, even one with no comma that ends up literal. Real patterns rarely go past three or four levels. Braces side by side do not nest: `**` followed by `{,/a}` written 33 times compiles.
+Braces may be nested up to 32 levels deep. One more level fails with `BraceNestingTooDeep`. Every `{` counts as it opens, even one with no comma that ends up literal. Braces side by side do not nest: `**` followed by `{,/a}` written 33 times compiles.
 
 Spec: [GLOB_SPEC §6.2](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)

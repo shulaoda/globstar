@@ -8,25 +8,25 @@ A pattern matches a path only when the pattern covers every byte of the path, fr
 
 | Pattern        | Path             | Match? |
 | -------------- | ---------------- | ------ |
-| `src/*.ts`     | `src/main.ts`    | ✅     |
-| `*.ts`         | `src/main.ts`    | ❌     |
-| `main`         | `src/main.ts`    | ❌     |
-| `README.md`    | `docs/README.md` | ❌     |
-| `**/README.md` | `docs/README.md` | ✅     |
+| `src/*.ts`     | `src/main.ts`    | yes    |
+| `*.ts`         | `src/main.ts`    | no     |
+| `main`         | `src/main.ts`    | no     |
+| `README.md`    | `docs/README.md` | no     |
+| `**/README.md` | `docs/README.md` | yes    |
 
 To match a name at any depth, start the pattern with `**/`. See [The `**` wildcard](./globstar.md).
 
 Spec: [GLOB_SPEC §14.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
-## Paths are just strings
+## Paths are strings
 
 The matcher never looks at the file system. It does not resolve `.` or `..`, follow symlinks, or add the current directory. `./src/a.ts` and `src/a.ts` are different strings, so they can give different answers.
 
 | Pattern      | Path          | Options      | Match? |
 | ------------ | ------------- | ------------ | ------ |
-| `src/a.ts`   | `./src/a.ts`  |              | ❌     |
-| `src/*/a.ts` | `src/../a.ts` |              | ✅     |
-| `src/*/a.ts` | `src/../a.ts` | `dot: false` | ❌     |
+| `src/a.ts`   | `./src/a.ts`  |              | no     |
+| `src/*/a.ts` | `src/../a.ts` |              | yes    |
+| `src/*/a.ts` | `src/../a.ts` | `dot: false` | no     |
 
 ::: warning `*` can match `..`
 With the default `dot: true`, `*` matches the names `.` and `..` like any other name. So `src/*/a.ts` matches `src/../a.ts`, a file that is not inside `src` at all. If paths come from users, clean them up (for example with `path.normalize`) before you match.
@@ -50,9 +50,9 @@ A path may use `/` on every platform. On Windows, `\` in a path also counts as a
 
 | Pattern       | Path           | macOS / Linux | Windows |
 | ------------- | -------------- | ------------- | ------- |
-| `src/*.ts`    | `src\main.ts`  | ❌            | ✅      |
-| `src/**/*.ts` | `src\lib\a.ts` | ❌            | ✅      |
-| `*.ts`        | `src\main.ts`  | ✅            | ❌      |
+| `src/*.ts`    | `src\main.ts`  | no            | yes     |
+| `src/**/*.ts` | `src\lib\a.ts` | no            | yes     |
+| `*.ts`        | `src\main.ts`  | yes           | no      |
 
 The last row shows the cost: on macOS and Linux, `\` is an ordinary byte in a file name, so `*` can match it. The matcher does not rewrite `\` to `/`; it only treats it as a separator. If you need the same answer on every platform, convert paths to `/` before matching.
 
@@ -64,18 +64,18 @@ Each `/` in a pattern matches exactly one separator in the path. Paths with `//`
 
 | Pattern       | Path           | Match? |
 | ------------- | -------------- | ------ |
-| `src/*.ts`    | `src//main.ts` | ❌     |
-| `a//b`        | `a//b`         | ✅     |
-| `a//b`        | `a/b`          | ❌     |
-| `src/**/*.ts` | `src//main.ts` | ✅     |
+| `src/*.ts`    | `src//main.ts` | no     |
+| `a//b`        | `a//b`         | yes    |
+| `a//b`        | `a/b`          | no     |
+| `src/**/*.ts` | `src//main.ts` | yes    |
 
 There are two exceptions, both about `**`. A `/` next to `**` (as in `/**/`) accepts one or more separators. A pattern that starts with `**/` also accepts any separators at the start of the path, so it matches absolute and UNC paths too:
 
 | Pattern        | Path                       | Match? |
 | -------------- | -------------------------- | ------ |
-| `**/*.ts`      | `/home/me/src/a.ts`        | ✅     |
-| `**/README.md` | `//server/share/README.md` | ✅     |
-| `src/**/*.ts`  | `/repo/src/a.ts`           | ❌     |
+| `**/*.ts`      | `/home/me/src/a.ts`        | yes    |
+| `**/README.md` | `//server/share/README.md` | yes    |
+| `src/**/*.ts`  | `/repo/src/a.ts`           | no     |
 
 Spec: [GLOB_SPEC §9.4, §9.5](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -85,11 +85,11 @@ A `/` at the end of a path is a real byte, and the pattern must match it like an
 
 | Pattern  | Path   | Match? |
 | -------- | ------ | ------ |
-| `src`    | `src/` | ❌     |
-| `src/`   | `src/` | ✅     |
-| `src/`   | `src`  | ❌     |
-| `src/**` | `src/` | ✅     |
-| `src/**` | `src`  | ❌     |
+| `src`    | `src/` | no     |
+| `src/`   | `src/` | yes    |
+| `src/`   | `src`  | no     |
+| `src/**` | `src/` | yes    |
+| `src/**` | `src`  | no     |
 
 `src/**` needs the `src/` prefix, so it does not match `src` itself. File systems usually return directory paths without a trailing `/`. To ask whether a directory may hold matches, see [Directory matching](./directory-matching.md).
 
@@ -126,12 +126,12 @@ The matcher default is `dot: true`. The matcher only compares strings, and "hidd
 
 | Pattern       | Path              | Options      | Match? |
 | ------------- | ----------------- | ------------ | ------ |
-| `*`           | `.env`            |              | ✅     |
-| `*`           | `.env`            | `dot: false` | ❌     |
-| `.*`          | `.env`            | `dot: false` | ✅     |
-| `*.txt`       | `.txt`            | `dot: false` | ❌     |
-| `**/*`        | `a/.b`            | `dot: false` | ❌     |
-| `src/**/*.ts` | `src/.cache/a.ts` | `dot: false` | ❌     |
+| `*`           | `.env`            |              | yes    |
+| `*`           | `.env`            | `dot: false` | no     |
+| `.*`          | `.env`            | `dot: false` | yes    |
+| `*.txt`       | `.txt`            | `dot: false` | no     |
+| `**/*`        | `a/.b`            | `dot: false` | no     |
+| `src/**/*.ts` | `src/.cache/a.ts` | `dot: false` | no     |
 
 Spec: [GLOB_SPEC §3.1](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -141,20 +141,20 @@ When `caseInsensitive` (Rust: `case_insensitive`) is `true`, ASCII letters match
 
 | Pattern     | Path        | Options                 | Match? |
 | ----------- | ----------- | ----------------------- | ------ |
-| `*.ts`      | `MAIN.TS`   |                         | ❌     |
-| `*.ts`      | `MAIN.TS`   | `caseInsensitive: true` | ✅     |
-| `README.md` | `readme.md` | `caseInsensitive: true` | ✅     |
-| `[A-Z]*.md` | `readme.md` | `caseInsensitive: true` | ✅     |
-| `café.txt`  | `CAFÉ.txt`  | `caseInsensitive: true` | ❌     |
-| `café.txt`  | `CAFé.txt`  | `caseInsensitive: true` | ✅     |
+| `*.ts`      | `MAIN.TS`   |                         | no     |
+| `*.ts`      | `MAIN.TS`   | `caseInsensitive: true` | yes    |
+| `README.md` | `readme.md` | `caseInsensitive: true` | yes    |
+| `[A-Z]*.md` | `readme.md` | `caseInsensitive: true` | yes    |
+| `café.txt`  | `CAFÉ.txt`  | `caseInsensitive: true` | no     |
+| `café.txt`  | `CAFé.txt`  | `caseInsensitive: true` | yes    |
 
 The option changes only how bytes are compared, never how the pattern is read. `[a-A]` is still an `InvalidRange` error with the option on, because `a` comes after `A` in byte order. If you need full Unicode case folding, normalize both the pattern and the path yourself (for example, lowercase both) before you match.
 
 Spec: [GLOB_SPEC §13](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
-### Options that do not exist
+### No other options
 
-There is no switch to turn off braces, to turn off `**`, or to fold Unicode case. Each switch would add state to the parser for very few users, and escapes already cover the need: write `\{a,b\}` to match a literal `{a,b}`. For Unicode case, normalize the strings first.
+There is no switch to turn off braces or `**`, and none for Unicode case folding. Escapes cover the first need: `\{a,b\}` matches the literal `{a,b}`. For Unicode case, normalize the strings before matching.
 
 Spec: [GLOB_SPEC §3.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -173,15 +173,15 @@ With `dot: false`, a `.` in the path is protected when it is the first byte of t
 
 | Pattern       | Path              | Options      | Match? |
 | ------------- | ----------------- | ------------ | ------ |
-| `?env`        | `.env`            | `dot: false` | ❌     |
-| `[!x]env`     | `.env`            | `dot: false` | ❌     |
-| `[.]env`      | `.env`            | `dot: false` | ✅     |
-| `src/**`      | `src/.git/config` | `dot: false` | ❌     |
-| `src/.git/**` | `src/.git/config` | `dot: false` | ✅     |
-| `**/.env`     | `app/.env`        | `dot: false` | ✅     |
-| `file?txt`    | `file.txt`        | `dot: false` | ✅     |
-| `*`           | `..`              | `dot: false` | ❌     |
-| `.*`          | `..`              | `dot: false` | ✅     |
+| `?env`        | `.env`            | `dot: false` | no     |
+| `[!x]env`     | `.env`            | `dot: false` | no     |
+| `[.]env`      | `.env`            | `dot: false` | yes    |
+| `src/**`      | `src/.git/config` | `dot: false` | no     |
+| `src/.git/**` | `src/.git/config` | `dot: false` | yes    |
+| `**/.env`     | `app/.env`        | `dot: false` | yes    |
+| `file?txt`    | `file.txt`        | `dot: false` | yes    |
+| `*`           | `..`              | `dot: false` | no     |
+| `.*`          | `..`              | `dot: false` | yes    |
 
 `file?txt` matches because that `.` is not at the start of a name. On Windows a dot right after `\` is protected too, since `\` is a separator there. The names `.` and `..` are plain bytes: with `dot: false`, `*` matches neither, but `.*` matches both, because the literal `.` takes the first dot and `*` may take the rest.
 
@@ -193,11 +193,11 @@ Matching works on bytes. A pattern and a JS path are compared as UTF-8 bytes; a 
 
 | Pattern  | Path      | Match? |
 | -------- | --------- | ------ |
-| `?.txt`  | `é.txt`   | ❌     |
-| `??.txt` | `é.txt`   | ✅     |
-| `?.md`   | `日.md`   | ❌     |
-| `???.md` | `日.md`   | ✅     |
-| `*.md`   | `日本.md` | ✅     |
+| `?.txt`  | `é.txt`   | no     |
+| `??.txt` | `é.txt`   | yes    |
+| `?.md`   | `日.md`   | no     |
+| `???.md` | `日.md`   | yes    |
+| `*.md`   | `日本.md` | yes    |
 
 Spec: [GLOB_SPEC §14.3](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md)
 
@@ -207,11 +207,11 @@ A leading `!` flips the result of the rest of the pattern. It is always on; no o
 
 | Pattern      | Path        | Options                 | Match? |
 | ------------ | ----------- | ----------------------- | ------ |
-| `!*.test.ts` | `a.test.ts` |                         | ❌     |
-| `!*.test.ts` | `a.ts`      |                         | ✅     |
-| `!*`         | `.env`      |                         | ❌     |
-| `!*`         | `.env`      | `dot: false`            | ✅     |
-| `!*.TS`      | `a.ts`      | `caseInsensitive: true` | ❌     |
+| `!*.test.ts` | `a.test.ts` |                         | no     |
+| `!*.test.ts` | `a.ts`      |                         | yes    |
+| `!*`         | `.env`      |                         | no     |
+| `!*`         | `.env`      | `dot: false`            | yes    |
+| `!*.TS`      | `a.ts`      | `caseInsensitive: true` | no     |
 
 ::: warning `dot: false` makes `!` patterns match dotfiles
 With `dot: false`, `*` cannot match `.env`, so `!*` does match it. A `!` pattern flips the hidden names too. For how `!` works inside a list of patterns, see [Multiple patterns](./multi-pattern.md).

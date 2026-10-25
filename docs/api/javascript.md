@@ -102,7 +102,11 @@ The full list of kinds, with an example for each, is in [Errors and limits](../g
 
 ## Walker
 
-The filesystem walker is a separate package, `@globstar/walk`, built on `compileMatcher`. It seeds the walk from `staticPrefixes()`, prunes with `matchDir`, breaks symlink cycles, and splits `!`-patterns into its ignore set. Its options are checked the same way (`cwd`, `dot`, `caseInsensitive`, `followSymlinks`, `ignore`); `globSync` throws, and `glob` rejects its Promise. An `ignore` entry may not start with `!`. A folder that links reach by several routes is walked once per route, as in every walker that follows links, so walk a tree that others control (a cloned repository, an unpacked archive) with `followSymlinks: false`. A pattern's literal head is opened as written, so on a case-insensitive file system (macOS and Windows by default) it reaches names spelled in another case, past an `ignore` entry for the listed spelling (`.GIT/config` past `**/.git/**`): walk such a file system with `caseInsensitive: true` when the ignore list must hold against patterns from others.
+The filesystem walker is a separate package, `@globstar/walk`, built on `compileMatcher`. It seeds the walk from `staticPrefixes()`, prunes with `matchDir`, breaks symlink cycles, and splits `!`-patterns into its ignore set.
+
+- Options: `cwd`, `dot`, `caseInsensitive`, `followSymlinks`, `ignore`, checked like the matcher's. `globSync` throws; `glob` rejects its Promise. An `ignore` entry may not start with `!`.
+- A folder that links reach by several routes is walked once per route, as in every walker that follows links. Walk a tree that others control, such as a cloned repository or an unpacked archive, with `followSymlinks: false`.
+- A pattern's literal head is opened as written. On a case-insensitive file system (macOS and Windows by default) it reaches names spelled in another case, past an `ignore` entry for the listed spelling (`.GIT/config` past `**/.git/**`). When the ignore list must hold against patterns from others, walk such a file system with `caseInsensitive: true`.
 
 ```js
 import { glob } from "@globstar/walk";

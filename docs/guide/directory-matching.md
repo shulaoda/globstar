@@ -78,10 +78,10 @@ For an _exclude_ pattern, the questions turn around. The walker wants to know wh
 | `**/node_modules/**` (with `dot`) | `node_modules`     | `DescendAll`      | Everything below is excluded: skip the directory.       |
 | `**/node_modules/**` (with `dot`) | `a/b/node_modules` | `DescendAll`      | Skip.                                                   |
 | `**/node_modules/**` (with `dot`) | `src`              | `Descend`         | Enter; some files below may still be excluded.          |
-| `**/*.log`                        | `app.log`          | `DescendAndMatch` | Enter! The directory matches, the files below need not. |
+| `**/*.log`                        | `app.log`          | `DescendAndMatch` | Enter: the directory matches, the files below need not. |
 | `dist/**`                         | `src`              | `Pruned`          | Enter, and stop testing this exclude below `src`.       |
 
-The `**/*.log` row is the trap this API is designed around. A pattern meant for files can happen to match a directory's own path. That says nothing about the files inside it: `app.log/notes.txt` does not end in `.log`. An exclude list must only skip a directory on `matches all below`, never on `matches`.
+The `**/*.log` row is the case the three facts exist for. A pattern meant for files can match a directory's own path. That says nothing about the files inside it: `app.log/notes.txt` does not end in `.log`. An exclude list must only skip a directory on `matches all below`, never on `matches`.
 
 ```js
 const exclude = compileMatcher(["**/node_modules/**", "**/*.log"]);

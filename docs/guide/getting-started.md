@@ -3,7 +3,7 @@
 `globstar` is one glob dialect with two implementations: the Rust crate `globstar` and the JavaScript package `@globstar/core`. Both compile a pattern once and then answer the same three questions about any path: does this path match, what does this directory mean for the pattern, and where can a filesystem walk start. This page installs the library and shows each question once; the rest of the guide explains the rules behind the answers.
 
 ::: warning Project status
-`globstar` is being built for [Vite](https://vitejs.dev/)'s `import.meta.glob`. Every release stays on `0.0.x`, and any `0.0.x` bump may change syntax, behavior or the API without a migration path. The [spec](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md) and the shared test corpus are the source of truth; a behavior is stable only when the corpus has a row for it.
+Every package stays on `0.0.x` while the spec settles. Any `0.0.x` release may change syntax, behavior or the API without a migration path. The [spec](https://github.com/shulaoda/globstar/blob/main/references/spec/GLOB_SPEC.md) and the shared test corpus are the source of truth; a behavior is stable once the corpus has a row for it.
 :::
 
 ## Install
@@ -19,10 +19,6 @@ pnpm add @globstar/core
 cargo add globstar
 ```
 
-:::
-
-::: tip Version
-These pages follow the main branch. The `DirMatch` helpers they use (`matches`, `mayMatchBelow`, `DirMatch.from`) need 0.0.5 or later; with 0.0.4 those examples fail.
 :::
 
 The JavaScript package is pure string matching: no filesystem access, no `node:` imports, so it runs in Node, Deno, Bun and the browser. The filesystem walkers live in separate packages, `@globstar/walk` and the `globstar-walk` crate.
@@ -59,7 +55,7 @@ Paths are matched whole, never as substrings, and `/` is the separator in patter
 
 ## Options
 
-Two options exist, and only two. `dot` decides whether wildcards may match a leading `.`; `caseInsensitive` folds ASCII letters. The matcher defaults to `dot: true`. The filesystem walkers default to `dot: false`, which is what shells do.
+There are two options. `dot` decides whether wildcards may match a leading `.`; `caseInsensitive` folds ASCII letters. The matcher defaults to `dot: true`. The filesystem walkers default to `dot: false`, which is what shells do.
 
 ::: code-group
 
@@ -102,7 +98,7 @@ assert!(glob.is_match(b"docs/guide/intro.md"));
 
 ## Ask about a directory
 
-A walker does not want to test every file under `node_modules` against `src/**/*.ts`. `matchDir` answers three questions about a directory path: does it match, may something below it match, and does everything below it match. The verdict is one of six values; a walker reads the facts it needs.
+`matchDir` answers three questions about a directory path, so a walker can skip a subtree instead of testing every file in it: does the directory match, may something below it match, and does everything below it match. The verdict is one of six values; a walker reads the facts it needs.
 
 ::: code-group
 
@@ -129,7 +125,7 @@ assert!(!glob.match_dir(b"node_modules").may_match_below());
 
 [Directory matching](./directory-matching.md) explains the six verdicts and how a pattern that excludes files reads them differently from one that selects files. `staticPrefixes()` is the other walker helper: the literal prefixes every match starts with, so a walk can begin at `src` instead of the root.
 
-## Where next
+## Next
 
 - [Pattern syntax](./syntax.md): every construct in one place, and what is deliberately not supported.
 - [The `**` wildcard](./globstar.md): the rule that `**` must own a whole segment, and what `a/**` means for `a`.

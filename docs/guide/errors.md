@@ -6,7 +6,7 @@ This page lists every way a pattern can fail to compile, the four size limits, a
 
 Patterns are checked when you compile them: `compileMatcher()` and `globstar()` in JS, `Glob::new`, `Glob::new_with`, `Glob::union` and `Glob::union_with` in Rust. If you pass a list, the first bad pattern stops the whole compile and nothing is built.
 
-globstar fails loudly on real mistakes, such as an unclosed `[` or `{`. It does not fail on things that have a sensible plain meaning. These all compile:
+A pattern fails to compile on an unclosed `[` or `{` and the other kinds listed below, never on text that has a plain meaning. These all compile:
 
 | Pattern       | What it means                               | Example path that matches |
 | ------------- | ------------------------------------------- | ------------------------- |
@@ -54,7 +54,7 @@ Spec: [GLOB_SPEC §6, §6.1](https://github.com/shulaoda/globstar/blob/main/refe
 
 ## The two limits
 
-The limits stop a hostile or broken pattern from using huge amounts of memory or time. Normal patterns never get close.
+The limits stop a hostile or broken pattern from taking unbounded memory or time.
 
 | Limit          | Value        | Rust constant       | Error                 |
 | -------------- | ------------ | ------------------- | --------------------- |

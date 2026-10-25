@@ -1,6 +1,6 @@
 # Multi-pattern matchers
 
-Most callers have a list of patterns, not one. An array compiles into a single matcher that answers with boolean OR: a path matches when any member matches. This page covers what the union means, how negated members behave in each language, and how directory verdicts combine.
+A list of patterns compiles into one matcher that answers with boolean OR: a path matches when any member matches. This page covers what the union means, how negated members behave in each language, and how directory verdicts combine.
 
 ## One matcher, OR semantics
 
@@ -34,7 +34,7 @@ Spec: [GLOB_SPEC §16.1](https://github.com/shulaoda/globstar/blob/main/referenc
 
 ## Negated members
 
-A leading `!` makes a pattern match everything its body does not. Inside a union that is rarely what you want: the member contributes its _complement_ to the OR, it does not subtract from the other members.
+A leading `!` makes a pattern match everything its body does not. In a union the member contributes its _complement_ to the OR; it does not subtract from the other members.
 
 ```js
 const m = globstar(["src/**", "!src/**/*.test.ts"]);
