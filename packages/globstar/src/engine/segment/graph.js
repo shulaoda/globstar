@@ -17,9 +17,8 @@ import {
 } from "../../parse/ast.js";
 import { hasEscapedSep } from "../../bytes.js";
 import { flat } from "../../utf8.js";
-import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild } from "./wild.js";
-import { GlueNfa } from "./seg-nfa.js";
-import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain-index.js";
+import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild, GlueNfa } from "./wild.js";
+import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain.js";
 
 export const EL_LIT = 0;
 export const EL_WILD = 1;

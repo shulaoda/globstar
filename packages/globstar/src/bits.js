@@ -1,6 +1,6 @@
 // Bit sets over Int32Array words, and a class as the bytes it takes.
 
-import { IS_WINDOWS_SEP } from "../../bytes.js";
+import { IS_WINDOWS_SEP } from "./bytes.js";
 
 export const wordsFor = (nBits) => Math.max(1, (nBits + 31) >>> 5);
 
