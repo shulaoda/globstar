@@ -30,6 +30,7 @@ import {
   probe,
   probeMany,
   probeInfix,
+  dirsOf,
 } from "./chain.js";
 import {
   anyNfa,
@@ -58,10 +59,12 @@ export class SegmentMatcher {
       chains = [];
     }
     const line = literals === null && chains.length === 1 && chains[0].g2 < 0;
-    this.elems = graph.elems;
+    const setOnly = literals !== null && chains.length === 0;
+    this.elems = setOnly ? [] : graph.elems;
     this.literals = literals;
+    this.below = setOnly ? dirsOf(literals) : null;
     this.chains = exact(chains);
-    this.nfa = line ? null : anyNfa(graph, ci);
+    this.nfa = line || setOnly ? null : anyNfa(graph, ci);
     this.index = index;
     this.triedLo = 0;
     this.triedHi = 0;
@@ -94,9 +97,12 @@ export class SegmentMatcher {
       i += n;
     }
     const g = this.nfa;
-    const nfa = g === null ? "none" : g.kind === NFA_SMALL ? "small" : "sparse";
-    const literals = this.literals === null ? "" : ` | literals ${this.literals.length}`;
-    return `${runs.join(" ")} | chains ${this.chains.length}${literals} | nfa ${nfa}`;
+    const parts = [];
+    if (runs.length > 0) parts.push(runs.join(" "));
+    parts.push(`chains ${this.chains.length}`);
+    if (this.literals !== null) parts.push(`literals ${this.literals.length}`);
+    parts.push(`nfa ${g === null ? "none" : g.kind === NFA_SMALL ? "small" : "sparse"}`);
+    return parts.join(" | ");
   }
 
   staticPrefixes() {
@@ -261,7 +267,12 @@ export class SegmentMatcher {
 
   _matchDir(str) {
     const nfa = this.nfa;
-    if (nfa === null) return chainDir(this, str);
+    if (nfa === null) {
+      if (this.chains.length > 0) return chainDir(this, str);
+      const set = this.literals;
+      const below = str.length === 0 || hasLiteral(this, this.below, str);
+      return DirMatch.from(hasLiteral(this, set, str), below, false);
+    }
     if (str.length === 0) {
       let all = false;
       if (this.dot) {

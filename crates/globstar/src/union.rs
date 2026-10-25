@@ -15,7 +15,7 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches.into_iter().map(Node::into_seq).collect();
     let mut out = lift_tokens(&mut seqs, true);
     let mut suffix = lift_tokens(&mut seqs, false);
-    let (mut single, mut some_literal) = (0, false);
+    let (mut single, mut names, mut some_literal) = (0, true, false);
     'members: for s in &seqs {
         let mut has_literal = false;
         for n in s {
@@ -26,11 +26,23 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
             }
         }
         single += 1;
+        names &= s.len() <= 1 && (s.is_empty() || has_literal);
         some_literal |= has_literal;
     }
+    let mut lifted_wild = out
+        .iter()
+        .chain(&suffix)
+        .any(|n| matches!(n, Node::Star | Node::AnyChar | Node::Globstar));
     // Members left within one segment share a brace only when none holds a
-    // literal; names go back whole, into the literal set.
-    if single > 1 && some_literal && !(out.is_empty() && suffix.is_empty()) {
+    // literal, or when they are names a lifted wildcard precedes
+    // (`*{.js,.ts}`); names alone go back whole, into the literal set.
+    let set_segment = names
+        && lifted_wild
+        && suffix
+            .iter()
+            .take_while(|n| !matches!(n, Node::Separator))
+            .all(|n| matches!(n, Node::Literal(_)));
+    if single > 1 && some_literal && !set_segment && !(out.is_empty() && suffix.is_empty()) {
         for s in &mut seqs {
             let mut whole = out.clone();
             whole.append(s);
@@ -39,13 +51,9 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
         }
         out.clear();
         suffix.clear();
+        lifted_wild = false;
     }
-    merge_segments(
-        &mut seqs,
-        out.iter()
-            .chain(&suffix)
-            .any(|n| matches!(n, Node::Star | Node::AnyChar | Node::Globstar)),
-    );
+    merge_segments(&mut seqs, lifted_wild);
 
     let mut empty = false;
     let mut branches: Vec<Node> = seqs

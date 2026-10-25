@@ -55,8 +55,8 @@ fn a_graph_past_64_states_keeps_dense_rows_within_bounds() {
         "src/a7/x/yb7/z.js",
     ];
     for (members, nfa) in [
-        (lits(48), "wide"),
-        (lits(49), "sparse"),
+        (lits(48), "none"),
+        (lits(49), "none"),
         (wilds(55), "wide"),
         (wilds(56), "sparse"),
     ] {

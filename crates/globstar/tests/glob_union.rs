@@ -59,7 +59,7 @@ fn a_union_of_many_wildcard_members_keeps_its_chains_while_indexed() {
     for (members, chains) in [
         (&keyed, "| chains 5000 |"),
         (&keyless, "| chains 0 |"),
-        (&crowded, "| chains 0 |"),
+        (&crowded, "chains 0 | literals 100 |"),
         (&product, "| chains 0 |"),
     ] {
         let union = Glob::union(members).unwrap();

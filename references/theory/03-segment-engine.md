@@ -37,6 +37,7 @@ What a call runs depends only on what compilation kept:
 | The matcher keeps                    | `is_match`, after the prefilter                                                    | `match_dir`               |
 | ------------------------------------ | ---------------------------------------------------------------------------------- | ------------------------- |
 | one line (a chain with ≤ 1 globstar) | the line's anchored comparisons (§4.1)                                             | read from the line (§4.4) |
+| the literal set alone                | the set, by binary search (§4.3)                                                   | read from the set (§4.3)  |
 | chains, a picker and an NFA          | the literal set, then the chains: each after its gate, or those the index selects  | the NFA (§6)              |
 | an NFA alone                         | the NFA                                                                            | the NFA                   |
 
@@ -81,7 +82,7 @@ A path with two globstars around a block (`**/x/**`, `src/**/{a,b}/**`) is walke
 
 ### 4.3 The literal set
 
-The literal paths, a union of file names, are kept apart as one sorted set of whole paths and searched once by binary search, however many there are; only their bytes are bounded.
+The literal paths, a union of file names, are kept apart as one sorted set of whole paths and searched once by binary search, however many there are; only their bytes are bounded. A union whose paths are all literal keeps the set alone, no elements and no NFA, and answers `match_dir` from it too: `d` matches when the set holds it, something below may match when a path starts with `d/` (one more binary search), and nothing covers all below.
 
 ### 4.4 `match_dir` from a lone line
 
@@ -277,7 +278,7 @@ combine(false, false, false) = Pruned
 
 ### 15.2 Realization
 
-A matcher with one chain and at most one globstar answers from the chain (§4.4). Every other matcher splits `d` at separators and runs its NFA over the graph (§6); the active set is then classified with the accepting bit and the precomputed `reach1` mask:
+A matcher with one chain and at most one globstar answers from the chain (§4.4), and one that keeps the literal set alone answers from the set (§4.3). Every other matcher splits `d` at separators and runs its NFA over the graph (§6); the active set is then classified with the accepting bit and the precomputed `reach1` mask:
 
 ```
 S       ← the state set after the segments of d

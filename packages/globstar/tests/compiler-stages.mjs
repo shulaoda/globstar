@@ -161,7 +161,7 @@ console.log("✓ a union of many file names keeps its literal set");
   for (const [members, chains] of [
     [keyed, "| chains 5000 |"],
     [keyless, "| chains 0 |"],
-    [crowded, "| chains 0 |"],
+    [crowded, "chains 0 | literals 100 |"],
     [product, "| chains 0 |"],
   ]) {
     const engine = buildEngine(

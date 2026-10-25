@@ -38,11 +38,15 @@ pub(crate) struct SegmentMatcher {
 }
 
 #[derive(Debug, Clone)]
-struct Union {
-    /// The literal paths, searched first.
-    literals: Option<Box<Literals>>,
-    nfa: AnyNfa,
-    route: Route,
+enum Union {
+    /// Literal paths only: the sorted set answers every call.
+    Set(Box<Literals>),
+    Graph {
+        /// The literal paths, searched first.
+        literals: Option<Box<Literals>>,
+        nfa: AnyNfa,
+        route: Route,
+    },
 }
 
 /// How a union's call finds its chain.
@@ -78,27 +82,32 @@ impl SegmentMatcher {
             literals = None;
             chains = Box::default();
         }
-        let union = match (&literals, &chains[..]) {
+        let union = match (literals, &chains[..]) {
             (None, [c]) if matches!(c.shape, Shape::Line(_)) => None,
-            _ => {
+            (Some(set), []) => Some(Box::new(Union::Set(set))),
+            (literals, _) => {
                 let route = match index {
                     Some(index) => Route::Index(index),
                     None if literals.is_none() && chains.is_empty() => Route::Nfa,
                     None => Route::Gates(chains.iter().map(|c| c.gate(&graph.elems, ci)).collect()),
                 };
-                Some(Box::new(Union {
+                Some(Box::new(Union::Graph {
                     literals,
                     nfa: any_nfa(&graph.elems, ci, graph.edges.as_ref(), graph.glue.take()),
                     route,
                 }))
             }
         };
+        let elems = match union.as_deref() {
+            Some(Union::Set(_)) => Box::default(),
+            _ => graph.elems.into_boxed_slice(),
+        };
         Box::new(SegmentMatcher {
             suffix_last: ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci),
             suffixes,
             chains,
             union,
-            elems: graph.elems.into_boxed_slice(),
+            elems,
             prefixes,
             case_insensitive: ci,
             dot,
@@ -114,22 +123,33 @@ impl SegmentMatcher {
         if !self.prefilter(path) {
             return false;
         }
-        match &self.union {
+        match self.union.as_deref() {
             None => self.chain_matches(&self.chains[0], path),
-            Some(u) => match &u.route {
-                Route::Nfa => u.nfa.is_match(self, path),
-                Route::Index(index) => {
-                    self.indexed_chain_matches(index, u.literals.as_deref(), path)
-                }
-                Route::Gates(gates) => self.any_chain_matches(gates, u.literals.as_deref(), path),
+            Some(Union::Set(set)) => set.contains(path, self.case_insensitive),
+            Some(Union::Graph {
+                literals,
+                nfa,
+                route,
+            }) => match route {
+                Route::Nfa => nfa.is_match(self, path),
+                Route::Index(index) => self.indexed_chain_matches(index, literals.as_deref(), path),
+                Route::Gates(gates) => self.any_chain_matches(gates, literals.as_deref(), path),
             },
         }
     }
 
     pub(crate) fn match_dir(&self, dir_path: &[u8]) -> DirMatch {
-        match &self.union {
-            Some(u) => u.nfa.match_dir(self, dir_path),
+        match self.union.as_deref() {
             None => self.chain_dir(dir_path),
+            Some(Union::Set(set)) => {
+                let ci = self.case_insensitive;
+                DirMatch::new(
+                    set.contains(dir_path, ci),
+                    set.any_below(dir_path, ci),
+                    false,
+                )
+            }
+            Some(Union::Graph { nfa, .. }) => nfa.match_dir(self, dir_path),
         }
     }
 
@@ -163,21 +183,28 @@ impl SegmentMatcher {
             });
             i += n;
         }
-        let union = self.union.as_deref();
-        let nfa = match union.map(|u| &u.nfa) {
-            None => "none",
-            Some(AnyNfa::Small(_)) => "small",
-            Some(AnyNfa::Wide(_)) => "wide",
-            Some(AnyNfa::Sparse(_)) => "sparse",
+        let (literals, nfa) = match self.union.as_deref() {
+            None => (None, "none"),
+            Some(Union::Set(set)) => (Some(set.len()), "none"),
+            Some(Union::Graph { literals, nfa, .. }) => (
+                literals.as_ref().map(|set| set.len()),
+                match nfa {
+                    AnyNfa::Small(_) => "small",
+                    AnyNfa::Wide(_) => "wide",
+                    AnyNfa::Sparse(_) => "sparse",
+                },
+            ),
         };
-        let literals = union
-            .and_then(|u| u.literals.as_ref())
-            .map_or(String::new(), |set| format!(" | literals {}", set.len()));
-        format!(
-            "{} | chains {}{literals} | nfa {nfa}",
-            runs.join(" "),
-            self.chains.len()
-        )
+        let mut parts = Vec::new();
+        if !runs.is_empty() {
+            parts.push(runs.join(" "));
+        }
+        parts.push(format!("chains {}", self.chains.len()));
+        if let Some(n) = literals {
+            parts.push(format!("literals {n}"));
+        }
+        parts.push(format!("nfa {nfa}"));
+        parts.join(" | ")
     }
 
     /// `false`: the path cannot match.

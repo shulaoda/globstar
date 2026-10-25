@@ -184,6 +184,15 @@ export function hasLiteral(m, literals, str) {
   return false;
 }
 
+export function dirsOf(literals) {
+  const dirs = new Set();
+  for (const path of literals) {
+    for (let i = path.indexOf("/"); i >= 0; i = path.indexOf("/", i + 1))
+      dirs.add(path.slice(0, i));
+  }
+  return [...dirs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 function consumeAt(m, e, str, pos, last) {
   if (e.kind === EL_LIT) {
     const end = pos + e.litStr.length;

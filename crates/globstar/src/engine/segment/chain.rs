@@ -255,6 +255,34 @@ impl Literals {
         }
         false
     }
+
+    /// Does a path of the set start with `dir/`?
+    pub(super) fn any_below(&self, dir: &[u8], ci: bool) -> bool {
+        if dir.is_empty() {
+            return self.len() > 0;
+        }
+        let (mut lo, mut hi) = (0usize, self.len());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.cmp_below(mid, dir, ci) == Ordering::Less {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo < self.len() && self.cmp_below(lo, dir, ci) == Ordering::Equal
+    }
+
+    /// Path `k` against `dir/`: `Equal` when it starts with it.
+    fn cmp_below(&self, k: usize, dir: &[u8], ci: bool) -> Ordering {
+        let lit = &self.bytes[self.bounds[k] as usize..self.bounds[k + 1] as usize];
+        let n = lit.len().min(dir.len());
+        match cmp_folded(&lit[..n], &dir[..n], ci) {
+            Ordering::Equal if lit.len() > dir.len() => lit[dir.len()].cmp(&b'/'),
+            Ordering::Equal => Ordering::Less,
+            other => other,
+        }
+    }
 }
 
 trait ChainElems {
