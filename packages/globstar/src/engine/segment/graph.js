@@ -35,8 +35,6 @@ const MIN_COPY_ROOM = 1 << 14;
 
 const LINEAR_GROUPS = 16;
 
-const LINEAR_NODES = 16;
-
 export const isGlobstar = (e) => e.kind === EL_G0 || e.kind === EL_G1;
 export const elemNullable = (e) => e.kind === EL_G0 || e.kind === EL_JOIN;
 
@@ -240,7 +238,24 @@ function indexGroups(merged) {
   });
 }
 
-const memoKey = (kind, lit, at, glued) => `${kind}${glued ? "+" : ""}:${lit ?? ""}|${at}`;
+function memoKey(kind, lit, tails, glued) {
+  let h = Math.imul(0x811c9dc5 ^ (kind * 2 + (glued ? 1 : 0)), 0x01000193);
+  if (lit !== null) {
+    h = Math.imul(h ^ lit.length, 0x01000193);
+    const n = Math.min(lit.length, 64);
+    for (let i = 0; i < n; i++) h = Math.imul(h ^ lit.charCodeAt(i), 0x01000193);
+  }
+  h = Math.imul(h ^ tails.length, 0x01000193);
+  for (let i = 0; i < tails.length; i++) h = Math.imul(h ^ tails[i], 0x01000193);
+  return h >>> 2;
+}
+
+function sameTails(at, tails) {
+  if (typeof at === "number") return tails.length === 1 && tails[0] === at;
+  if (at.length !== tails.length) return false;
+  for (let i = 0; i < at.length; i++) if (at[i] !== tails[i]) return false;
+  return true;
+}
 
 class Builder {
   constructor(dot, ci, linear, weight) {
@@ -248,8 +263,7 @@ class Builder {
     this.succs = [];
     this.start = [];
     this.linear = linear;
-    this.memo = [];
-    this.memoIndex = null;
+    this.memo = linear ? null : new Map();
     this.glued = null;
     this.pieces = [];
     this.room = Math.max(COPY_PER_WEIGHT * weight, MIN_COPY_ROOM);
@@ -290,15 +304,22 @@ class Builder {
   }
 
   emit(elem, tails, glued) {
-    const id = this.elems.length;
     if (this.linear) {
       this.elems.push(elem);
-      return id;
+      return this.elems.length - 1;
     }
-    if (elem.kind !== EL_WILD) {
-      const found = this.reuse(elem.kind, elem.litStr, tails, glued, id);
-      if (found !== -1) return found;
+    const key = elem.kind === EL_WILD ? -1 : memoKey(elem.kind, elem.litStr, tails, glued);
+    const found = key === -1 ? undefined : this.memo.get(key);
+    if (
+      found !== undefined &&
+      found.kind === elem.kind &&
+      found.lit === elem.litStr &&
+      found.glued === glued &&
+      sameTails(found.at, tails)
+    ) {
+      return found.id;
     }
+    const id = this.elems.length;
     this.elems.push(elem);
     this.succs.push([]);
     if (glued) {
@@ -306,28 +327,11 @@ class Builder {
       this.glued[id] = 1;
     }
     for (const t of tails) this.link(t, id);
-    return id;
-  }
-
-  reuse(kind, lit, tails, glued, id) {
-    const at = tails.length === 1 ? tails[0] : tails.join(",");
-    if (this.memoIndex === null) {
-      for (const n of this.memo) {
-        if (n.kind === kind && n.lit === lit && n.at === at && n.glued === glued) return n.id;
-      }
-      this.memo.push({ kind, lit, at, glued, id });
-      if (this.memo.length > LINEAR_NODES) {
-        this.memoIndex = new Map(
-          this.memo.map((n) => [memoKey(n.kind, n.lit, n.at, n.glued), n.id]),
-        );
-      }
-      return -1;
+    if (key !== -1 && found === undefined) {
+      const at = tails.length === 1 ? tails[0] : tails.slice();
+      this.memo.set(key, { kind: elem.kind, lit: elem.litStr, at, glued, id });
     }
-    const key = memoKey(kind, lit, at, glued);
-    const found = this.memoIndex.get(key);
-    if (found !== undefined) return found;
-    this.memoIndex.set(key, id);
-    return -1;
+    return id;
   }
 
   link(tail, id) {
