@@ -62,24 +62,17 @@ The JS `compileMatcher` accepts negated members: the positive members are factor
 
 ### 5.2 Factoring
 
-`factor_branches` turns the members' sequences into one sequence with one brace, so that the segment engine sees their common parts once:
-
-1. **Lift tokens.** The whole tokens every member starts with are moved before the brace, and the tokens every member ends with after it (`lift_tokens`). A `**/`, `/**/` or `/**` is lifted whole or not at all (`group`).
-2. **Take back.** When what is left of several members lies within one segment, the lifted tokens would make those members one in-segment brace. That is kept only when the brace holds no literal at all (`?` with `??*`, whose in-segment NFA is exact). Otherwise the tokens go back into the members: a mixed brace would be one in-segment NFA over all of them, and a brace of names would be one in-segment set compared name by name, where the whole paths make a literal set searched by halving (note 03, §4.3); members apart in one literal still merge (§5.3).
-3. **Merge segments.** Members that differ only in the literal ending one segment become one member with a brace there (`merge_segments`, §5.3).
-4. **Assemble.** Members that are left empty are one empty branch (a union of equal members is that member); one member is no brace; the result is the lifted tokens, the brace, and the lifted tail.
+`factor_branches` turns the members' sequences into one body: members apart in the literal ending one segment become one member with a brace of those literals there (`merge_segments`, §5.3), and the members are then the branches of one brace, or the one member left is the body. Nothing is lifted out of the brace: the engine's walk (note 03, §3) shares what members have in common, so a union of file names is a trie of literal nodes and one literal set either way, and `N` chains that each compare a name become one that compares a suffix set once their members merge.
 
 ### 5.3 Merging segments
 
-`merge_segments` takes the members made only of literals, separators and the wildcards `*`, `?` and `**`, with at least one wildcard in the member or among the lifted tokens, and more than one node. For each such member and each of its segments that ends in a literal, it records (segment index, a hash of the member with that literal replaced by a marker (`hash_without`), member, node). The records are sorted by segment (deepest first), hash and member; the members of one (segment, hash) group are compared node by node with the first of them that is still free (`same_but`), and those that agree are merged into it: its literal becomes a brace of all their literals, and the others are dropped. A member joins the deepest group it fits and takes no part at shallower segments.
-
-The reads are budgeted: the sum of the merged members' lengths over all records may not exceed 16 per node of the union, and at least 4,096; a union past that is not merged. Real unions read each member once or twice; members alike in every segment but never equal would be read once per segment.
+`merge_segments` takes the members made only of literals, separators and the wildcards `*`, `?` and `**`, with at least one wildcard and more than one node. A member is hashed in one pass: its hash is the sum of its node hashes, each mixed with its position, so the hash of the member with one node masked is that sum less the node's term plus the mask's. For each segment that ends in a literal, the member records (segment index, that masked hash, member, node). The records are sorted by segment (deepest first), hash and member; the members of one (segment, hash) group are compared node by node with the first of them that is still free (`same_but`), and those that agree are merged into it: its literal becomes a brace of all their literals, and the others are dropped. A member joins the deepest group it fits and takes no part at shallower segments.
 
 Examples: `**/a/**` with `**/b/**` gives `**/{a,b}/**`; `**/*.log` with `**/*.tmp` gives `**/*{.log,.tmp}`; `src/**/*.ts` with `tests/**/*.ts` gives `{src,tests}/**/*.ts`.
 
 ## 6. Complexity
 
-Parsing is one pass, linear in the pattern. Factoring reads each member a bounded number of times: the lifts read the edges of every member once per token lifted, and merging is bounded by its budget. The result is linear in the members' total length.
+Parsing is one pass, linear in the pattern. Factoring hashes each member in one pass, each record costs a constant, and a member is compared node by node only against the head of its group, so it is linear in the members' total length as well.
 
 ## 7. Source map
 
@@ -88,5 +81,5 @@ Parsing is one pass, linear in the pattern. Factoring reads each member a bounde
 | `parse`, `Parser::parse_sequence`, `double_star`, `parse_class`, `parse_brace` | `parse/mod.rs`   |
 | `Node`, `CharClass`, `Ast`, `Node::to_literal_bytes`              | `parse/ast.rs`              |
 | `Glob::new_with`, `Glob::union_with`, `Glob::from_body`           | `lib.rs`                    |
-| `factor_branches`, `lift_tokens`, `merge_segments`, `hash_without`, `same_but` | `union.rs` |
+| `factor_branches`, `merge_segments`, `member_hash`, `same_but`  | `union.rs`                  |
 | `compileMatcher`, `buildEngine`, `makeMatcher`                    | `packages/globstar/src/glob.js` |

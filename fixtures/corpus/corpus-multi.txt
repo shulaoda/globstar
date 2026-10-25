@@ -169,7 +169,7 @@
 ["**/*.log","**/*.tmp","src/**/x"]	src/a/x	match
 ["**/*.log","**/*.tmp","src/**/x"]	a/log	no-match
 
-## or.lifted_names_and_wildcards (a lifted `**/` taken back: a set chain and a wildcard chain)
+## or.names_and_wildcards_under_globstar (the names make one set chain, each wildcard its own)
 ["**/.DS_Store","**/Thumbs.db","**/*.log"]	a/.DS_Store	match	dot=false
 ["**/.DS_Store","**/Thumbs.db","**/*.log"]	x/y/Thumbs.db	match
 ["**/.DS_Store","**/Thumbs.db","**/*.log"]	a/b.log	match
@@ -201,7 +201,7 @@
 ["a,b.txt","{x}.log"]	b.txt	no-match
 ["a,b.txt","{x}.log"]	x.log	no-match
 
-## or.globstar_fold (factoring does not lift the trailing `/` across a `**`)
+## or.globstar_trailing_sep (a trailing `/` stays with its member's `**`)
 ["//","a/**/"]	a/	match
 ["//","a/**/"]	a/b/	match
 ["//","a/**/"]	//	match

@@ -167,10 +167,9 @@ fn a_member_error_names_the_member() {
     ));
 }
 
-// Factoring lifts all of one body under two spellings and keeps one empty
-// branch, so a literal keeps the literal engine.
+// A body given under two spellings matches as that body.
 #[test]
-fn members_spelled_differently_fold_into_one() {
+fn members_spelled_differently_match_as_one() {
     for (a, b) in [
         ("**", "**/**"),
         ("a/**", "a/**/**"),
@@ -193,15 +192,26 @@ fn members_spelled_differently_fold_into_one() {
     assert!(folded.shape().contains("literals 2"), "{}", folded.shape());
 }
 
-// The shared tokens leave each member in one drain, not one per token.
 #[test]
-fn long_shared_prefixes_lift_in_one_pass() {
+fn long_shared_prefixes_build_in_linear_time() {
     let (x, y) = ("a/".repeat(32_000) + "x", "a/".repeat(32_000) + "y");
     let start = std::time::Instant::now();
     let union = Glob::union([&x, &y]).unwrap();
     assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
     assert!(union.is_match(x.as_bytes()) && union.is_match(y.as_bytes()));
     assert!(!union.is_match(("a/".repeat(32_000) + "z").as_bytes()));
+}
+
+// Members apart in one literal merge however deep they lie: 200 names under
+// a 17-segment prefix are one set chain, not 200 chains.
+#[test]
+fn deep_members_apart_in_one_literal_merge() {
+    let prefix: String = (0..17).map(|i| format!("p{i}/")).collect();
+    let members: Vec<String> = (0..200).map(|i| format!("{prefix}n{i}/*.log")).collect();
+    let union = Glob::union(&members).unwrap();
+    assert!(union.shape().contains("| chains 1 |"), "{}", union.shape());
+    assert!(union.is_match(format!("{prefix}n7/x.log").as_bytes()));
+    assert!(!union.is_match(format!("{prefix}n200/x.log").as_bytes()));
 }
 
 // Unlike the JS factory, a union is a pure OR of positive patterns. The

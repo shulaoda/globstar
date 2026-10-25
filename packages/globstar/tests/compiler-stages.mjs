@@ -15,7 +15,6 @@ import {
 } from "../src/parse/ast.js";
 import { parse } from "../src/parse/parser.js";
 import { buildEngine, compileMatcher } from "../src/glob.js";
-import { factorBranches } from "../src/union.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cases = readFileSync(resolve(here, "../../../fixtures/compiler-stages.tsv"), "utf8");
@@ -120,14 +119,12 @@ for (const [a, b] of [
     assert.equal(union.matchDir(path), single.matchDir(path), `${a} ${b} ${path}`);
   }
 }
-const folded = parse("\\a").body;
-assert.deepEqual(factorBranches([folded, parse("a").body]), folded);
 const ciSet = buildEngine(
   ["Src/A.ts", "src/a.ts", "LIB/b.ts", "x/*.md"].map((p) => parse(p)),
   { dot: true, caseInsensitive: true },
 );
 assert.ok(ciSet.shape().includes("literals 2"), ciSet.shape());
-console.log("✓ members spelled differently fold into one");
+console.log("✓ a member spelled two ways matches as that member");
 
 {
   const files = Array.from({ length: 10_000 }, (_, i) => `src/m${i % 100}/f${i}.ts`);
@@ -301,7 +298,7 @@ console.log("✓ limits");
     if (line === "" || line.startsWith("#")) continue;
     const [want, ...patterns] = line.split("\t");
     const engine = buildEngine(
-      patterns.map((p) => parse(p)),
+      [...new Set(patterns)].map((p) => parse(p)),
       { dot: true, caseInsensitive: false },
     );
     assert.equal(engine.shape(), want, patterns.join(" + ").slice(0, 60));

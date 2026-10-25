@@ -79,8 +79,8 @@
 # `*` takes the children, `*/**` everything deeper.
 ["/p/dist/*","/p/dist/*/**"]	/p/dist	descend-all	dot=true
 ["/p/dist/*","/p/dist/*/**"]	/p/dist/a	descend-all-match	dot=true
-# One byte, or two and more.
-["/p/dist/**/?","/p/dist/**/??*"]	/p/dist	descend-all	dot=true
+# One byte, or two and more: every name together, no member alone; not proven.
+["/p/dist/**/?","/p/dist/**/??*"]	/p/dist	descend	dot=true
 # Children only: /p/dist/a/b escapes.
 ["/p/dist/*","/p/dist/*.js"]	/p/dist	descend	dot=true
 

@@ -148,7 +148,7 @@ One more NFA of the same states holds every glued piece of the graph (`GlueNfa`)
 
 ## 8. Unions
 
-A union's members are factored into one body before the walk (note 01, §5): the tokens all members start or end with are lifted out of the brace, and members that differ only in the literal ending one segment are merged into one member with a brace there. `N` chains that each compare a name thus become one that compares a suffix set (§7.1), and a union of file names becomes a trie of literal nodes and one literal set (§4.3).
+A union's members are factored into one body before the walk (note 01, §5): members that differ only in the literal ending one segment are merged into one member with a brace there, and the rest are the branches of one brace. `N` chains that each compare a name thus become one that compares a suffix set (§7.1), and a union of file names becomes a trie of literal nodes and one literal set (§4.3).
 
 ## 9. Thresholds
 
@@ -312,7 +312,7 @@ Tokens move right along a sequence or stay on a globstar, so the loop ends withi
 
 Under `dot = false` the answer is `false` without simulation: `**` does not match a dot-led name, so some `d/.x` escapes.
 
-One case is not provable: branches that split the names by length, `?/**/?` with `**/??*`, accept every name together, but the rule asks each `Wild` to accept every length on its own and answers `false`. Union members that merge into one segment (`**/?` with `**/??*` factors to `**/?{,?*}`) are one `Wild` and are proven; factoring merges members and not the braces a pattern writes, so `{**/?,**/??*}` keeps two branches and is not.
+One case is not provable: branches that split the names by length, `?/**/?` with `**/??*`, accept every name together, but the rule asks each `Wild` to accept every length on its own and answers `false`. A brace written within one segment (`**/{?,??*}`) is one `Wild` and is proven; union members are not merged there, so `**/?` with `**/??*` keeps two branches, as `{**/?,**/??*}` does, and is not.
 
 ### 15.5 Soundness
 
