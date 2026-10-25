@@ -20,6 +20,14 @@
 [badge-ci]: https://github.com/shulaoda/globstar/actions/workflows/ci.yml/badge.svg
 [url-ci]: https://github.com/shulaoda/globstar/actions/workflows/ci.yml
 
+Rust and Node each have several glob libraries, and no two agree on
+every edge: a `**` beside text, a brace that crosses a `/`, a leading
+dot, a class, a stray separator. A tool that matches in one language
+and again in the other gets two sets of files. `globstar` is one
+dialect, written down as a spec, with two implementations that match
+byte for byte: the Rust crate is canonical, and a differential corpus
+holds the JavaScript port to it.
+
 ```
 crates/globstar          — Rust crate (canonical implementation)
 crates/globstar-walk     — Rust filesystem walker built on globstar
@@ -27,94 +35,38 @@ packages/globstar        — JavaScript matcher published as @globstar/core
 packages/globstar-walk   — JavaScript walker published as @globstar/walk
 ```
 
-Both `globstar` implementations compile every non-literal pattern to
-the segment-structured matcher: a graph of per-segment elements,
-matched by anchored compares along each path through the graph, or by
-an NFA over the graph when there are too many paths, a path has several
-`**`, or a path needs too many states. The only caps are the parser's
-limits on pattern length and brace nesting: every pattern within them
-compiles, in time and memory linear in its length. See
-[`references/theory/03-segment-engine.md`](./references/theory/03-segment-engine.md).
+## Syntax
 
-## Why this exists
+| Syntax           | Meaning                                                                                                                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `?`              | One byte that is not a separator.                                                                                                                                                                    |
+| `*`              | Zero or more bytes within one segment; never crosses a `/`.                                                                                                                                          |
+| `**`             | Any number of whole segments, zero included, when it stands alone between `/` and the pattern's ends (`a/**/b`, `**/x`). Beside other text it is a `*`. A leading `**/` also takes an absolute root. |
+| `/`              | Exactly one separator. Only the `/` beside a `**` accepts a run of them.                                                                                                                             |
+| `[abc]`, `[a-z]` | One byte from the set or the range; `[!abc]` or `[^abc]` any byte but those. A class never matches a separator.                                                                                      |
+| `{a,b}`          | One of the branches. A branch may hold wildcards, nest braces or be empty (`{a,}`); `{a}` with no comma is the literal text `{a}`.                                                                   |
+| `!`              | At the start of the pattern, negates the whole pattern; `!!` cancels. Anywhere else it is literal.                                                                                                   |
+| `\`              | The next byte, literally (`\*`, `\{`); `\/` is an error.                                                                                                                                             |
 
-`import.meta.glob` runs glob matching on **two sides** of [Vite][vite]'s pipeline:
+## Options
 
-- the **Rust** side, where the build-time module graph and asset
-  resolution happen;
-- the **JavaScript** side, where the runtime needs the same set of
-  matched paths to wire up dynamic imports.
+| Option                                    | Meaning                                         | Matcher | Walker  |
+| ----------------------------------------- | ----------------------------------------------- | ------- | ------- |
+| `dot`                                     | A wildcard may take the `.` that starts a name. | `true`  | `false` |
+| `case_insensitive` (JS `caseInsensitive`) | ASCII letters compare case-folded.              | `false` | `false` |
 
-Existing JS glob libraries (`fast-glob`, `tinyglobby`, `picomatch`) and
-existing Rust crates (`globset`, `glob`, `fast-glob`)
-implement subtly different dialects. Mixing two of them in one
-pipeline produces "matches in dev, misses in build" bugs that are
-painful to track down.
+## Limits
 
-`globstar` exists to give Vite **one glob dialect** with a Rust
-implementation and a JavaScript port that match byte-for-byte on every
-documented edge case. The Rust crate is the canonical implementation
-and the JS package is held to the same semantics via the differential
-test corpus under `fixtures/corpus/`; `fixtures/ecosystem/` runs the other
-glob libraries' own test suites against both and records every difference.
+Each pattern is at most 64 KiB and its braces nest at most 32 deep; a
+union's members share no limit. Everything within those limits
+compiles, in time and memory linear in its length.
 
 ## Documentation
 
-The user guide and a browser playground live under [`docs/`](./docs)
-as a [VitePress](https://vitepress.dev/) site. The playground runs the
-`@globstar/core` source from this checkout.
+Guide, playground and the spec: **<https://globstar.void.app>**
 
-```sh
-pnpm docs:dev     # local dev server
-pnpm docs:build   # static site in docs/.vitepress/dist
-```
+## Status
 
-A push to `main` that touches the docs or the matcher deploys the site
-to [Void](https://void.cloud) through
-[`void-deploy.yml`](./.github/workflows/void-deploy.yml); the workflow's
-header lists the one-time setup.
-
-## Specifications
-
-The pattern language and walker behavior are formalized under
-[`references/spec/`](./references/spec/):
-
-- [`GLOB_SPEC.md`](./references/spec/GLOB_SPEC.md) — glob pattern
-  syntax, match semantics, `match_dir`, multi-pattern union.
-- [`WALKER_SPEC.md`](./references/spec/WALKER_SPEC.md) — JS filesystem
-  walker (`glob` / `globSync`) layered on the matcher.
-
-The Rust walker (`crates/globstar-walk`) ships an iterator-based API
-and is governed by its crate-level documentation, not the spec above.
-The pattern language spec applies to both.
-
-## Project status
-
-> **All packages stay on `0.0.x`.** This is deliberate.
-
-`globstar` is being iterated for **Vite's needs**. Every release is a
-work-in-progress — we adjust syntax, behavior, error model, and even
-the public API surface as Vite integration uncovers new requirements
-or edge cases.
-
-- The version line stays at `0.0.x` until the spec freezes and Vite
-  adopts the library in a stable release.
-- Each `0.0.x` bump may carry **breaking changes** with no migration
-  path. We do not maintain compatibility shims at this stage.
-- The differential test corpus is the truth: a behavior is "stable"
-  only when the corpus has a row for it.
-
-**External use is not supported.** If you depend on `globstar` outside
-of Vite, you accept that:
-
-- semantics can change between any two consecutive `0.0.x` releases;
-- bug reports and feature requests are triaged by Vite-relevance
-  first; non-Vite issues may be deferred indefinitely;
-- the published API surface (Rust crate exports, JS package exports)
-  may shrink without notice.
-
-If you want a stable glob library today, use `fast-glob` (JS),
-`globset` (Rust), or `picomatch` (JS) — they have stable releases and
-will not move under your feet.
-
-[vite]: https://vitejs.dev/
+Every package stays on `0.0.x` while the spec settles. Any release may
+change syntax, behavior or the public API with no migration path; a
+behavior is stable only once the corpus has a row for it.
