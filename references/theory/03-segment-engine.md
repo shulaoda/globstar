@@ -170,7 +170,6 @@ Every threshold selects a representation; none rejects a pattern. The only limit
 | kept closures                            | 128 KiB                                   | the step closes its set                      |
 | in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
 | wildcard-only cover steps                | 64                                        | all-below: `false`                           |
-| union merge reads                        | 16 per node, at least 4,096               | the members stay apart                       |
 | suffix prefilter set (`mod.rs`) | 16 branches                               | one suffix, what the branches' tails share   |
 
 ## 10. The cost of each layer
