@@ -4,7 +4,7 @@
 use crate::parse::ast::CharClass;
 
 /// A state set: one `u64` up to 64 states, a boxed word slice beyond.
-pub(crate) trait Bits: Clone + PartialEq + std::fmt::Debug {
+pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     fn zero(words: usize) -> Self;
     fn words(n_bits: usize) -> usize;
     fn set(&mut self, i: usize);
@@ -65,11 +65,11 @@ impl Bits for u64 {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Wide(Box<[u64]>);
+pub(super) struct Wide(Box<[u64]>);
 
 impl Wide {
     #[inline]
-    pub(crate) fn unset(&mut self, i: usize) {
+    pub(super) fn unset(&mut self, i: usize) {
         self.0[i >> 6] &= !(1u64 << (i & 63));
     }
 }
@@ -120,12 +120,12 @@ impl Bits for Wide {
 
 /// A set of bytes by `b % 64`: a byte outside the sketch is outside the set.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ByteSketch(u64);
+pub(super) struct ByteSketch(u64);
 
 impl ByteSketch {
-    pub(crate) const ALL: ByteSketch = ByteSketch(u64::MAX);
+    pub(super) const ALL: ByteSketch = ByteSketch(u64::MAX);
 
-    pub(crate) fn of_last_bytes<'a>(strings: impl Iterator<Item = &'a [u8]>, ci: bool) -> Self {
+    pub(super) fn of_last_bytes<'a>(strings: impl Iterator<Item = &'a [u8]>, ci: bool) -> Self {
         let mut bits = 0u64;
         for s in strings {
             match s.last() {
@@ -148,7 +148,7 @@ impl ByteSketch {
     }
 
     #[inline]
-    pub(crate) fn may_end(self, s: &[u8]) -> bool {
+    pub(super) fn may_end(self, s: &[u8]) -> bool {
         match s.last() {
             None => self.0 == ByteSketch::ALL.0,
             Some(&b) => self.0 & (1 << (b & 63)) != 0,
@@ -160,15 +160,15 @@ impl ByteSketch {
 /// out. `negated` stays for dot protection, where a negated class is a
 /// wildcard.
 #[derive(Debug, Clone)]
-pub(crate) struct ByteSet {
-    pub(crate) bits: [u64; 4],
-    pub(crate) negated: bool,
+pub(super) struct ByteSet {
+    pub(super) bits: [u64; 4],
+    pub(super) negated: bool,
 }
 
 impl ByteSet {
     /// Case-insensitively a listed ASCII letter lists its other case too,
     /// before the negation (GLOB_SPEC §13).
-    pub(crate) fn of(cls: &CharClass, ci: bool) -> Self {
+    pub(super) fn of(cls: &CharClass, ci: bool) -> Self {
         let mut set = ByteSet {
             bits: [0; 4],
             negated: cls.negated,
@@ -199,16 +199,16 @@ impl ByteSet {
         set
     }
 
-    pub(crate) fn add(&mut self, b: u8) {
+    pub(super) fn add(&mut self, b: u8) {
         self.bits[usize::from(b >> 6)] |= 1 << (b & 63);
     }
 
     #[inline]
-    pub(crate) fn has(&self, b: u8) -> bool {
+    pub(super) fn has(&self, b: u8) -> bool {
         self.bits[usize::from(b >> 6)] >> (b & 63) & 1 != 0
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.bits == [0; 4]
     }
 }

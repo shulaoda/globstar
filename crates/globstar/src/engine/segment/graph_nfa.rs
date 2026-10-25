@@ -5,9 +5,9 @@ use crate::bytes::{cmp_folded, seg_end};
 use crate::dir_match::DirMatch;
 
 use super::SegmentMatcher;
+use super::bits::{Bits, Wide};
 use super::graph::{ACCEPT, Edges, Elem, INNER};
 use super::wild::GlueNfa;
-use crate::bits::{Bits, Wide};
 
 /// Wildcard-only segments `covers_below` feeds before it gives up.
 const MAX_COVER_SEGMENTS: usize = 64;

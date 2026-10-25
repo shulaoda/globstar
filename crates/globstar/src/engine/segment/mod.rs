@@ -2,6 +2,7 @@
 //! matched segment by segment. The design and its thresholds:
 //! `references/theory/03-segment-engine.md`.
 
+mod bits;
 mod chain;
 mod graph;
 mod graph_nfa;
@@ -11,8 +12,8 @@ use crate::CompileOptions;
 use crate::dir_match::DirMatch;
 use crate::parse::ast::{Node, ends_in_globstar};
 
-use crate::bits::ByteSketch;
 use crate::bytes::{self, has_escaped_sep};
+use bits::ByteSketch;
 use chain::{Chain, ChainIndex, Gate, Literals, MAX_CHAINS, Paths, Shape};
 use graph::{Elem, Graph, node_weight};
 use graph_nfa::{AnyNfa, any_nfa};

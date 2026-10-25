@@ -41,7 +41,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-mod bits;
 mod bytes;
 mod dir_match;
 mod engine;

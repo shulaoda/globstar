@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use crate::bytes::{affix_eq, fold};
 use crate::parse::ast::Node;
 
+use super::bits::{Bits, ByteSet, ByteSketch, Wide};
 use super::graph::{ACCEPT, Edges, Elem, INNER};
 use super::{Bytes, SegmentMatcher};
-use crate::bits::{Bits, ByteSet, ByteSketch, Wide};
 
 /// The `min_len` of a segment no path segment can fill.
 pub(super) const NEVER: u32 = u32::MAX;

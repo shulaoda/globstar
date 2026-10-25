@@ -334,5 +334,5 @@ Proposition 3 is what a walker relies on when it skips a directory; Proposition 
 | `engine/segment/chain.rs`     | `engine/segment/chain.js`     | chains, gates, `match_dir` from a lone line (§4); the chain index (§5)              |
 | `engine/segment/graph_nfa.rs` | `engine/segment/graph-nfa.js` | the graph NFA and the all-below search (§6, §15.4)                                  |
 | `engine/segment/wild.rs`      | `engine/segment/wild.js`      | affixes, suffix sets, pieces, the in-segment NFA and the glue NFA (§7)              |
-| `bits.rs`                     | `bits.js`                     | bit sets, byte sets of classes; in Rust, the byte sketch                            |
+| `engine/segment/bits.rs`      | `engine/segment/bits.js`      | bit sets, byte sets of classes; in Rust, the byte sketch                            |
 | `dir_match.rs`                | `dir-match.js`                | the six results and their three facts (§15.1)                                       |

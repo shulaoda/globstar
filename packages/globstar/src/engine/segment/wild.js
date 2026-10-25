@@ -6,7 +6,7 @@ import { N_ANYCHAR, N_BRACE, N_LITERAL, N_STAR, seq, N_CLASS, lit } from "../../
 import { affixEq, ctz32 } from "../../bytes.js";
 import { flat, isAscii, utf8Latin1, utf8Length } from "../../utf8.js";
 import { exact, EL_JOIN, EL_LIT, EL_PIECE, EL_WILD, INNER, ACCEPT } from "./graph.js";
-import { byteSet, setEmpty, setHas, wordsFor, bitTest, bitSet, bitsIsZero } from "../../bits.js";
+import { byteSet, setEmpty, setHas, wordsFor, bitTest, bitSet, bitsIsZero } from "./bits.js";
 
 // `lit (*|?)+ lit`, any part empty.
 export const WK_AFFIX = 0;

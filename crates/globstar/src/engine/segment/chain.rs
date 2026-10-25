@@ -9,9 +9,9 @@ use crate::bytes::{cmp_folded, fold, is_sep, seg_end, seg_start};
 use crate::dir_match::DirMatch;
 
 use super::SegmentMatcher;
+use super::bits::ByteSketch;
 use super::graph::{ACCEPT, Elem, Graph};
 use super::wild::WildKind;
-use crate::bits::ByteSketch;
 use crate::parse::ast::Node;
 
 /// Wildcard chains kept without an index; more while their nodes fit
