@@ -1,77 +1,36 @@
-//! Compile errors and the limits that guard compiling.
-
 use core::fmt;
 
-/// The longest pattern accepted, in bytes.
 pub const MAX_PATTERN_LEN: usize = 64 * 1024;
-/// How deep braces may nest.
 pub const MAX_BRACE_NESTING: usize = 32;
 
-/// Why a pattern does not compile. An `at` is a byte offset into the
-/// UTF-8 pattern; a `max` is the limit that was passed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum GlobError {
     /// The empty pattern.
     Empty,
     /// Longer than [`MAX_PATTERN_LEN`].
-    TooLong {
-        /// The pattern's length in bytes.
-        len: usize,
-        /// [`MAX_PATTERN_LEN`].
-        max: usize,
-    },
+    TooLong { len: usize, max: usize },
     /// A class without its `]`.
-    UnterminatedClass {
-        /// Where the class opens.
-        at: usize,
-    },
+    UnterminatedClass { at: usize },
     /// A brace without its `}`.
-    UnterminatedBrace {
-        /// Where the brace opens.
-        at: usize,
-    },
+    UnterminatedBrace { at: usize },
     /// The pattern ends with a lone `\`.
     TrailingBackslash,
     /// `\/`: no file name holds a `/`, so the escape could never match.
-    EscapedSeparator {
-        /// Where the `\` is.
-        at: usize,
-    },
+    EscapedSeparator { at: usize },
     /// Braces nested deeper than [`MAX_BRACE_NESTING`].
-    BraceNestingTooDeep {
-        /// [`MAX_BRACE_NESTING`].
-        max: usize,
-    },
+    BraceNestingTooDeep { max: usize },
     /// A class range whose end is below its start.
-    InvalidRange {
-        /// Where the range starts.
-        at: usize,
-        /// The first end, as a byte.
-        low: u8,
-        /// The second end, as a byte.
-        high: u8,
-    },
+    InvalidRange { at: usize, low: u8, high: u8 },
     /// `Glob::union` of no patterns.
     EmptyPatternSet,
     /// A negated pattern given to `Glob::union`.
-    NegatedInUnion {
-        /// Its position in the list, counting every member given.
-        index: usize,
-        /// The pattern as given.
-        pattern: String,
-    },
+    NegatedInUnion { index: usize, pattern: String },
     /// A member of a `Glob::union` list does not compile.
-    InMember {
-        /// The member's position in the list, counting every member given.
-        index: usize,
-        /// Why it does not compile, with offsets into that member.
-        error: Box<GlobError>,
-    },
+    InMember { index: usize, error: Box<GlobError> },
 }
 
 impl GlobError {
-    /// The error past any [`InMember`](Self::InMember) wrapping.
     pub fn root(&self) -> &GlobError {
         match self {
             Self::InMember { error, .. } => error.root(),
@@ -124,7 +83,6 @@ impl std::error::Error for GlobError {
     }
 }
 
-/// A byte as written, or as `\xHH` when it is not printable ASCII.
 fn show(byte: u8) -> String {
     if byte.is_ascii_graphic() {
         (byte as char).to_string()

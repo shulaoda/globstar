@@ -1,28 +1,15 @@
-//! A union's members factored into one body.
-
 use crate::parse::ast::Node;
 
-/// What merging may read: this many nodes per node of the members, at
-/// least `MIN_MERGE_READS`.
 const MERGE_READS_PER_NODE: usize = 16;
 const MIN_MERGE_READS: usize = 4096;
 
-/// A member's part in a merge.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Member {
     Free,
-    /// Its trailing literal became the brace.
     Head,
-    /// Joined a head's brace: dropped at the end.
     Absorbed,
 }
 
-/// The tokens all members start or end with are lifted out of the brace,
-/// and members that differ only in the literal ending one segment are
-/// merged into one with a brace there. Members left within one segment share a brace
-/// only when it is a set (literal branches) or holds no literal at all;
-/// a mix would be one in-segment NFA, so the tokens go back and the
-/// members stay apart.
 #[inline(never)]
 pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches.into_iter().map(Node::into_seq).collect();
@@ -64,8 +51,6 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
             .any(|n| matches!(n, Node::Star | Node::AnyChar | Node::Globstar)),
     );
 
-    // Members that differ only in spelling leave nothing behind: one
-    // empty branch stands for them all.
     let mut empty = false;
     let mut branches: Vec<Node> = seqs
         .into_iter()
@@ -93,13 +78,6 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     Node::of_seq(out)
 }
 
-/// Members that differ only in the literal ending one segment become one
-/// member with a brace there: `**/a/**` and `**/b/**` are `**/{a,b}/**`.
-/// Members with a wildcard take part (in the member or lifted). They are
-/// grouped by segment and a hash of everything but that literal, then
-/// compared node by node, from the last segment back; a member joins the
-/// deepest group it fits. Out of line: inlined into `factor_branches` it
-/// builds unions up to 0.4% slower.
 #[inline(never)]
 fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
     // (segment, hash, member, node) per literal ending a segment.
@@ -160,7 +138,6 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
     seqs.retain(|_| *st.next().unwrap() != Member::Absorbed);
 }
 
-/// FNV-1a of `s`, with a marker in place of node `skip`.
 fn hash_without(s: &[Node], skip: usize) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut mix = |b: u8| {
@@ -196,7 +173,6 @@ fn same_but(a: &[Node], b: &[Node], at: usize) -> bool {
             .all(|(j, (x, y))| j == at || node_eq(x, y))
 }
 
-/// The `k`th node of `seq` from the front, or from the back.
 fn at(seq: &[Node], k: usize, front: bool) -> Option<&Node> {
     if front {
         seq.get(k)
@@ -216,8 +192,6 @@ fn node_eq(a: &Node, b: &Node) -> bool {
     }
 }
 
-/// How many nodes from the `k`th on stay together: `**/`, `/**/` and
-/// `/**` are lifted whole or not at all.
 fn group(seq: &[Node], k: usize, front: bool) -> usize {
     match (at(seq, k, front), at(seq, k + 1, front)) {
         (None, _) => 0,
@@ -233,7 +207,6 @@ fn group(seq: &[Node], k: usize, front: bool) -> usize {
     }
 }
 
-/// The whole tokens every member starts (or ends) with, taken out of them.
 fn lift_tokens(seqs: &mut [Vec<Node>], front: bool) -> Vec<Node> {
     let mut n = 0;
     loop {
