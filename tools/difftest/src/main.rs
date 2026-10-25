@@ -160,7 +160,6 @@ fn dir_token(d: DirMatch) -> String {
         DirMatch::DescendAndMatch => "descend-match",
         DirMatch::DescendAll => "descend-all",
         DirMatch::DescendAllAndMatch => "descend-all-match",
-        // Never a JS token.
     }
     .to_string()
 }
