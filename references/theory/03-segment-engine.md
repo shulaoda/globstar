@@ -147,7 +147,7 @@ One more NFA of the same states holds every glued piece of the graph (`GlueNfa`)
 
 ## 8. Unions
 
-A union's members are factored into one body before the walk (note 01, §5): the tokens all members start or end with are lifted out of the brace, then the bytes their first or last literals share, and members that differ only in the literal ending one segment are merged into one member with a brace there. `N` chains that each compare a name thus become one that compares a suffix set (§7.1), and a union of file names becomes a trie of literal nodes and one literal set (§4.3).
+A union's members are factored into one body before the walk (note 01, §5): the tokens all members start or end with are lifted out of the brace, and members that differ only in the literal ending one segment are merged into one member with a brace there. `N` chains that each compare a name thus become one that compares a suffix set (§7.1), and a union of file names becomes a trie of literal nodes and one literal set (§4.3).
 
 ## 9. Thresholds
 
@@ -170,7 +170,7 @@ Every threshold selects a representation; none rejects a pattern. The only limit
 | in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
 | wildcard-only cover steps                | 64                                        | all-below: `false`                           |
 | union merge reads                        | 16 per node, at least 4,096               | the members stay apart                       |
-| suffix prefilter set (`mod.rs`) | 16 branches                               | no prefilter                                 |
+| suffix prefilter set (`mod.rs`) | 16 branches                               | one suffix, what the branches' tails share   |
 
 ## 10. The cost of each layer
 
@@ -210,7 +210,7 @@ A *prefilter* for a language `L` is a predicate `A` with `A(w) = 0 ⇒ w ∉ L`;
 
 `segment/mod.rs::trailing` reads the pattern's nodes right to left: a literal contributes its bytes, a separator a `/` unless it is the `/` of a `**/`, and any other node stops the reading. The bytes, reversed, are the suffix; stopping at the first other node is required, since a wildcard or a `**` can produce any bytes. The `/` after a `**` belongs to that `**/`, which absorbs zero segments as well, so the suffix of `a/**/b` is `b` and `**/b` keeps matching `b`.
 
-When the suffix is ε and the pattern ends with a brace of at most 16 branches (`MAX_SUFFIX_SET`), `suffix_set` derives one suffix per branch: the suffix of the nodes before the brace, appended to the branch's own suffix when the branch is all literal, and the branch's own suffix alone otherwise; a branch that gives ε gives up the set. `**/*.{ts,tsx,js}` has the set `{".ts", ".tsx", ".js"}`. A brace of more than 16 branches gets no prefilter; its literal branches are grouped by the suffix set of §7.1.
+When the suffix is ε and the pattern ends with a brace of at most 16 branches (`MAX_SUFFIX_SET`), `suffix_set` derives one suffix per branch: the suffix of the nodes before the brace, appended to the branch's own suffix when the branch is all literal, and the branch's own suffix alone otherwise; a branch that gives ε gives up the set. `**/*.{ts,tsx,js}` has the set `{".ts", ".tsx", ".js"}`. A brace of more than 16 branches gets one suffix, the longest its branches' own tails share (the nodes before the brace are not read), or none when they share nothing; its literal branches are grouped by the suffix set of §7.1.
 
 ### 13.2 Comparison
 

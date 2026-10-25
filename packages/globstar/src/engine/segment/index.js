@@ -318,7 +318,8 @@ export class SegmentMatcher {
 // The literal ends every match shares, read off the AST: the suffixes
 // the prefilter checks and the static prefixes a walker seeds from.
 
-// A pattern that ends in a brace of more branches gets no prefilter.
+// A pattern that ends in a brace of more branches gets one suffix: the
+// one they all share.
 const MAX_SUFFIX_SET = 16;
 
 // How deep braces may nest along one head, the budget every pattern gets
@@ -351,26 +352,43 @@ function trailing(nodes, end, afterGlobstar) {
   return acc;
 }
 
-// One suffix per branch of a trailing brace, or none when a branch
+// One suffix per branch of a trailing brace, or past MAX_SUFFIX_SET
+// branches the suffix the branches' own tails share; none when a branch
 // guarantees nothing.
 function suffixSet(nodes) {
   if (nodes.length === 0) return [];
   const last = nodes[nodes.length - 1];
-  if (last.tag !== N_BRACE || last.branches.length > MAX_SUFFIX_SET) return [];
+  if (last.tag !== N_BRACE) return [];
   const common = trailing(nodes, nodes.length - 1, false);
   const afterGlobstar = endsInGlobstar(nodes, nodes.length - 1, false);
+  const many = last.branches.length > MAX_SUFFIX_SET;
   const set = [];
+  let shared = null;
   for (const branch of last.branches) {
     const b = seq(branch);
-    const own = trailing(b, b.length, afterGlobstar);
+    let own = trailing(b, b.length, afterGlobstar);
     // The common tail joins a branch only when the branch is all literal;
     // otherwise it would claim more than the branch does.
-    const allLiteral = b.every((n) => n.tag === N_LITERAL || n.tag === N_SEPARATOR);
-    const full = allLiteral ? common + own : own;
-    if (full.length === 0) return [];
-    set.push(full);
+    if (!many && b.every((n) => n.tag === N_LITERAL || n.tag === N_SEPARATOR)) own = common + own;
+    if (own.length === 0) return [];
+    if (!many) {
+      set.push(own);
+      continue;
+    }
+    if (shared === null) shared = own;
+    else {
+      let k = 0;
+      while (
+        k < shared.length &&
+        k < own.length &&
+        shared[shared.length - 1 - k] === own[own.length - 1 - k]
+      )
+        k++;
+      shared = shared.slice(shared.length - k);
+    }
   }
-  return set;
+  if (shared === null) return set;
+  return shared.length === 0 ? [] : [shared];
 }
 
 // The deepest segment-bounded literal head of each brace expansion,

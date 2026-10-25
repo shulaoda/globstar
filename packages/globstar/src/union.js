@@ -93,14 +93,17 @@ export function factorBranches(branches) {
 // Members that differ only in the literal ending one segment become one
 // member with a brace there: `**/a/**` and `**/b/**` are `**/{a,b}/**`.
 // Members with a wildcard take part (in the member or lifted). They are
-// grouped by segment and a cheap key, then by a hash of everything else,
-// then compared node by node, from the last segment back; a member joins
-// the deepest group it fits.
+// grouped by segment and a hash of everything but that literal, then
+// compared node by node, from the last segment back; a member joins the
+// deepest group it fits.
 function mergeSegments(seqs, liftedWild) {
-  // [segment, cheap key, member, node] per literal ending a segment.
+  // [segment, hash, member, node] per literal ending a segment.
   const entries = [];
+  let reads = 0;
+  let nodes = 0;
   for (let i = 0; i < seqs.length; i++) {
     const s = seqs[i];
+    nodes += s.length;
     let wild = liftedWild;
     let plain = true;
     for (let j = 0; j < s.length && plain; j++) {
@@ -110,22 +113,19 @@ function mergeSegments(seqs, liftedWild) {
     }
     if (!(plain && wild && s.length > 1)) continue;
     let k = 0;
-    let start = 0;
-    for (let end = 0; end <= s.length; end++) {
-      if (end < s.length && s[end] !== SEP_NODE) continue;
-      if (end > start && s[end - 1].tag === N_LITERAL) {
-        entries.push([k, cheapKey(s, end - 1), i, end - 1]);
+    for (let at = 0; at < s.length; at++) {
+      const n = s[at];
+      if (n === SEP_NODE) k++;
+      else if (n.tag === N_LITERAL && (at + 1 === s.length || s[at + 1] === SEP_NODE)) {
+        entries.push([k, 0, i, at]);
+        reads += s.length;
       }
-      k++;
-      start = end + 1;
     }
   }
-  if (entries.length < 2) return seqs;
-  let reads = 0;
-  for (const e of entries) reads += seqs[e[2]].length;
-  let nodes = 0;
-  for (const s of seqs) nodes += s.length;
-  if (reads > Math.max(MERGE_READS_PER_NODE * nodes, MIN_MERGE_READS)) return seqs;
+  if (entries.length < 2 || reads > Math.max(MERGE_READS_PER_NODE * nodes, MIN_MERGE_READS)) {
+    return seqs;
+  }
+  for (const e of entries) e[1] = hashWithout(seqs[e[2]], e[3]);
   // A comparator sort costs V8 more than the rest of a small union's merge.
   const order = (x, y) => y[0] - x[0] || x[1] - y[1] || x[2] - y[2];
   if (entries.length > 8) entries.sort(order);
@@ -137,84 +137,33 @@ function mergeSegments(seqs, liftedWild) {
       entries[j] = e;
     }
   }
-  let state = null;
+  const state = new Uint8Array(seqs.length);
+  let absorbed = 0;
   for (let run = 0; run < entries.length; ) {
-    const e = entries[run];
+    const [k, hash] = entries[run];
     let end = run + 1;
-    while (end < entries.length && entries[end][0] === e[0] && entries[end][1] === e[1]) end++;
-    if (end - run >= 2) state = mergeAlike(seqs, entries.slice(run, end), state);
-    run = end;
-  }
-  return state === null ? seqs : seqs.filter((_, i) => state[i] !== ABSORBED);
-}
-
-// Merges the free members of `alike` that are the same node for node but
-// for that literal, into the first of them: few compared head by head,
-// many keyed by all they hold but the literal first.
-function mergeAlike(seqs, alike, state) {
-  const free = [];
-  for (const m of alike) if (state === null || state[m[2]] === FREE) free.push(m);
-  if (free.length < 2) return state;
-  if (free.length > 8) {
-    const keyed = free.map((m) => [hashWithout(seqs[m[2]], m[3]), m[2], m[3]]);
-    keyed.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
-    return mergeRuns(seqs, keyed, state);
-  }
-  // [member, node, the literals that joined]
-  const heads = [];
-  for (const [, , i, at] of free) {
-    const head = heads.find((h) => sameBut(seqs[h[0]], seqs[i], h[1]));
-    if (head === undefined) heads.push([i, at, []]);
-    else {
-      head[2].push(seqs[i][at]);
-      (state ??= new Uint8Array(seqs.length))[i] = ABSORBED;
-    }
-  }
-  for (const [h, at, lits] of heads) {
-    if (lits.length === 0) continue;
-    state[h] = HEAD;
-    lits.unshift(seqs[h][at]);
-    seqs[h][at] = brace(lits);
-  }
-  return state;
-}
-
-// Merges each run of `keyed` ([hash, member, node]) whose members are the
-// same node for node but for that literal, into the first of them.
-function mergeRuns(seqs, keyed, state) {
-  for (let run = 0; run < keyed.length; ) {
-    const hash = keyed[run][0];
-    const head = keyed[run][1];
-    const headAt = keyed[run][2];
-    const lits = [];
-    let end = run + 1;
-    for (; end < keyed.length && keyed[end][0] === hash; end++) {
-      const i = keyed[end][1];
-      if (!sameBut(seqs[head], seqs[i], headAt)) continue;
-      (state ??= new Uint8Array(seqs.length))[i] = ABSORBED;
-      lits.push(seqs[i][keyed[end][2]]);
-    }
-    if (lits.length > 0) {
-      state[head] = HEAD;
-      lits.unshift(seqs[head][headAt]);
-      seqs[head][headAt] = brace(lits);
+    while (end < entries.length && entries[end][0] === k && entries[end][1] === hash) end++;
+    let h = run;
+    while (h < end && state[entries[h][2]] !== FREE) h++;
+    if (h < end) {
+      const [, , head, headAt] = entries[h];
+      const lits = [];
+      for (let e = h + 1; e < end; e++) {
+        const [, , i, at] = entries[e];
+        if (state[i] !== FREE || !sameBut(seqs[head], seqs[i], headAt)) continue;
+        state[i] = ABSORBED;
+        absorbed++;
+        lits.push(seqs[i][at]);
+      }
+      if (lits.length > 0) {
+        state[head] = HEAD;
+        lits.unshift(seqs[head][headAt]);
+        seqs[head][headAt] = brace(lits);
+      }
     }
     run = end;
   }
-  return state;
-}
-
-// The node count and the first node (the last, when the first is the
-// literal `at`) by kind, length and edge characters.
-function cheapKey(s, at) {
-  const node = s[at === 0 ? s.length - 1 : 0];
-  let h = Math.imul(s.length, 0x9e3779b1);
-  if (node.tag === N_LITERAL) {
-    const str = node.str;
-    h ^= (2 << 24) | ((str.length & 0xff) << 16);
-    if (str.length > 0) h ^= (str.charCodeAt(0) << 8) ^ str.charCodeAt(str.length - 1);
-  } else h ^= (node.tag + 3) << 24;
-  return h >>> 0;
+  return absorbed === 0 ? seqs : seqs.filter((_, i) => state[i] !== ABSORBED);
 }
 
 // FNV-1a of `s`, with a marker in place of node `skip`.

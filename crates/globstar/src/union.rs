@@ -104,15 +104,17 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
 /// Members that differ only in the literal ending one segment become one
 /// member with a brace there: `**/a/**` and `**/b/**` are `**/{a,b}/**`.
 /// Members with a wildcard take part (in the member or lifted). They are
-/// grouped by segment and a cheap key, then by a hash of everything else,
-/// then compared node by node, from the last segment back; a member joins
-/// the deepest group it fits. Out of line: inlined into `factor_branches`
-/// it builds unions up to 0.4% slower.
+/// grouped by segment and a hash of everything but that literal, then
+/// compared node by node, from the last segment back; a member joins the
+/// deepest group it fits. Out of line: inlined into `factor_branches` it
+/// builds unions up to 0.4% slower.
 #[inline(never)]
 fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
-    // (segment, cheap key, member, node) per literal ending a segment.
+    // (segment, hash, member, node) per literal ending a segment.
     let mut entries: Vec<(usize, u64, usize, usize)> = Vec::new();
+    let (mut reads, mut nodes) = (0, 0);
     for (i, s) in seqs.iter().enumerate() {
+        nodes += s.len();
         let mut wild = lifted_wild;
         let plain = s.iter().all(|n| match n {
             Node::Globstar | Node::Star | Node::AnyChar => {
@@ -125,61 +127,36 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>, lifted_wild: bool) {
         if !(plain && wild && s.len() > 1) {
             continue;
         }
-        let (mut k, mut start) = (0, 0);
-        for end in 0..=s.len() {
-            if end < s.len() && !matches!(s[end], Node::Separator) {
-                continue;
+        let mut k = 0;
+        for at in 0..s.len() {
+            match s[at] {
+                Node::Separator => k += 1,
+                Node::Literal(_) if s.get(at + 1).is_none_or(|n| matches!(n, Node::Separator)) => {
+                    entries.push((k, 0, i, at));
+                    reads += s.len();
+                }
+                _ => {}
             }
-            if end > start && matches!(s[end - 1], Node::Literal(_)) {
-                entries.push((k, cheap_key(s, end - 1), i, end - 1));
-            }
-            k += 1;
-            start = end + 1;
         }
     }
-    if entries.len() < 2 {
+    if entries.len() < 2 || reads > (MERGE_READS_PER_NODE * nodes).max(MIN_MERGE_READS) {
         return;
     }
-    let reads: usize = entries.iter().map(|e| seqs[e.2].len()).sum();
-    let nodes: usize = seqs.iter().map(Vec::len).sum();
-    if reads > (MERGE_READS_PER_NODE * nodes).max(MIN_MERGE_READS) {
-        return;
+    for e in &mut entries {
+        e.1 = hash_without(&seqs[e.2], e.3);
     }
     entries.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    let mut state: Vec<Member> = Vec::new();
+    let mut state = vec![Member::Free; seqs.len()];
     for alike in entries.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
-        if alike.len() < 2 {
+        let Some(&(_, _, h, h_at)) = alike.iter().find(|e| state[e.2] == Member::Free) else {
             continue;
-        }
-        let mut keyed: Vec<(u64, usize, usize)> = alike
-            .iter()
-            .filter(|&&(_, _, i, _)| state.get(i).is_none_or(|&st| st == Member::Free))
-            .map(|&(_, _, i, at)| (hash_without(&seqs[i], at), i, at))
-            .collect();
-        keyed.sort_unstable();
-        merge_runs(seqs, &keyed, &mut state);
-    }
-    if !state.is_empty() {
-        let mut st = state.iter();
-        seqs.retain(|_| *st.next().unwrap() != Member::Absorbed);
-    }
-}
-
-/// Merges each run of `keyed` (hash, member, node) whose members are the
-/// same node for node but for that literal, into the first of them.
-fn merge_runs(seqs: &mut [Vec<Node>], keyed: &[(u64, usize, usize)], state: &mut Vec<Member>) {
-    for run in keyed.chunk_by(|a, b| a.0 == b.0) {
-        let (_, h, h_at) = run[0];
+        };
         let mut lits = Vec::new();
-        for &(_, i, at) in &run[1..] {
-            if !same_but(&seqs[h], &seqs[i], h_at) {
-                continue;
+        for &(_, _, i, at) in alike {
+            if i != h && state[i] == Member::Free && same_but(&seqs[h], &seqs[i], h_at) {
+                state[i] = Member::Absorbed;
+                lits.push(std::mem::replace(&mut seqs[i][at], Node::Separator));
             }
-            if state.is_empty() {
-                *state = vec![Member::Free; seqs.len()];
-            }
-            state[i] = Member::Absorbed;
-            lits.push(std::mem::replace(&mut seqs[i][at], Node::Separator));
         }
         if !lits.is_empty() {
             state[h] = Member::Head;
@@ -187,22 +164,8 @@ fn merge_runs(seqs: &mut [Vec<Node>], keyed: &[(u64, usize, usize)], state: &mut
             seqs[h][h_at] = Node::Brace(lits);
         }
     }
-}
-
-/// The node count and the first node (the last, when the first is the
-/// literal `at`) by kind, length and edge bytes.
-fn cheap_key(s: &[Node], at: usize) -> u64 {
-    let edge = |b: &[u8]| (b.len() as u64) << 16 | (b[0] as u64) << 8 | *b.last().unwrap() as u64;
-    let node = match &s[if at == 0 { s.len() - 1 } else { 0 }] {
-        Node::Literal(b) if !b.is_empty() => 2 << 32 | edge(b),
-        Node::Literal(_) => 2 << 32,
-        Node::Separator => 3 << 32,
-        Node::Globstar => 4 << 32,
-        Node::Star => 5 << 32,
-        Node::AnyChar => 6 << 32,
-        Node::Class(_) | Node::Brace(_) | Node::Concat(_) => unreachable!("not a candidate"),
-    };
-    (s.len() as u64) << 40 ^ node
+    let mut st = state.iter();
+    seqs.retain(|_| *st.next().unwrap() != Member::Absorbed);
 }
 
 /// FNV-1a of `s`, with a marker in place of node `skip`.

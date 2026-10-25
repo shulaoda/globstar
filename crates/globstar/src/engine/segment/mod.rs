@@ -205,7 +205,8 @@ impl SegmentMatcher {
 // The literal ends every match shares, read off the AST: the suffixes
 // the prefilter checks and the static prefixes a walker seeds from.
 
-/// A pattern that ends in a brace of more branches gets no prefilter.
+/// A pattern that ends in a brace of more branches gets one suffix: the
+/// one they all share.
 const MAX_SUFFIX_SET: usize = 16;
 
 /// How deep braces may nest along one head, the budget every pattern
@@ -254,27 +255,30 @@ fn push_run(run: &[Node], acc: &mut Vec<u8>) {
     }
 }
 
-/// One suffix per branch of a trailing brace, or none when a branch
+/// One suffix per branch of a trailing brace, or past `MAX_SUFFIX_SET`
+/// branches the suffix the branches' own tails share; none when a branch
 /// guarantees nothing.
 fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
-    let branches = match nodes.last() {
-        Some(Node::Brace(branches)) if branches.len() <= MAX_SUFFIX_SET => branches,
-        _ => return Box::default(),
+    let Some(Node::Brace(branches)) = nodes.last() else {
+        return Box::default();
     };
     let before = &nodes[..nodes.len() - 1];
     let mut common = Vec::new();
     push_run(trailing(before, false), &mut common);
     let after_globstar = ends_in_globstar(before, false);
-    let mut set = Vec::with_capacity(branches.len());
+    let many = branches.len() > MAX_SUFFIX_SET;
+    let mut set = Vec::new();
+    let mut shared: Option<Vec<u8>> = None;
     let mut acc = Vec::new();
     for branch in branches {
         acc.clear();
         // The common tail joins a branch only when the branch is all
         // literal; otherwise it would claim more than the branch does.
-        if branch
-            .seq()
-            .iter()
-            .all(|n| matches!(n, Node::Literal(_) | Node::Separator))
+        if !many
+            && branch
+                .seq()
+                .iter()
+                .all(|n| matches!(n, Node::Literal(_) | Node::Separator))
         {
             acc.extend_from_slice(&common);
         }
@@ -282,9 +286,28 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
         if acc.is_empty() {
             return Box::default();
         }
-        set.push(Bytes::from(&acc[..]));
+        if !many {
+            set.push(Bytes::from(&acc[..]));
+            continue;
+        }
+        shared = Some(match shared {
+            None => acc.clone(),
+            Some(s) => {
+                let n = s
+                    .iter()
+                    .rev()
+                    .zip(acc.iter().rev())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                s[s.len() - n..].to_vec()
+            }
+        });
     }
-    set.into_boxed_slice()
+    match shared {
+        None => set.into_boxed_slice(),
+        Some(s) if s.is_empty() => Box::default(),
+        Some(s) => Box::new([s.into_boxed_slice()]),
+    }
 }
 
 /// The deepest segment-bounded literal head of each brace expansion,

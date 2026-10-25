@@ -72,7 +72,7 @@ The JS `compileMatcher` accepts negated members: the positive members are factor
 
 ### 5.3 Merging segments
 
-`merge_segments` takes the members made only of literals, separators and the wildcards `*`, `?` and `**`, with at least one wildcard in the member or among the lifted tokens, and more than one node. For each such member and each of its segments that ends in a literal, it records (segment index from the end, a cheap key, member, node). The cheap key is the member's node count and its first node's kind, length and edge bytes (its last node's when the first is the literal itself). The records are sorted by segment (deepest first), key and member, and each group of records alike is keyed again by a hash of the member with the literal replaced by a marker (`hash_without`); members in one hash run are compared node by node (`same_but`), and those that agree are merged into the first: its literal becomes a brace of all their literals, and the others are dropped. A member joins the deepest group it fits and is not keyed again at shallower segments.
+`merge_segments` takes the members made only of literals, separators and the wildcards `*`, `?` and `**`, with at least one wildcard in the member or among the lifted tokens, and more than one node. For each such member and each of its segments that ends in a literal, it records (segment index, a hash of the member with that literal replaced by a marker (`hash_without`), member, node). The records are sorted by segment (deepest first), hash and member; the members of one (segment, hash) group are compared node by node with the first of them that is still free (`same_but`), and those that agree are merged into it: its literal becomes a brace of all their literals, and the others are dropped. A member joins the deepest group it fits and takes no part at shallower segments.
 
 The reads are budgeted: the sum of the merged members' lengths over all records may not exceed 16 per node of the union, and at least 4,096; a union past that is not merged. Real unions read each member once or twice; members alike in every segment but never equal would be read once per segment.
 
@@ -89,5 +89,5 @@ Parsing is one pass, linear in the pattern. Factoring reads each member a bounde
 | `parse`, `Parser::parse_sequence`, `double_star`, `parse_class`, `parse_brace` | `parse/mod.rs`   |
 | `Node`, `CharClass`, `Ast`, `Node::to_literal_bytes`              | `parse/ast.rs`              |
 | `Glob::new_with`, `Glob::union_with`, `Glob::from_body`           | `lib.rs`                    |
-| `factor_branches`, `lift_tokens`, `lift_bytes`, `merge_segments`, `merge_runs`, `cheap_key`, `hash_without`, `same_but` | `union.rs` |
+| `factor_branches`, `lift_tokens`, `lift_bytes`, `merge_segments`, `hash_without`, `same_but` | `union.rs` |
 | `compileMatcher`, `buildEngine`, `makeMatcher`                    | `packages/globstar/src/glob.js` |
