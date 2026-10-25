@@ -159,14 +159,12 @@ function doubleStar(state, nodes, inBrace) {
     nodes.push(STAR_NODE);
     return;
   }
-  const surelySepBefore = (at) => (at === 0 ? !inBrace : nodes[at - 1].tag === N_SEPARATOR);
-  if (
-    end &&
-    n >= 2 &&
+  const afterSep =
     last === N_SEPARATOR &&
+    n >= 2 &&
     nodes[n - 2].tag === N_GLOBSTAR &&
-    surelySepBefore(n - 2)
-  ) {
+    (n === 2 ? !inBrace : nodes[n - 3].tag === N_SEPARATOR);
+  if (end && afterSep) {
     nodes.pop();
     return;
   }

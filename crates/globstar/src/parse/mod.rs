@@ -137,15 +137,11 @@ impl<'a> Parser<'a> {
             nodes.push(Node::Star);
             return;
         }
-        let surely_sep_before = |at: usize| match at.checked_sub(1) {
-            None => !in_brace,
-            Some(i) => matches!(nodes[i], Node::Separator),
-        };
-        let n = nodes.len();
-        if matches!(next, None | Some(b'/'))
-            && matches!(nodes[..], [.., Node::Globstar, Node::Separator])
-            && surely_sep_before(n - 2)
-        {
+        let after_sep = matches!(
+            nodes[..],
+            [.., Node::Separator, Node::Globstar, Node::Separator]
+        ) || !in_brace && matches!(nodes[..], [Node::Globstar, Node::Separator]);
+        if matches!(next, None | Some(b'/')) && after_sep {
             nodes.pop();
             return;
         }
