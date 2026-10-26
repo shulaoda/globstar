@@ -195,19 +195,30 @@ impl Graph {
             weight,
             paths,
         } = survey;
+        // A union's members are paths of their own, never one segment's
+        // choice: the names among them make the literal set, the rest
+        // their own chains.
+        let union = matches!(body, Node::Brace(members) if members.len() > 1);
+        let linear = linear && !union;
         if !linear {
-            regroup(body);
+            match &mut *body {
+                Node::Brace(members) if union => members.iter_mut().for_each(regroup),
+                other => regroup(other),
+            }
         }
         let mut builder = Builder::new(boundaries, linear, weight, dot, ci);
         // Only a union the chain index may file reads its segments' keys.
-        if paths > LINEAR_CHAINS {
+        if union || paths > LINEAR_CHAINS {
             builder.keys = Some(Box::new(KeyReading {
                 keys: Vec::new(),
                 room: key_room(weight),
                 scratch: KeyScratch::default(),
             }));
         }
-        let groups = builder.walk(body.seq(), vec![Group::first()]);
+        let groups = match &*body {
+            Node::Brace(members) if union => builder.choice(members, vec![Group::first()]),
+            body => builder.walk(body.seq(), vec![Group::first()]),
+        };
         for g in groups {
             builder.end(g);
         }
@@ -550,34 +561,37 @@ impl<'a> Builder<'a> {
         g.tails.push(id);
     }
 
+    /// Every branch goes on from the groups: the open segments go on
+    /// into each, or are cut, and the branches glue to the pieces.
+    fn choice(&mut self, branches: &'a [Node], mut groups: Vec<Group<'a>>) -> Vec<Group<'a>> {
+        let held: usize = groups
+            .iter()
+            .flat_map(|g| g.buf.iter().copied())
+            .map(node_weight)
+            .sum();
+        if !self.afford((branches.len() - 1).saturating_mul(held)) {
+            groups = self.cut_all(groups);
+        }
+        for g in groups.iter_mut() {
+            self.join(g, branches.len());
+        }
+        let mut merged = Merged::default();
+        for branch in branches {
+            for g in self.walk(branch.seq(), groups.to_vec()) {
+                merged.add(g);
+            }
+        }
+        groups = merged.groups;
+        for g in &mut groups {
+            g.dedupe_tails();
+        }
+        groups
+    }
+
     fn walk(&mut self, nodes: &'a [Node], mut groups: Vec<Group<'a>>) -> Vec<Group<'a>> {
         for node in nodes {
             match node {
-                Node::Brace(branches) if crosses(node) => {
-                    // The open segments go on into every branch, or are
-                    // cut, and the branches glue to the pieces.
-                    let held: usize = groups
-                        .iter()
-                        .flat_map(|g| g.buf.iter().copied())
-                        .map(node_weight)
-                        .sum();
-                    if !self.afford((branches.len() - 1).saturating_mul(held)) {
-                        groups = self.cut_all(groups);
-                    }
-                    for g in groups.iter_mut() {
-                        self.join(g, branches.len());
-                    }
-                    let mut merged = Merged::default();
-                    for branch in branches {
-                        for g in self.walk(branch.seq(), groups.to_vec()) {
-                            merged.add(g);
-                        }
-                    }
-                    groups = merged.groups;
-                    for g in &mut groups {
-                        g.dedupe_tails();
-                    }
-                }
+                Node::Brace(branches) if crosses(node) => groups = self.choice(branches, groups),
                 Node::Separator => self.close_all(&mut groups),
                 Node::Globstar => {
                     groups.retain(|g| !(g.shadow && g.double_star));

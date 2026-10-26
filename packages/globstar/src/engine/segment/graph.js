@@ -55,15 +55,22 @@ const G1_ELEM = makeElem(EL_G1, null, null);
 const JOIN_ELEM = makeElem(EL_JOIN, null, null);
 
 export function buildGraph(body, dot, ci) {
-  const nodes = seq(body);
-  const { linear, weight, paths } = survey(nodes);
-  if (!linear) regroup(body);
+  const union = body.tag === N_BRACE && body.branches.length > 1;
+  const { linear: plain, weight, paths } = survey(seq(body));
+  const linear = plain && !union;
+  if (!linear) {
+    if (union) body.branches.forEach(regroup);
+    else regroup(body);
+  }
   const builder = new Builder(dot, ci, linear, weight);
-  if (paths > LINEAR_CHAINS) {
+  if (union || paths > LINEAR_CHAINS) {
     builder.keys = [];
     builder.keyRoom = keyRoom(weight);
   }
-  for (const g of builder.walk(nodes, [firstGroup()])) builder.end(g);
+  const groups = union
+    ? builder.choice(body.branches, [firstGroup()])
+    : builder.walk(seq(body), [firstGroup()]);
+  for (const g of groups) builder.end(g);
   return builder.finish(weight);
 }
 
@@ -350,26 +357,26 @@ class Builder {
     g.tails.push(id);
   }
 
+  choice(branches, groups) {
+    let held = 0;
+    for (const g of groups) for (const n of g.buf) held += nodeWeight(n);
+    if (!this.afford((branches.length - 1) * held)) groups = this.cutAll(groups);
+    for (const g of groups) this.join(g, branches.length);
+    const merged = mergedGroups();
+    for (const branch of branches) {
+      for (const g of this.walk(seq(branch), groups.map(forkGroup))) mergeGroup(merged, g);
+    }
+    groups = merged.groups;
+    for (const g of groups) dedupeTails(g);
+    return groups;
+  }
+
   walk(nodes, groups) {
     for (const node of nodes) {
       switch (node.tag) {
-        case N_BRACE: {
-          if (!crosses(node)) {
-            groups = this.push(groups, node);
-            break;
-          }
-          let held = 0;
-          for (const g of groups) for (const n of g.buf) held += nodeWeight(n);
-          if (!this.afford((node.branches.length - 1) * held)) groups = this.cutAll(groups);
-          for (const g of groups) this.join(g, node.branches.length);
-          const merged = mergedGroups();
-          for (const branch of node.branches) {
-            for (const g of this.walk(seq(branch), groups.map(forkGroup))) mergeGroup(merged, g);
-          }
-          groups = merged.groups;
-          for (const g of groups) dedupeTails(g);
+        case N_BRACE:
+          groups = crosses(node) ? this.choice(node.branches, groups) : this.push(groups, node);
           break;
-        }
         case N_SEPARATOR:
           groups = this.closeAll(groups);
           break;

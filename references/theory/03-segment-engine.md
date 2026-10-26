@@ -51,7 +51,7 @@ One walk over the AST builds the graph. It keeps one *group* per distinct pair (
 
 A brace whose branches cross a separator is not multiplied out: each branch is walked from the groups before the brace, and the groups the branches leave merge again. `{a/,b/}x` is three nodes with `x` shared, and `{a/,b/}` repeated `k` times gives `2k + 1` nodes rather than `2^k` sequences. The in-segment branches of such a brace are walked as one choice (`{a,b,/}` as `{{a,b},/}`, `regroup`). A node is reused when its element and predecessors already exist, which turns a union of names into a trie. Two hash maps serve the walk: one finds a node to reuse (JS scans its first 16 nodes before keying them), one finds a group by its key past the first 16 groups.
 
-A brace that crosses no separator stays inside its segment and belongs to the in-segment matcher (§7).
+A brace that crosses no separator stays inside its segment and belongs to the in-segment matcher (§7), unless it is the whole pattern: a union's members, or a pattern written as one brace, are walked as branches whatever they hold, so that the names among them join the literal set and the rest are chains of their own, each with its keys (§5), rather than one segment's choice.
 
 ### 3.2 Globstars
 
@@ -148,7 +148,7 @@ One more NFA of the same states holds every glued piece of the graph (`GlueNfa`)
 
 ## 8. Unions
 
-A union's members are factored into one body before the walk (note 01, §5): members that differ only in the literal ending one segment are merged into one member with a brace there, and the rest are the branches of one brace. `N` chains that each compare a name thus become one that compares a suffix set (§7.1), and a union of file names becomes a trie of literal nodes and one literal set (§4.3).
+A union's members are factored into one body before the walk (note 01, §5): members that differ only in the literal ending one segment are merged into one member with a brace there, and the rest are the branches of one brace, walked as paths of their own whether or not they cross a separator (§3.1). `N` chains that each compare a name thus become one that compares a suffix set (§7.1), and a union of file names becomes a trie of literal nodes and one literal set (§4.3).
 
 ## 9. Thresholds
 
