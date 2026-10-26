@@ -1,31 +1,20 @@
 use crate::parse::ast::Node;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Part {
-    Free,
-    Head,
-    Absorbed,
+/// A literal ending segment `k` of member `i`, at node `at`, with the
+/// member's hash masked there: members alike but for that literal share it.
+struct Entry {
+    k: usize,
+    hash: u64,
+    i: usize,
+    at: usize,
 }
 
 #[inline(never)]
 pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
     let mut seqs: Vec<Vec<Node>> = branches.into_iter().map(Node::into_seq).collect();
-    merge_segments(&mut seqs);
-    let mut branches: Vec<Node> = seqs.into_iter().map(Node::of_seq).collect();
-    if branches.len() == 1 {
-        branches.pop().unwrap()
-    } else {
-        Node::Brace(branches)
-    }
-}
-
-/// Members apart in the literal ending one segment become one member with a
-/// brace of those literals there.
-#[inline(never)]
-fn merge_segments(seqs: &mut Vec<Vec<Node>>) {
-    // (segment, hash of the member with that literal masked, member, node)
-    // per literal ending a segment of a plain member with a wildcard.
-    let mut entries: Vec<(usize, u64, usize, usize)> = Vec::with_capacity(seqs.len());
+    // Members apart in the literal ending one segment become one member
+    // with a brace of those literals there.
+    let mut entries = Vec::with_capacity(seqs.len());
     for (i, s) in seqs.iter().enumerate() {
         let Some(whole) = member_hash(s) else {
             continue;
@@ -37,70 +26,71 @@ fn merge_segments(seqs: &mut Vec<Vec<Node>>) {
                 Node::Literal(lit)
                     if s.get(at + 1).is_none_or(|n| matches!(n, Node::Separator)) =>
                 {
-                    let masked = whole
-                        .wrapping_sub(salted(lit_hash(lit), at))
-                        .wrapping_add(salted(MASK, at));
-                    entries.push((k, masked, i, at));
+                    let hash = whole.wrapping_sub(salted(lit_hash(lit), at));
+                    entries.push(Entry { k, hash, i, at });
                 }
                 _ => {}
             }
         }
     }
-    if entries.len() < 2 {
-        return;
-    }
-    entries.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    let mut state = vec![Part::Free; seqs.len()];
-    for alike in entries.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
-        let Some(&(_, _, h, h_at)) = alike.iter().find(|e| state[e.2] == Part::Free) else {
+    // Deepest segment first: a member merges at the deepest segment it
+    // fits, and once absorbed takes no part at shallower ones.
+    entries.sort_unstable_by(|a, b| b.k.cmp(&a.k).then(a.hash.cmp(&b.hash)).then(a.i.cmp(&b.i)));
+    let mut absorbed = vec![false; seqs.len()];
+    for alike in entries.chunk_by(|a, b| (a.k, a.hash) == (b.k, b.hash)) {
+        let Some(head) = alike.iter().find(|e| !absorbed[e.i]) else {
             continue;
         };
+        let (h, at) = (head.i, head.at);
         let mut lits = Vec::with_capacity(alike.len());
-        for &(_, _, i, at) in alike {
-            if i != h && state[i] == Part::Free && same_but(&seqs[h], &seqs[i], h_at) {
-                state[i] = Part::Absorbed;
-                lits.push(std::mem::replace(&mut seqs[i][at], Node::Separator));
+        for e in alike {
+            if e.i != h && !absorbed[e.i] && same_but(&seqs[h], &seqs[e.i], at) {
+                absorbed[e.i] = true;
+                lits.push(std::mem::replace(&mut seqs[e.i][at], Node::Separator));
             }
         }
         if !lits.is_empty() {
-            state[h] = Part::Head;
-            lits.insert(0, std::mem::replace(&mut seqs[h][h_at], Node::Separator));
-            seqs[h][h_at] = Node::Brace(lits);
+            lits.insert(0, std::mem::replace(&mut seqs[h][at], Node::Separator));
+            seqs[h][at] = Node::Brace(lits);
         }
     }
-    let mut st = state.iter();
-    seqs.retain(|_| *st.next().unwrap() != Part::Absorbed);
+    let mut gone = absorbed.iter();
+    seqs.retain(|_| !*gone.next().unwrap());
+    let mut members: Vec<Node> = seqs.into_iter().map(Node::of_seq).collect();
+    if members.len() == 1 {
+        members.pop().unwrap()
+    } else {
+        Node::Brace(members)
+    }
 }
 
-const MASK: u64 = 1;
-
 /// The hash of a member made of literals, separators and the wildcards
-/// `*`, `?` and `**`, with a wildcard among them and more than one node:
-/// the sum of its node hashes, each mixed with its position.
+/// `*`, `?` and `**`, with a wildcard among them: the sum of its node
+/// hashes, each mixed with its position.
 fn member_hash(s: &[Node]) -> Option<u64> {
+    let mut hash = 0u64;
     let mut wild = false;
-    let mut hash = s.len() as u64;
     for (at, n) in s.iter().enumerate() {
         let h = match n {
             Node::Literal(lit) => lit_hash(lit),
-            Node::Separator => 3,
+            Node::Separator => 1,
             Node::Globstar => {
                 wild = true;
-                4
+                2
             }
             Node::Star => {
                 wild = true;
-                5
+                3
             }
             Node::AnyChar => {
                 wild = true;
-                6
+                4
             }
             Node::Class(_) | Node::Brace(_) | Node::Concat(_) => return None,
         };
         hash = hash.wrapping_add(salted(h, at));
     }
-    (wild && s.len() > 1).then_some(hash)
+    wild.then_some(hash)
 }
 
 fn lit_hash(lit: &[u8]) -> u64 {
@@ -117,6 +107,7 @@ fn salted(hash: u64, at: usize) -> u64 {
     (x ^ (x >> 31)).wrapping_mul(0xBF58_476D_1CE4_E5B9)
 }
 
+/// `b` is `a` but for a literal at `at`.
 fn same_but(a: &[Node], b: &[Node], at: usize) -> bool {
     a.len() == b.len()
         && matches!(b[at], Node::Literal(_))
@@ -126,13 +117,10 @@ fn same_but(a: &[Node], b: &[Node], at: usize) -> bool {
             .all(|(j, (x, y))| j == at || node_eq(x, y))
 }
 
+/// Equal nodes of plain members: a literal's bytes, else the kind.
 fn node_eq(a: &Node, b: &Node) -> bool {
     match (a, b) {
         (Node::Literal(x), Node::Literal(y)) => x == y,
-        (Node::Separator, Node::Separator)
-        | (Node::Globstar, Node::Globstar)
-        | (Node::AnyChar, Node::AnyChar)
-        | (Node::Star, Node::Star) => true,
-        _ => false,
+        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
     }
 }
