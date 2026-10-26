@@ -8,6 +8,7 @@ use crate::engine::bytes::{affix_eq, fold};
 use crate::parse::ast::Node;
 
 use super::bits::{Bits, ByteSet, ByteSketch, Wide};
+use super::chain::{Key, MAX_KEY_PRODUCT};
 use super::graph::{ACCEPT, Edges, Elem, INNER};
 use super::{Bytes, SegmentMatcher};
 
@@ -237,6 +238,22 @@ impl Affix {
 }
 
 impl SuffixSet {
+    pub(super) fn prefix(&self) -> &[u8] {
+        &self.prefix
+    }
+
+    /// One suffix is empty: it ends anything.
+    pub(super) fn has_empty(&self) -> bool {
+        self.empty
+    }
+
+    /// The non-empty suffixes.
+    pub(super) fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.bounds
+            .windows(2)
+            .map(|w| &self.suffixes[w[0] as usize..w[1] as usize])
+    }
+
     fn new(prefix: Bytes, suffixes: Vec<Vec<u8>>, ci: bool) -> Self {
         let last = ByteSketch::of_last_bytes(suffixes.iter().map(|s| &s[..]), ci);
         let empty = suffixes.iter().any(Vec::is_empty);
@@ -361,6 +378,71 @@ impl Pos {
 }
 
 impl Pieces {
+    /// The strings the last piece ends with (`back`) or the first starts
+    /// with, as many as fit `MAX_KEY_PRODUCT`, into `out`; whether the
+    /// whole piece was taken.
+    pub(super) fn edge_keys(&self, back: bool, ci: bool, out: &mut Vec<Key>) -> bool {
+        let piece = self.piece(if back { self.ends.len() - 1 } else { 0 });
+        let join = |key: Key, next: Key| if back { next.then(key) } else { key.then(next) };
+        out.clear();
+        out.push(Key::EMPTY);
+        for k in 0..piece.len() {
+            match piece[if back { piece.len() - 1 - k } else { k }] {
+                Pos::Byte(b) => {
+                    let key = Key::of(&[b], ci);
+                    for o in out.iter_mut() {
+                        *o = join(*o, key);
+                    }
+                }
+                Pos::Any => return false,
+                Pos::Class(c) => {
+                    let set = &self.classes[usize::from(c)];
+                    let mut members = [0u8; MAX_KEY_PRODUCT];
+                    let mut n = 0;
+                    for b in set.iter().filter(|b| !(ci && b.is_ascii_uppercase())) {
+                        if set.negated || !b.is_ascii() || n == MAX_KEY_PRODUCT {
+                            return false;
+                        }
+                        members[n] = b;
+                        n += 1;
+                    }
+                    if out.len() * n > MAX_KEY_PRODUCT {
+                        return false;
+                    }
+                    let keys = std::mem::take(out);
+                    for o in keys {
+                        out.extend(members[..n].iter().map(|&b| join(o, Key::of(&[b], ci))));
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    pub(super) fn one_piece(&self) -> bool {
+        self.ends.len() == 1
+    }
+
+    /// The longest run of bytes within one piece, folded.
+    pub(super) fn longest_literal(&self) -> Option<Vec<u8>> {
+        let mut best: &[Pos] = &[];
+        for k in 0..self.ends.len() {
+            for run in self.piece(k).split(|p| !matches!(p, Pos::Byte(_))) {
+                if run.len() > best.len() {
+                    best = run;
+                }
+            }
+        }
+        (!best.is_empty()).then(|| {
+            best.iter()
+                .map(|p| match p {
+                    Pos::Byte(b) => *b,
+                    _ => unreachable!("a run of bytes"),
+                })
+                .collect()
+        })
+    }
+
     /// `None` when the segment holds a brace. What the graph reads off the
     /// pieces is what it would read off the NFA.
     fn wild(nodes: &[&Node], dot: bool, ci: bool) -> Option<Wild> {

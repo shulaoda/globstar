@@ -12,7 +12,6 @@ import {
 } from "../../parse/ast.js";
 import { hasEscapedSep } from "../bytes.js";
 import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild, GlueNfa } from "./wild.js";
-import { LINEAR_CHAINS, keyRoom, segKeysLen, segmentKeys } from "./chain.js";
 
 export const EL_LIT = 0;
 export const EL_WILD = 1;
@@ -56,17 +55,13 @@ const JOIN_ELEM = makeElem(EL_JOIN, null, null);
 
 export function buildGraph(body, dot, ci) {
   const union = body.tag === N_BRACE && body.branches.length > 1;
-  const { linear: plain, weight, paths } = survey(seq(body));
+  const { linear: plain, weight } = survey(seq(body));
   const linear = plain && !union;
   if (!linear) {
     if (union) body.branches.forEach(regroup);
     else regroup(body);
   }
   const builder = new Builder(dot, ci, linear, weight);
-  if (union || paths > LINEAR_CHAINS) {
-    builder.keys = [];
-    builder.keyRoom = keyRoom(weight);
-  }
   const groups = union
     ? builder.choice(body.branches, [firstGroup()])
     : builder.walk(seq(body), [firstGroup()]);
@@ -75,7 +70,7 @@ export function buildGraph(body, dot, ci) {
 }
 
 function survey(nodes) {
-  const out = { boundaries: 0, linear: true, weight: 0, paths: 1 };
+  const out = { boundaries: 0, linear: true, weight: 0 };
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     if (node.tag === N_SEPARATOR || node.tag === N_GLOBSTAR) {
@@ -90,18 +85,13 @@ function survey(nodes) {
     const nextTo = nodes[i + 1]?.tag === N_GLOBSTAR || nodes[i - 1]?.tag === N_GLOBSTAR;
     if (nextTo && nullable(node)) out.linear = false;
     const before = out.boundaries;
-    let branchPaths = 0;
     out.weight++;
     for (const b of node.branches) {
       const inner = survey(seq(b));
       out.boundaries += inner.boundaries;
       out.weight += Math.max(1, inner.weight);
-      branchPaths = Math.min(branchPaths + inner.paths, Number.MAX_SAFE_INTEGER);
     }
-    if (out.boundaries > before) {
-      out.linear = false;
-      out.paths = Math.min(out.paths * branchPaths, Number.MAX_SAFE_INTEGER);
-    }
+    if (out.boundaries > before) out.linear = false;
   }
   return out;
 }
@@ -276,8 +266,6 @@ class Builder {
     this.room = Math.max(COPY_PER_WEIGHT * weight, MIN_COPY_ROOM);
     this.dot = dot;
     this.ci = ci;
-    this.keys = null;
-    this.keyRoom = 0;
   }
 
   finish(weight) {
@@ -305,7 +293,6 @@ class Builder {
       start: this.start,
       linear: this.linear,
       weight,
-      keys: this.keys,
       glue,
     };
   }
@@ -514,13 +501,6 @@ class Builder {
     const glued = g.state === B_GLUE;
     const id = this.emit(elem, g.tails, glued);
     if (wild && (glued || cut)) this.pieces[id] = g.buf.slice();
-    if (wild && this.keys !== null) {
-      const keys = segmentKeys(g.buf, this.ci, this.keyRoom);
-      if (keys !== null) {
-        this.keyRoom -= segKeysLen(keys);
-        this.keys[id] = keys;
-      }
-    }
     return id;
   }
 

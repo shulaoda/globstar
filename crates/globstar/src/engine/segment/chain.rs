@@ -11,8 +11,7 @@ use crate::engine::bytes::{cmp_folded, fold, is_sep, seg_end, seg_start};
 use super::SegmentMatcher;
 use super::bits::ByteSketch;
 use super::graph::{ACCEPT, Elem, Graph};
-use super::wild::WildKind;
-use crate::parse::ast::Node;
+use super::wild::{Wild, WildKind};
 
 /// Wildcard chains kept without an index; more while their nodes fit
 /// four times the pattern's weight.
@@ -744,7 +743,7 @@ pub(super) const LINEAR_CHAINS: usize = 10;
 
 /// A product of alternatives (`[._]s[a-v][a-z]`) is cut to the nodes
 /// whose strings fit this many; a single list is kept up to the key room.
-const MAX_KEY_PRODUCT: usize = 64;
+pub(super) const MAX_KEY_PRODUCT: usize = 64;
 
 /// A key compares this many outer bytes of a segment at most; the walk
 /// checks the rest. Past 64 chains an exact key compares the whole
@@ -761,14 +760,14 @@ const MAX_INFIX: usize = 16;
 /// to `KEY_BYTES` (1 to 4), a prefix of each (5 to 8).
 const LOOKUPS: usize = 1 + 2 * KEY_BYTES;
 
-/// The keys a union's segments may give and the entries its index may
-/// file: one per unit of the pattern's weight, at least 4,096.
-pub(super) fn key_room(weight: usize) -> usize {
+/// The entries a union's index may file: one per unit of the pattern's
+/// weight, at least 4,096.
+fn key_room(weight: usize) -> usize {
     weight.max(4096)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Kind {
+enum Kind {
     Exact,
     Suffix,
     Prefix,
@@ -787,18 +786,17 @@ pub(super) struct Key {
 }
 
 #[derive(Debug)]
-pub(super) enum SegKeys {
+enum SegKeys {
     Strings(Vec<(Kind, Key)>),
     /// Every match holds this literal (`*.so.*` holds `.so.`).
     Infix(Box<[u8]>),
 }
 
-#[derive(Debug, Default)]
-pub(super) struct KeyScratch {
+#[derive(Default)]
+struct KeyScratch {
     suffixes: Vec<Key>,
     prefixes: Vec<Key>,
-    alts: Vec<Key>,
-    next: Vec<Key>,
+    exact: Vec<Key>,
 }
 
 /// Which segment of a path a chain's key is looked up in.
@@ -831,7 +829,7 @@ pub(super) struct ChainIndex {
 }
 
 impl Key {
-    const EMPTY: Key = Key {
+    pub(super) const EMPTY: Key = Key {
         len: 0,
         back: 0,
         front: 0,
@@ -839,7 +837,7 @@ impl Key {
         pow: 1,
     };
 
-    fn of(bytes: &[u8], ci: bool) -> Key {
+    pub(super) fn of(bytes: &[u8], ci: bool) -> Key {
         Key {
             len: bytes.len(),
             back: pack(bytes.iter().rev().copied(), ci),
@@ -849,7 +847,7 @@ impl Key {
         }
     }
 
-    fn then(self, next: Key) -> Key {
+    pub(super) fn then(self, next: Key) -> Key {
         let back = if next.len >= KEY_BYTES {
             next.back
         } else {
@@ -870,75 +868,58 @@ impl Key {
     }
 }
 
-impl SegKeys {
-    /// What it takes of the key room.
-    pub(super) fn len(&self) -> usize {
-        match self {
-            SegKeys::Strings(keys) => keys.len(),
-            SegKeys::Infix(_) => 1,
-        }
-    }
-}
-
-/// The keys of a segment's nodes, none when they pass `room`. A segment
-/// that is one brace bound apart by its branches (`{Makefile,inc.*,*.pc}`)
-/// is bound by all their keys, each its own kind.
-pub(super) fn segment_keys(
-    nodes: &[&Node],
-    ci: bool,
-    room: usize,
-    k: &mut KeyScratch,
-) -> Option<SegKeys> {
-    let keys = one_kind(nodes, ci, room, k);
-    let (None, [Node::Brace(branches)]) = (&keys, nodes) else {
-        return keys.filter(|keys| keys.len() <= room);
-    };
-    let mut out = Vec::new();
-    for branch in branches {
-        let seq: Vec<&Node> = branch.seq().iter().collect();
-        match segment_keys(&seq, ci, room - out.len(), k)? {
-            SegKeys::Strings(keys) => out.extend(keys),
-            SegKeys::Infix(_) => return None,
-        }
-    }
-    Some(SegKeys::Strings(out))
-}
-
-/// One kind of keys: the segment's strings when it is literal; else those
-/// of the literal nodes that end it or start it, whichever bind more
-/// bytes; else the start of its longest literal. None when it has no
-/// literal, or a string may be empty.
-fn one_kind(nodes: &[&Node], ci: bool, room: usize, k: &mut KeyScratch) -> Option<SegKeys> {
+/// The keys a wildcard segment's element gives: its strings when nothing
+/// varies; else those it must end with or start with, whichever bind more
+/// bytes; else the start of its longest literal. None for a brace around
+/// wildcards, or when a string may be empty.
+fn keys_of(w: &Wild, ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
     let KeyScratch {
         suffixes,
         prefixes,
-        alts,
-        next,
+        exact,
     } = k;
-    let from_end = nodes.iter().rev().copied();
-    let taken = literal_run(from_end, true, ci, room, suffixes, alts, next);
-    if taken == nodes.len() {
-        return strings(Kind::Exact, suffixes);
+    suffixes.clear();
+    prefixes.clear();
+    exact.clear();
+    let fixed = !w.variable;
+    let mut pieces = None;
+    match &w.kind {
+        WildKind::Affix(affix) => {
+            let (p, s) = affix.parts();
+            prefixes.push(Key::of(p, ci));
+            suffixes.push(Key::of(s, ci));
+            if fixed && w.min_len as usize == p.len() + s.len() {
+                exact.push(prefixes[0].then(suffixes[0]));
+            }
+        }
+        WildKind::Suffixes(set) => {
+            let p = Key::of(set.prefix(), ci);
+            prefixes.push(p);
+            if !set.has_empty() {
+                suffixes.extend(set.iter().map(|s| Key::of(s, ci)));
+                if fixed && w.min_len as usize == p.len {
+                    exact.extend(suffixes.iter().map(|&s| p.then(s)));
+                }
+            }
+        }
+        WildKind::Pieces(p) => {
+            let whole = p.edge_keys(true, ci, suffixes);
+            p.edge_keys(false, ci, prefixes);
+            if fixed && whole && p.one_piece() {
+                exact.extend_from_slice(suffixes);
+            }
+            pieces = Some(p);
+        }
+        WildKind::Generic(_) => return None,
     }
-    literal_run(nodes.iter().copied(), false, ci, room, prefixes, alts, next);
+    if !exact.is_empty() {
+        return strings(Kind::Exact, exact);
+    }
     let shortest = |keys: &[Key]| keys.iter().map(|k| k.len).min().unwrap_or(0);
     match (shortest(suffixes), shortest(prefixes)) {
-        (0, 0) => {
-            let longest = nodes
-                .iter()
-                .filter_map(|n| match n {
-                    Node::Literal(bytes) => Some(bytes),
-                    _ => None,
-                })
-                .max_by_key(|bytes| bytes.len())?;
-            Some(SegKeys::Infix(
-                longest
-                    .iter()
-                    .take(MAX_INFIX)
-                    .map(|&b| fold(b, ci))
-                    .collect(),
-            ))
-        }
+        (0, 0) => pieces
+            .and_then(|p| p.longest_literal())
+            .map(|lit| SegKeys::Infix(lit.into_iter().take(MAX_INFIX).collect())),
         (s, p) if p > s => strings(Kind::Prefix, prefixes),
         _ => strings(Kind::Suffix, suffixes),
     }
@@ -947,102 +928,6 @@ fn one_kind(nodes: &[&Node], ci: bool, room: usize, k: &mut KeyScratch) -> Optio
 fn strings(kind: Kind, keys: &[Key]) -> Option<SegKeys> {
     (!keys.iter().any(|k| k.len == 0))
         .then(|| SegKeys::Strings(keys.iter().map(|&k| (kind, k)).collect()))
-}
-
-/// The strings of the literal nodes `nodes` yields from one end, as many
-/// as fit `MAX_KEY_PRODUCT`, into `out`; how many nodes they took. A
-/// node of one string waits in `fixed` for the next choice.
-fn literal_run<'a>(
-    nodes: impl Iterator<Item = &'a Node>,
-    back: bool,
-    ci: bool,
-    room: usize,
-    out: &mut Vec<Key>,
-    alts: &mut Vec<Key>,
-    next: &mut Vec<Key>,
-) -> usize {
-    let join = |key: Key, node: Key| if back { node.then(key) } else { key.then(node) };
-    let flush = |out: &mut Vec<Key>, fixed: &mut Key| {
-        if fixed.len > 0 {
-            for o in out.iter_mut() {
-                *o = join(*o, *fixed);
-            }
-            *fixed = Key::EMPTY;
-        }
-    };
-    out.clear();
-    out.push(Key::EMPTY);
-    let mut fixed = Key::EMPTY;
-    let mut taken = 0;
-    for node in nodes {
-        alts.clear();
-        if !alternatives(node, ci, room, alts) {
-            break;
-        }
-        if let [one] = alts[..] {
-            fixed = join(fixed, one);
-        } else {
-            if out.len() > 1 && out.len() * alts.len() > MAX_KEY_PRODUCT {
-                break;
-            }
-            flush(out, &mut fixed);
-            next.clear();
-            for &o in out.iter() {
-                next.extend(alts.iter().map(|&a| join(o, a)));
-            }
-            std::mem::swap(out, next);
-        }
-        taken += 1;
-    }
-    flush(out, &mut fixed);
-    taken
-}
-
-/// The strings one literal node matches: a literal, a positive ASCII
-/// class, a brace of literal branches. `false` for any other node, and
-/// for a brace of more than `room` strings.
-fn alternatives(node: &Node, ci: bool, room: usize, out: &mut Vec<Key>) -> bool {
-    match node {
-        Node::Literal(bytes) => out.push(Key::of(bytes, ci)),
-        Node::Class(class) if !class.negated => {
-            for &(lo, hi) in &class.ranges {
-                if !hi.is_ascii()
-                    || out.len() + usize::from(hi.saturating_sub(lo)) >= MAX_KEY_PRODUCT
-                {
-                    return false;
-                }
-                out.extend((lo..=hi).map(|b| Key::of(&[b], ci)));
-            }
-        }
-        Node::Brace(branches) => {
-            for branch in branches {
-                match branch.seq() {
-                    [Node::Literal(bytes)] => out.push(Key::of(bytes, ci)),
-                    seq => {
-                        let (mut keys, mut alts, mut next) = (Vec::new(), Vec::new(), Vec::new());
-                        let taken = literal_run(
-                            seq.iter(),
-                            false,
-                            ci,
-                            room,
-                            &mut keys,
-                            &mut alts,
-                            &mut next,
-                        );
-                        if taken < seq.len() {
-                            return false;
-                        }
-                        out.extend_from_slice(&keys);
-                    }
-                }
-                if out.len() > room {
-                    return false;
-                }
-            }
-        }
-        _ => return false,
-    }
-    true
 }
 
 impl ChainIndex {
@@ -1054,7 +939,8 @@ impl ChainIndex {
         graph: &Graph,
         ci: bool,
     ) -> Option<Box<Self>> {
-        let (elems, keys) = (&graph.elems, &graph.keys);
+        let elems = &graph.elems;
+        let mut scratch = KeyScratch::default();
         if chains.len() <= LINEAR_CHAINS {
             return None;
         }
@@ -1094,23 +980,19 @@ impl ChainIndex {
                         index.file(role, Kind::Exact, Key::of(lit, ci), id, &mut entries);
                         filed = true;
                     }
-                    Elem::Wild(_) => {
-                        if let Ok(i) = keys.binary_search_by_key(&node, |&(n, _)| n) {
-                            match &keys[i].1 {
-                                SegKeys::Strings(strings) => {
-                                    for &(kind, key) in strings {
-                                        index.file(role, kind, key, id, &mut entries);
-                                    }
-                                    filed = true;
-                                }
-                                SegKeys::Infix(lit) if role == Role::Last => {
-                                    infix.push((id as u32, lit.clone()));
-                                    filed = true;
-                                }
-                                SegKeys::Infix(_) => {}
+                    Elem::Wild(w) => match keys_of(w, ci, &mut scratch) {
+                        Some(SegKeys::Strings(strings)) => {
+                            for (kind, key) in strings {
+                                index.file(role, kind, key, id, &mut entries);
                             }
+                            filed = true;
                         }
-                    }
+                        Some(SegKeys::Infix(lit)) if role == Role::Last => {
+                            infix.push((id as u32, lit));
+                            filed = true;
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 }
                 if filed {

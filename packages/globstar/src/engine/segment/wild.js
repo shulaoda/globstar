@@ -17,8 +17,8 @@ const MAX_SUFFIX_BYTES = 64 * 1024;
 
 const GROUP_SCRATCH = new Int32Array(65);
 
-const ANY = 256;
-const CLASS = 257;
+export const ANY = 256;
+export const CLASS = 257;
 
 export function concatLits(nodes, to) {
   let s = "";

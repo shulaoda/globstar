@@ -211,6 +211,17 @@ impl ByteSet {
     pub(super) fn is_empty(&self) -> bool {
         self.bits == [0; 4]
     }
+
+    /// The bytes in the set, ascending.
+    pub(super) fn iter(&self) -> impl Iterator<Item = u8> + '_ {
+        self.bits.iter().enumerate().flat_map(|(w, &word)| {
+            std::iter::successors((word != 0).then_some(word), |&left| {
+                let left = left & (left - 1);
+                (left != 0).then_some(left)
+            })
+            .map(move |left| (w as u8) << 6 | left.trailing_zeros() as u8)
+        })
+    }
 }
 
 #[cfg(test)]

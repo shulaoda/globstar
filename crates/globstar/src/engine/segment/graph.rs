@@ -10,7 +10,6 @@ use crate::engine::bytes::has_escaped_sep;
 use crate::parse::ast::Node;
 
 use super::Bytes;
-use super::chain::{KeyScratch, LINEAR_CHAINS, SegKeys, key_room, segment_keys};
 use super::wild::{Affix, GlueNfa, NEVER, Wild, WildKind, compile_wild, concat_lits};
 
 /// The entry of an `Elem::Piece` no segment starts in.
@@ -53,8 +52,6 @@ pub(super) struct Graph {
     /// `None` for a linear pattern, whose nodes follow one another.
     pub(super) edges: Option<Edges>,
     pub(super) weight: usize,
-    /// A crossing brace's wildcard nodes and their keys, in node order.
-    pub(super) keys: Vec<(u32, SegKeys)>,
     pub(super) glue: Option<Box<GlueNfa>>,
 }
 
@@ -70,8 +67,6 @@ pub(super) struct Survey {
     /// No brace holds a boundary or may leave a `**` beside one.
     linear: bool,
     pub(super) weight: usize,
-    /// An upper bound on the paths through the graph.
-    paths: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,18 +95,11 @@ struct Group<'a> {
     shadow: bool,
 }
 
-struct KeyReading {
-    keys: Vec<(u32, SegKeys)>,
-    room: usize,
-    scratch: KeyScratch,
-}
-
 /// A pattern with a crossing brace records node `i`'s predecessors as
 /// `preds[pred_at[i]..pred_at[i + 1]]` and reuses a node by its
 /// (element, predecessors) hash; a linear pattern records its nodes only.
 struct Builder<'a> {
     elems: Vec<Elem>,
-    keys: Option<Box<KeyReading>>,
     linear: bool,
     preds: Vec<u32>,
     pred_at: Vec<u32>,
@@ -193,7 +181,6 @@ impl Graph {
             boundaries,
             linear,
             weight,
-            paths,
         } = survey;
         // A union's members are paths of their own, never one segment's
         // choice: the names among them make the literal set, the rest
@@ -207,14 +194,6 @@ impl Graph {
             }
         }
         let mut builder = Builder::new(boundaries, linear, weight, dot, ci);
-        // Only a union the chain index may file reads its segments' keys.
-        if union || paths > LINEAR_CHAINS {
-            builder.keys = Some(Box::new(KeyReading {
-                keys: Vec::new(),
-                room: key_room(weight),
-                scratch: KeyScratch::default(),
-            }));
-        }
         let groups = match &*body {
             Node::Brace(members) if union => builder.choice(members, vec![Group::first()]),
             body => builder.walk(body.seq(), vec![Group::first()]),
@@ -230,7 +209,6 @@ pub(super) fn survey(nodes: &[Node]) -> Survey {
     let mut boundaries = 0;
     let mut linear = true;
     let mut weight = 0;
-    let mut paths = 1usize;
     for (i, node) in nodes.iter().enumerate() {
         match node {
             Node::Brace(branches) => {
@@ -241,19 +219,13 @@ pub(super) fn survey(nodes: &[Node]) -> Survey {
                     linear = false;
                 }
                 let before = boundaries;
-                let mut branch_paths = 0usize;
                 weight += 1;
                 for b in branches {
                     let inner = survey(b.seq());
                     boundaries += inner.boundaries;
                     weight += inner.weight.max(1);
-                    branch_paths = branch_paths.saturating_add(inner.paths);
                 }
-                let crosses = boundaries > before;
-                linear &= !crosses;
-                if crosses {
-                    paths = paths.saturating_mul(branch_paths);
-                }
+                linear &= boundaries == before;
             }
             Node::Literal(_) | Node::AnyChar | Node::Star | Node::Class(_) => {
                 weight += node_weight(node);
@@ -269,7 +241,6 @@ pub(super) fn survey(nodes: &[Node]) -> Survey {
         boundaries,
         linear,
         weight,
-        paths,
     }
 }
 
@@ -363,7 +334,6 @@ impl<'a> Builder<'a> {
         let edges = if linear { 0 } else { boundaries + 1 };
         Builder {
             elems: Vec::with_capacity(boundaries + 1),
-            keys: None,
             linear,
             preds: Vec::with_capacity(edges),
             pred_at: Vec::with_capacity(edges),
@@ -414,7 +384,6 @@ impl<'a> Builder<'a> {
             elems: self.elems,
             edges,
             weight,
-            keys: self.keys.map_or_else(Vec::new, |k| k.keys),
             glue,
         }
     }
@@ -761,8 +730,7 @@ impl<'a> Builder<'a> {
     }
 
     /// The node of the group's segment, or of the piece read since the
-    /// last cut; a wildcard piece keeps its nodes, a wildcard segment of
-    /// a crossing brace its keys.
+    /// last cut; a wildcard piece keeps its nodes.
     fn segment(&mut self, g: &Group<'a>, cut: bool) -> u32 {
         let glued = g.state == Boundary::Glue;
         if !self.linear
@@ -778,13 +746,6 @@ impl<'a> Builder<'a> {
         if wild && (glued || cut) {
             self.pieces.resize(id as usize + 1, Vec::new());
             self.pieces[id as usize] = g.buf.clone();
-        }
-        if wild
-            && let Some(k) = &mut self.keys
-            && let Some(keys) = segment_keys(&g.buf, self.ci, k.room, &mut k.scratch)
-        {
-            k.room -= keys.len();
-            k.keys.push((id, keys));
         }
         id
     }

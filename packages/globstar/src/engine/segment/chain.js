@@ -9,12 +9,13 @@ import {
   isGlobstar,
   ACCEPT,
 } from "./graph.js";
-import { WK_AFFIX, WK_SUFFIXES, wildConsumes } from "./wild.js";
+import { ANY, CLASS, WK_AFFIX, WK_PIECES, WK_SUFFIXES, wildConsumes } from "./wild.js";
 import {
   IS_WINDOWS_SEP,
   affixEq,
   asciiLower,
   cmpFolded,
+  ctz32,
   isPathSep,
   litEq,
   nextSep,
@@ -22,7 +23,6 @@ import {
   fold,
 } from "../bytes.js";
 import { DirMatch, PRUNED } from "../../dir-match.js";
-import { N_BRACE, N_CLASS, N_LITERAL, seq } from "../../parse/ast.js";
 
 export const MAX_CHAINS = 64;
 
@@ -361,7 +361,7 @@ export function chainDir(m, str) {
   return DirMatch.from(matched, mayBelow, all);
 }
 
-export const LINEAR_CHAINS = 10;
+const LINEAR_CHAINS = 10;
 
 const MAX_KEY_PRODUCT = 64;
 
@@ -383,7 +383,7 @@ const LOOKUPS = 1 + 2 * KEY_BYTES;
 
 const EMPTY_KEY = { len: 0, back: 0, front: 0, whole: 0, pow: 1 };
 
-export function keyRoom(weight) {
+function keyRoom(weight) {
   return Math.max(weight, 4096);
 }
 
@@ -411,46 +411,6 @@ function then(a, b) {
   };
 }
 
-export function segKeysLen(k) {
-  return k.keys === null ? 1 : k.keys.length;
-}
-
-export function segmentKeys(nodes, ci, room) {
-  const keys = oneKind(nodes, ci, room);
-  if (keys !== null || nodes.length !== 1 || nodes[0].tag !== N_BRACE)
-    return keys !== null && segKeysLen(keys) > room ? null : keys;
-  const out = [];
-  for (const branch of nodes[0].branches) {
-    const k = segmentKeys(seq(branch), ci, room - out.length);
-    if (k === null || k.keys === null) return null;
-    for (const kk of k.keys) out.push(kk);
-  }
-  return { keys: out, infix: null };
-}
-
-function oneKind(nodes, ci, room) {
-  const suffixes = [];
-  const taken = literalRun(nodes, true, ci, room, suffixes);
-  if (taken === nodes.length) return strings(K_EXACT, suffixes);
-  const prefixes = [];
-  literalRun(nodes, false, ci, room, prefixes);
-  const s = shortest(suffixes);
-  const p = shortest(prefixes);
-  if (s === 0 && p === 0) {
-    let longest = null;
-    for (const n of nodes) {
-      if (n.tag === N_LITERAL && (longest === null || n.str.length > longest.length))
-        longest = n.str;
-    }
-    if (longest === null) return null;
-    let infix = "";
-    for (let i = 0; i < Math.min(longest.length, MAX_INFIX); i++)
-      infix += String.fromCharCode(fold(longest.charCodeAt(i), ci));
-    return { keys: null, infix };
-  }
-  return p > s ? strings(K_PREFIX, prefixes) : strings(K_SUFFIX, suffixes);
-}
-
 function shortest(keys) {
   let min = Infinity;
   for (const k of keys) min = Math.min(min, k.len);
@@ -462,56 +422,93 @@ function strings(kind, keys) {
   return { keys: keys.map((k) => [kind, k]), infix: null };
 }
 
-function literalRun(nodes, back, ci, room, out) {
-  const join = back ? (key, node) => then(node, key) : then;
-  let cur = [EMPTY_KEY];
-  let fixed = EMPTY_KEY;
-  const flush = () => {
-    if (fixed.len === 0) return;
-    for (let i = 0; i < cur.length; i++) cur[i] = join(cur[i], fixed);
-    fixed = EMPTY_KEY;
-  };
-  let taken = 0;
-  for (let k = 0; k < nodes.length; k++) {
-    const alts = alternatives(nodes[back ? nodes.length - 1 - k : k], ci, room);
-    if (alts === null) break;
-    if (alts.length === 1) fixed = join(fixed, alts[0]);
-    else {
-      if (cur.length > 1 && cur.length * alts.length > MAX_KEY_PRODUCT) break;
-      flush();
-      const next = [];
-      for (const o of cur) for (const a of alts) next.push(join(o, a));
-      cur = next;
+function keysOf(w, ci) {
+  const suffixes = [];
+  const prefixes = [];
+  const exact = [];
+  const fixed = !w.variable;
+  let pieces = null;
+  if (w.kind === WK_AFFIX) {
+    prefixes.push(keyOf(w.prefixStr, ci));
+    suffixes.push(keyOf(w.suffixStr, ci));
+    if (fixed && w.minLen === w.prefixStr.length + w.suffixStr.length) {
+      exact.push(then(prefixes[0], suffixes[0]));
     }
-    taken++;
+  } else if (w.kind === WK_SUFFIXES) {
+    const p = keyOf(w.prefixStr, ci);
+    prefixes.push(p);
+    if (!w.suffixEmpty) {
+      for (const s of w.suffixSetStr) suffixes.push(keyOf(s, ci));
+      if (fixed && w.minLen === w.prefixStr.length)
+        for (const s of suffixes) exact.push(then(p, s));
+    }
+  } else if (w.kind === WK_PIECES) {
+    pieces = w.matcher;
+    const whole = pieceKeys(pieces, true, ci, suffixes);
+    pieceKeys(pieces, false, ci, prefixes);
+    if (fixed && whole && pieces.ends.length === 1) for (const s of suffixes) exact.push(s);
+  } else return null;
+  if (exact.length > 0) return strings(K_EXACT, exact);
+  const s = shortest(suffixes);
+  const p = shortest(prefixes);
+  if (s === 0 && p === 0) {
+    const lit = pieces === null ? null : longestLiteral(pieces);
+    return lit === null ? null : { keys: null, infix: lit.slice(0, MAX_INFIX) };
   }
-  flush();
-  for (const k of cur) out.push(k);
-  return taken;
+  return p > s ? strings(K_PREFIX, prefixes) : strings(K_SUFFIX, suffixes);
 }
 
-function alternatives(node, ci, room) {
-  if (node.tag === N_LITERAL) return [keyOf(node.str, ci)];
-  if (node.tag === N_CLASS) {
-    if (node.neg) return null;
-    const out = [];
-    for (const { lo, hi } of node.ranges) {
-      if (hi >= 0x80 || out.length + Math.max(0, hi - lo) >= MAX_KEY_PRODUCT) return null;
-      for (let c = lo; c <= hi; c++) out.push(keyOf(String.fromCharCode(c), ci));
+function pieceKeys(p, back, ci, out) {
+  const k = back ? p.ends.length - 1 : 0;
+  const from = k === 0 ? 0 : p.ends[k - 1];
+  const to = p.ends[k];
+  const join = back ? (key, next) => then(next, key) : then;
+  out.length = 0;
+  out.push(EMPTY_KEY);
+  for (let i = from; i < to; i++) {
+    const pos = p.at[back ? to - 1 - (i - from) : i];
+    if (pos === ANY) return false;
+    if (pos < CLASS) {
+      const key = keyOf(String.fromCharCode(pos), ci);
+      for (let j = 0; j < out.length; j++) out[j] = join(out[j], key);
+      continue;
     }
-    return out;
-  }
-  if (node.tag === N_BRACE) {
-    const out = [];
-    for (const branch of node.branches) {
-      const s = seq(branch);
-      if (s.length === 1 && s[0].tag === N_LITERAL) out.push(keyOf(s[0].str, ci));
-      else if (literalRun(s, false, ci, room, out) < s.length) return null;
-      if (out.length > room) return null;
+    const set = p.classes[pos - CLASS];
+    if (set.neg || (set.bits[4] | set.bits[5] | set.bits[6] | set.bits[7]) !== 0) return false;
+    const members = [];
+    for (let w = 0; w < 4; w++) {
+      for (let word = set.bits[w]; word !== 0; word &= word - 1) {
+        const b = (w << 5) | ctz32(word);
+        if (members.length === MAX_KEY_PRODUCT) return false;
+        if (!(ci && b >= 0x41 && b <= 0x5a)) members.push(keyOf(String.fromCharCode(b), ci));
+      }
     }
-    return out;
+    if (out.length * members.length > MAX_KEY_PRODUCT) return false;
+    const prev = out.slice();
+    out.length = 0;
+    for (const o of prev) for (const m of members) out.push(join(o, m));
   }
-  return null;
+  return true;
+}
+
+function longestLiteral(p) {
+  let best = "";
+  let run = "";
+  let from = 0;
+  for (const to of p.ends) {
+    for (let i = from; i < to; i++) {
+      const pos = p.at[i];
+      if (pos < ANY) run += String.fromCharCode(pos);
+      else {
+        if (run.length > best.length) best = run;
+        run = "";
+      }
+    }
+    if (run.length > best.length) best = run;
+    run = "";
+    from = to;
+  }
+  return best === "" ? null : best;
 }
 
 function anchors(chain) {
@@ -534,7 +531,7 @@ function anchors(chain) {
 
 export function chainIndex(literals, chains, graph, ci) {
   if (chains.length <= LINEAR_CHAINS) return null;
-  const { elems, keys } = graph;
+  const elems = graph.elems;
   const firstChain = literals !== null ? 1 : 0;
   const ids = chains.length + firstChain;
   const idBits = Math.max(6, 32 - Math.clz32(ids - 1));
@@ -573,12 +570,12 @@ export function chainIndex(literals, chains, graph, ci) {
       if (e.kind === EL_LIT && e.litStr.length > 0) {
         file(ix, role, K_EXACT, keyOf(e.litStr, ci), id, entries);
         filed = true;
-      } else if (e.kind === EL_WILD && keys !== null && keys[node] !== undefined) {
-        const k = keys[node];
-        if (k.infix === null) {
+      } else if (e.kind === EL_WILD) {
+        const k = keysOf(e.wild, ci);
+        if (k !== null && k.infix === null) {
           for (const [kind, key] of k.keys) file(ix, role, kind, key, id, entries);
           filed = true;
-        } else if (role === R_LAST) {
+        } else if (k !== null && role === R_LAST) {
           ix.infix.push([id, k.infix]);
           filed = true;
         }
