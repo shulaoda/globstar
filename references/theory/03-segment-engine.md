@@ -41,7 +41,7 @@ What a call runs depends only on what compilation kept:
 | chains, a picker and an NFA          | the literal set, then the chains: each after its gate, or those the index selects  | the NFA (§6)              |
 | an NFA alone                         | the NFA                                                                            | the NFA                   |
 
-The graph keeps no chains, and the NFA answers `is_match` as well, when a brace cut a segment into pieces, when there are more than 64 wildcard paths and their nodes exceed four times the pattern's weight or the chain index cannot select them (§5), when the literal paths take more bytes (one more per path) than 64 KiB and four times the pattern's weight, or when a path has more than two globstars, or two with nothing between them.
+The graph keeps no chains, and the NFA answers `is_match` as well, when a brace cut a segment into pieces, when there are more than 64 wildcard paths and their elements weigh more than four times the pattern (§11.1) or the chain index cannot select them (§5), when the literal paths take more bytes (one more per path) than 64 KiB and four times the pattern's weight, or when a path has more than two globstars, or two with nothing between them.
 
 ## 3. The graph
 
@@ -55,11 +55,11 @@ A brace that crosses no separator stays inside its segment and belongs to the in
 
 ### 3.2 Globstars
 
-The parser reads a `**` beside text as a star (note 01, §2.1). One beside a separator, a brace or an edge of the pattern is decided per group as the brace expansions reach it (GLOB_SPEC §9.1): a group at a boundary that reads `**` holds it until the next token; a `/` makes it a pending `**/`, the end of the pattern a bare `**`, and anything else a star. Pending `**/`s count once (`**/**/` ≡ `**/`), except that one whose group gathered tails from several branches becomes a `G0` of its own when the next token is read, so that `{**,a}/` repeated `k` times keeps about `5k` edges rather than `k²`. The empty expansions of a brace beside a `**` continue as a *shadow* group while the `**` may still be a globstar (`{a,}**`, `**{,a}/`), and end once text makes it a star.
+The parser reads a `**` beside text as a star (note 01, §2.1). One beside a separator, a brace or an edge of the pattern is decided per group as the brace expansions reach it (GLOB_SPEC §9.1): a group at a boundary that reads `**` holds it until the next token; a `/` makes it a pending `**/`, the end of the pattern a bare `**`, and anything else a star. Pending `**/`s count once (`**/**/` ≡ `**/`). The empty expansions of a brace beside a `**` continue as a *shadow* group while the `**` may still be a globstar (`{a,}**`, `**{,a}/`), and end once text makes it a star.
 
 ### 3.3 Joins
 
-A node takes an edge from each tail of its group, and a group is copied into every branch of a crossing brace. A group of `k` tails that enters a brace of `m` branches therefore first gathers its tails into one `Join` node when `k · m > k + m`, so that the branches share one edge instead of taking `k` each. Braces that may be empty, side by side, then keep a few edges per brace: `{a/,}` repeated `k` times is about `2k` nodes and `4k` edges, where each `a` would otherwise follow every one before it (`k²/2` edges). No NFA set holds a join, and a chain omits it.
+Every node but a join has one predecessor. A group whose tails are several gathers them into one `Join` node before a node follows them or a crossing brace copies them into its branches; the join takes an edge from each tail, and what follows takes one from the join. Braces that may be empty, side by side, thus keep a few edges per brace: in `{a/,}` or `{**,a}/` repeated `k` times each node would otherwise follow every one before it (`k²/2` edges). And each element has one position before it, which an NFA step enters once (§6). No NFA set holds a join, and a chain omits it.
 
 ### 3.4 The copy room and pieces
 
@@ -95,7 +95,7 @@ Every call passes the suffix prefilter (§13) first. The literal set is then sea
 - **Gates**, for at most 10 wildcard chains (`LINEAR_CHAINS`), and for up to 64 when the index cannot file them. Each chain is tried after two tests read from its ends: the path's last byte against a sketch of the bytes the chain may end with, and its first byte against a literal head's; then the last segment against the chain's last literal or affix (`ends_like`).
 - **The chain index**, for more. Each chain is filed under the literal strings one of its anchored segments must have: its last element's segment (a name, `.DS_Store`; the end of an extension, `*.log`; the start of a prefix, `._*`; a literal it holds, `*.so.*`, by its first 16 bytes), else its first element's, else the first of its block. The strings are read from the segment's compiled element: an affix's prefix or suffix, a suffix set's suffixes, the end or start of a piece-wise segment with its small classes expanded (`[Dd]ebug`, `*.py[cod]`); a brace around wildcards gives none. The literal set is filed under its paths' first segments. A key is its length and its outer four bytes, a lookup one hash probe, and a 64-bit sketch of the outer bytes skips the lookups that cannot hit. A path looks up its last segment, then its first, then the others, and walks each chain selected, without the gates; a chain no key files is tried on every call. The walk decides; the index only chooses which chains to ask, so a 600-member ignore list costs a few lookups and one or two walks. A class product is cut at 64 strings, and the entries are bounded by one per unit of pattern weight, and at least 4,096: a union whose chains would file more is scanned with gates instead.
 
-  Up to 64 chains, a step's selection is a word of bits. Past 64 the index names each chain by its id and is the only picker: a step's selections are sorted and walked once each (JS: listed once per call by a stamp), the inner segments' together, and an exact key compares the whole segment by a 32-bit hash, so names that differ only inside (`n17.js`, `n27.js`) file apart. The index is built only while no key files more than 64 chains and at most 64 go unkeyed or are searched for a literal, so that no lookup walks more than a scan of 64 would; otherwise the NFA answers. A union of 50,000 members of ten shapes keeps 5,000 chains this way and answers in microseconds, where the NFA takes a tenth of a millisecond.
+  Up to 64 chains, a step's selection is a word of bits. Past 64 the index names each chain by its id and is the only picker: a step's selections are sorted and walked once each (JS: listed once per call by a stamp), the inner segments' together, and an exact key compares the whole segment by a 32-bit hash, so names that differ only inside (`n17.js`, `n27.js`) file apart. The index is built only while no key files more than 64 chains and at most 64 go unkeyed or are searched for a literal, so that no lookup walks more than a scan of 64 would; otherwise the NFA answers. A union of 50,000 members of ten shapes keeps 5,000 chains this way and answers in microseconds, where the NFA takes a tenth of a millisecond. Chains that share an element read its strings once.
 
 ## 6. The graph NFA
 
@@ -107,7 +107,7 @@ The NFA over the graph has one state per node and an accepting state, and it ste
 | `Wide`   | Rust only: rows within 4 KiB (about 170 states), no position leading to more than 48 literals     | the same over word rows                        |
 | `Sparse` | everything else, and always with pieces                                                           | per position its successors, literals sorted   |
 
-The sparse NFA keeps, per position, its successors in three parts, the literal ones sorted by literal, the nullable ones, the rest, and its active set lists states and whole positions ("every successor of `p` is entered"), so a step costs what it tests (one binary search for a position's literals) and the tables are linear in the graph. Entering a join enters its successors, as a `G0` does without staying.
+The sparse NFA keeps, per position, its successors in three parts, the literal ones sorted by literal, the nullable ones, the rest, and its active set lists states and whole positions ("every successor of `p` is entered"), so a step costs what it tests (one binary search for a position's literals) and the tables are linear in the graph. Entering a join enters its successors, as a `G0` does without staying. A step enters each position once, and each element has one position before it (§3.3), so a step tests each element at most once.
 
 The prefix bit of `match_dir` is `active ∩ reach1`, where `reach1[s]` holds when some continuation of at least one segment from `s` reaches accept. The all-below bit steps the active set over wildcard-only segments until it settles (§15.4), and gives up past its cap with the safe answer (GLOB_SPEC §15.5).
 
@@ -126,7 +126,7 @@ A segment that holds an escaped `\` on Windows takes no path segment (GLOB_SPEC 
 
 ### 7.1 Suffix sets
 
-The alternation is a list of any length, or a product of braces of up to 1,024 suffixes whose bytes stay within 64 KiB or four times the nodes they come from; past either bound the segment is `Generic`, which holds a product without multiplying it out. The suffixes are grouped by their last byte, so that a segment is compared only with the few that end as it does, in pattern order; four or fewer are scanned in turn after a sketch of their last bytes.
+The alternation is a list of any length, or a product of braces of up to 1,024 suffixes whose bytes stay within four times the nodes they come from, the rest drawn from a pool of 64 KiB that the whole pattern shares; past either bound the segment is `Generic`, which holds a product without multiplying it out. The suffixes are grouped by their last byte, so that a segment is compared only with the few that end as it does, in pattern order; four or fewer are scanned in turn after a sketch of their last bytes.
 
 ### 7.2 Pieces
 
@@ -157,7 +157,7 @@ Every threshold selects a representation; none rejects a pattern. The only limit
 | Threshold                                | Value                                     | Past it                                      |
 | ---------------------------------------- | ----------------------------------------- | -------------------------------------------- |
 | copy room (`graph.rs`)                   | 1 per unit of weight, at least 16,384     | segments are cut into glued pieces           |
-| wildcard chains (`MAX_CHAINS`)           | 64; more while nodes ≤ 4 · weight         | no chains: the NFA answers                   |
+| wildcard chains (`MAX_CHAINS`)           | 64; more while they weigh ≤ 4 · weight    | no chains: the NFA answers                   |
 | chains past 64, per index lookup         | 64 by one key, 64 unkeyed or searched     | no chains: the NFA answers                   |
 | literal paths (`MAX_LITERAL_BYTES`)      | bytes + paths ≤ max(64 KiB, 4 · weight)   | no chains: the NFA answers                   |
 | gated chains (`LINEAR_CHAINS`)           | 10                                        | the chain index selects                      |
@@ -165,7 +165,7 @@ Every threshold selects a representation; none rejects a pattern. The only limit
 | tail comparisons (`MAX_TAIL_CHECKS`)     | 4,096                                     | `chain_dir` gives the safe answer            |
 | `Small` NFA                              | 64 states (JS 32)                         | `Wide` (Rust) or `Sparse`                    |
 | `Wide` NFA (Rust)                        | 4 KiB of rows, 48 literals per position   | `Sparse`                                     |
-| suffix product                           | 1,024 suffixes, 64 KiB or 4 · nodes       | `Generic`                                    |
+| suffix product                           | 1,024 suffixes, 4 · nodes + 64 KiB pool   | `Generic`                                    |
 | suffix scan                              | 4 suffixes                                | grouped by last byte                         |
 | kept closures                            | 128 KiB                                   | the step closes its set                      |
 | in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
@@ -192,9 +192,61 @@ Each layer costs at least a quarter of some bench row when disabled.
 
 ## 11. Complexity
 
-Compilation is linear in the pattern: a brace-free pattern walks its nodes once, a crossing brace adds one node per branch rather than a product, and what it copies is bounded by the room, past which it cuts pieces. Every table built from the graph (chains, suffix products, in-segment closures, NFA rows, index keys) has a size bound past which a linear representation takes over (§9), so memory is linear as well. Matching is `O(n · m)` in the worst case, with `m` the graph's nodes and edges and the glued pieces' states, all linear in the pattern: the NFA over the graph is the non-backtracking floor that rules out exponential behavior. A chain with at most one globstar is `O(n)`.
+### 11.1 Measures
 
-`match_dir` adds at most 65 wildcard-only segments for the all-below proof (64, and the step that shows the set has settled; a set with pieces costs one pass over the glued pieces' states), and 4,096 element comparisons for a chain's tail tokens; past them it gives the safe answer (GLOB_SPEC §15.5). The engine answers `is_match`, `match_dir` and `static_prefixes` without any further construction.
+For a pattern `P`, `|P|` is its length in bytes and `W` its weight (§3.4). A literal weighs its length, a class at most its bytes, a brace at most its bytes with the commas and the braces, any other token one, so `W ≤ |P|`. For a union of members `P_1, …, P_N`, `|P|` is `Σ |P_i| + N`, and the factored body weighs at most `|P| + 1`, since a merge leaves one member no heavier than the ones it replaces. A path `w` has `n` bytes and at most `n + 1` segments.
+
+The *weight* `ω(e)` of an element bounds what testing it against a segment `u` costs per byte of `u`: one for a literal, an affix, a globstar, a join and a piece (whose test the glue NFA makes); the number of suffixes for a suffix set; the number of positions for pieces; the number of states for an in-segment NFA. A test costs `O((|u| + 1) · ω(e))`: a literal or an affix compares at most `|u|` bytes; a suffix set compares its prefix and then each suffix of the group `u`'s last byte selects, each in at most `|u|` bytes; pieces place each piece at most `|u|` times; an in-segment NFA steps each byte over its states, and the closures it keeps fit 128 KiB, which leaves at most 16 words a state. An element is compiled from one closed segment and weighs `O` of that segment's weight, except a suffix set, whose suffixes take at most four times the segment's weight and a share of one 64 KiB pool (§7.1); so the elements of the graph, `ω(G)` together, weigh `O(W)` by Lemma 3.
+
+The bounds count a hash-table operation as `O(1)`, which holds in expectation for keys an adversary does not choose; §11.4 names the tables whose hashes are not keyed.
+
+### 11.2 Compilation
+
+**Theorem 1.** Compiling `P` takes `O(|P| + W log W)` time and `O(|P| + W)` memory.
+
+The theorem is the sum of the lemmas below, one per layer of §2.
+
+**Lemma 1 (parse and factoring).** Parsing takes `O(|P|)` and leaves `O(|P|)` nodes. Factoring a union of total length `L` takes `O(L log L)`.
+
+*Proof.* The parser reads each byte once; a brace of one branch hands its bytes to the enclosing literal (note 01, §2), at most once per level of nesting, so at most 33 times. Factoring hashes each member once, files at most one record per node and sorts the records. A group compares each free member with its head, and each comparison retires the member compared, absorbed or not (note 01, §5.3), so a member is compared at most once, at the cost of its length. ∎
+
+**Lemma 2 (literal ends).** The suffix prefilter takes `O(|P|)`. The static prefixes take `O(W log W)` time and `O(W)` memory.
+
+*Proof.* `trailing` reads the nodes once from the right, and `suffix_set` copies the shared tail into at most 16 suffixes. The head reader of §14.2 spends one unit of its budget `B = 4096 + 2W` on each byte it appends, each separator, each brace it enters and each brace whose branches it looks at; every other step ends a reading or climbs to an enclosing continuation, at most 64 levels up. A reading starts per branch paid for, so there are at most `B + 1` readings, each recording one head. The bytes recorded are counted, and past `64 · B` the reading starts again at the depth limit, which records one head; the heads thus hold `O(B) = O(W)` bytes. `dedupe` sorts them, `O(C log C)` for `C` bytes, and walks the chain of kept prefixes: a failed test removes the chain's top for good, at the cost of its length, and the one test that does not fail costs at most the current head's length. ∎
+
+**Lemma 3 (graph).** The walk takes `O(W)` time and builds a graph of `O(W)` nodes and edges whose elements weigh `O(W)`.
+
+*Proof sketch.* Each node of a walked sequence is visited once, and a crossing brace's subtree is read by `crosses` once per enclosing level, at most 33 times. A visit costs the groups it reaches. After a separator the groups merge into at most four (§3.2: one for the closed segments, one per boundary of a pending `**/`), and a group whose segment is empty differs from another only in its boundary and three flags, so at most 24 such groups exist at once. Groups with text multiply only where a crossing brace copies them into its branches, and the copy is paid from the room of `max(W, 16384)` units before it is made; past the room the open segments become pieces, which are never copied (§3.4), and every later token added to `c` groups pays `c − 1` units of its weight. Several tails pass through one join before a node follows them or a brace copies them (§3.3), so a node takes one edge, a join one per tail it gathers, and a brace copies one tail per group into each branch. The walk thus makes `O(W)` nodes, edges and copies of tokens, and each closed segment compiles in time linear in its weight: suffix products are bounded before they are built (§7.1), the closures an NFA keeps by 128 KiB (§7.3), the glue NFA by its pieces and their edges (§7.5). ∎
+
+**Lemma 4 (paths).** Enumerating the paths takes `O(W)`. The chains kept weigh at most `max(64 · ω(G), 4W) = O(W)` together.
+
+*Proof.* Every node reaches the accept state, since each node becomes a tail that a later node or the end of the pattern takes (§3), and every edge points forward; so every step of the depth-first walk lies on a path it completes. Charge each step to the first path completed below it. The steps charged to a path follow first successors from where it leaves the path before. Successors are listed in node order, and a join's first successor is the first node its group makes, which is no join, the group holding the join alone; a later join that gathers it comes after. On such a run joins and other nodes alternate at worst, and a path is charged at most twice its other nodes, plus one. A wildcard path's other nodes weigh at least their number, a literal path's number at most its bytes plus one, and the walk stops once more than 64 wildcard paths weigh more than `4W` together, or the literal paths take more than `max(64 KiB, 4W)` bytes. ∎
+
+**Lemma 5 (pickers and NFA).** The gates, the chain index and the graph NFA take `O(W log W)` time and `O(W)` memory.
+
+*Proof sketch.* A gate reads a chain's two ends. The index reads each anchored element's strings once, at a cost linear in the element's weight (§5). It files at most `max(W, 4096)` entries, and those of the chain that passes that bound, sorts them and lays them out in a table of twice their number. A `Small` NFA has at most 64 states and a `Wide` one rows within 4 KiB. A `Sparse` one lists each edge once and sorts each position's literal successors, and a literal sits in one list, its one predecessor's (§3.3). ∎
+
+### 11.3 Calls
+
+**Theorem 2.** `is_match(w)` and `match_dir(w)` take `O((n + 1) · W)` time and `O(W)` memory. `static_prefixes` copies `O(W)` bytes.
+
+*Proof.* The prefilter compares at most 16 suffixes with the end of `w`. What follows depends on what compilation kept (§2); each case tests elements against segments, at the cost of §11.1.
+
+- A lone line tests each element on one segment, and the globstar's absorption reads the middle once (§4.1). `match_dir` adds at most 90 tail alignments (`MAX_TAIL_CHECKS`, §4.4), each testing each element on one segment.
+- A block tests its first element on each middle segment and, from each, the next elements on the segments that follow, so each element meets each segment at most once; the dot scan moves right only (§4.2).
+- The literal set makes `O(log K)` comparisons of at most `n` bytes, and `match_dir` one more search.
+- Gates try at most 64 chains, each once. The index makes at most nine lookups per segment it probes and walks a chain at most once in each of its four steps (§5); up to 64 chains there are 64 to walk, and past 64 they weigh `O(W)` together (Lemma 4).
+- A dense NFA step tests each active state once and ORs its row. A sparse step enters each position once, binary-searches its literal successors and tests the others, so each element at most once (§6), and runs the glue NFA once over the segment from all the entries it holds (§7.5). A step on segment `u` thus costs `O((|u| + 1) · W)`. `match_dir` adds at most 65 steps on wildcard-only segments, which test no bytes (§15.4).
+
+A call keeps the NFA's sets, the in-segment NFA's and the glue NFA's sets, and the index's picks: `O(W)`. The static prefixes are those of Lemma 2. ∎
+
+The bound is the one a simulation without backtracking cannot avoid, and the one RE2 and Rust's `regex` state. Its constant is the size of the pattern: a 4 KiB path against `{**,a}/` repeated to 57 KiB takes 0.66 s per call (Rust, 2026-10-27), and sixteen 255-byte segments against `{a*,b*}` repeated to 57 KiB 0.55 ms.
+
+### 11.4 What the bounds assume
+
+The bounds count each hash-table operation as `O(1)`. Three kinds of table hash the keys a pattern decides with a hash an adversary can compute: the graph walk's node and group tables (FNV, `graph.rs`), the chain index (a multiplicative hash of a segment's outer bytes or its polynomial hash, `chain.rs`), and in JS the maps keyed by small integers. Keys chosen to collide make one operation cost up to the table's size, and compilation `O(W²)` at worst. A call's probes of the index stay within Theorem 2, since a probe reads at most the `O(W)` entries. Factoring (Lemma 1) and the static prefixes (Lemma 2) use no hash for their bounds.
+
+`tools/memory-check/tests/scaling.rs` checks the theorems on 19 shapes, the ones that broke an earlier bound among them: four times the pattern costs at most five times the memory and eight times the time, four times the path at most eight times the time.
 
 ## 12. Execution in JS
 
@@ -238,9 +290,9 @@ For a pattern `P` with brace expansions `E(P)` (GLOB_SPEC §10.1), let `head(e)`
 
 `segment/mod.rs::static_prefixes` reads the AST left to right, collecting bytes from literals and `/` from separators. A brace in the head is read branch by branch, each followed by what follows the brace, as a continuation rather than a copy. At the first other node (a wildcard, a `**`) the bytes are cut back to the last separator before it; a brace that the budget or the depth limit stops, and whose branches all start with a separator, ends a whole segment instead. Trailing separators are dropped. Each path through the braces of the head records one head.
 
-Re-reading the continuation once per branch is the only part that can cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal re-reads it once per branch. Each byte read and each branch taken therefore costs one unit of a budget of `4096 + 2 · weight(P)`, and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment, a shorter prefix that is still sound. Recording a head costs every byte read to reach it, and these could still sum to the square of the budget; past 64 budgets of such bytes the reading starts again as if at the depth limit, and the result is the one head before the first brace, which every expansion shares.
+Re-reading the continuation once per branch is the only part that can cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal re-reads it once per branch. Each byte read, each branch taken and each branch looked at for its first node therefore costs one unit of a budget of `4096 + 2 · weight(P)`, and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment, a shorter prefix that is still sound. Recording a head costs every byte read to reach it, and these could still sum to the square of the budget; past 64 budgets of such bytes the reading starts again as if at the depth limit, and the result is the one head before the first brace, which every expansion shares.
 
-With several heads, `dedupe` sorts them by length and bytes and drops every head a shorter kept one covers (`src` covers `src/a`); the empty head covers all.
+With several heads, `dedupe` drops every head a shorter kept one covers (`src` covers `src/a`); the empty head covers all. It reads the heads in byte order, in which the kept heads that are prefixes of the current one form a chain ending at the last of them: only that one may cover the current head, since one before it would have covered it. The kept heads are then ordered by length and bytes.
 
 ```
 src/main.rs        →  { "src/main.rs" }

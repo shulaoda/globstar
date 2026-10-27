@@ -13,8 +13,8 @@ use super::bits::ByteSketch;
 use super::graph::{ACCEPT, Elem, Graph};
 use super::wild::{Wild, WildKind};
 
-/// Wildcard chains kept without an index; more while their nodes fit
-/// four times the pattern's weight.
+/// Wildcard chains kept without an index; more while their elements
+/// weigh at most four times the pattern.
 pub(super) const MAX_CHAINS: usize = 64;
 
 /// The literal set's bytes, one more per path, or four times the weight.
@@ -83,7 +83,7 @@ impl Graph {
             });
         };
         let mut wild_paths: Vec<Vec<u32>> = Vec::new();
-        let mut wild_nodes = 0;
+        let mut wild_weight = 0;
         let mut literal_bytes: Vec<u8> = Vec::new();
         let mut literal_bounds: Vec<u32> = vec![0];
         let mut path: Vec<u32> = Vec::new();
@@ -108,10 +108,14 @@ impl Graph {
                     self.literal_path(&nodes, &mut literal_bytes);
                     literal_bounds.push(literal_bytes.len() as u32);
                 } else {
-                    wild_nodes += nodes.len();
+                    // A node shared by several paths weighs in each.
+                    wild_weight += nodes
+                        .iter()
+                        .map(|&i| self.elems[i as usize].weight())
+                        .sum::<usize>();
                     wild_paths.push(nodes);
                 }
-                if wild_paths.len() > MAX_CHAINS && wild_nodes > 4 * self.weight
+                if wild_paths.len() > MAX_CHAINS && wild_weight > 4 * self.weight
                     || literal_bytes.len() + literal_bounds.len()
                         > MAX_LITERAL_BYTES.max(4 * self.weight)
                 {
@@ -787,6 +791,8 @@ pub(super) struct Key {
 
 #[derive(Debug)]
 enum SegKeys {
+    /// A literal segment's.
+    Lit(Key),
     Strings(Vec<(Kind, Key)>),
     /// Every match holds this literal (`*.so.*` holds `.so.`).
     Infix(Box<[u8]>),
@@ -971,28 +977,39 @@ impl ChainIndex {
                 );
             }
         }
+        let mut read = |node: u32| match &elems[node as usize] {
+            Elem::Lit(lit) if !lit.is_empty() => Some(SegKeys::Lit(Key::of(lit, ci))),
+            Elem::Wild(w) => keys_of(w, ci, &mut scratch),
+            _ => None,
+        };
+        // Chains that share a node read its keys once, into
+        // `keys[slot[node]]`.
+        let mut slot = vec![u32::MAX; elems.len()];
+        let mut keys: Vec<Option<SegKeys>> = Vec::with_capacity(chains.len());
         for (c, chain) in chains.iter().enumerate() {
             let id = c + first_chain;
             let mut filed = false;
             for (role, node) in chain.anchors() {
-                match &elems[node as usize] {
-                    Elem::Lit(lit) if !lit.is_empty() => {
-                        index.file(role, Kind::Exact, Key::of(lit, ci), id, &mut entries);
+                let at = &mut slot[node as usize];
+                if *at == u32::MAX {
+                    *at = keys.len() as u32;
+                    keys.push(read(node));
+                }
+                match &keys[*at as usize] {
+                    Some(SegKeys::Lit(key)) => {
+                        index.file(role, Kind::Exact, *key, id, &mut entries);
                         filed = true;
                     }
-                    Elem::Wild(w) => match keys_of(w, ci, &mut scratch) {
-                        Some(SegKeys::Strings(strings)) => {
-                            for (kind, key) in strings {
-                                index.file(role, kind, key, id, &mut entries);
-                            }
-                            filed = true;
+                    Some(SegKeys::Strings(strings)) => {
+                        for &(kind, key) in strings.iter() {
+                            index.file(role, kind, key, id, &mut entries);
                         }
-                        Some(SegKeys::Infix(lit)) if role == Role::Last => {
-                            infix.push((id as u32, lit));
-                            filed = true;
-                        }
-                        _ => {}
-                    },
+                        filed = true;
+                    }
+                    Some(SegKeys::Infix(lit)) if role == Role::Last => {
+                        infix.push((id as u32, lit.clone()));
+                        filed = true;
+                    }
                     _ => {}
                 }
                 if filed {

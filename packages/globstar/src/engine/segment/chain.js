@@ -9,7 +9,7 @@ import {
   isGlobstar,
   ACCEPT,
 } from "./graph.js";
-import { ANY, CLASS, WK_AFFIX, WK_PIECES, WK_SUFFIXES, wildConsumes } from "./wild.js";
+import { ANY, CLASS, WK_AFFIX, WK_PIECES, WK_SUFFIXES, wildConsumes, wildWeight } from "./wild.js";
 import {
   IS_WINDOWS_SEP,
   affixEq,
@@ -43,7 +43,7 @@ export function pathsOf(graph, ci) {
     return chain === null ? none : { literals: null, chains: [chain] };
   }
   const paths = [];
-  let pathNodes = 0;
+  let pathWeight = 0;
   const literalPaths = [];
   let literalChars = 0;
   const path = [];
@@ -65,11 +65,15 @@ export function pathsOf(graph, ci) {
         literalPaths.push(ci ? asciiLower(joined) : joined);
         literalChars += joined.length;
       } else {
-        pathNodes += nodes.length;
+        // A node shared by several paths weighs in each.
+        for (const i of nodes) {
+          const e = graph.elems[i];
+          pathWeight += e.kind === EL_WILD ? wildWeight(e.wild) : 1;
+        }
         paths.push(exact(nodes));
       }
       if (
-        (paths.length > MAX_CHAINS && pathNodes > 4 * graph.weight) ||
+        (paths.length > MAX_CHAINS && pathWeight > 4 * graph.weight) ||
         literalChars + literalPaths.length > Math.max(MAX_LITERAL_BYTES, 4 * graph.weight)
       ) {
         return none;
@@ -562,23 +566,30 @@ export function chainIndex(literals, chains, graph, ci) {
       file(ix, R_FIRST, K_EXACT, key, 0, entries);
     }
   }
+  const read = (node) => {
+    const e = elems[node];
+    if (e.kind === EL_LIT && e.litStr.length > 0) {
+      return { keys: [[K_EXACT, keyOf(e.litStr, ci)]], infix: null };
+    }
+    return e.kind === EL_WILD ? keysOf(e.wild, ci) : null;
+  };
+  // Chains that share a node read its keys once.
+  const nodeKeys = new Map();
   for (let c = 0; c < chains.length; c++) {
     const id = c + firstChain;
     let filed = false;
     for (const [role, node] of anchors(chains[c])) {
-      const e = elems[node];
-      if (e.kind === EL_LIT && e.litStr.length > 0) {
-        file(ix, role, K_EXACT, keyOf(e.litStr, ci), id, entries);
+      let k = nodeKeys.get(node);
+      if (k === undefined) {
+        k = read(node);
+        nodeKeys.set(node, k);
+      }
+      if (k !== null && k.infix === null) {
+        for (const [kind, key] of k.keys) file(ix, role, kind, key, id, entries);
         filed = true;
-      } else if (e.kind === EL_WILD) {
-        const k = keysOf(e.wild, ci);
-        if (k !== null && k.infix === null) {
-          for (const [kind, key] of k.keys) file(ix, role, kind, key, id, entries);
-          filed = true;
-        } else if (k !== null && role === R_LAST) {
-          ix.infix.push([id, k.infix]);
-          filed = true;
-        }
+      } else if (k !== null && role === R_LAST) {
+        ix.infix.push([id, k.infix]);
+        filed = true;
       }
       if (filed) break;
     }

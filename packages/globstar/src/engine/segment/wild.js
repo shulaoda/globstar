@@ -13,7 +13,9 @@ export const NEVER_LEN = 0x7fffffff;
 
 const MAX_SUFFIX_PRODUCT = 1024;
 
-const MAX_SUFFIX_BYTES = 64 * 1024;
+// The enumerated suffixes may take four times the nodes they come from,
+// and past that a pool of this many bytes the whole pattern shares.
+export const MAX_SUFFIX_BYTES = 64 * 1024;
 
 const GROUP_SCRATCH = new Int32Array(65);
 
@@ -43,7 +45,8 @@ export function makeWild(kind, fields) {
   };
 }
 
-export function compileWild(nodes, dot, ci) {
+/** `pools.suffixPool`: what suffix sets may still take past four times their nodes. */
+export function compileWild(nodes, dot, ci, pools) {
   let idx = 0;
   while (idx < nodes.length && nodes[idx].tag === N_LITERAL) idx++;
   const prefix = concatLits(nodes, idx);
@@ -56,7 +59,7 @@ export function compileWild(nodes, dot, ci) {
     else break;
     idx += 1;
   }
-  const suffixes = suffixProduct(nodes, idx);
+  const suffixes = suffixProduct(nodes, idx, pools);
   if (suffixes === null) {
     const pieces = compilePieces(nodes, dot, ci);
     if (pieces !== null) return makeWild(WK_PIECES, pieces);
@@ -102,14 +105,14 @@ function lastGroup(c, ci) {
   return c & 63;
 }
 
-function suffixProduct(nodes, from) {
+function suffixProduct(nodes, from, pools) {
   if (from + 1 === nodes.length && nodes[from].tag === N_LITERAL) {
     return [nodes[from].str];
   }
   let parts = [""];
   let size = 1;
   let source = 1;
-  const fits = () => size <= Math.max(MAX_SUFFIX_BYTES, source * 4);
+  const fits = () => size <= source * 4 + pools.suffixPool;
   for (let i = from; i < nodes.length; i++) {
     const node = nodes[i];
     if (node.tag === N_LITERAL) {
@@ -138,7 +141,16 @@ function suffixProduct(nodes, from) {
       return null;
     }
   }
+  pools.suffixPool -= Math.max(0, size - source * 4);
   return parts;
+}
+
+/** A bound on testing one segment, per byte of it. */
+export function wildWeight(w) {
+  if (w.kind === WK_AFFIX) return 1;
+  if (w.kind === WK_SUFFIXES) return w.suffixSetStr.length + 1;
+  if (w.kind === WK_PIECES) return Math.max(w.matcher.at.length, 1);
+  return w.matcher.kinds.length;
 }
 
 export function wildConsumes(m, w, str, s, t) {

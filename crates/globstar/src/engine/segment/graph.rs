@@ -10,7 +10,9 @@ use crate::engine::bytes::has_escaped_sep;
 use crate::parse::ast::Node;
 
 use super::Bytes;
-use super::wild::{Affix, GlueNfa, NEVER, Wild, WildKind, compile_wild, concat_lits};
+use super::wild::{
+    Affix, GlueNfa, MAX_SUFFIX_BYTES, NEVER, Wild, WildKind, compile_wild, concat_lits,
+};
 
 /// The entry of an `Elem::Piece` no segment starts in.
 pub(super) const INNER: u32 = u32::MAX;
@@ -111,6 +113,8 @@ struct Builder<'a> {
     ends: Vec<u32>,
     memo: HashMap<u64, u32, BuildHasherDefault<Fnv>>,
     room: usize,
+    /// What suffix sets may take past four times their nodes.
+    suffix_pool: usize,
     dot: bool,
     ci: bool,
 }
@@ -140,6 +144,14 @@ impl Elem {
         match self {
             Elem::Lit(lit) => lit,
             _ => unreachable!("not a literal"),
+        }
+    }
+
+    /// A bound on testing one segment, per byte of it.
+    pub(super) fn weight(&self) -> usize {
+        match self {
+            Elem::Wild(w) => w.weight(),
+            _ => 1,
         }
     }
 
@@ -342,6 +354,7 @@ impl<'a> Builder<'a> {
             ends: Vec::new(),
             memo: HashMap::with_capacity_and_hasher(edges, Default::default()),
             room: COPY_PER_WEIGHT.saturating_mul(weight).max(MIN_COPY_ROOM),
+            suffix_pool: MAX_SUFFIX_BYTES,
             dot,
             ci,
         }
@@ -514,15 +527,14 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Before a group is copied into `ways` branches, its tails become
-    /// one join when that keeps fewer edges (`k · ways > k + ways`).
-    fn join(&mut self, g: &mut Group, ways: usize) {
+    /// Several tails pass through one join, before a node follows them or
+    /// a brace copies them: every other node has one predecessor.
+    fn gather(&mut self, g: &mut Group) {
         if g.tails.len() < 2 {
             return;
         }
         g.dedupe_tails();
-        let k = g.tails.len();
-        if k * ways <= k + ways {
+        if g.tails.len() < 2 {
             return;
         }
         let id = self.emit(Elem::Join, &g.tails, g.state == Boundary::Glue);
@@ -542,7 +554,7 @@ impl<'a> Builder<'a> {
             groups = self.cut_all(groups);
         }
         for g in groups.iter_mut() {
-            self.join(g, branches.len());
+            self.gather(g);
         }
         let mut merged = Merged::default();
         for branch in branches {
@@ -619,6 +631,7 @@ impl<'a> Builder<'a> {
         if !g.pending_globstar {
             return;
         }
+        self.gather(g);
         let id = match g.tails[..] {
             [t] if t != START && matches!(self.elems[t as usize], Elem::G0) => t,
             _ => self.emit(Elem::G0, &g.tails, false),
@@ -668,11 +681,6 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let into = if g.double_star {
-                // Tails a pending `**/` gathered become one `G0`, or they
-                // pile up (`{**,a}/` × k: k² edges).
-                if g.tails.len() > 1 {
-                    self.settle(g);
-                }
                 g.double_star = false;
                 g.shadow = false;
                 g.pending_globstar = true;
@@ -716,6 +724,7 @@ impl<'a> Builder<'a> {
             } else {
                 Elem::G1
             };
+            self.gather(&mut g);
             let id = self.emit(elem, &g.tails, false);
             self.end_after(id);
         } else if g.state == Boundary::Glue && g.buf.is_empty() {
@@ -724,14 +733,15 @@ impl<'a> Builder<'a> {
             }
         } else {
             self.settle(&mut g);
-            let id = self.segment(&g, false);
+            let id = self.segment(&mut g, false);
             self.end_after(id);
         }
     }
 
     /// The node of the group's segment, or of the piece read since the
     /// last cut; a wildcard piece keeps its nodes.
-    fn segment(&mut self, g: &Group<'a>, cut: bool) -> u32 {
+    fn segment(&mut self, g: &mut Group<'a>, cut: bool) -> u32 {
+        self.gather(g);
         let glued = g.state == Boundary::Glue;
         if !self.linear
             && let [node] = g.buf[..]
@@ -750,7 +760,7 @@ impl<'a> Builder<'a> {
         id
     }
 
-    fn close(&self, buf: &[&Node]) -> Elem {
+    fn close(&mut self, buf: &[&Node]) -> Elem {
         // An escaped `\` on Windows is a separator no segment holds
         // (GLOB_SPEC §4.2): a wildcard that wants more bytes than any
         // segment has.
@@ -767,7 +777,7 @@ impl<'a> Builder<'a> {
             });
         }
         if !buf.iter().all(|node| matches!(node, Node::Literal(_))) {
-            return Elem::Wild(compile_wild(buf, self.dot, self.ci));
+            return Elem::Wild(compile_wild(buf, self.dot, self.ci, &mut self.suffix_pool));
         }
         Elem::Lit(concat_lits(buf))
     }

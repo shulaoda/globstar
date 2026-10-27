@@ -11,7 +11,15 @@ import {
   seq,
 } from "../../parse/ast.js";
 import { hasEscapedSep } from "../bytes.js";
-import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild, GlueNfa } from "./wild.js";
+import {
+  WK_AFFIX,
+  NEVER_LEN,
+  MAX_SUFFIX_BYTES,
+  compileWild,
+  concatLits,
+  makeWild,
+  GlueNfa,
+} from "./wild.js";
 
 export const EL_LIT = 0;
 export const EL_WILD = 1;
@@ -264,6 +272,7 @@ class Builder {
     this.glued = null;
     this.pieces = [];
     this.room = Math.max(COPY_PER_WEIGHT * weight, MIN_COPY_ROOM);
+    this.suffixPool = MAX_SUFFIX_BYTES;
     this.dot = dot;
     this.ci = ci;
   }
@@ -334,11 +343,12 @@ class Builder {
     else this.succs[tail].push(id);
   }
 
-  join(g, ways) {
+  // Several tails pass through one join, before a node follows them or a
+  // brace copies them: every other node has one predecessor.
+  gather(g) {
     if (g.tails.length < 2) return;
     dedupeTails(g);
-    const k = g.tails.length;
-    if (k * ways <= k + ways) return;
+    if (g.tails.length < 2) return;
     const id = this.emit(JOIN_ELEM, g.tails, g.state === B_GLUE);
     g.tails.length = 0;
     g.tails.push(id);
@@ -348,7 +358,7 @@ class Builder {
     let held = 0;
     for (const g of groups) for (const n of g.buf) held += nodeWeight(n);
     if (!this.afford((branches.length - 1) * held)) groups = this.cutAll(groups);
-    for (const g of groups) this.join(g, branches.length);
+    for (const g of groups) this.gather(g);
     const merged = mergedGroups();
     for (const branch of branches) {
       for (const g of this.walk(seq(branch), groups.map(forkGroup))) mergeGroup(merged, g);
@@ -419,6 +429,7 @@ class Builder {
 
   settle(g) {
     if (!g.pendingGlobstar) return;
+    this.gather(g);
     const t = g.tails[0];
     const lone = g.tails.length === 1 && t !== START && this.elems[t] === G0_ELEM;
     rebase(g, lone ? t : this.emit(G0_ELEM, g.tails, false), B_SEP);
@@ -455,7 +466,6 @@ class Builder {
       }
       let into;
       if (g.doubleStar) {
-        if (g.tails.length > 1) this.settle(g);
         g.doubleStar = false;
         g.shadow = false;
         g.pendingGlobstar = true;
@@ -486,6 +496,7 @@ class Builder {
     if (g.shadow && !g.doubleStar) return;
     if (g.doubleStar) {
       const elem = g.state === B_START ? G0_ELEM : G1_ELEM;
+      this.gather(g);
       this.link(this.emit(elem, g.tails, false), ACCEPT);
     } else if (g.state === B_GLUE && g.buf.length === 0) {
       for (const t of g.tails) this.link(t, ACCEPT);
@@ -496,6 +507,7 @@ class Builder {
   }
 
   segment(g, cut) {
+    this.gather(g);
     const elem = this.close(g.buf);
     const wild = elem.kind === EL_WILD;
     const glued = g.state === B_GLUE;
@@ -509,7 +521,8 @@ class Builder {
       return makeElem(EL_WILD, null, makeWild(WK_AFFIX, { minLen: NEVER_LEN, variable: false }));
     }
     for (const n of buf) {
-      if (n.tag !== N_LITERAL) return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci));
+      if (n.tag !== N_LITERAL)
+        return makeElem(EL_WILD, null, compileWild(buf, this.dot, this.ci, this));
     }
     return makeElem(EL_LIT, concatLits(buf, buf.length), null);
   }

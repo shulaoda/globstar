@@ -24,10 +24,10 @@ W:set G0 L G0 W:affix(2) | chains 2 | nfa small	src/**/*.ts	tests/**/*.ts	lib/**
 G0 W:set G1 W:affix | chains 2 | nfa small	**/node_modules/**	**/.git/**	**/*.log
 G0 L G0 W:set W:affix | chains 2 | nfa small	**/.DS_Store	**/Thumbs.db	src/**/*.ts
 chains 0 | literals 3 | nfa none	src/a/x.ts	src/a/y.ts	src/b/x.ts
-L(4) G1 | chains 2 | nfa small	a/x/**	b/y/**
+L(4) J G1 | chains 2 | nfa small	a/x/**	b/y/**
 L W:set L G0 G1 W:affix | chains 2 | nfa small	a/x/**	a/y/**	b/**/*.ts
 G0 L G0 W:set L | chains 2 | nfa small	**/*.log	**/*.tmp	src/**/x
-L W:affix W:set L W:affix L G1 | chains 2 | nfa small	packages/*/dist/**	packages/*/coverage/**	apps/*/out/**
+L W:affix W:set L W:affix L J G1 | chains 2 | nfa small	packages/*/dist/**	packages/*/coverage/**	apps/*/out/**
 G0 L G0 W:affix(2) L | chains 3 | nfa small	**/.env.*	**/vite.config.*	src/**/x
 # Names in one segment make a set chain; each wildcard member is a chain of
 # its own.
@@ -45,7 +45,7 @@ L G0 W:set | chains 1 | nfa none	src/**/test_*.{js,ts}
 W:pieces | chains 1 | nfa none	a*b*c*d*e*f
 W:pieces | chains 1 | nfa none	x*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b*b
 G0 L G1 | chains 1 | nfa small	**/node_modules/**
-L(4) W:pieces | chains 2 | nfa small	a/[ab]	.h/a/ab/[ab]
+L(4) J W:pieces | chains 2 | nfa small	a/[ab]	.h/a/ab/[ab]
 # A union's plain paths are one sorted set; a member given twice is parsed
 # once, a second spelling is not folded; members that merge into one body
 # are that body.

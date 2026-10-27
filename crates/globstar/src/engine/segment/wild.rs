@@ -26,9 +26,9 @@ const GROUP_MASK: u8 = GROUPS as u8 - 1;
 /// NFA; a single list is enumerated whatever its length.
 const MAX_SUFFIX_PRODUCT: usize = 1024;
 
-/// The enumerated suffixes may not take more than this, or four times
-/// their nodes.
-const MAX_SUFFIX_BYTES: usize = 64 * 1024;
+/// The enumerated suffixes may take four times the nodes they come from,
+/// and past that a pool of this many bytes the whole pattern shares.
+pub(super) const MAX_SUFFIX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub(super) struct Wild {
@@ -123,7 +123,7 @@ pub(super) fn concat_lits(nodes: &[&Node]) -> Bytes {
     }
 }
 
-pub(super) fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
+pub(super) fn compile_wild(nodes: &[&Node], dot: bool, ci: bool, pool: &mut usize) -> Wild {
     let mut idx = nodes
         .iter()
         .take_while(|n| matches!(n, Node::Literal(_)))
@@ -139,7 +139,7 @@ pub(super) fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
         }
         idx += 1;
     }
-    let Some(mut suffixes) = suffix_product(&nodes[idx..]) else {
+    let Some(mut suffixes) = suffix_product(&nodes[idx..], pool) else {
         return Pieces::wild(nodes, dot, ci).unwrap_or_else(|| SegNfa::wild(nodes, dot, ci));
     };
     let dot_protect = !dot && prefix.is_empty() && (has_star || anychars > 0);
@@ -163,15 +163,17 @@ pub(super) fn compile_wild(nodes: &[&Node], dot: bool, ci: bool) -> Wild {
 }
 
 /// The literal suffixes after the wildcards, enumerated; `None` when
-/// something else follows or the product passes its caps.
-fn suffix_product(nodes: &[&Node]) -> Option<Vec<Vec<u8>>> {
+/// something else follows or the product passes its caps. What passes
+/// four times the nodes is drawn from `pool`.
+fn suffix_product(nodes: &[&Node], pool: &mut usize) -> Option<Vec<Vec<u8>>> {
     if let [Node::Literal(bytes)] = nodes {
         return Some(vec![bytes.clone()]);
     }
     let mut parts: Vec<Vec<u8>> = vec![Vec::new()];
     // Σ (part + 1) bytes, and what the nodes themselves hold.
     let (mut size, mut source) = (1usize, 1usize);
-    let fits = |size: usize, source: usize| size <= MAX_SUFFIX_BYTES.max(source.saturating_mul(4));
+    let free = *pool;
+    let fits = |size: usize, source: usize| size <= source.saturating_mul(4).saturating_add(free);
     for node in nodes {
         match node {
             Node::Literal(bytes) => {
@@ -217,7 +219,23 @@ fn suffix_product(nodes: &[&Node]) -> Option<Vec<Vec<u8>>> {
             _ => return None,
         }
     }
+    *pool -= size.saturating_sub(source.saturating_mul(4));
     Some(parts)
+}
+
+impl Wild {
+    /// A bound on testing one segment, per byte of it.
+    pub(super) fn weight(&self) -> usize {
+        match &self.kind {
+            WildKind::Affix(_) => 1,
+            WildKind::Suffixes(set) => set.bounds.len(),
+            WildKind::Pieces(pieces) => pieces.at.len().max(1),
+            WildKind::Generic(nfa) => match nfa.as_ref() {
+                SegNfa::Small(n) => n.states.len(),
+                SegNfa::Wide(n) => n.states.len(),
+            },
+        }
+    }
 }
 
 impl Affix {

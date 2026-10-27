@@ -27,6 +27,7 @@ fn large_patterns_stay_small() {
     let (x16, x32, nest) = (x(16_384), x(32_705), format!("{}/y", x(32_703)));
     let (one, distinct) = (format!("{x16}a"), format!("{x16}/aaa"));
     let cut = format!("abcdefghijklmnop/{x16}bq");
+    let product = format!("d7/q{}7abababbaba", x(50));
     let wide = copied(16, "[a-z", "\x01-\x7f", "]");
     let cases = [
         (
@@ -107,6 +108,25 @@ fn large_patterns_stay_small() {
             "az",
             false,
             4 * MB,
+            16 * MB,
+        ),
+        // Suffix sets past four times their nodes share one pool.
+        (
+            "640 suffix products",
+            vec![format!("*{}{}/", x(50), "{a,b}".repeat(10)).repeat(640)],
+            "a",
+            false,
+            4 * MB,
+            8 * MB,
+        ),
+        (
+            "1,000 members with suffix products",
+            names(1_000, |i| {
+                format!("d{i}/*{}{i}{}", "x".repeat(50), "{a,b}".repeat(10))
+            }),
+            &product,
+            true,
+            8 * MB,
             16 * MB,
         ),
         // A long segment keeps no per-state closures past the budget.
