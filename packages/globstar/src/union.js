@@ -25,24 +25,34 @@ export function factorBranches(branches) {
       }
     }
   }
+  // Deepest segment first: a member takes part in one merge at most, the
+  // deepest it fits, as the head or as one absorbed. One compared with a
+  // head it does not fit, which only a hash collision groups, takes part
+  // in none.
   sortEntries(entries);
+  const done = new Uint8Array(seqs.length);
   const absorbed = new Uint8Array(seqs.length);
   for (let run = 0; run < entries.length; ) {
     const [k, hash] = entries[run];
     let end = run + 1;
     while (end < entries.length && entries[end][0] === k && entries[end][1] === hash) end++;
     let h = run;
-    while (h < end && absorbed[entries[h][2]] === 1) h++;
+    while (h < end && done[entries[h][2]] === 1) h++;
     if (h < end) {
       const [, , head, at] = entries[h];
       const lits = [seqs[head][at]];
       for (let e = h + 1; e < end; e++) {
         const i = entries[e][2];
-        if (absorbed[i] === 1 || !sameBut(seqs[head], seqs[i], at)) continue;
+        if (done[i] === 1) continue;
+        done[i] = 1;
+        if (!sameBut(seqs[head], seqs[i], at)) continue;
         absorbed[i] = 1;
         lits.push(seqs[i][at]);
       }
-      if (lits.length > 1) seqs[head][at] = brace(lits);
+      if (lits.length > 1) {
+        done[head] = 1;
+        seqs[head][at] = brace(lits);
+      }
     }
     run = end;
   }

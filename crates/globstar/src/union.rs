@@ -33,23 +33,31 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
             }
         }
     }
-    // Deepest segment first: a member merges at the deepest segment it
-    // fits, and once absorbed takes no part at shallower ones.
+    // Deepest segment first: a member takes part in one merge at most,
+    // the deepest it fits, as the head or as one absorbed. One compared
+    // with a head it does not fit, which only a hash collision groups,
+    // takes part in none.
     entries.sort_unstable_by(|a, b| b.k.cmp(&a.k).then(a.hash.cmp(&b.hash)).then(a.i.cmp(&b.i)));
+    let mut done = vec![false; seqs.len()];
     let mut absorbed = vec![false; seqs.len()];
     for alike in entries.chunk_by(|a, b| (a.k, a.hash) == (b.k, b.hash)) {
-        let Some(head) = alike.iter().find(|e| !absorbed[e.i]) else {
+        let Some(head) = alike.iter().find(|e| !done[e.i]) else {
             continue;
         };
         let (h, at) = (head.i, head.at);
         let mut lits = Vec::with_capacity(alike.len());
         for e in alike {
-            if e.i != h && !absorbed[e.i] && same_but(&seqs[h], &seqs[e.i], at) {
+            if e.i == h || done[e.i] {
+                continue;
+            }
+            done[e.i] = true;
+            if same_but(&seqs[h], &seqs[e.i], at) {
                 absorbed[e.i] = true;
                 lits.push(std::mem::replace(&mut seqs[e.i][at], Node::Separator));
             }
         }
         if !lits.is_empty() {
+            done[h] = true;
             lits.insert(0, std::mem::replace(&mut seqs[h][at], Node::Separator));
             seqs[h][at] = Node::Brace(lits);
         }

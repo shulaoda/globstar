@@ -168,6 +168,11 @@
 ["**/*.log","**/*.tmp","src/**/x"]	a/.b.log	match
 ["**/*.log","**/*.tmp","src/**/x"]	src/a/x	match
 ["**/*.log","**/*.tmp","src/**/x"]	a/log	no-match
+# members merged at a deeper segment are not merged again
+["x/a/*","x/b/*","y/a/*","y/c/*"]	x/b/f	match
+["x/a/*","x/b/*","y/a/*","y/c/*"]	y/c/f	match
+["x/a/*","x/b/*","y/a/*","y/c/*"]	y/b/f	no-match
+["x/a/*","x/b/*","y/a/*","y/c/*"]	x/c/f	no-match
 
 ## or.names_and_wildcards_under_globstar (the names make one set chain, each wildcard its own)
 ["**/.DS_Store","**/Thumbs.db","**/*.log"]	a/.DS_Store	match	dot=false

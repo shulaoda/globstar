@@ -66,13 +66,13 @@ The JS `compileMatcher` accepts negated members: the positive members are factor
 
 ### 5.3 Merging segments
 
-The merge takes the members made only of literals, separators and the wildcards `*`, `?` and `**`, with at least one wildcard. A member is hashed in one pass: its hash is the sum of its node hashes, each mixed with its position, so the hash of the member with one node masked is that sum less the node's term. For each segment that ends in a literal, the member records (segment index, that masked hash, member, node). The records are sorted by segment (deepest first), hash and member; the members of one (segment, hash) group are compared node by node with the first of them that is still free (`same_but`), and those that agree are merged into it: its literal becomes a brace of all their literals, and the others are dropped. A member joins the deepest group it fits and takes no part at shallower segments.
+The merge takes the members made only of literals, separators and the wildcards `*`, `?` and `**`, with at least one wildcard. A member is hashed in one pass: its hash is the sum of its node hashes, each mixed with its position, so the hash of the member with one node masked is that sum less the node's term. For each segment that ends in a literal, the member records (segment index, that masked hash, member, node). The records are sorted by segment (deepest first), hash and member; the members of one (segment, hash) group are compared node by node with the first of them that is still free (`same_but`), and those that agree are merged into it: its literal becomes a brace of all their literals, and the others are dropped. A member takes part in one merge at most, the deepest it fits, as the head or as one absorbed; one compared with a head it does not fit, which only a collision of the hash puts in its group, takes part in none.
 
 Examples: `**/a/**` with `**/b/**` gives `**/{a,b}/**`; `**/*.log` with `**/*.tmp` gives `**/*{.log,.tmp}`; `src/**/*.ts` with `tests/**/*.ts` gives `{src,tests}/**/*.ts`.
 
 ## 6. Complexity
 
-Parsing is one pass, linear in the pattern. Factoring hashes each member in one pass, each record costs a constant, and a member is compared node by node only against the head of its group, so it is linear in the members' total length as well.
+Parsing is one pass, linear in the pattern. Factoring hashes each member in one pass and sorts the records, `O(L log L)` for members of total length `L`; each comparison retires the member compared, so the comparisons cost `O(L)` together, whatever the hash does (note 03, Lemma 1).
 
 ## 7. Source map
 
