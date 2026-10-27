@@ -4,6 +4,12 @@
 // `difftest` harness (the `fuzz` profile: release speed with
 // `debug_assert!` and overflow checks on); every token must agree. A
 // divergence reproduces from its seed. About 5% of the cases are long.
+// Two properties hold besides, checked on the JS side (Rust agrees with
+// it token for token): a union answers what its members do together, and
+// every path a pattern matches lies under one of its static prefixes.
+// Half the union and prefix cases are variants of one member, and their
+// paths instances of a member with one segment swapped, which is where
+// factoring merges.
 //
 //   node scripts/fuzz.mjs                         # 50k mixed cases, seed 1
 //   node scripts/fuzz.mjs --seed 99 --count 200000
@@ -21,6 +27,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileMatcher } from "../packages/globstar/src/glob.js";
 import { GlobError } from "../packages/globstar/src/error.js";
+import { DirMatch } from "../packages/globstar/src/dir-match.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 process.chdir(ROOT);
@@ -237,6 +244,46 @@ function jsResult(c) {
   }
 }
 
+// A matched path lies under a static prefix (theory 03, Proposition 2);
+// a union's answer is its members' together.
+function propertyFailure(c) {
+  if (c.sample === undefined && !UNION.has(c.cmd)) return null;
+  const opts = { dot: c.dot, caseInsensitive: c.ci };
+  let union;
+  let members;
+  try {
+    union = compileMatcher(c.patterns, opts);
+    members = c.patterns.map((p) => compileMatcher(p, opts));
+  } catch {
+    return null;
+  }
+  const paths = c.cmd === "s" ? c.sample : [c.input];
+  for (const path of paths) {
+    const any = members.some((m) => m.match(path));
+    if (c.cmd === "u" && union.match(path) !== any)
+      return `union ${!any} on ${JSON.stringify(path)}`;
+    if (c.cmd === "ud" && DirMatch.matches(union.matchDir(path)) !== any) {
+      return `union matchDir exact ${!any} on ${JSON.stringify(path)}`;
+    }
+    if (c.cmd === "s" && any && !underPrefix(union.staticPrefixes(), path, c.ci)) {
+      return `${JSON.stringify(path)} under no static prefix`;
+    }
+  }
+  return null;
+}
+
+function underPrefix(prefixes, path, ci) {
+  const fold = (b) => (ci && b >= 0x41 && b <= 0x5a ? b + 32 : b);
+  const p = ENC.encode(path);
+  return prefixes.some((x) => {
+    if (x.length > p.length || (x.length < p.length && x.length > 0 && p[x.length] !== 0x2f)) {
+      return false;
+    }
+    for (let i = 0; i < x.length; i++) if (fold(x[i]) !== fold(p[i])) return false;
+    return true;
+  });
+}
+
 function wireLine(c) {
   const f = `${c.dot ? 1 : 0}${c.ci ? 1 : 0}`;
   if (c.cmd === "s") return `s\t${f}\t${c.patterns.map(patternWire).join("\t")}`;
@@ -270,6 +317,45 @@ function makeGen(seed) {
     return s;
   };
 
+  // One member made of segments, and variants of it that swap one or two
+  // of its literal segments for others of a few, or now and then a
+  // segment for any; a path is an instance of one variant, at times with
+  // one literal segment swapped.
+  const LITERALS = ["a", "b", "c", "src", ".git", "A"];
+  const SEGMENTS = ["*", "*.ts", "?", "**", "a*", "[ab]", "{a,b}", "*x"];
+  const genSegment = () => (chance(0.6) ? pick(LITERALS) : pick(SEGMENTS));
+  const genVariants = () => {
+    const base = Array.from({ length: randint(2, 5) }, genSegment);
+    if (!base.some((s) => SEGMENTS.includes(s))) base[randint(0, base.length - 1)] = "*";
+    const lits = base.flatMap((s, i) => (LITERALS.includes(s) ? [i] : []));
+    const few = LITERALS.slice(0, randint(2, 3));
+    return Array.from({ length: randint(2, 12) }, () => {
+      const v = base.slice();
+      for (let k = randint(1, 2); k > 0; k--) {
+        if (lits.length > 0 && chance(0.85)) v[pick(lits)] = pick(few);
+        else v[randint(0, v.length - 1)] = genSegment();
+      }
+      return v;
+    });
+  };
+  const instance = (segs) => {
+    const out = [];
+    for (const s of segs) {
+      if (s === "**") for (let k = randint(0, 2); k > 0; k--) out.push(pick(LITERALS));
+      else if (LITERALS.includes(s)) out.push(chance(0.2) ? pick(LITERALS) : s);
+      else {
+        out.push(
+          s
+            .replace("{a,b}", pick(["a", "b", "c"]))
+            .replace("[ab]", pick(["a", "b", "c"]))
+            .replace("?", pick(["a", "q", ""]))
+            .replace("*", pick(["", "q", "qx"])),
+        );
+      }
+    }
+    return out.join("/");
+  };
+
   // Union members are stripped of `!`: Rust rejects a negated member and
   // JS accepts it, so raw equality cannot compare them.
   return () => {
@@ -278,10 +364,20 @@ function makeGen(seed) {
     const ci = chance(0.5);
     const scale = chance(0.05) ? 4 : 1;
     if (cmd === "s") {
+      if (chance(0.5)) {
+        const variants = genVariants();
+        const sample = Array.from({ length: 4 }, () => instance(pick(variants)));
+        return { cmd, dot, ci, patterns: variants.map((v) => v.join("/")), sample };
+      }
       const k = chance(0.5) ? 1 : randint(2, 5);
       const patterns =
         k === 1 ? [genPattern(10)] : Array.from({ length: k }, () => stripBang(genPattern(6)));
       return { cmd, dot, ci, patterns };
+    }
+    if (UNION.has(cmd) && chance(0.5)) {
+      const variants = genVariants();
+      const input = instance(pick(variants));
+      return { cmd, dot, ci, input, patterns: variants.map((v) => v.join("/")) };
     }
     const input = genPath(8 * scale);
     if (!UNION.has(cmd)) return { cmd, dot, ci, pat: genPattern(10 * scale), input };
@@ -329,34 +425,50 @@ function runSeed(seed) {
         samples.push({ c: cases[i], js: jsResults[i], rust: rustResults[i] });
     }
   }
-  return { seed, n: jsResults.length, diff, samples };
+  let failed = 0;
+  for (const c of cases) {
+    const why = propertyFailure(c);
+    if (why === null) continue;
+    failed++;
+    if (samples.length < MAX_SAMPLES) samples.push({ c, why });
+  }
+  return { seed, n: jsResults.length, diff, failed, samples };
 }
 
 console.log(`[fuzz] mode=${MODE} count=${COUNT} seeds=[${SEEDS[0]}..${SEEDS[SEEDS.length - 1]}]`);
 const t0 = Date.now();
 let totalDiff = 0;
+let totalFailed = 0;
 let totalN = 0;
 const allSamples = [];
 for (const seed of SEEDS) {
   const res = runSeed(seed);
   totalDiff += res.diff;
+  totalFailed += res.failed;
   totalN += res.n;
-  console.log(`  seed=${res.seed} n=${res.n} divergences=${res.diff}`);
+  console.log(
+    `  seed=${res.seed} n=${res.n} divergences=${res.diff} property failures=${res.failed}`,
+  );
   for (const s of res.samples) if (allSamples.length < MAX_SAMPLES) allSamples.push(s);
 }
 const dt = ((Date.now() - t0) / 1000).toFixed(1);
 if (totalN === 0) usage("no case ran");
 
-if (totalDiff > 0) {
-  console.log(`\n--- divergence samples (first ${MAX_SAMPLES}) ---`);
-  for (const { c, js, rust } of allSamples) {
+if (totalDiff + totalFailed > 0) {
+  console.log(`\n--- samples (first ${MAX_SAMPLES}) ---`);
+  for (const { c, js, rust, why } of allSamples) {
     const what =
       c.cmd === "s" ? "" : ` ${DIR.has(c.cmd) ? "dir" : "path"}=${JSON.stringify(c.input)}`;
     const desc = `${c.patterns ? `patterns=${JSON.stringify(c.patterns)}` : `pattern=${JSON.stringify(c.pat)}`}${what}`;
-    console.log(`  [${c.cmd}] ${desc} dot=${c.dot} ci=${c.ci}  js=${js}  rust=${rust}`);
+    const got = why === undefined ? `js=${js}  rust=${rust}` : `property: ${why}`;
+    console.log(`  [${c.cmd}] ${desc} dot=${c.dot} ci=${c.ci}  ${got}`);
   }
-  console.log(`\n✗ ${totalDiff}/${totalN} JS↔Rust divergences in ${dt}s`);
+  console.log(
+    `\n✗ ${totalDiff}/${totalN} JS↔Rust divergences, ${totalFailed} property failures in ${dt}s`,
+  );
   process.exit(1);
 }
 
-console.log(`\n✓ JS and Rust agree on all ${totalN} generated cases (${dt}s)`);
+console.log(
+  `\n✓ JS and Rust agree on all ${totalN} generated cases, and both properties hold (${dt}s)`,
+);
