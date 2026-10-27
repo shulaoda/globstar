@@ -10,14 +10,14 @@ mod wild;
 
 use crate::CompileOptions;
 use crate::dir_match::DirMatch;
-use crate::parse::ast::Node;
+use crate::parse::ast::{Node, ends_in_globstar};
 
-use crate::engine::bytes;
+use crate::engine::bytes::{self, has_escaped_sep};
 use bits::ByteSketch;
 use chain::{Chain, ChainIndex, Gate, Literals, MAX_CHAINS, Paths, Shape};
-use graph::{ACCEPT, Elem, Graph, room};
+use graph::{Elem, Graph, node_weight, room};
 use graph_nfa::{AnyNfa, any_nfa};
-use wild::{SuffixSet, WildKind};
+use wild::WildKind;
 
 type Bytes = Box<[u8]>;
 
@@ -61,11 +61,12 @@ enum Route {
 impl SegmentMatcher {
     pub(crate) fn build(mut body: Node, opts: CompileOptions) -> Box<Self> {
         let (dot, ci) = (opts.dot, opts.case_insensitive);
+        // The survey, the suffixes and the prefixes read the pattern as
+        // written; the graph walk regroups it.
         let survey = graph::survey(body.seq());
-        let room = room(survey.weight);
+        let suffixes = suffixes(&body);
+        let prefixes = static_prefixes(&body, survey.weight);
         let mut graph = Graph::build(&mut body, survey, dot, ci);
-        let suffixes = graph.suffixes();
-        let prefixes = graph.static_prefixes(room);
         let paths = if opts.force_nfa {
             None
         } else {
@@ -228,270 +229,239 @@ impl SegmentMatcher {
     }
 }
 
-// The literal ends every match shares, read off the graph: the suffixes
+// The literal ends every match shares, read off the AST: the suffixes
 // the prefilter checks and the static prefixes a walker seeds from.
 
-/// Past this many suffixes the prefilter keeps the one they all share.
+/// A pattern that ends in a brace of more branches gets one suffix: the
+/// one they all share.
 const MAX_SUFFIX_SET: usize = 16;
 
-/// What an element takes when it is a few literal segments: `prefix`, then
-/// one of the set's suffixes, or nothing when there is no set (a literal
-/// segment).
-#[derive(Clone, Copy)]
-struct Exact<'a> {
-    prefix: &'a [u8],
-    set: Option<&'a SuffixSet>,
+/// How deep braces may nest along one head.
+const MAX_HEAD_DEPTH: usize = 64;
+
+/// Literal suffixes one of which every match ends with: the trailing
+/// literal run, or one per branch of a trailing brace. Empty when nothing
+/// is guaranteed.
+fn suffixes(body: &Node) -> Box<[Bytes]> {
+    let nodes = body.seq();
+    let run = trailing(nodes, false);
+    if run.is_empty() {
+        return suffix_set(nodes);
+    }
+    let mut acc = Vec::with_capacity(run.iter().map(node_weight).sum());
+    push_run(run, &mut acc);
+    Box::new([acc.into_boxed_slice()])
 }
 
-fn exact(elem: &Elem) -> Option<Exact<'_>> {
-    match elem {
-        Elem::Lit(lit) => Some(Exact {
-            prefix: lit,
-            set: None,
-        }),
-        Elem::Wild(w) => match &w.kind {
-            WildKind::Suffixes(set) if !w.variable && w.min_len as usize == set.prefix().len() => {
-                Some(Exact {
-                    prefix: set.prefix(),
-                    set: Some(set),
-                })
-            }
-            _ => None,
-        },
-        _ => None,
+/// The literal/separator run that ends `nodes`. The `/` of a `**/` is
+/// not part of it, nor one a brace that may be empty parts from a `**`:
+/// `**/b` and `**{,a}/b` match `b` alone.
+fn trailing(nodes: &[Node], after_globstar: bool) -> &[Node] {
+    let mut from = nodes.len();
+    while from > 0 {
+        match &nodes[from - 1] {
+            Node::Literal(_) => {}
+            Node::Separator if !ends_in_globstar(&nodes[..from - 1], after_globstar) => {}
+            _ => break,
+        }
+        from -= 1;
     }
+    &nodes[from..]
 }
 
-impl<'a> Exact<'a> {
-    fn ends(self) -> impl Iterator<Item = &'a [u8]> {
-        let empty = self.set.is_none_or(SuffixSet::has_empty);
-        let set = self.set.into_iter().flat_map(SuffixSet::iter);
-        set.chain(empty.then_some(&b""[..]))
-    }
-
-    /// The one segment it takes, as prefix and end, if one.
-    fn one(self) -> Option<(&'a [u8], &'a [u8])> {
-        let mut ends = self.ends();
-        match (ends.next(), ends.next()) {
-            (Some(end), None) => Some((self.prefix, end)),
-            _ => None,
+fn push_run(run: &[Node], acc: &mut Vec<u8>) {
+    for node in run {
+        match node {
+            Node::Literal(bytes) => acc.extend_from_slice(bytes),
+            _ => acc.push(b'/'),
         }
     }
 }
 
-/// The longest suffix all of `strings` share.
-fn shared_suffix<'a>(mut strings: impl Iterator<Item = &'a [u8]>) -> &'a [u8] {
-    let Some(mut shared) = strings.next() else {
-        return b"";
+/// One suffix per branch of a trailing brace, or past `MAX_SUFFIX_SET`
+/// branches the suffix the branches' own tails share; none when a branch
+/// guarantees nothing.
+fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
+    let Some(Node::Brace(branches)) = nodes.last() else {
+        return Box::default();
     };
-    for s in strings {
-        let n = shared
-            .iter()
-            .rev()
-            .zip(s.iter().rev())
-            .take_while(|(a, b)| a == b)
-            .count();
-        shared = &shared[shared.len() - n..];
-    }
-    shared
-}
-
-/// A node the head reader is to visit: where the head before it ends in
-/// the buffer, the segment the node before adds (none after a join), and
-/// whether the head held a segment before that one.
-struct HeadStep<'a> {
-    node: u32,
-    mark: usize,
-    segment: Option<[&'a [u8]; 2]>,
-    had: bool,
-}
-
-/// The nodes after one: a linear graph's next or `ACCEPT`, or a list.
-enum Next<'a> {
-    One([u32; 1]),
-    Many(&'a [u32]),
-}
-
-impl std::ops::Deref for Next<'_> {
-    type Target = [u32];
-    fn deref(&self) -> &[u32] {
-        match self {
-            Next::One(one) => one,
-            Next::Many(many) => many,
+    let before = &nodes[..nodes.len() - 1];
+    let mut common = Vec::new();
+    push_run(trailing(before, false), &mut common);
+    let after_globstar = ends_in_globstar(before, false);
+    let many = branches.len() > MAX_SUFFIX_SET;
+    let mut set = Vec::new();
+    let mut shared: Option<Vec<u8>> = None;
+    let mut acc = Vec::new();
+    for branch in branches {
+        acc.clear();
+        // The common tail joins a branch only when the branch is all
+        // literal; otherwise it would claim more than the branch does.
+        if !many
+            && branch
+                .seq()
+                .iter()
+                .all(|n| matches!(n, Node::Literal(_) | Node::Separator))
+        {
+            acc.extend_from_slice(&common);
         }
-    }
-}
-
-impl Graph {
-    /// The nodes after `i`, the start being `elems.len()`, and none after
-    /// `ACCEPT`.
-    fn next(&self, i: usize) -> Next<'_> {
-        let n = self.elems.len();
-        match &self.edges {
-            _ if i > n => Next::Many(&[]),
-            Some(edges) => Next::Many(edges.succ(i)),
-            None if i == n => Next::One([if n > 0 { 0 } else { ACCEPT }]),
-            None => Next::One([if i + 1 < n { i as u32 + 1 } else { ACCEPT }]),
-        }
-    }
-
-    /// Literal suffixes one of which every match ends with, in pattern
-    /// order; empty when nothing is guaranteed. An end that takes whole
-    /// literal segments reads back through the literal segments before it,
-    /// each the one before the next (§3.3), up to a `**/`, a join or the
-    /// start; a segment of any other kind leaves the `/` before.
-    fn suffixes(&self) -> Box<[Bytes]> {
-        let n = self.elems.len();
-        // A node's one predecessor; `NONE` past the start or a join.
-        const NONE: u32 = u32::MAX;
-        let preds = self.edges.as_ref().map(|_| {
-            let mut pred = vec![u32::MAX - 1; n];
-            for p in 0..n {
-                for &t in &*self.next(p) {
-                    if let Some(at) = pred.get_mut(t as usize) {
-                        *at = if *at == u32::MAX - 1 { p as u32 } else { NONE };
-                    }
-                }
-            }
-            pred
-        });
-        let pred = |i: usize| match &preds {
-            Some(pred) => pred[i] as usize,
-            None => i.wrapping_sub(1),
-        };
-        let mut set: Vec<Bytes> = Vec::with_capacity(1);
-        let mut run: Vec<&[u8]> = Vec::new();
-        for e in (0..=n).filter(|&p| self.next(p).contains(&ACCEPT)) {
-            let Some(el) = self.elems.get(e) else {
-                return Box::default();
-            };
-            // Past `MAX_SUFFIX_SET` only what all share counts, and the
-            // ends alone give that.
-            let read_back = set.len() <= MAX_SUFFIX_SET;
-            // In pattern order, which the prefilter tries first; past
-            // `MAX_SUFFIX_SET` the set gives way to what all share.
-            let mut push = |parts: &[&[u8]]| {
-                let s = parts.concat().into_boxed_slice();
-                if set.len() > MAX_SUFFIX_SET || !set.contains(&s) {
-                    set.push(s);
-                }
-            };
-            match (exact(el), el) {
-                (Some(x), _) if x.ends().nth(MAX_SUFFIX_SET).is_none() => {
-                    run.clear();
-                    let mut at = e;
-                    while read_back && let Some(el) = self.elems.get(pred(at)) {
-                        let Some((prefix, end)) = exact(el).and_then(Exact::one) else {
-                            if !matches!(el, Elem::G0 | Elem::Join) {
-                                run.push(b"/");
-                            }
-                            break;
-                        };
-                        run.extend([&b"/"[..], end, prefix]);
-                        at = pred(at);
-                    }
-                    run.reverse();
-                    let len = run.len();
-                    for end in x.ends() {
-                        run.extend([x.prefix, end]);
-                        push(&run);
-                        run.truncate(len);
-                    }
-                }
-                (Some(x), _) => push(&[shared_suffix(x.ends())]),
-                (None, Elem::Wild(w)) => match &w.kind {
-                    WildKind::Affix(affix) => push(&[affix.parts().1]),
-                    WildKind::Suffixes(set) if !set.has_empty() => {
-                        set.iter().for_each(|s| push(&[s]))
-                    }
-                    WildKind::Pieces(pieces) => push(&[&pieces.last_bytes()]),
-                    _ => return Box::default(),
-                },
-                _ => return Box::default(),
-            }
-        }
-        if set.len() > MAX_SUFFIX_SET {
-            set = vec![shared_suffix(set.iter().map(|s| &s[..])).into()];
-        }
-        if set.iter().any(|s| s.is_empty()) {
+        push_run(trailing(branch.seq(), after_globstar), &mut acc);
+        if acc.is_empty() {
             return Box::default();
         }
-        set.into_boxed_slice()
+        if !many {
+            set.push(Bytes::from(&acc[..]));
+            continue;
+        }
+        shared = Some(match shared {
+            None => acc.clone(),
+            Some(s) => {
+                let n = s
+                    .iter()
+                    .rev()
+                    .zip(acc.iter().rev())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                s[s.len() - n..].to_vec()
+            }
+        });
+    }
+    match shared {
+        None => set.into_boxed_slice(),
+        Some(s) if s.is_empty() => Box::default(),
+        Some(s) => Box::new([s.into_boxed_slice()]),
+    }
+}
+
+/// The deepest segment-bounded literal head of each brace expansion,
+/// deduplicated. Every byte read and branch taken costs one unit of the
+/// room; past it, or past `MAX_HEAD_DEPTH`, a head ends at its last whole
+/// segment, a shorter prefix that still holds. Past a room of bytes
+/// copied into heads, the reading starts again at the depth limit, which
+/// gives the one head before the first brace.
+fn static_prefixes(body: &Node, weight: usize) -> Box<[Bytes]> {
+    let read_at = |depth| {
+        let mut heads = Heads {
+            spent: 0,
+            budget: room(weight),
+            copied: 0,
+            out: Vec::with_capacity(1),
+        };
+        heads.read(body.seq(), None, &mut Vec::new(), 0, depth);
+        heads
+    };
+    let mut heads = read_at(0);
+    if heads.copied > heads.budget {
+        heads = read_at(MAX_HEAD_DEPTH);
+    }
+    let out = if heads.out.len() > 1 {
+        dedupe(heads.out)
+    } else {
+        heads.out
+    };
+    out.into_boxed_slice()
+}
+
+/// What follows the nodes being read: the rest of an enclosing sequence.
+struct Then<'a> {
+    nodes: &'a [Node],
+    next: Option<&'a Then<'a>>,
+}
+
+struct Heads {
+    spent: usize,
+    budget: usize,
+    copied: usize,
+    out: Vec<Bytes>,
+}
+
+impl Heads {
+    fn afford(&mut self, n: usize) -> bool {
+        if self.spent + n > self.budget {
+            return false;
+        }
+        self.spent += n;
+        true
     }
 
-    /// The deepest segment-bounded literal head of every path, read from
-    /// the start through literal segments, deduplicated; the empty head
-    /// ends the reading, as it covers every other. Every byte a head
-    /// takes costs a unit of `room`, paid before it is built; a head the
-    /// room cannot pay for ends where it is. One buffer holds the head.
-    fn static_prefixes(&self, room: usize) -> Box<[Bytes]> {
-        let mut stack: Vec<HeadStep> = Vec::new();
-        for &t in &*self.next(self.elems.len()) {
-            stack.push(HeadStep {
-                node: t,
-                mark: 0,
-                segment: None,
-                had: false,
-            });
-        }
-        let (mut head, mut spent, mut out) = (Vec::new(), 0usize, Vec::with_capacity(1));
-        while let Some(HeadStep {
-            node: t,
-            mark,
-            segment,
-            had,
-        }) = stack.pop()
-        {
-            head.truncate(mark);
-            if let Some([prefix, end]) = segment {
-                if had {
-                    head.push(b'/');
+    /// An empty head covers every other one.
+    fn covered(&self) -> bool {
+        self.out.last().is_some_and(|h| h.is_empty())
+    }
+
+    /// Read `nodes`, then `then`, after `acc` (whose last whole segment
+    /// ends at `boundary`), and record the head each expansion reaches.
+    fn read<'a>(
+        &mut self,
+        mut nodes: &'a [Node],
+        mut then: Option<&'a Then<'a>>,
+        acc: &mut Vec<u8>,
+        mut boundary: usize,
+        depth: usize,
+    ) {
+        let mark = acc.len();
+        let end = loop {
+            let Some((node, rest)) = nodes.split_first() else {
+                match then {
+                    Some(t) => {
+                        nodes = t.nodes;
+                        then = t.next;
+                        continue;
+                    }
+                    None => break acc.len(),
                 }
-                head.extend_from_slice(prefix);
-                head.extend_from_slice(end);
-            }
-            let has = had || segment.is_some();
-            let next = self.next(t as usize);
-            // A join takes nothing and passes the head on.
-            let (join, ways) = match self.elems.get(t as usize) {
-                Some(Elem::Join) => (
-                    true,
-                    Some(Exact {
-                        prefix: b"",
-                        set: None,
-                    }),
-                ),
-                el => (false, el.and_then(exact)),
             };
-            let cost = ways.map_or(0, |x| {
-                let each = |end: &[u8]| head.len() + 1 + x.prefix.len() + end.len();
-                x.ends().map(each).sum::<usize>() * next.len() + 1
-            });
-            let Some(x) = ways.filter(|_| spent + cost <= room) else {
-                let mut to = head.len();
-                while to > 0 && head[to - 1] == b'/' {
-                    to -= 1;
+            match node {
+                // An expansion through an escaped `\` on Windows matches
+                // nothing (GLOB_SPEC §4.2): no head to seed.
+                Node::Literal(bytes) if has_escaped_sep(bytes) => {
+                    acc.truncate(mark);
+                    return;
                 }
-                // The empty head covers every other.
-                if to == 0 {
-                    return Box::new([Bytes::default()]);
+                Node::Literal(bytes) if self.afford(bytes.len()) => acc.extend_from_slice(bytes),
+                Node::Separator if self.afford(1) => {
+                    acc.push(b'/');
+                    boundary = acc.len();
                 }
-                out.push(Bytes::from(&head[..to]));
-                continue;
-            };
-            spent += cost;
-            for end in x.ends() {
-                for &u in &*next {
-                    stack.push(HeadStep {
-                        node: u,
-                        mark: head.len(),
-                        segment: (!join).then_some([x.prefix, end]),
-                        had: has,
-                    });
+                Node::Brace(bs) if depth < MAX_HEAD_DEPTH && self.afford(bs.len()) => {
+                    let after = Then {
+                        nodes: rest,
+                        next: then,
+                    };
+                    for branch in bs {
+                        if self.covered() {
+                            break;
+                        }
+                        self.read(branch.seq(), Some(&after), acc, boundary, depth + 1);
+                    }
+                    acc.truncate(mark);
+                    return;
                 }
+                // Every branch opening a new segment leaves what came
+                // before whole; the look at the branches is paid too.
+                Node::Brace(bs)
+                    if self.afford(bs.len())
+                        && bs
+                            .iter()
+                            .all(|b| matches!(b.seq().first(), Some(Node::Separator))) =>
+                {
+                    break acc.len();
+                }
+                _ => break boundary,
             }
+            nodes = rest;
+        };
+        let mut head = &acc[..end];
+        while let [rest @ .., b'/'] = head {
+            head = rest;
         }
-        (if out.len() > 1 { dedupe(out) } else { out }).into_boxed_slice()
+        self.copied += acc.len();
+        if self.copied > self.budget {
+            self.out = vec![Bytes::default()];
+        } else {
+            self.out.push(Bytes::from(head));
+        }
+        acc.truncate(mark);
     }
 }
 

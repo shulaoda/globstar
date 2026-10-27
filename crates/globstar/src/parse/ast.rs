@@ -63,6 +63,15 @@ impl Node {
         }
     }
 
+    pub(crate) fn ends_with_globstar(&self) -> bool {
+        match self {
+            Node::Globstar => true,
+            Node::Concat(xs) => ends_in_globstar(xs, false),
+            Node::Brace(bs) => bs.iter().any(Node::ends_with_globstar),
+            _ => false,
+        }
+    }
+
     pub(crate) fn nullable(&self) -> bool {
         match self {
             Node::Brace(xs) => xs.iter().any(Node::nullable),
@@ -70,4 +79,16 @@ impl Node {
             _ => false,
         }
     }
+}
+
+pub(crate) fn ends_in_globstar(nodes: &[Node], outer: bool) -> bool {
+    for node in nodes.iter().rev() {
+        if node.ends_with_globstar() {
+            return true;
+        }
+        if !node.nullable() {
+            return false;
+        }
+    }
+    outer
 }

@@ -433,18 +433,6 @@ impl Pieces {
         true
     }
 
-    /// The bytes the last piece ends with, folded when case-insensitive.
-    pub(super) fn last_bytes(&self) -> Vec<u8> {
-        let last = self.piece(self.ends.len() - 1);
-        let bytes = last.iter().rev().map_while(|&p| match p {
-            Pos::Byte(b) => Some(b),
-            _ => None,
-        });
-        let mut out: Vec<u8> = bytes.collect();
-        out.reverse();
-        out
-    }
-
     pub(super) fn one_piece(&self) -> bool {
         self.ends.len() == 1
     }
