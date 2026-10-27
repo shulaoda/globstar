@@ -37,19 +37,7 @@ export function seq(n) {
   return n.tag === N_CONCAT ? n.children : [n];
 }
 
-function endsWithGlobstar(n) {
-  if (n.tag === N_GLOBSTAR) return true;
-  if (n.tag === N_CONCAT) return endsInGlobstar(n.children, n.children.length, false);
-  return n.tag === N_BRACE && n.branches.some(endsWithGlobstar);
-}
 export function nullable(n) {
   if (n.tag === N_BRACE) return n.branches.some(nullable);
   return n.tag === N_CONCAT && n.children.every(nullable);
-}
-export function endsInGlobstar(nodes, end, outer) {
-  for (let i = end - 1; i >= 0; i--) {
-    if (endsWithGlobstar(nodes[i])) return true;
-    if (!nullable(nodes[i])) return false;
-  }
-  return outer;
 }

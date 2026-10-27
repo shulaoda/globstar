@@ -1,10 +1,4 @@
-import {
-  IS_WINDOWS_SEP,
-  endsWithPattern,
-  lastSepBefore,
-  nextSep,
-  hasEscapedSep,
-} from "../bytes.js";
+import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../bytes.js";
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import {
@@ -15,8 +9,8 @@ import {
   EL_JOIN,
   EL_PIECE,
   exact,
-  nodeWeight,
   room,
+  ACCEPT,
 } from "./graph.js";
 import {
   MAX_CHAINS,
@@ -45,14 +39,13 @@ import {
   NFA_SMALL,
   NFA_SPARSE,
 } from "./graph-nfa.js";
-import { WK_AFFIX, WK_PIECES, WK_SUFFIXES } from "./wild.js";
-import { N_BRACE, N_LITERAL, N_SEPARATOR, endsInGlobstar, seq } from "../../parse/ast.js";
+import { ANY, WK_AFFIX, WK_PIECES, WK_SUFFIXES } from "./wild.js";
 
 export class SegmentMatcher {
   constructor(body, dot, ci, opts) {
-    const prefixes = staticPrefixes(body);
-    const ends = suffixes(body);
     const graph = buildGraph(body, dot, ci);
+    const prefixes = staticPrefixes(graph);
+    const ends = suffixes(graph);
     let { literals, chains } = opts.forceNfa ? { literals: null, chains: [] } : pathsOf(graph, ci);
     const index = chainIndex(literals, chains, graph, ci);
     if (index === null && chains.length > MAX_CHAINS) {
@@ -300,149 +293,179 @@ export class SegmentMatcher {
   }
 }
 
+// The literal ends every match shares, read off the graph: the suffixes
+// the prefilter checks and the static prefixes a walker seeds from.
+
+// Past this many suffixes the prefilter keeps the one they all share.
 const MAX_SUFFIX_SET = 16;
 
-const MAX_HEAD_DEPTH = 64;
-
-function suffixes(body) {
-  const nodes = seq(body);
-  const suffix = trailing(nodes, nodes.length, false);
-  if (suffix.length > 0) return [suffix];
-  return suffixSet(nodes);
+// The nodes after `i`, the start being `elems.length`: how many, and the
+// `k`th. A linear graph's next is the node after, then `ACCEPT`.
+function nextCount(graph, i) {
+  if (i === ACCEPT) return 0;
+  return graph.linear ? 1 : i === graph.elems.length ? graph.start.length : graph.succs[i].length;
 }
 
-function trailing(nodes, end, afterGlobstar) {
-  let acc = "";
-  for (let i = end - 1; i >= 0; i--) {
-    const node = nodes[i];
-    if (node.tag === N_LITERAL) acc = node.str + acc;
-    else if (node.tag === N_SEPARATOR && !endsInGlobstar(nodes, i, afterGlobstar)) acc = "/" + acc;
-    else break;
-  }
-  return acc;
+function nextAt(graph, i, k) {
+  const n = graph.elems.length;
+  if (graph.linear) return i === n ? (n > 0 ? 0 : ACCEPT) : i + 1 < n ? i + 1 : ACCEPT;
+  return i === n ? graph.start[k] : graph.succs[i][k];
 }
 
-function suffixSet(nodes) {
-  if (nodes.length === 0) return [];
-  const last = nodes[nodes.length - 1];
-  if (last.tag !== N_BRACE) return [];
-  const common = trailing(nodes, nodes.length - 1, false);
-  const afterGlobstar = endsInGlobstar(nodes, nodes.length - 1, false);
-  const many = last.branches.length > MAX_SUFFIX_SET;
-  const set = [];
-  let shared = null;
-  for (const branch of last.branches) {
-    const b = seq(branch);
-    let own = trailing(b, b.length, afterGlobstar);
-    if (!many && b.every((n) => n.tag === N_LITERAL || n.tag === N_SEPARATOR)) own = common + own;
-    if (own.length === 0) return [];
-    if (!many) {
-      set.push(own);
-      continue;
-    }
-    if (shared === null) shared = own;
-    else {
-      let k = 0;
-      while (
-        k < shared.length &&
-        k < own.length &&
-        shared[shared.length - 1 - k] === own[own.length - 1 - k]
-      )
-        k++;
-      shared = shared.slice(shared.length - k);
-    }
-  }
-  if (shared === null) return set;
-  return shared.length === 0 ? [] : [shared];
+const ONE_END = [""];
+
+// What an element takes when it is a few literal segments: its prefix,
+// then one of its ends. A literal segment is its string and one empty end;
+// a suffix set without a wildcard is its prefix and its suffixes. `null`
+// for any other element.
+function exactEnds(e) {
+  if (e.kind === EL_LIT) return ONE_END;
+  if (e.kind !== EL_WILD) return null;
+  const w = e.wild;
+  if (w.kind !== WK_SUFFIXES || w.variable || w.minLen !== w.prefixStr.length) return null;
+  return w.suffixEmpty ? [...w.suffixSetStr, ""] : w.suffixSetStr;
 }
 
-function staticPrefixes(body) {
-  const nodes = seq(body);
-  let heads = readAt(nodes, 0);
-  if (heads.copied > heads.limit) heads = readAt(nodes, MAX_HEAD_DEPTH);
-  return dedupe(heads.out);
+const exactPrefix = (e) => (e.kind === EL_LIT ? e.litStr : e.wild.prefixStr);
+
+// The bytes the last piece ends with, folded when case-insensitive.
+function lastBytes(pieces) {
+  const { at, ends } = pieces;
+  const from = ends.length > 1 ? ends[ends.length - 2] : 0;
+  const to = ends[ends.length - 1];
+  let i = to;
+  while (i > from && at[i - 1] < ANY) i--;
+  let out = "";
+  for (let k = i; k < to; k++) out += String.fromCharCode(at[k]);
+  return out;
 }
 
-function readAt(nodes, depth) {
-  const heads = {
-    root: nodes,
-    spent: 0,
-    limit: room(0),
-    weighed: false,
-    copied: 0,
-    out: [],
-  };
-  readHeads(heads, nodes, 0, null, "", 0, depth);
-  return heads;
-}
-
-function readHeads(heads, nodes, at, then, acc, boundary, depth) {
-  let i = at;
-  let end;
-  for (;;) {
-    if (i === nodes.length) {
-      if (then === null) {
-        end = acc.length;
-        break;
-      }
-      nodes = then.nodes;
-      i = then.at;
-      then = then.next;
-      continue;
-    }
-    const node = nodes[i++];
-    if (node.tag === N_LITERAL && hasEscapedSep(node.str)) return;
-    if (node.tag === N_LITERAL && afford(heads, node.str.length)) {
-      acc += node.str;
-    } else if (node.tag === N_SEPARATOR && afford(heads, 1)) {
-      acc += "/";
-      boundary = acc.length;
-    } else if (
-      node.tag === N_BRACE &&
-      depth < MAX_HEAD_DEPTH &&
-      afford(heads, node.branches.length)
+function sharedSuffix(strings) {
+  let shared = strings[0];
+  for (const x of strings) {
+    let k = 0;
+    while (
+      k < shared.length &&
+      k < x.length &&
+      shared[shared.length - 1 - k] === x[x.length - 1 - k]
     ) {
-      const after = { nodes, at: i, next: then };
-      for (const branch of node.branches) {
-        if (covered(heads)) break;
-        readHeads(heads, seq(branch), 0, after, acc, boundary, depth + 1);
-      }
-      return;
-    } else {
-      end =
-        node.tag === N_BRACE && afford(heads, node.branches.length) && opensSegment(node)
-          ? acc.length
-          : boundary;
-      break;
+      k++;
+    }
+    shared = shared.slice(shared.length - k);
+  }
+  return shared;
+}
+
+// Literal suffixes one of which every match ends with, in pattern order;
+// empty when nothing is guaranteed. An end that takes whole literal
+// segments reads back through the literal segments before it, each the
+// one before the next, up to a `**/`, a join or the start; a segment of
+// any other kind leaves the `/` before.
+function suffixes(graph) {
+  const n = graph.elems.length;
+  // A node's one predecessor; -1 past the start or a join.
+  let pred = null;
+  if (!graph.linear) {
+    pred = new Int32Array(n).fill(-2);
+    for (let p = 0; p < n; p++) {
+      for (const t of graph.succs[p]) if (t !== ACCEPT) pred[t] = pred[t] === -2 ? p : -1;
     }
   }
-  while (end > 0 && acc.charCodeAt(end - 1) === 0x2f) end--;
-  heads.copied += acc.length;
-  if (within(heads, heads.copied)) heads.out.push(acc.slice(0, end));
-  else heads.out = [""];
-}
-
-const covered = (heads) => heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0;
-
-function afford(heads, n) {
-  if (!within(heads, heads.spent + n)) return false;
-  heads.spent += n;
-  return true;
-}
-
-// The pattern is weighed only once its room's floor is passed.
-function within(heads, used) {
-  if (used > heads.limit && !heads.weighed) {
-    heads.weighed = true;
-    let weight = 0;
-    for (const node of heads.root) weight += nodeWeight(node);
-    heads.limit = room(weight);
+  const set = [];
+  // In pattern order, which the prefilter tries first; past
+  // `MAX_SUFFIX_SET` the set gives way to what all share.
+  const push = (s) => {
+    if (set.length > MAX_SUFFIX_SET || !set.includes(s)) set.push(s);
+  };
+  for (let e = 0; e <= n; e++) {
+    let ends = false;
+    for (let k = 0, m = nextCount(graph, e); k < m; k++) ends ||= nextAt(graph, e, k) === ACCEPT;
+    if (!ends) continue;
+    if (e === n) return [];
+    const el = graph.elems[e];
+    const exact = exactEnds(el);
+    if (exact !== null && exact.length <= MAX_SUFFIX_SET) {
+      // Past `MAX_SUFFIX_SET` only what all share counts, and the ends
+      // alone give that.
+      let run = "";
+      for (let at = e; set.length <= MAX_SUFFIX_SET; ) {
+        const p = pred === null ? at - 1 : pred[at];
+        if (p < 0) break;
+        const before = graph.elems[p];
+        const segs = exactEnds(before);
+        if (segs === null || segs.length !== 1) {
+          if (before.kind !== EL_G0 && before.kind !== EL_JOIN) run = "/" + run;
+          break;
+        }
+        run = exactPrefix(before) + segs[0] + "/" + run;
+        at = p;
+      }
+      for (const end of exact) push(run + exactPrefix(el) + end);
+    } else if (exact !== null) {
+      push(sharedSuffix(exact));
+    } else if (el.kind === EL_WILD && el.wild.kind === WK_AFFIX) {
+      push(el.wild.suffixStr);
+    } else if (el.kind === EL_WILD && el.wild.kind === WK_SUFFIXES && !el.wild.suffixEmpty) {
+      for (const x of el.wild.suffixSetStr) push(x);
+    } else if (el.kind === EL_WILD && el.wild.kind === WK_PIECES) {
+      push(lastBytes(el.wild.matcher));
+    } else {
+      return [];
+    }
   }
-  return used <= heads.limit;
+  const out = set.length > MAX_SUFFIX_SET ? [sharedSuffix(set)] : set;
+  return out.some((x) => x.length === 0) ? [] : out;
 }
 
-function opensSegment(node) {
-  return node.branches.every((b) => seq(b)[0]?.tag === N_SEPARATOR);
+// The deepest segment-bounded literal head of every path, read from the
+// start through literal segments, deduplicated; the empty head ends the
+// reading, as it covers every other. Every byte a head takes at a node,
+// and every node it moves to, costs a unit of the room, paid before the
+// head is built; a head the room cannot pay for ends where it is.
+function staticPrefixes(graph) {
+  const limit = room(graph.weight);
+  const nodes = [];
+  const heads = [];
+  const seen = [];
+  for (let k = 0, m = nextCount(graph, graph.elems.length); k < m; k++) {
+    nodes.push(nextAt(graph, graph.elems.length, k));
+    heads.push("");
+    seen.push(false);
+  }
+  const out = [];
+  let spent = 0;
+  while (nodes.length > 0) {
+    const t = nodes.pop();
+    const head = heads.pop();
+    const seg = seen.pop();
+    const e = t === ACCEPT ? null : graph.elems[t];
+    const m = nextCount(graph, t);
+    // A join takes nothing and passes the head on.
+    const join = e !== null && e.kind === EL_JOIN;
+    const ends = e === null ? null : join ? ONE_END : exactEnds(e);
+    const prefix = ends === null || join ? "" : exactPrefix(e);
+    let cost = 1;
+    if (ends !== null)
+      for (const end of ends) cost += (head.length + 1 + prefix.length + end.length) * m;
+    if (ends === null || spent + cost > limit) {
+      let to = head.length;
+      while (to > 0 && head.charCodeAt(to - 1) === 0x2f) to--;
+      // The empty head covers every other.
+      if (to === 0) return [""];
+      out.push(head.slice(0, to));
+      continue;
+    }
+    spent += cost;
+    const base = join ? head : (seg ? head + "/" : head) + prefix;
+    for (const end of ends) {
+      for (let k = 0; k < m; k++) {
+        nodes.push(nextAt(graph, t, k));
+        heads.push(base + end);
+        seen.push(seg || !join);
+      }
+    }
+  }
+  return dedupe(out);
 }
 
 function dedupe(prefixes) {

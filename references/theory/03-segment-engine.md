@@ -26,8 +26,8 @@ A pattern without a brace whose branches cross a separator is one path through t
 Compilation is one pass per layer, each linear in the pattern; a layer that enumerates pays for it from a room of its own (§9):
 
 1. **Parse** (note 01): the AST, a union's members factored into one body.
-2. **Literal ends** (`mod.rs`): the suffix prefilter (§13) and the static prefixes (§14), read from the AST as written.
-3. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (`wild.rs`, §7.5).
+2. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (`wild.rs`, §7.5).
+3. **Literal ends** (`mod.rs`): the suffix prefilter (§13) and the static prefixes (§14), read off the graph.
 4. **Chains** (`chain.rs`): the paths through the graph, while they are few and simple (§4).
 5. **Picker**: how a union tries its chains, each after its gate (`chain.rs`) or only those the chain index selects (`chain.rs`) (§5).
 6. **Graph NFA** (`graph_nfa.rs`): built unless one line serves alone (§6).
@@ -154,7 +154,7 @@ A union's members are factored into one body before the walk (note 01, §5): mem
 
 Every threshold selects a representation; none rejects a pattern. The only limits are the parser's: 64 KiB of pattern and 32 levels of brace nesting.
 
-What a layer enumerates is paid from a *room* of its own, of `max(4W, 64 KiB)` units for a pattern of weight `W` (`graph.rs::room`): the copies of a cut segment (§3.4), the suffix bytes of a product past four times its nodes (§7.1), the bytes the static prefixes read and record (§14.2), the weight of the wildcard paths (§11.1), the bytes of the literal paths (§4.3) and the index's entries (§5). Each pays before it builds, and what its room cannot pay for keeps the pattern's form unexpanded.
+What a layer enumerates is paid from a *room* of its own, of `max(4W, 64 KiB)` units for a pattern of weight `W` (`graph.rs::room`): the copies of a cut segment (§3.4), the suffix bytes of a product past four times its nodes (§7.1), the bytes and nodes of the static prefixes (§14.2), the weight of the wildcard paths (§11.1), the bytes of the literal paths (§4.3) and the index's entries (§5). Each pays before it builds, and what its room cannot pay for keeps the pattern's form unexpanded.
 
 | Threshold                                | Value                                     | Past it                                      |
 | ---------------------------------------- | ----------------------------------------- | -------------------------------------------- |
@@ -170,7 +170,7 @@ What a layer enumerates is paid from a *room* of its own, of `max(4W, 64 KiB)` u
 | kept closures                            | 128 KiB                                   | the step closes its set                      |
 | in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
 | wildcard-only cover steps                | 64                                        | all-below: `false`                           |
-| suffix prefilter set (`mod.rs`) | 16 branches                               | one suffix, what the branches' tails share   |
+| suffix prefilter set (`MAX_SUFFIX_SET`)  | 16 suffixes                               | one suffix, what they all share              |
 
 ## 10. The cost of each layer
 
@@ -210,9 +210,9 @@ The theorem is the sum of the lemmas below, one per layer of §2.
 
 *Proof.* The parser reads each byte once; a brace of one branch hands its bytes to the enclosing literal (note 01, §2), at most once per level of nesting, so at most 33 times. Factoring hashes each member once, files at most one record per node and sorts the records. A group compares each free member with its head, and each comparison retires the member compared, absorbed or not (note 01, §5.3), so a member is compared at most once, at the cost of its length. ∎
 
-**Lemma 2 (literal ends).** The suffix prefilter takes `O(|P|)`. The static prefixes take `O(W log W)` time and `O(W)` memory.
+**Lemma 2 (literal ends).** The suffix prefilter takes `O(W)`. The static prefixes take `O(W log W)` time and `O(W)` memory.
 
-*Proof.* `trailing` reads the nodes once from the right, and `suffix_set` copies the shared tail into at most 16 suffixes. The head reader of §14.2 spends one unit of its room `R` on each byte it appends, each separator, each brace it enters and each brace whose branches it looks at; every other step ends a reading or climbs to an enclosing continuation, at most 64 levels up. A reading starts per branch paid for, so there are at most `R + 1` readings, each recording one head. The bytes recorded are counted, and past `R` the reading starts again at the depth limit, which records one head; the heads thus hold `O(R) = O(W)` bytes. `dedupe` sorts them, `O(C log C)` for `C` bytes, and walks the chain of kept prefixes: a failed test removes the chain's top for good, at the cost of its length, and the one test that does not fail costs at most the current head's length. ∎
+*Proof.* The suffixes take one pass over the edges for the predecessors and the ends, and each end's literal ends, of `O` its element's weight. An end that takes whole literal segments reads back one predecessor at a time, and none reads back once the set holds more than 16 suffixes, so at most 16 read-backs of at most every node are made. The head reader of §14.2 pays from its room, before it builds, every byte the heads take at a node and one unit per node it moves to, and records a head at most once per step it took: the heads hold `O(W)` bytes. `dedupe` sorts them, `O(C log C)` for `C` bytes, and walks the chain of kept prefixes: a failed test removes the chain's top for good, at the cost of its length, and the one test that does not fail costs at most the current head's length. ∎
 
 **Lemma 3 (graph).** The walk takes `O(W)` time and builds a graph of `O(W)` nodes and edges whose elements weigh `O(W)`.
 
@@ -260,9 +260,9 @@ A *prefilter* for a language `L` is a predicate `A` with `A(w) = 0 ⇒ w ∉ L`;
 
 ### 13.1 Extraction
 
-`segment/mod.rs::trailing` reads the pattern's nodes right to left: a literal contributes its bytes, a separator a `/` unless it is the `/` of a `**/`, and any other node stops the reading. The bytes, reversed, are the suffix; stopping at the first other node is required, since a wildcard or a `**` can produce any bytes. The `/` after a `**` belongs to that `**/`, which absorbs zero segments as well, so the suffix of `a/**/b` is `b` and `**/b` keeps matching `b`.
+`segment/mod.rs::Graph::suffixes` reads the graph back from its ends, the nodes the accept state follows. An end gives its literal ends: a literal segment its bytes, a suffix set without a wildcard its segments, an affix its suffix, a suffix set its suffixes, pieces the bytes their last piece ends with. An end that guarantees no byte, as a `**` does, gives up the prefilter. An end that takes whole literal segments then reads back through the literal segments before it, each the one predecessor of the next (§3.3): a `**/` or a join ends the reading, and a segment of any other kind ends it after the `/` before the run. The `/` after a `**` thus belongs to that `**/`, which absorbs zero segments as well: the suffix of `a/**/b` is `b`, and `**/b` keeps matching `b`, while that of `src/*/index.ts` is `/index.ts`.
 
-When the suffix is ε and the pattern ends with a brace of at most 16 branches (`MAX_SUFFIX_SET`), `suffix_set` derives one suffix per branch: the suffix of the nodes before the brace, appended to the branch's own suffix when the branch is all literal, and the branch's own suffix alone otherwise; a branch that gives ε gives up the set. `**/*.{ts,tsx,js}` has the set `{".ts", ".tsx", ".js"}`. A brace of more than 16 branches gets one suffix, the longest its branches' own tails share (the nodes before the brace are not read), or none when they share nothing; its literal branches are grouped by the suffix set of §7.1.
+The suffixes of all ends form the set, in pattern order and without repeats, which the comparison tries in turn. Past 16 (`MAX_SUFFIX_SET`) the set gives way to the longest suffix all of them share, or to none when they share nothing, and the ends after it read no further back. `**/*.{ts,tsx,js}` has the set `{".ts", ".tsx", ".js"}`.
 
 ### 13.2 Comparison
 
@@ -272,7 +272,7 @@ When the suffix is ε and the pattern ends with a brace of at most 16 branches (
 
 **Proposition 1.** For every pattern `P` and `w ∈ Σ*`, if the prefilter rejects `w` then `w ∉ L(P)`.
 
-*Proof.* Both extraction procedures yield a set `S` such that every `w ∈ L(P)` ends with some `s ∈ S` under the byte rule. The prefilter accepts `w` exactly when `w` ends with some element of `S`. If it rejects `w`, then `w` ends with no element of `S`, so `w ∉ L(P)`. ∎
+*Proof.* The extraction yields a set `S` such that every `w ∈ L(P)` ends with some `s ∈ S` under the byte rule: an accepted path ends at an end, whose element takes only segments that end with one of its literal ends, and every path to the end passes the segments read back before it. A suffix that all of `S` share, or a literal end that read no further back, ends every such `w` as well. The prefilter accepts `w` exactly when `w` ends with some element of `S`. If it rejects `w`, then `w` ends with no element of `S`, so `w ∉ L(P)`. ∎
 
 The prefilter is not applied to `match_dir`: a directory path does not in general end with the pattern's suffix, which lies in the file segment, so the test would reject directories with matches below them.
 
@@ -288,9 +288,9 @@ For a pattern `P` with brace expansions `E(P)` (GLOB_SPEC §10.1), let `head(e)`
 
 ### 14.2 Extraction
 
-`segment/mod.rs::static_prefixes` reads the AST left to right, collecting bytes from literals and `/` from separators. A brace in the head is read branch by branch, each followed by what follows the brace, as a continuation rather than a copy. At the first other node (a wildcard, a `**`) the bytes are cut back to the last separator before it; a brace that the room or the depth limit stops, and whose branches all start with a separator, ends a whole segment instead. Trailing separators are dropped. Each path through the braces of the head records one head.
+`segment/mod.rs::Graph::static_prefixes` walks the graph from the start, collecting the segments of literal nodes and of suffix sets without a wildcard, each segment of a set a branch, joined by `/`; a join passes the head on. At any other node (a wildcard, a `**`, a piece) and at the accept state the head read so far is recorded, without its trailing separators. Each path through the literal part of the graph records one head, and one buffer holds them all: a step names its node, where the head before it ends, and the segment the node before adds.
 
-Re-reading the continuation once per branch is the only part that can cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal re-reads it once per branch. Each byte read, each branch taken and each branch looked at for its first node therefore costs one unit of the room (§9), and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment, a shorter prefix that is still sound. Recording a head costs every byte read to reach it, and these could still sum to the square of the room; past a room of such bytes the reading starts again as if at the depth limit, and the result is the one head before the first brace, which every expansion shares.
+Paths multiply through suffix sets and joins: `{a,b}/{c,d}/…` doubles per segment. Every byte a head takes at a node, and every node it moves to, costs a unit of the room (§9), paid before the head is built; a head the room cannot pay for ends where it is, a shorter prefix that is still sound. The empty head covers every other, so recording it ends the reading.
 
 With several heads, `dedupe` drops every head a shorter kept one covers (`src` covers `src/a`); the empty head covers all. It reads the heads in byte order, in which the kept heads that are prefixes of the current one form a chain ending at the last of them: only that one may cover the current head, since one before it would have covered it. The kept heads are then ordered by length and bytes.
 
@@ -308,7 +308,7 @@ a{b,c}d/x          →  { "abd/x", "acd/x" }
 
 **Proposition 2.** For every `w ∈ L(P)` there is a static prefix `s` such that `w` starts with `s` at a segment boundary.
 
-*Proof.* Every `w ∈ L(P)` lies in `L(e)` for some expansion `e`, and the reading follows the branches of `e` through the braces of the head. The bytes it keeps come only from literal and separator nodes before the first other node, cut back to a segment boundary, so every `w ∈ L(e)` starts with them. A head cut short by the room is a segment-prefix of `head(e)` and starts every such `w` as well, and `dedupe` drops a head only when a shorter kept head covers it. ∎
+*Proof.* Every `w ∈ L(P)` follows a path of the graph from the start to the accept state, and the walk follows that path through its literal part as far as the room lets it. The bytes it keeps are the segments that path's literal nodes and literal sets take before its first other node, each whole, so `w` starts with them at a segment boundary. A head cut short by the room is a segment-prefix of the full one and starts `w` as well, the empty head starts every path, and `dedupe` drops a head only when a shorter kept head covers it. ∎
 
 ## 15. The directory predicate
 
