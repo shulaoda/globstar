@@ -410,7 +410,10 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
       }
       return;
     } else {
-      end = node.tag === N_BRACE && opensSegment(node) ? acc.length : boundary;
+      end =
+        node.tag === N_BRACE && afford(heads, node.branches.length) && opensSegment(node)
+          ? acc.length
+          : boundary;
       break;
     }
   }
@@ -442,26 +445,25 @@ function opensSegment(node) {
 
 function dedupe(prefixes) {
   if (prefixes.length <= 1) return prefixes;
-  prefixes.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+  // In byte order a head's prefixes come before it: `top` walks down the
+  // kept ones that are prefixes of the current head (`up` links each to
+  // the one below), and the first alone may cover it, since one below
+  // would have covered that one.
+  prefixes.sort();
+  if (prefixes[0].length === 0) return [""];
   const kept = [];
-  const coveredBy = (p) => {
-    for (let i = p.indexOf("/"); i !== -1; i = p.indexOf("/", i + 1)) {
-      let lo = 0;
-      let hi = kept.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        const k = kept[mid];
-        const c = k.length - i || (p.startsWith(k) ? 0 : k < p ? -1 : 1);
-        if (c === 0) return true;
-        if (c < 0) lo = mid + 1;
-        else hi = mid;
-      }
+  const up = [];
+  let top = -1;
+  for (let i = 0; i < prefixes.length; i++) {
+    const p = prefixes[i];
+    while (top !== -1 && !p.startsWith(kept[top])) top = up[top];
+    if (top !== -1 && (p.length === kept[top].length || p.charCodeAt(kept[top].length) === 0x2f)) {
+      continue;
     }
-    return false;
-  };
-  for (const p of prefixes) {
-    if (p.length === 0) return [p];
-    if (p !== kept[kept.length - 1] && !coveredBy(p)) kept.push(p);
+    up.push(top);
+    top = kept.length;
+    kept.push(p);
   }
-  return kept;
+  // Stable: a length's heads stay in byte order.
+  return kept.sort((a, b) => a.length - b.length);
 }

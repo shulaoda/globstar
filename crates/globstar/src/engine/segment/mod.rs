@@ -443,11 +443,12 @@ impl Heads {
                     return;
                 }
                 // Every branch opening a new segment leaves what came
-                // before whole.
+                // before whole; the look at the branches is paid too.
                 Node::Brace(bs)
-                    if bs
-                        .iter()
-                        .all(|b| matches!(b.seq().first(), Some(Node::Separator))) =>
+                    if self.afford(bs.len())
+                        && bs
+                            .iter()
+                            .all(|b| matches!(b.seq().first(), Some(Node::Separator))) =>
                 {
                     break acc.len();
                 }
@@ -469,22 +470,31 @@ impl Heads {
     }
 }
 
-/// Drops the prefixes a shorter one covers; an empty one covers all.
+/// Drops the prefixes a shorter one covers; an empty one covers all. In
+/// byte order a head's prefixes come before it: `top` walks down the kept
+/// ones that are prefixes of the current head (`up` links each to the one
+/// below), and the first alone may cover it, since one below would have
+/// covered that one.
 fn dedupe(mut prefixes: Vec<Bytes>) -> Vec<Bytes> {
-    prefixes.sort_unstable_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
-    prefixes.dedup();
-    let mut kept: Vec<Bytes> = Vec::new();
-    for p in prefixes {
-        if p.is_empty() {
-            return vec![p];
-        }
-        let covered = (0..p.len()).filter(|&j| p[j] == b'/').any(|j| {
-            kept.binary_search_by(|k| k.len().cmp(&j).then_with(|| k[..].cmp(&p[..j])))
-                .is_ok()
-        });
-        if !covered {
-            kept.push(p);
-        }
+    prefixes.sort_unstable();
+    if prefixes[0].is_empty() {
+        return vec![Bytes::default()];
     }
+    let mut kept: Vec<Bytes> = Vec::new();
+    let mut up: Vec<usize> = Vec::new();
+    let mut top = usize::MAX;
+    for p in prefixes {
+        while top != usize::MAX && !p.starts_with(&kept[top]) {
+            top = up[top];
+        }
+        if top != usize::MAX && (p.len() == kept[top].len() || p[kept[top].len()] == b'/') {
+            continue;
+        }
+        up.push(top);
+        top = kept.len();
+        kept.push(p);
+    }
+    // Stable: a length's heads stay in byte order.
+    kept.sort_by_key(|p| p.len());
     kept
 }
