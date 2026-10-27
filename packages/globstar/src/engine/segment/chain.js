@@ -8,6 +8,7 @@ import {
   exact,
   isGlobstar,
   ACCEPT,
+  room,
 } from "./graph.js";
 import { ANY, CLASS, WK_AFFIX, WK_PIECES, WK_SUFFIXES, wildConsumes, wildWeight } from "./wild.js";
 import {
@@ -25,8 +26,6 @@ import {
 import { DirMatch, PRUNED } from "../../dir-match.js";
 
 export const MAX_CHAINS = 64;
-
-const MAX_LITERAL_BYTES = 64 * 1024;
 
 const NO_G = -1;
 
@@ -73,8 +72,8 @@ export function pathsOf(graph, ci) {
         paths.push(exact(nodes));
       }
       if (
-        (paths.length > MAX_CHAINS && pathWeight > 4 * graph.weight) ||
-        literalChars + literalPaths.length > Math.max(MAX_LITERAL_BYTES, 4 * graph.weight)
+        pathWeight > room(graph.weight) ||
+        literalChars + literalPaths.length > room(graph.weight)
       ) {
         return none;
       }
@@ -387,10 +386,6 @@ const LOOKUPS = 1 + 2 * KEY_BYTES;
 
 const EMPTY_KEY = { len: 0, back: 0, front: 0, whole: 0, pow: 1 };
 
-function keyRoom(weight) {
-  return Math.max(weight, 4096);
-}
-
 function keyOf(str, ci) {
   let pow = 1;
   for (let i = 0; i < str.length; i++) pow = Math.imul(pow, BASE);
@@ -598,7 +593,7 @@ export function chainIndex(literals, chains, graph, ci) {
       else if (id < 32) ix.restLo |= 1 << id;
       else ix.restHi |= 1 << (id - 32);
     }
-    if (entries.length > keyRoom(graph.weight)) return null;
+    if (entries.length > room(graph.weight)) return null;
   }
   entries.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   if (many) {

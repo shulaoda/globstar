@@ -10,9 +10,7 @@ use crate::engine::bytes::has_escaped_sep;
 use crate::parse::ast::Node;
 
 use super::Bytes;
-use super::wild::{
-    Affix, GlueNfa, MAX_SUFFIX_BYTES, NEVER, Wild, WildKind, compile_wild, concat_lits,
-};
+use super::wild::{Affix, GlueNfa, NEVER, Wild, WildKind, compile_wild, concat_lits};
 
 /// The entry of an `Elem::Piece` no segment starts in.
 pub(super) const INNER: u32 = u32::MAX;
@@ -25,11 +23,16 @@ const START: u32 = u32::MAX;
 
 static STAR: Node = Node::Star;
 
-/// Copies a crossing brace may make: this much per unit of pattern
-/// weight, at least `MIN_COPY_ROOM`; past it, segments are cut into
-/// pieces.
-const COPY_PER_WEIGHT: usize = 1;
-const MIN_COPY_ROOM: usize = 1 << 14;
+/// What one kind of expansion may take for a pattern: four units per unit
+/// of its weight, at least 64 KiB. Each kind draws from a room of its own,
+/// and past it keeps the pattern's form unexpanded.
+pub(super) fn room(weight: usize) -> usize {
+    weight.saturating_mul(4).max(1 << 16)
+}
+
+/// A copied token is compiled again in every copy: a copy costs this many
+/// units of the room per unit of its weight.
+const COPY_COST: usize = 4;
 
 /// Groups past this many are found by hash.
 const LINEAR_GROUPS: usize = 16;
@@ -353,8 +356,8 @@ impl<'a> Builder<'a> {
             pieces: Vec::new(),
             ends: Vec::new(),
             memo: HashMap::with_capacity_and_hasher(edges, Default::default()),
-            room: COPY_PER_WEIGHT.saturating_mul(weight).max(MIN_COPY_ROOM),
-            suffix_pool: MAX_SUFFIX_BYTES,
+            room: room(weight),
+            suffix_pool: room(weight),
             dot,
             ci,
         }
@@ -658,7 +661,8 @@ impl<'a> Builder<'a> {
         cut.groups
     }
 
-    fn afford(&mut self, units: usize) -> bool {
+    fn afford(&mut self, weight: usize) -> bool {
+        let units = weight.saturating_mul(COPY_COST);
         let fits = units <= self.room;
         if fits {
             self.room -= units;

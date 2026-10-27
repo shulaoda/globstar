@@ -11,15 +11,7 @@ import {
   seq,
 } from "../../parse/ast.js";
 import { hasEscapedSep } from "../bytes.js";
-import {
-  WK_AFFIX,
-  NEVER_LEN,
-  MAX_SUFFIX_BYTES,
-  compileWild,
-  concatLits,
-  makeWild,
-  GlueNfa,
-} from "./wild.js";
+import { WK_AFFIX, NEVER_LEN, compileWild, concatLits, makeWild, GlueNfa } from "./wild.js";
 
 export const EL_LIT = 0;
 export const EL_WILD = 1;
@@ -37,8 +29,14 @@ const B_START = 0;
 const B_SEP = 1;
 const B_GLUE = 2;
 
-const COPY_PER_WEIGHT = 1;
-const MIN_COPY_ROOM = 1 << 14;
+// What one kind of expansion may take for a pattern: four units per unit
+// of its weight, at least 64 KiB. Each kind draws from a room of its own,
+// and past it keeps the pattern's form unexpanded.
+export const room = (weight) => Math.max(4 * weight, 1 << 16);
+
+// A copied token is compiled again in every copy: a copy costs this many
+// units of the room per unit of its weight.
+const COPY_COST = 4;
 
 const LINEAR_GROUPS = 16;
 
@@ -271,8 +269,8 @@ class Builder {
     this.memo = linear ? null : new Map();
     this.glued = null;
     this.pieces = [];
-    this.room = Math.max(COPY_PER_WEIGHT * weight, MIN_COPY_ROOM);
-    this.suffixPool = MAX_SUFFIX_BYTES;
+    this.room = room(weight);
+    this.suffixPool = room(weight);
     this.dot = dot;
     this.ci = ci;
   }
@@ -450,7 +448,8 @@ class Builder {
     return merged.groups;
   }
 
-  afford(units) {
+  afford(weight) {
+    const units = weight * COPY_COST;
     if (units > this.room) return false;
     this.room -= units;
     return true;

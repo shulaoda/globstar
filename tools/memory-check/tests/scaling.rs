@@ -30,7 +30,7 @@ fn members(n: usize, f: impl Fn(usize) -> String) -> Vec<String> {
 }
 
 /// Compiled at `k` and `4k`, each about 16 and 64 KiB.
-const BUILDS: [(&str, usize, Shape); 12] = [
+const BUILDS: [(&str, usize, Shape); 13] = [
     ("{a/,} x k", 3_200, |k| {
         one("{a/,}".repeat(k) + "x", "a/x".into())
     }),
@@ -66,6 +66,11 @@ const BUILDS: [(&str, usize, Shape); 12] = [
             "x".repeat(4 * k)
         );
         one(p, "a1/b/x".into())
+    }),
+    // Past 16 suffixes no end reads back through the run before it.
+    ("k ends behind one long literal run", 4_000, |k| {
+        let ends = list(k / 4, |i| format!("x{i}/z"), ",");
+        one(format!("*/{}{{{ends}}}", "a/".repeat(k)), "q/a/x7/z".into())
     }),
     ("k heads under heads", 235, |k| {
         let heads = list(k, |i| format!("{}y", "x/".repeat(i % 64 + 1)), ",");

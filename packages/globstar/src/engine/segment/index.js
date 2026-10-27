@@ -16,6 +16,7 @@ import {
   EL_PIECE,
   exact,
   nodeWeight,
+  room,
 } from "./graph.js";
 import {
   MAX_CHAINS,
@@ -302,8 +303,6 @@ export class SegmentMatcher {
 const MAX_SUFFIX_SET = 16;
 
 const MAX_HEAD_DEPTH = 64;
-const HEAD_BUDGET_FLOOR = 4096;
-const HEAD_COPY_FACTOR = 64;
 
 function suffixes(body) {
   const nodes = seq(body);
@@ -360,7 +359,7 @@ function suffixSet(nodes) {
 function staticPrefixes(body) {
   const nodes = seq(body);
   let heads = readAt(nodes, 0);
-  if (heads.copied > HEAD_COPY_FACTOR * heads.limit) heads = readAt(nodes, MAX_HEAD_DEPTH);
+  if (heads.copied > heads.limit) heads = readAt(nodes, MAX_HEAD_DEPTH);
   return dedupe(heads.out);
 }
 
@@ -368,7 +367,7 @@ function readAt(nodes, depth) {
   const heads = {
     root: nodes,
     spent: 0,
-    limit: HEAD_BUDGET_FLOOR,
+    limit: room(0),
     weighed: false,
     copied: 0,
     out: [],
@@ -419,24 +418,27 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
   }
   while (end > 0 && acc.charCodeAt(end - 1) === 0x2f) end--;
   heads.copied += acc.length;
-  if (within(heads, heads.copied, HEAD_COPY_FACTOR)) heads.out.push(acc.slice(0, end));
+  if (within(heads, heads.copied)) heads.out.push(acc.slice(0, end));
   else heads.out = [""];
 }
 
 const covered = (heads) => heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0;
 
 function afford(heads, n) {
-  if (!within(heads, heads.spent + n, 1)) return false;
+  if (!within(heads, heads.spent + n)) return false;
   heads.spent += n;
   return true;
 }
 
-function within(heads, used, factor) {
-  if (used > factor * heads.limit && !heads.weighed) {
+// The pattern is weighed only once its room's floor is passed.
+function within(heads, used) {
+  if (used > heads.limit && !heads.weighed) {
     heads.weighed = true;
-    for (const node of heads.root) heads.limit += 2 * nodeWeight(node);
+    let weight = 0;
+    for (const node of heads.root) weight += nodeWeight(node);
+    heads.limit = room(weight);
   }
-  return used <= factor * heads.limit;
+  return used <= heads.limit;
 }
 
 function opensSegment(node) {

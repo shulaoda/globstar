@@ -10,15 +10,11 @@ use crate::engine::bytes::{cmp_folded, fold, is_sep, seg_end, seg_start};
 
 use super::SegmentMatcher;
 use super::bits::ByteSketch;
-use super::graph::{ACCEPT, Elem, Graph};
+use super::graph::{ACCEPT, Elem, Graph, room};
 use super::wild::{Wild, WildKind};
 
-/// Wildcard chains kept without an index; more while their elements
-/// weigh at most four times the pattern.
+/// Wildcard chains kept without an index.
 pub(super) const MAX_CHAINS: usize = 64;
-
-/// The literal set's bytes, one more per path, or four times the weight.
-const MAX_LITERAL_BYTES: usize = 64 * 1024;
 
 /// `chain_dir`'s budget of element compares on tail tokens.
 const MAX_TAIL_CHECKS: usize = 4096;
@@ -115,9 +111,8 @@ impl Graph {
                         .sum::<usize>();
                     wild_paths.push(nodes);
                 }
-                if wild_paths.len() > MAX_CHAINS && wild_weight > 4 * self.weight
-                    || literal_bytes.len() + literal_bounds.len()
-                        > MAX_LITERAL_BYTES.max(4 * self.weight)
+                if wild_weight > room(self.weight)
+                    || literal_bytes.len() + literal_bounds.len() > room(self.weight)
                 {
                     return None;
                 }
@@ -764,12 +759,6 @@ const MAX_INFIX: usize = 16;
 /// to `KEY_BYTES` (1 to 4), a prefix of each (5 to 8).
 const LOOKUPS: usize = 1 + 2 * KEY_BYTES;
 
-/// The entries a union's index may file: one per unit of the pattern's
-/// weight, at least 4,096.
-fn key_room(weight: usize) -> usize {
-    weight.max(4096)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Exact,
@@ -1019,7 +1008,7 @@ impl ChainIndex {
             if !filed {
                 rest.push(id as u32);
             }
-            if entries.len() > key_room(graph.weight) {
+            if entries.len() > room(graph.weight) {
                 return None;
             }
         }

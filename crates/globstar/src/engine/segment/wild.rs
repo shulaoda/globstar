@@ -26,10 +26,6 @@ const GROUP_MASK: u8 = GROUPS as u8 - 1;
 /// NFA; a single list is enumerated whatever its length.
 const MAX_SUFFIX_PRODUCT: usize = 1024;
 
-/// The enumerated suffixes may take four times the nodes they come from,
-/// and past that a pool of this many bytes the whole pattern shares.
-pub(super) const MAX_SUFFIX_BYTES: usize = 64 * 1024;
-
 #[derive(Debug, Clone)]
 pub(super) struct Wild {
     pub(super) kind: WildKind,

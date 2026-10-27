@@ -15,7 +15,7 @@ use crate::parse::ast::{Node, ends_in_globstar};
 use crate::engine::bytes::{self, has_escaped_sep};
 use bits::ByteSketch;
 use chain::{Chain, ChainIndex, Gate, Literals, MAX_CHAINS, Paths, Shape};
-use graph::{Elem, Graph, node_weight};
+use graph::{Elem, Graph, node_weight, room};
 use graph_nfa::{AnyNfa, any_nfa};
 use wild::WildKind;
 
@@ -236,12 +236,8 @@ impl SegmentMatcher {
 /// one they all share.
 const MAX_SUFFIX_SET: usize = 16;
 
-/// How deep braces may nest along one head, the budget every pattern
-/// gets for reading heads, and how many budgets of bytes recording them
-/// may cost.
+/// How deep braces may nest along one head.
 const MAX_HEAD_DEPTH: usize = 64;
-const HEAD_BUDGET_FLOOR: usize = 4096;
-const HEAD_COPY_FACTOR: usize = 64;
 
 /// Literal suffixes one of which every match ends with: the trailing
 /// literal run, or one per branch of a trailing brace. Empty when nothing
@@ -338,17 +334,16 @@ fn suffix_set(nodes: &[Node]) -> Box<[Bytes]> {
 }
 
 /// The deepest segment-bounded literal head of each brace expansion,
-/// deduplicated. Every byte read and branch taken costs one unit of a
-/// budget; past it, or past `MAX_HEAD_DEPTH`, a head ends at its last
-/// whole segment, a shorter prefix that still holds. Past
-/// `HEAD_COPY_FACTOR` budgets of bytes copied into heads, the reading
-/// starts again at the depth limit, which gives the one head before the
-/// first brace.
+/// deduplicated. Every byte read and branch taken costs one unit of the
+/// room; past it, or past `MAX_HEAD_DEPTH`, a head ends at its last whole
+/// segment, a shorter prefix that still holds. Past a room of bytes
+/// copied into heads, the reading starts again at the depth limit, which
+/// gives the one head before the first brace.
 fn static_prefixes(body: &Node, weight: usize) -> Box<[Bytes]> {
     let read_at = |depth| {
         let mut heads = Heads {
             spent: 0,
-            budget: HEAD_BUDGET_FLOOR + 2 * weight,
+            budget: room(weight),
             copied: 0,
             out: Vec::with_capacity(1),
         };
@@ -356,7 +351,7 @@ fn static_prefixes(body: &Node, weight: usize) -> Box<[Bytes]> {
         heads
     };
     let mut heads = read_at(0);
-    if heads.copied > HEAD_COPY_FACTOR.saturating_mul(heads.budget) {
+    if heads.copied > heads.budget {
         heads = read_at(MAX_HEAD_DEPTH);
     }
     let out = if heads.out.len() > 1 {
@@ -461,7 +456,7 @@ impl Heads {
             head = rest;
         }
         self.copied += acc.len();
-        if self.copied > HEAD_COPY_FACTOR.saturating_mul(self.budget) {
+        if self.copied > self.budget {
             self.out = vec![Bytes::default()];
         } else {
             self.out.push(Bytes::from(head));

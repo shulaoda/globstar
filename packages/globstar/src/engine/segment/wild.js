@@ -13,10 +13,6 @@ export const NEVER_LEN = 0x7fffffff;
 
 const MAX_SUFFIX_PRODUCT = 1024;
 
-// The enumerated suffixes may take four times the nodes they come from,
-// and past that a pool of this many bytes the whole pattern shares.
-export const MAX_SUFFIX_BYTES = 64 * 1024;
-
 const GROUP_SCRATCH = new Int32Array(65);
 
 export const ANY = 256;
