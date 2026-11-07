@@ -88,7 +88,7 @@ impl SegmentMatcher {
             (literals, _) => {
                 let route = match index {
                     Some(index) => Route::Index(index),
-                    None if literals.is_none() && chains.is_empty() => Route::Nfa,
+                    None if chains.is_empty() => Route::Nfa,
                     None => Route::Gates(chains.iter().map(|c| c.gate(&graph.elems, ci)).collect()),
                 };
                 Some(Box::new(Union::Graph {

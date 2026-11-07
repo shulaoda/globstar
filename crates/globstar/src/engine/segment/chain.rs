@@ -900,7 +900,7 @@ fn keys_of(w: &Wild, ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
         WildKind::Pieces(p) => {
             let whole = p.edge_keys(true, ci, suffixes);
             p.edge_keys(false, ci, prefixes);
-            if fixed && whole && p.one_piece() {
+            if fixed && whole {
                 exact.extend_from_slice(suffixes);
             }
             pieces = Some(p);

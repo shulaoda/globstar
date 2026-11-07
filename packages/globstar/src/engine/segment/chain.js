@@ -445,7 +445,7 @@ function keysOf(w, ci) {
     pieces = w.matcher;
     const whole = pieceKeys(pieces, true, ci, suffixes);
     pieceKeys(pieces, false, ci, prefixes);
-    if (fixed && whole && pieces.ends.length === 1) for (const s of suffixes) exact.push(s);
+    if (fixed && whole) for (const s of suffixes) exact.push(s);
   } else return null;
   if (exact.length > 0) return strings(K_EXACT, exact);
   const s = shortest(suffixes);

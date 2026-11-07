@@ -433,10 +433,6 @@ impl Pieces {
         true
     }
 
-    pub(super) fn one_piece(&self) -> bool {
-        self.ends.len() == 1
-    }
-
     /// The longest run of bytes within one piece, folded.
     pub(super) fn longest_literal(&self) -> Option<Vec<u8>> {
         let mut best: &[Pos] = &[];
