@@ -801,8 +801,8 @@ fn walker_seeds_see_the_tree_when_iterated() {
     assert_eq!(collect_rel(glob, t.root()), set(&[]));
 }
 
-// Under dot=true `**/node_modules/**/*` covers all of `node_modules`
-// (the entry itself does not match it), so the folder is never read.
+// `**/node_modules/**/*` matches `node_modules/`, the folder asked with
+// its `/`, so the folder is never read.
 #[cfg(unix)]
 #[test]
 fn walker_skips_a_subtree_the_ignore_covers() {

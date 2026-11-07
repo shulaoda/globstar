@@ -171,9 +171,6 @@ struct Rules {
     /// The patterns that end in `/`: asked about a folder with its `/`.
     dirs: Option<Glob>,
     follow_links: bool,
-    /// Whether the ignore set can cover a whole subtree, which
-    /// `dot = false` never does.
-    prune_ignored: bool,
 }
 
 /// An entry as its folder lists it.
@@ -273,7 +270,6 @@ impl Walk {
             ignore,
             dirs,
             follow_links: opts.follow_links,
-            prune_ignored: opts.dot,
         });
         Ok(Self {
             rules,
@@ -493,20 +489,14 @@ impl Rules {
             return self.matcher.is_match(rel).then(|| entry(path()));
         }
         // Asked with its `/`, a folder is pruned by an ignore entry that
-        // ends in `/` or `/**` (WALKER_SPEC §3.2), under either `dot`.
+        // matches it so, as `d/`, `d/**` and `d/*` do (WALKER_SPEC §3.2).
         if folder_matches(self.ignore.as_ref(), rel) {
             return None;
         }
         let dir_match = self.matcher.match_dir(rel);
         let emitted =
             (dir_match.matches() || folder_matches(self.dirs.as_ref(), rel)).then(|| entry(path()));
-        // An ignore that covers everything below skips the subtree.
-        let covered = self.prune_ignored
-            && self
-                .ignore
-                .as_ref()
-                .is_some_and(|ig| ig.match_dir(rel).matches_all_below());
-        if !dir_match.may_match_below() || covered {
+        if !dir_match.may_match_below() {
             return emitted;
         }
         let path = path();
@@ -688,8 +678,7 @@ fn folders_only(entries: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Does `glob` match the folder `rel`, asked with its `/`? Only a
-/// pattern that ends in `/` or `/**` can.
+/// Does `glob` match the folder `rel`, asked with its `/`?
 fn folder_matches(glob: Option<&Glob>, rel: &mut Vec<u8>) -> bool {
     glob.is_some_and(|g| {
         rel.push(b'/');

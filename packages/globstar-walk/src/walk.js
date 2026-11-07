@@ -124,7 +124,6 @@ function prepare(patterns, optsInput) {
     ignore,
     cwd,
     followSymlinks: opts.followSymlinks,
-    pruneIgnored: opts.dot && ignore !== null,
     seedFrames: [],
     seedResults: [],
   };
@@ -197,7 +196,6 @@ function processDirents(ctx, dirents, frame, results, descend) {
     }
     if (ignore !== null && ignore.match(childRel + "/")) continue;
     if (!DirMatch.mayMatchBelow(matcher.matchDir(childRel))) continue;
-    if (ctx.pruneIgnored && DirMatch.matchesAllBelow(ignore.matchDir(childRel))) continue;
     const childAbs = absHead + name;
     let childLinks = links;
     if (target !== null) {

@@ -186,7 +186,7 @@ A frame is a directory to read: its absolute path, its path relative to `cwd`, a
 5. **Special files.** A FIFO, a socket or a device, which is neither a directory, a file nor a link, is skipped (§8.1).
 6. **Branch on the type.**
    - A non-directory is returned when `positive` matches its relative path.
-   - A directory is read only for the files below it. It is skipped when `ignore` matches its relative path with a trailing `/` (§3.2), when `may_match_below` of `positive.match_dir` on its relative path is false, or when `ignore.match_dir` on its relative path reports `matches_all_below`. The last test applies under `dot: true` only: under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §15.5), which a positive pattern may still name. Otherwise a child frame is created, whose `links` are the frame's, plus this entry when it is a link to a directory. A link whose target is already the target of a link in the frame's `links` closes a cycle and is not entered (§10).
+   - A directory is read only for the files below it. It is skipped when `ignore` matches its relative path with a trailing `/` (§3.2), or when `may_match_below` of `positive.match_dir` on its relative path is false. Otherwise a child frame is created, whose `links` are the frame's, plus this entry when it is a link to a directory. A link whose target is already the target of a link in the frame's `links` closes a cycle and is not entered (§10).
 
 ### 7.2 The synchronous operation
 

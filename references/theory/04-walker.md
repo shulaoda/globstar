@@ -13,7 +13,6 @@ A walk holds two matchers and the base:
 | `dirs` (Rust)  | the union of the positive patterns that end in `/`, which match directories only        |
 | `cwd` / `base` | the base directory, resolved to an absolute path                                        |
 | `follow_links` | whether a link is read through to its target                                            |
-| `prune_ignored`| whether the ignore set may cover a subtree (`dot: true`; under `dot: false` it never does) |
 
 The unit of work is a *frame*: a directory's absolute path, its path relative to the base (with `/`), and the links entered to reach it (§7). The JS walk keeps its seed frames and seed results in a context; the Rust walk is a struct with a stack of frames, the directory being read, a buffer of seed results, and a scratch buffer for the relative path of the entry being judged.
 
@@ -75,20 +74,19 @@ if the type is a FIFO, socket or device:               skip
 if the type is not a directory:
     if matcher matches rel:  yield the file
     done
-if ignore matches rel · "/":                           skip      (entries ending in "/" or "/**")
+if ignore matches rel · "/":                           skip      (`d/`, `d/**`, `d/*`, …)
 dm ← matcher.match_dir(rel)
 (Rust) if dm.matches or dirs matches rel · "/":        yield the directory
 if not dm.may_match_below:                             done
-if prune_ignored and ignore.match_dir(rel).matches_all_below:  done
 if the entry is a link:
     if its target is already among frame.links:        done      (a cycle, §7)
     links ← frame.links + this link
 child frame ← (frame / name, rel, links)
 ```
 
-The ignore test precedes the `stat` so that an ignored link is never resolved. The absolute path of an entry is built only when it is yielded or entered. The test with the trailing `/` catches ignore entries that end in `/` or `/**` under either `dot`; the test with `match_dir` catches entries such as `**/node_modules/**/*`, which the first cannot, and is made under `dot: true` only, since under `dot: false` a `**` never covers the dot-led names below (GLOB_SPEC §15.5).
+The ignore test precedes the `stat` so that an ignored link is never resolved. The absolute path of an entry is built only when it is yielded or entered. The test with the trailing `/` catches, under either `dot`, every ignore entry that matches the directory's path with its `/`: one that ends in `/`, `/**` or `/*`, and `**/node_modules/**/*` as well. An ignore set that covers a subtree without matching its root so (`d/**/?*`) costs the one listing of that root, each of whose entries the ignore test then skips.
 
-The soundness of the two pruning tests is note 03, Propositions 3 and 4: a directory skipped on `may_match_below = false` holds no match, and one skipped on the ignore set's `matches_all_below` holds no path the ignore set would let through.
+The soundness of the pruning test is note 03, Proposition 3: a directory skipped on `may_match_below = false` holds no match.
 
 ## 5. Scheduling
 
@@ -122,7 +120,7 @@ A child's absolute path is its parent's with one separator and the name (`join`,
 
 ## 9. Complexity
 
-The walk reads each directory it enters once per route to it, and makes one `stat` per link met with `follow_links`, one `lstat` per seed segment, and one listing per seed segment whose spelling could open another entry. The matcher is asked at most three times per directory (`ignore` without and with the `/`, and `match_dir` twice at most) and once or twice per file. Memory is the frames found and not yet read: the depth of the tree times the fan-out in the synchronous walks, and the number of reads in flight in the asynchronous one.
+The walk reads each directory it enters once per route to it, and makes one `stat` per link met with `follow_links`, one `lstat` per seed segment, and one listing per seed segment whose spelling could open another entry. The matcher is asked at most four times per directory (`ignore` without and with the `/`, `match_dir`, and in Rust the directory patterns with the `/`) and once or twice per file. Memory is the frames found and not yet read: the depth of the tree times the fan-out in the synchronous walks, and the number of reads in flight in the asynchronous one.
 
 ## 10. Source map
 
