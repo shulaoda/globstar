@@ -658,12 +658,10 @@ fn compile_union(
     patterns: &[(String, String)],
     opts: CompileOptions,
 ) -> Result<Option<Glob>, WalkError> {
-    let bodies = || patterns.iter().map(|(_, body)| body);
-    let glob = match patterns {
-        [] => return Ok(None),
-        [(_, single)] => Glob::new_with(single, opts),
-        _ => Glob::union_with(bodies(), opts),
-    };
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+    let glob = Glob::union_with(patterns.iter().map(|(_, body)| body), opts);
     glob.map(Some).map_err(|e| {
         let (index, source) = match e {
             GlobError::InMember { index, error } => (index, *error),
