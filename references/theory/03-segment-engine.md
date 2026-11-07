@@ -69,7 +69,7 @@ Past the room, the walk cuts each open segment into a *piece* at the brace's edg
 
 ## 4. Chains
 
-`Graph::chains` enumerates the paths through the graph, depth first in pattern order, joins omitted. A path of literals only joins the literal set; every other path becomes a chain whose shape is fixed by the positions of its globstars. Let `m` be a chain's elements and `n` the path's segments.
+`Graph::paths` enumerates the paths through the graph, depth first in pattern order, joins omitted. A path of literals only joins the literal set; every other path becomes a chain whose shape is fixed by the positions of its globstars. Let `m` be a chain's elements and `n` the path's segments.
 
 ### 4.1 A line: at most one globstar
 
@@ -86,7 +86,7 @@ The literal paths, a union of file names, are kept apart as one sorted set of wh
 
 ### 4.4 `match_dir` from a lone line
 
-One line with at most one globstar answers `match_dir` by the same anchored comparisons, reading from the line the tokens the NFA would hold after the directory: a head position when the directory ends inside the head, the globstar when it has taken everything after the head, and a tail position when the tail's first elements take the last segments. Each tail alignment is a run of its own, so the runs are budgeted at 4,096 element comparisons (`MAX_TAIL_CHECKS`; tails of up to 90 elements stay exact), past which the answer is the safe one. Such a matcher keeps no NFA.
+One line with at most one globstar answers `match_dir` by the same anchored comparisons, reading from the line the tokens the NFA would hold after the directory: a head position when the directory ends inside the head, the globstar when it has taken everything after the head, and a tail position when the tail's first elements take the last segments. Each tail alignment is a run of its own, so the runs are budgeted at 4,096 element comparisons (`MAX_TAIL_CHECKS`; tails of up to 91 elements stay exact), past which the answer is the safe one. Such a matcher keeps no NFA.
 
 ## 5. Selecting a union's chains
 
@@ -216,7 +216,7 @@ The theorem is the sum of the lemmas below, one per layer of §2.
 
 **Lemma 3 (graph).** The walk takes `O(W)` time and builds a graph of `O(W)` nodes and edges whose elements weigh `O(W)`.
 
-*Proof sketch.* Each node of a walked sequence is visited once, and a crossing brace's subtree is read by `crosses` once per enclosing level, at most 33 times. A visit costs the groups it reaches. After a separator the groups merge into at most four (§3.2: one for the closed segments, one per boundary of a pending `**/`), and a group whose segment is empty differs from another only in its boundary and three flags, so at most 24 such groups exist at once. Groups with text multiply only where a crossing brace copies them into its branches, and the copy is paid from the room (§9) before it is made; past the room the open segments become pieces, which are never copied (§3.4), and every later token added to `c` groups pays `c − 1` units of its weight. Several tails pass through one join before a node follows them or a brace copies them (§3.3), so a node takes one edge, a join one per tail it gathers, and a brace copies one tail per group into each branch. The walk thus makes `O(W)` nodes, edges and copies of tokens, and each closed segment compiles in time linear in its weight: suffix products are bounded before they are built (§7.1), the closures an NFA keeps by 128 KiB (§7.3), the glue NFA by its pieces and their edges (§7.5). ∎
+*Proof sketch.* Each node of a walked sequence is visited once, and a crossing brace's subtree is read by `crosses` once per enclosing level, at most 33 times. A visit costs the groups it reaches. After a separator the groups merge into at most three (§3.2: one for the closed segments, and one per boundary of a pending `**/`, the pattern's start or a separator), and a group whose segment is empty differs from another only in its boundary and three flags, so at most 24 such groups exist at once. Groups with text multiply only where a crossing brace copies them into its branches, and the copy is paid from the room (§9) before it is made; past the room the open segments become pieces, which are never copied (§3.4), and every later token added to `c` groups pays `c − 1` units of its weight. Several tails pass through one join before a node follows them or a brace copies them (§3.3), so a node takes one edge, a join one per tail it gathers, and a brace copies one tail per group into each branch. The walk thus makes `O(W)` nodes, edges and copies of tokens, and each closed segment compiles in time linear in its weight: suffix products are bounded before they are built (§7.1), the closures an NFA keeps by 128 KiB (§7.3), the glue NFA by its pieces and their edges (§7.5). ∎
 
 **Lemma 4 (paths).** Enumerating the paths takes `O(W)`. The chains kept weigh at most the room, `O(W)`, together.
 
@@ -246,13 +246,13 @@ The bound is the one a simulation without backtracking cannot avoid, and the one
 
 The bounds count each hash-table operation as `O(1)`. Three kinds of table hash the keys a pattern decides with a hash an adversary can compute: the graph walk's node and group tables (FNV, `graph.rs`), the chain index (a multiplicative hash of a segment's outer bytes or its polynomial hash, `chain.rs`), and in JS the maps keyed by small integers. Keys chosen to collide make one operation cost up to the table's size, and compilation `O(W²)` at worst. A call's probes of the index stay within Theorem 2, since a probe reads at most the `O(W)` entries. Factoring (Lemma 1) and the static prefixes (Lemma 2) use no hash for their bounds.
 
-`tools/memory-check/tests/scaling.rs` checks the theorems on 19 shapes, the ones that broke an earlier bound among them: four times the pattern costs at most five times the memory and eight times the time, four times the path at most eight times the time.
+`tools/memory-check/tests/scaling.rs` checks the theorems on 20 shapes, the ones that broke an earlier bound among them: four times the pattern costs at most five times the memory and eight times the time, four times the path at most eight times the time.
 
 ## 12. Execution in JS
 
 The JS implementation runs the same algorithm on JS strings (`charCodeAt`, `startsWith`, `endsWith`, `indexOf`), with no allocation per call. Byte exactness holds by construction: literal comparisons and the absorption of `*` and `**` do not depend on the count of UTF-16 units, and the only counting constructs, `?` (one byte) and negated classes (one byte), read a non-ASCII segment's UTF-8 length or run on that segment's bytes, so nothing is matched twice. A pattern with a non-ASCII byte compiles to byte mode outright. The equivalence of the string and byte modes is fuzzed by `packages/globstar/tests/string-mode.mjs`.
 
-Where the twins differ, they differ in representation only: JS bit sets are int32 words, so its small graph NFA and small in-segment NFA hold 32 states; it has no `Wide` graph NFA (a graph past 32 states is sparse); and it finds a suffix group, however few the suffixes, by a binary search of their keys, since a typed table costs V8 more to allocate (about 200 ns) than the search saves.
+Where the twins differ, they differ in representation only: JS bit sets are int32 words, so its small graph NFA and small in-segment NFA hold 32 states; it has no `Wide` graph NFA (a graph past 32 states is sparse); it finds a suffix group, however few the suffixes, by a binary search of their keys, since a typed table costs V8 more to allocate (about 200 ns) than the search saves; and a chain's gate (§5) is the path's first character and `endsWith` or `startsWith` on the last segment, in place of the sketch of last bytes, and is kept for case-sensitive matchers only.
 
 ## 13. The suffix prefilter
 

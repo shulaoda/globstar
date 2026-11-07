@@ -699,7 +699,7 @@ Under `dot = true` the reference implementations set the flag when, from every s
 - coverage through classes: `/p/dist/**/{a*,[!a]*}` takes every name, as one that starts with `a` or one that does not;
 - coverage by length across branches: `?/**/?` with `**/??*` takes every name below `c/x.js`, as a one-byte name or a longer one; the brace `{**/?,**/??*}` likewise.
 
-A union whose members are merged into one construct is proven: `["**/?", "**/??*"]` becomes `**/?{,?*}` and receives `DescendAllAndMatch` at `a`, while the brace `{**/?,**/??*}`, which keeps its two branches, receives `DescendAndMatch` there.
+A union is judged as the brace of its members: `["**/?", "**/??*"]` and `{**/?,**/??*}` both receive `DescendAndMatch` at `a`, while `**/{?,??*}`, one construct, receives `DescendAllAndMatch` there.
 
 #### Examples
 

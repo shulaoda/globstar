@@ -50,13 +50,13 @@ The leading `!` is read at the level of the predicate: `match(!P, w) = ¬match(P
 - a body whose nodes are literals and separators only (`Node::to_literal_bytes`) is the literal engine's (note 02), with its bytes joined by `/`;
 - every other body is the segment engine's (note 03).
 
-The two options, `dot` and `case_insensitive`, are parameters of the engine and are not consulted while parsing (GLOB_SPEC §3). A union whose members factor back into a literal (`["a", "\a"]`) takes the literal engine as well.
+The two options, `dot` and `case_insensitive`, are parameters of the engine and are not consulted while parsing (GLOB_SPEC §3).
 
 ## 5. Unions
 
 ### 5.1 Members
 
-`Glob::union_with` parses each member in turn. A member given twice is parsed once (a set of the texts, kept only for a list of more than one). A member that does not parse raises `InMember { index, error }`, with the index counting every member given; a negated member raises `NegatedInUnion`. No member leaves one body, and one leaves its own; several are factored by `union.rs::factor_branches` into one body, which the engine selection of §4 then treats as a pattern.
+`Glob::union_with` parses each member in turn. A member given twice is parsed once (a set of the texts, kept only for a list of more than one). A member that does not parse raises `InMember { index, error }`, with the index counting every member given; a negated member raises `NegatedInUnion`. An empty list raises `EmptyPatternSet`; one member leaves its own body; several are factored by `union.rs::factor_branches` into one body, which the engine selection of §4 then treats as a pattern.
 
 The JS `compileMatcher` accepts negated members: the positive members are factored and compiled as one engine, and each negated member becomes an engine of its own. The matcher's `match` is true when the positive engine matches or some negated engine does not; `matchDir` with negated members reports the exact match, `may_match_below` as true, and the positive engine's `matches_all_below` (GLOB_SPEC §16.2); `staticPrefixes` is the empty prefix.
 

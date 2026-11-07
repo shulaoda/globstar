@@ -8,7 +8,7 @@ A pattern made of literals and separators only (`src/main.rs`) denotes one path,
 LiteralMatcher { literal: bytes, case_insensitive: bool }
 ```
 
-`literal` is the pattern's bytes with every separator written as `/`. The JS matcher keeps the literal as a Latin-1 string, one character per byte; a literal that is ASCII, compared case-sensitively on a platform where `\` is not a separator, is matched by string equality alone (`exact`), and a non-ASCII path is converted to its UTF-8 bytes before any other comparison.
+`literal` is the pattern's bytes with every separator written as `/`. The JS matcher keeps the literal as a Latin-1 string, one character per byte; a literal that is ASCII, compared case-sensitively on a platform where `\` is not a separator, is matched by string equality alone (`exact`). When the literal is not ASCII, the path is converted to its UTF-8 bytes before any other comparison; an ASCII literal is compared with the path as given, since no UTF-16 unit of a non-ASCII character equals an ASCII byte.
 
 ## 2. Byte comparison
 
@@ -37,7 +37,7 @@ The literal without its trailing `/`s is its own prefix; a literal that holds a 
 
 ## 6. Correctness and cost
 
-`is_match` is `L(P) = {literal}` under the byte rule of §2, read directly. `match_dir` returns `Pruned` only when `d` is neither the literal nor a segment-prefix of it, and no path below such a `d` can be the literal. Every operation is one pass over at most `|literal|` bytes, and the matcher holds the literal and nothing else.
+`is_match` is `L(P) = {literal}` under the byte rule of §2, read directly. `match_dir` returns `Pruned` only when `d` is neither the literal nor a segment-prefix of it, and no path below such a `d` can be the literal. Every operation is one pass over at most `|literal|` bytes; in JS a literal that is not ASCII first costs the conversion of the path. The matcher holds the literal and nothing else.
 
 ## 7. Source map
 
