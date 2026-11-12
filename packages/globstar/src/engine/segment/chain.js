@@ -411,10 +411,7 @@ function shortest(keys) {
   return keys.length === 0 ? 0 : min;
 }
 
-function strings(kind, keys) {
-  for (const k of keys) if (k.len === 0) return null;
-  return { keys: keys.map((k) => [kind, k]), infix: null };
-}
+const strings = (kind, keys) => ({ keys: keys.map((k) => [kind, k]), infix: null });
 
 function keysOf(w, ci) {
   const suffixes = [];

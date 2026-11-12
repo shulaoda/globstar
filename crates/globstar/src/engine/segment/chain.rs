@@ -898,21 +898,20 @@ fn keys_of(w: &Wild, ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
         WildKind::Generic(_) => return None,
     }
     if !exact.is_empty() {
-        return strings(Kind::Exact, exact);
+        return Some(strings(Kind::Exact, exact));
     }
     let shortest = |keys: &[Key]| keys.iter().map(|k| k.len).min().unwrap_or(0);
     match (shortest(suffixes), shortest(prefixes)) {
         (0, 0) => pieces
             .and_then(|p| p.longest_literal())
             .map(|lit| SegKeys::Infix(lit.into_iter().take(MAX_INFIX).collect())),
-        (s, p) if p > s => strings(Kind::Prefix, prefixes),
-        _ => strings(Kind::Suffix, suffixes),
+        (s, p) if p > s => Some(strings(Kind::Prefix, prefixes)),
+        _ => Some(strings(Kind::Suffix, suffixes)),
     }
 }
 
-fn strings(kind: Kind, keys: &[Key]) -> Option<SegKeys> {
-    (!keys.iter().any(|k| k.len == 0))
-        .then(|| SegKeys::Strings(keys.iter().map(|&k| (kind, k)).collect()))
+fn strings(kind: Kind, keys: &[Key]) -> SegKeys {
+    SegKeys::Strings(keys.iter().map(|&k| (kind, k)).collect())
 }
 
 impl ChainIndex {
