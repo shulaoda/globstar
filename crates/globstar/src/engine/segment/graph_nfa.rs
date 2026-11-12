@@ -454,7 +454,7 @@ impl SparseNfa {
         };
         for &item in &active.items {
             let Some(p) = item.checked_sub(self.n + 1) else {
-                if item != self.accept() && consumes(item) {
+                if item != self.accept() && absorb_ok {
                     self.fire(m, item, next);
                 }
                 continue;
@@ -521,7 +521,7 @@ impl SparseNfa {
             let mut entries = None;
             for &item in &active.items {
                 let Some(p) = item.checked_sub(self.n + 1) else {
-                    if item != accept && any_seg(item) {
+                    if item != accept {
                         self.fire(m, item, next);
                     }
                     continue;

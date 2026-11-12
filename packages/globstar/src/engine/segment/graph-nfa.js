@@ -282,8 +282,7 @@ function stepSparse(m, nfa, active, next, str, s0, e0) {
   for (let k = 0, n = active.len; k < n; k++) {
     const item = items[k];
     if (item < base) {
-      if (item === nfa.accept) continue;
-      if (sparseConsumes(m, item, str, s0, e0, absorbOk)) fireSparse(m, nfa, item, next);
+      if (item !== nfa.accept && absorbOk) fireSparse(m, nfa, item, next);
       continue;
     }
     const p = item - base;
@@ -339,7 +338,6 @@ export function coversBelowSparse(m, active) {
   const scratch = sparseScratch(nfa);
   let next = active === scratch.a ? scratch.b : scratch.a;
   const base = nfa.n + 1;
-  const anySeg = (s) => elemAnySeg(m.elems[s]);
   const limit = Math.min(nfa.n + 1, MAX_COVER_SEGMENTS) + 1;
   for (let step = 0; step <= limit; step++) {
     clearSet(next);
@@ -347,7 +345,7 @@ export function coversBelowSparse(m, active) {
     for (let k = 0; k < active.len; k++) {
       const item = active.items[k];
       if (item < base) {
-        if (item !== nfa.accept && anySeg(item)) fireSparse(m, nfa, item, next);
+        if (item !== nfa.accept) fireSparse(m, nfa, item, next);
         continue;
       }
       const p = item - base;
