@@ -30,12 +30,19 @@ fn members(n: usize, f: impl Fn(usize) -> String) -> Vec<String> {
 }
 
 /// Compiled at `k` and `4k`, each about 16 and 64 KiB.
-const BUILDS: [(&str, usize, Shape); 13] = [
+const BUILDS: [(&str, usize, Shape); 15] = [
     ("{a/,} x k", 3_200, |k| {
         one("{a/,}".repeat(k) + "x", "a/x".into())
     }),
     ("{**,a}/ x k", 2_300, |k| {
         one("{**,a}/".repeat(k) + "x", "a/x".into())
+    }),
+    // A brace that may be empty beside a `**` copies one tail, a join.
+    ("{a,}**/ x k", 2_300, |k| {
+        one("{a,}**/".repeat(k) + "x", "a/x".into())
+    }),
+    ("/**{,a} x k", 2_300, |k| {
+        one("/**{,a}".repeat(k) + "x", "/a/x".into())
     }),
     ("x{a,/} x k", 2_700, |k| {
         one("x{a,/}".repeat(k), "xa".into())
@@ -88,7 +95,7 @@ const BUILDS: [(&str, usize, Shape); 13] = [
 ];
 
 /// Called on a fixed path, the pattern at `k` and `4k`.
-const CALLS: [(&str, usize, Shape); 5] = [
+const CALLS: [(&str, usize, Shape); 6] = [
     // A costly wildcard many positions lead to is tested once a step.
     ("k branches into one wide wildcard", 1_000, |k| {
         let p = format!("{{{}*/}}{}c", "*/,".repeat(k - 1), "{*,a}".repeat(k));
@@ -107,6 +114,9 @@ const CALLS: [(&str, usize, Shape); 5] = [
     }),
     ("{a*,b*} x k", 2_300, |k| {
         one("{a*,b*}".repeat(k) + "c", format!("{}cc", "ab".repeat(64)))
+    }),
+    ("{a,}**/ x k", 2_300, |k| {
+        one("{a,}**/".repeat(k) + "x", format!("{}x", "a/".repeat(64)))
     }),
     ("union of k pieces", 1_300, |k| {
         (

@@ -423,7 +423,7 @@ for (const [pattern, path] of [
   assert.ok(m.match(path), pattern.slice(0, 7));
 }
 
-for (const unit of ["{**,a}/", "{**,*}/"]) {
+for (const unit of ["{**,a}/", "{**,*}/", "{a,}**/", "**{,a}/"]) {
   const path = "a/".repeat(16) + "x";
   const start = performance.now();
   const m = compileMatcher(unit.repeat(8192) + "x");

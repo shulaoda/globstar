@@ -603,6 +603,7 @@ impl<'a> Builder<'a> {
                     let mut shadows = Vec::new();
                     for g in groups.iter_mut().filter(|g| !g.shadow) {
                         if empty && !g.within() {
+                            self.gather(g);
                             shadows.push(Group {
                                 shadow: true,
                                 ..g.clone()

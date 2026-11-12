@@ -406,15 +406,18 @@ class Builder {
     let shadows = null;
     for (const g of groups) {
       if (g.shadow) continue;
-      if (empty && !within(g)) {
-        const s = forkGroup(g);
-        s.shadow = true;
-        (shadows ??= []).push(s);
-      }
+      if (empty && !within(g)) (shadows ??= []).push(this.shadow(g));
       this.text(g);
       g.buf.push(node);
     }
     return shadows === null ? groups : groups.concat(shadows);
+  }
+
+  shadow(g) {
+    this.gather(g);
+    const s = forkGroup(g);
+    s.shadow = true;
+    return s;
   }
 
   text(g) {
