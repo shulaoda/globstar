@@ -42,7 +42,8 @@ for each prefix p of matcher.static_prefixes():
         if the segment's spelling could open another entry and it is not in the
            listing of frame as written:  drop p         (§3.1)
         lstat(frame / segment)
-            nothing can be there (ENOENT, ENOTDIR, ELOOP, ENAMETOOLONG, EINVAL):  drop p
+            nothing can be there (ENOENT, ENOTDIR, ELOOP, EINVAL, or ENAMETOOLONG
+               for a segment the listing of frame lacks):  drop p
             any other failure:  report Io for that path; drop p
         judge the segment by the per-entry rule (§4) as the only entry of frame
         if it is the last segment:  its file goes to the results, its frame to the seeds
@@ -120,7 +121,7 @@ A child's absolute path is its parent's with one separator and the name (`join`,
 
 ## 9. Complexity
 
-The walk reads each directory it enters once per route to it, and makes one `stat` per link met with `follow_links`, one `lstat` per seed segment, and one listing per seed segment whose spelling could open another entry. The matcher is asked at most four times per directory (`ignore` without and with the `/`, `match_dir`, and in Rust the directory patterns with the `/`) and once or twice per file. Memory is the frames found and not yet read: the depth of the tree times the fan-out in the synchronous walks, and the number of reads in flight in the asynchronous one.
+The walk reads each directory it enters once per route to it, and makes one `stat` per link met with `follow_links`, one `lstat` per seed segment, and one listing per seed segment whose spelling could open another entry or whose `lstat` fails with ENAMETOOLONG. The matcher is asked at most four times per directory (`ignore` without and with the `/`, `match_dir`, and in Rust the directory patterns with the `/`) and once or twice per file. Memory is the frames found and not yet read: the depth of the tree times the fan-out in the synchronous walks, and the number of reads in flight in the asynchronous one.
 
 ## 10. Source map
 

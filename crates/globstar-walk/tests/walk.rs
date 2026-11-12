@@ -703,6 +703,43 @@ fn walker_seed_errors_follow_the_root_walk() {
     assert_eq!(t.walk(&["{ok.txt,a\0b/x.txt}"]), set(&["ok.txt"]));
 }
 
+// A path too long to stat as a whole: the seed reports the entry its
+// folder lists, and drops the one it does not (WALKER_SPEC §9.4).
+#[cfg(unix)]
+#[test]
+fn walker_seed_reports_a_path_too_long_to_stat() {
+    let limit = if cfg!(target_os = "macos") {
+        1024
+    } else {
+        4096
+    };
+    let t = TmpTree::new("long_path", &[]);
+    let mut folder = String::new();
+    while t.root().as_os_str().len() + folder.len() + 51 < limit - 60 {
+        folder.push_str(&"d".repeat(50));
+        folder.push('/');
+    }
+    t.touch(&folder);
+    let name = "f".repeat(200) + ".txt";
+    let made = std::process::Command::new("touch")
+        .arg(&name)
+        .current_dir(t.root().join(&folder))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let file = format!("{folder}{name}");
+    assert!(fs::symlink_metadata(t.root().join(&file)).is_err());
+
+    let results: Vec<_> = Walk::new(file.as_str(), t.root()).unwrap().collect();
+    assert!(
+        matches!(results.as_slice(), [Err(WalkError::Io { .. })]),
+        "a path too long must surface as an Io error: {results:?}"
+    );
+    assert_eq!(t.walk(&[&format!("{folder}*.txt")]), set(&[&file]));
+    let missing = format!("{folder}{}.txt", "g".repeat(200));
+    assert_eq!(t.walk(&[&missing]), set(&[]));
+}
+
 // A seed through a link starts with the link on its way down, as a root
 // walk does.
 #[cfg(unix)]

@@ -260,12 +260,12 @@ The walker MUST NOT silence an I/O error: there is no error callback and no log-
 
 A prefix's segments are `lstat`ed one by one (§6), and a failure is classified by whether anything can be there:
 
-- Nothing can be there: the prefix is dropped silently. These are ENOENT (missing), ENOTDIR (a segment is a file), ELOOP (a looping link), ENAMETOOLONG (no directory lists such a name), EINVAL and a NUL byte in the name. A walk from `cwd` lists none of these; the branch of the pattern matches nothing that exists.
-- Anything else (EACCES, …): `Io`, naming the segment that failed. A walk from `cwd` reaching that subtree would fail, and a seed must not turn the failure into an empty result.
+- Nothing can be there: the prefix is dropped silently. These are ENOENT (missing), ENOTDIR (a segment is a file), ELOOP (a looping link), ENAMETOOLONG when the directory does not list the segment (a name too long for any directory, or a missing entry under a path too long as a whole), EINVAL and a NUL byte in the name. A walk from `cwd` lists none of these; the branch of the pattern matches nothing that exists.
+- Anything else (EACCES, ENAMETOOLONG for a segment the directory lists, …): `Io`, naming the segment that failed. A walk from `cwd` reaching that subtree would fail, and a seed must not turn the failure into an empty result.
 
 A segment that `lstat` finds is judged by §7.1 like any entry, so a broken or looping link is a non-directory, returned when it matches (§10).
 
-Permissions are the one case where a seed and a walk from `cwd` see different things: a seed `lstat`s its segments, while a walk lists every directory on the way. Under a directory that can be entered but not listed, a seed finds its file where the walk fails; under one that can be listed but not entered, a seed fails where the walk lists the names. Both cases report a problem rather than hide one.
+Permissions and path length are the two cases where a seed and a walk from `cwd` see different things: a seed `lstat`s its segments, while a walk lists every directory on the way. Under a directory that can be entered but not listed, a seed finds its file where the walk fails; under one that can be listed but not entered, a seed fails where the walk lists the names; and an entry whose path is too long as a whole, in a directory whose path is not, fails in a seed where the walk lists it. Every case reports a problem rather than hide one.
 
 ---
 

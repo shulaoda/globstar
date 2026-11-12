@@ -355,7 +355,7 @@ impl Walk {
                 let path = join(&frame.absolute, name.as_ref());
                 let meta = match fs::symlink_metadata(&path) {
                     Ok(m) => m,
-                    Err(e) if nothing_there(&e) => break,
+                    Err(e) if nothing_there(&e, &frame.absolute, name) => break,
                     Err(source) => {
                         self.ready.push(Err(WalkError::Io { path, source }));
                         break;
@@ -690,15 +690,15 @@ fn folder_matches(glob: Option<&Glob>, rel: &mut Vec<u8>) -> bool {
 
 /// A stat error that means no entry can be at the path, so a root walk
 /// would never list one (WALKER_SPEC §9.4).
-fn nothing_there(err: &io::Error) -> bool {
+fn nothing_there(err: &io::Error, dir: &Path, name: &str) -> bool {
     let kind = err.kind();
     matches!(
         kind,
-        io::ErrorKind::NotFound
-            | io::ErrorKind::NotADirectory
-            | io::ErrorKind::InvalidFilename
-            | io::ErrorKind::InvalidInput
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory | io::ErrorKind::InvalidInput
     )
+    // A path too long as a whole fails so too, though its folder lists
+    // the entry.
+    || kind == io::ErrorKind::InvalidFilename && !listed(dir, name)
     // `ErrorKind::FilesystemLoop` cannot be named on stable Rust yet.
     || format!("{kind:?}") == "FilesystemLoop"
 }

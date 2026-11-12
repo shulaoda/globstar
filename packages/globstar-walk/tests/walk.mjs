@@ -336,6 +336,27 @@ await check("seed errors follow the root walk", async () => {
   await expectBoth(root, ["{ok.txt,a\0b/x.txt}"], {}, ["ok.txt"], "NUL");
 });
 
+await check("a seed reports a path too long to stat", async () => {
+  if (process.platform === "win32") return;
+  const limit = process.platform === "darwin" ? 1024 : 4096;
+  const root = tmpTree("longpath", []);
+  let folder = "";
+  while (Buffer.byteLength(root) + folder.length + 51 < limit - 60) folder += "d".repeat(50) + "/";
+  const cwd = path.join(root, folder);
+  fs.mkdirSync(cwd, { recursive: true });
+  const name = "f".repeat(200) + ".txt";
+  const file = folder + name;
+  execFileSync("touch", [name], { cwd });
+  try {
+    assert.throws(() => fs.lstatSync(path.join(root, file)), { code: "ENAMETOOLONG" });
+    await throwsBoth([file], { cwd: root }, isIo);
+    await expectBoth(root, [folder + "*.txt"], {}, [file], "listed by its folder");
+    await expectBoth(root, [folder + "g".repeat(200) + ".txt"], {}, [], "not listed");
+  } finally {
+    execFileSync("rm", [name], { cwd });
+  }
+});
+
 await check("a seed through a symlink knows its cycle", async () => {
   if (!symlinksOk) return;
   const root = tmpTree("seedcycle", ["a/x.txt"], { "a/link": "." });

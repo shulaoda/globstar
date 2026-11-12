@@ -149,7 +149,7 @@ function initFromPrefixes(ctx) {
       try {
         entry = fs.lstatSync(abs);
       } catch (cause) {
-        if (nothingThere(cause)) break;
+        if (nothingThere(cause, frame.absolute, name)) break;
         throw new WalkError("Io", { path: abs, cause });
       }
       entry.name = name;
@@ -264,15 +264,16 @@ function readEachEntry(dir) {
 
 const gone = (err) => err?.code === "ENOENT" || err?.code === "ENOTDIR";
 
-function nothingThere(err) {
+function nothingThere(err, dir, name) {
   switch (err?.code) {
     case "ENOENT":
     case "ENOTDIR":
     case "ELOOP":
-    case "ENAMETOOLONG":
     case "EINVAL":
     case "ERR_INVALID_ARG_VALUE":
       return true;
+    case "ENAMETOOLONG":
+      return !listed(dir, name);
     default:
       return false;
   }
