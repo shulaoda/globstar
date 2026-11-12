@@ -876,9 +876,6 @@ fn keys_of(w: &Wild, ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
             let (p, s) = affix.parts();
             prefixes.push(Key::of(p, ci));
             suffixes.push(Key::of(s, ci));
-            if fixed && w.min_len as usize == p.len() + s.len() {
-                exact.push(prefixes[0].then(suffixes[0]));
-            }
         }
         WildKind::Suffixes(set) => {
             let p = Key::of(set.prefix(), ci);

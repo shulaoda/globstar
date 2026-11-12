@@ -425,9 +425,6 @@ function keysOf(w, ci) {
   if (w.kind === WK_AFFIX) {
     prefixes.push(keyOf(w.prefixStr, ci));
     suffixes.push(keyOf(w.suffixStr, ci));
-    if (fixed && w.minLen === w.prefixStr.length + w.suffixStr.length) {
-      exact.push(then(prefixes[0], suffixes[0]));
-    }
   } else if (w.kind === WK_SUFFIXES) {
     const p = keyOf(w.prefixStr, ci);
     prefixes.push(p);
