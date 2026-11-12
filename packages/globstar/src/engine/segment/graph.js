@@ -430,9 +430,7 @@ class Builder {
   settle(g) {
     if (!g.pendingGlobstar) return;
     this.gather(g);
-    const t = g.tails[0];
-    const lone = g.tails.length === 1 && t !== START && this.elems[t] === G0_ELEM;
-    rebase(g, lone ? t : this.emit(G0_ELEM, g.tails, false), B_SEP);
+    rebase(g, this.emit(G0_ELEM, g.tails, false), B_SEP);
   }
 
   cut(g) {

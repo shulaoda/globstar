@@ -633,17 +633,13 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Emit a pending `**/`, always a `G0`; after a lone `G0` it is that
-    /// one (`**/**/` ≡ `**/`).
+    /// Emit a pending `**/`, always a `G0`.
     fn settle(&mut self, g: &mut Group<'_>) {
         if !g.pending_globstar {
             return;
         }
         self.gather(g);
-        let id = match g.tails[..] {
-            [t] if t != START && matches!(self.elems[t as usize], Elem::G0) => t,
-            _ => self.emit(Elem::G0, &g.tails, false),
-        };
+        let id = self.emit(Elem::G0, &g.tails, false);
         g.rebase(id, Boundary::Sep);
     }
 
