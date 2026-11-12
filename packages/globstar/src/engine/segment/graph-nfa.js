@@ -42,6 +42,7 @@ function denseNfa(graph) {
   const after = [];
   for (let s = 0; s <= n; s++) after.push(0);
   let reach1 = 0;
+  let wild = 0;
   const addTarget = (c, t) => {
     if (t === ACCEPT) return c | (1 << accept);
     if (elems[t].kind === EL_JOIN) return c | after[t];
@@ -54,8 +55,10 @@ function denseNfa(graph) {
     if (succs === null) c = addTarget(c, i + 1 < n ? i + 1 : ACCEPT);
     else for (const t of succs[i]) c = addTarget(c, t);
     if (elemSatisfiable(el) && ((c & (1 << accept)) !== 0 || (c & reach1) !== 0)) reach1 |= 1 << i;
+    if (elemAnySeg(el)) wild |= 1 << i;
     after[i] = isGlobstar(el) ? c | (1 << i) : c;
   }
+  after[accept] = wild;
   let init = 0;
   for (const t of start) init = addTarget(init, t);
   return { kind: NFA_SMALL, after: exact(after), init, accept, reach1 };
@@ -186,27 +189,15 @@ function nfaStep(m, nfa, active, str, s0, e0) {
   return next;
 }
 
-function nfaStepWild(m, active) {
-  const nfa = m.nfa;
-  const elems = m.elems;
-  const after = nfa.after;
-  let next = 0;
-  let bits = active & ~(1 << nfa.accept);
-  while (bits !== 0) {
-    const s = ctz32(bits);
-    bits &= bits - 1;
-    if (!elemAnySeg(elems[s])) continue;
-    next |= after[s];
-  }
-  return next;
-}
-
 export function coversBelow(m, active) {
-  const acceptBit = 1 << m.nfa.accept;
-  const limit = Math.min(m.nfa.after.length, MAX_COVER_SEGMENTS);
-  for (let step = 0; step <= limit; step++) {
-    const next = nfaStepWild(m, active);
-    if ((next & acceptBit) === 0) return false;
+  const { after, accept } = m.nfa;
+  const wild = after[accept];
+  active &= wild;
+  for (let step = Math.min(after.length, MAX_COVER_SEGMENTS); step >= 0; step--) {
+    let next = 0;
+    for (let bits = active; bits !== 0; bits &= bits - 1) next |= after[ctz32(bits)];
+    if ((next & (1 << accept)) === 0) return false;
+    next &= wild;
     if (next === active) return true;
     active = next;
   }
@@ -349,7 +340,7 @@ export function coversBelowSparse(m, active) {
   let next = active === scratch.a ? scratch.b : scratch.a;
   const base = nfa.n + 1;
   const anySeg = (s) => elemAnySeg(m.elems[s]);
-  const limit = Math.min(nfa.n + 1, MAX_COVER_SEGMENTS);
+  const limit = Math.min(nfa.n + 1, MAX_COVER_SEGMENTS) + 1;
   for (let step = 0; step <= limit; step++) {
     clearSet(next);
     let entries = null;

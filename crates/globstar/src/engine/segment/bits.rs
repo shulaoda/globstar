@@ -12,6 +12,7 @@ pub(super) trait Bits: Clone + PartialEq + std::fmt::Debug {
     fn is_zero(&self) -> bool;
     fn clear(&mut self);
     fn or_with(&mut self, other: &Self);
+    fn and_with(&mut self, other: &Self);
     fn intersects(&self, other: &Self) -> bool;
     fn for_each(&self, f: impl FnMut(usize));
     fn words_mut(&mut self) -> &mut [u64];
@@ -45,6 +46,10 @@ impl Bits for u64 {
     #[inline]
     fn or_with(&mut self, other: &Self) {
         *self |= *other;
+    }
+    #[inline]
+    fn and_with(&mut self, other: &Self) {
+        *self &= *other;
     }
     #[inline]
     fn intersects(&self, other: &Self) -> bool {
@@ -98,6 +103,11 @@ impl Bits for Wide {
     fn or_with(&mut self, other: &Self) {
         for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
             *a |= *b;
+        }
+    }
+    fn and_with(&mut self, other: &Self) {
+        for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
+            *a &= *b;
         }
     }
     fn intersects(&self, other: &Self) -> bool {

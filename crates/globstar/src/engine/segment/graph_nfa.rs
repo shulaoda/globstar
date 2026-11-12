@@ -21,7 +21,8 @@ const MAX_DENSE_LITS: usize = 48;
 #[derive(Debug, Clone)]
 pub(super) struct Nfa<B: Bits> {
     /// Per state, the closure entered after it takes a segment; a
-    /// globstar's holds itself. The accept slot is never read.
+    /// globstar's holds itself. The accept slot holds the states that
+    /// take any segment.
     after: Box<[B]>,
     init: B,
     /// States from which at least one more segment reaches accept.
@@ -117,6 +118,7 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
     let words = B::words(n + 1);
     let mut after: Vec<B> = (0..=n).map(|_| B::zero(0)).collect();
     let mut reach1 = B::zero(words);
+    let mut wild = B::zero(words);
     // Successors lie ahead, so a pass from the last position back finds
     // every closure complete; a join is only its successors.
     let closure_of = |targets: &mut dyn Iterator<Item = u32>, after: &[B]| {
@@ -145,8 +147,12 @@ fn dense_nfa<B: Bits>(elems: &[Elem], edges: Option<&Edges>) -> Nfa<B> {
         if el.is_globstar() {
             c.set(i);
         }
+        if el.any_seg() {
+            wild.set(i);
+        }
         after[i] = c;
     }
+    after[accept] = wild;
     let init = closure_of(&mut succ_of(elems, edges, n), &after);
     Nfa {
         after: after.into_boxed_slice(),
@@ -264,7 +270,7 @@ impl<B: Bits> Nfa<B> {
             (active, next, exact)
         };
         let prefix = root || active.intersects(&self.reach1);
-        let all = m.dot && prefix && self.covers_below(m, &mut active, &mut next);
+        let all = m.dot && prefix && self.covers_below(&mut active, &mut next);
         DirMatch::new(exact, prefix, all)
     }
 
@@ -306,26 +312,20 @@ impl<B: Bits> Nfa<B> {
         });
     }
 
-    /// `step` over a segment that only wildcards take (`dot=true` only).
-    fn step_wild(&self, m: &SegmentMatcher, active: &B, next: &mut B) {
-        next.clear();
-        let accept = self.accept();
-        active.for_each(|s| {
-            if s != accept && m.elems[s].any_seg() {
-                next.or_with(&self.after[s]);
-            }
-        });
-    }
-
-    /// Feeds wildcard-only segments until the set settles, requiring an
-    /// accept after each: a real segment fires at least what one does, so
-    /// `true` holds for every path below.
-    fn covers_below(&self, m: &SegmentMatcher, active: &mut B, next: &mut B) -> bool {
+    /// Feeds wildcard-only segments (`dot=true` only) until the states
+    /// that take one repeat, requiring an accept after each: a real
+    /// segment fires at least what one does, so `true` holds for every
+    /// path below.
+    fn covers_below(&self, active: &mut B, next: &mut B) -> bool {
+        let wild = &self.after[self.accept()];
+        active.and_with(wild);
         for _ in 0..=self.after.len().min(MAX_COVER_SEGMENTS) {
-            self.step_wild(m, active, next);
+            next.clear();
+            active.for_each(|s| next.or_with(&self.after[s]));
             if !next.test(self.accept()) {
                 return false;
             }
+            next.and_with(wild);
             if next == active {
                 return true;
             }
@@ -510,12 +510,13 @@ impl SparseNfa {
         }
     }
 
-    /// As `Nfa::covers_below`; a piece fires the exits the glue NFA
-    /// reaches through wildcards alone.
+    /// As `Nfa::covers_below`, the set showing one step later that the
+    /// states repeat; a piece fires the exits the glue NFA reaches
+    /// through wildcards alone.
     fn covers_below(&self, m: &SegmentMatcher, active: &mut Active, next: &mut Active) -> bool {
         let accept = self.accept();
         let any_seg = |s: u32| m.elems[s as usize].any_seg();
-        for _ in 0..=(self.n as usize + 1).min(MAX_COVER_SEGMENTS) {
+        for _ in 0..=(self.n as usize + 1).min(MAX_COVER_SEGMENTS) + 1 {
             next.clear();
             let mut entries = None;
             for &item in &active.items {

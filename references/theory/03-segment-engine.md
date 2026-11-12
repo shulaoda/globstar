@@ -236,7 +236,7 @@ The theorem is the sum of the lemmas below, one per layer of §2.
 - A block tests its first element on each middle segment and, from each, the next elements on the segments that follow, so each element meets each segment at most once; the dot scan moves right only (§4.2).
 - The literal set makes `O(log K)` comparisons of at most `n` bytes, and `match_dir` one more search.
 - Gates try at most 64 chains, each once. The index makes at most nine lookups per segment it probes and walks a chain at most once in each of its four steps (§5); the chains weigh `O(W)` together (Lemma 4).
-- A dense NFA step tests each active state once and ORs its row. A sparse step enters each position once, binary-searches its literal successors and tests the others, so each element at most once (§6), and runs the glue NFA once over the segment from all the entries it holds (§7.5). A step on segment `u` thus costs `O((|u| + 1) · W)`. `match_dir` adds at most 65 steps on wildcard-only segments, which test no bytes (§15.4).
+- A dense NFA step tests each active state once and ORs its row. A sparse step enters each position once, binary-searches its literal successors and tests the others, so each element at most once (§6), and runs the glue NFA once over the segment from all the entries it holds (§7.5). A step on segment `u` thus costs `O((|u| + 1) · W)`. `match_dir` adds at most 66 steps on wildcard-only segments, which test no bytes (§15.4).
 
 A call keeps the NFA's sets, the in-segment NFA's and the glue NFA's sets, and the index's picks: `O(W)`. The static prefixes are those of Lemma 2. ∎
 
@@ -356,10 +356,10 @@ repeat
         (a globstar absorbs it; a Wild consumes it iff its wildcards alone
          accept every non-empty segment; a Lit never does)
     if S holds no accepting state:  return false
-    if S did not change:            return true
+    if the states of S that take such a segment did not change:  return true
 ```
 
-Tokens move right along a sequence or stay on a globstar, so the loop ends within the number of states; it is capped at 65 steps (GLOB_SPEC §15.5). The bit per `Wild` is the `any_seg` of §7.4. A segment that a brace cut into glued pieces (§3.4) is no element of its own: the pieces a set holds enter the glue NFA at once, and the pass of §7.5 tells each exit whether the wildcards alone accept every name there; the loop fires those nodes, and the answer is the one the copied segments would give. On a lone chain the simulation has a closed form (§4.4): the globstar is alive after `d`, every tail element has the bit, and every shorter tail token is alive as well, within the budget of 4,096 element comparisons.
+Tokens move right along a sequence or stay on a globstar, so the loop ends within the number of states; it is capped at 65 steps, past which the answer is `false` (GLOB_SPEC §15.5). The states that take a wildcard-only segment decide every later step, so the test is the same in every form of the NFA; a sparse set holds the positions those states left, shows the repeat one step later, and so takes one step more. The bit per `Wild` is the `any_seg` of §7.4. A segment that a brace cut into glued pieces (§3.4) is no element of its own: the pieces a set holds enter the glue NFA at once, and the pass of §7.5 tells each exit whether the wildcards alone accept every name there; the loop fires those nodes, and the answer is the one the copied segments would give. On a lone chain the simulation has a closed form (§4.4): the globstar is alive after `d`, every tail element has the bit, and every shorter tail token is alive as well, within the budget of 4,096 element comparisons.
 
 Under `dot = false` the answer is `false` without simulation: `**` does not match a dot-led name, so some `d/.x` escapes.
 
