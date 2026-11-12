@@ -112,7 +112,7 @@ impl Graph {
                     wild_paths.push(nodes);
                 }
                 if wild_weight > room(self.weight)
-                    || literal_bytes.len() + literal_bounds.len() > room(self.weight)
+                    || literal_bytes.len() + literal_bounds.len() - 1 > room(self.weight)
                 {
                     return None;
                 }

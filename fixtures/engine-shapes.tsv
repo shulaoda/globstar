@@ -57,3 +57,6 @@ G0 W:set | chains 1 | nfa none	**/*.ts	**/*.tsx	**/*.js	**/*.jsx	**/*.md
 # for merging, the same hash in both runtimes: the three are compared with
 # the first and left apart, where `**/2tocn71/{x,y}` would be one member.
 G0 L(5) | chains 3 | nfa small	**/r2hnjeq/z	**/2tocn71/x	**/2tocn71/y
+# 2,048 literal paths of 31 bytes: with one unit per path they fill the
+# room of 65,536 exactly, and stay a literal set.
+chains 0 | literals 2048 | nfa none	{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}xxxxxxxxx
