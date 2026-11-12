@@ -85,7 +85,8 @@ pub use entry::DirEntry;
 pub use error::WalkError;
 pub use options::WalkOptions;
 
-use std::ffi::OsStr;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::path;
@@ -324,6 +325,7 @@ impl Walk {
         let Some(rules) = &self.rules else {
             return;
         };
+        let mut listings = Listings::new();
         for prefix in rules.matcher.static_prefixes() {
             let mut frame = Frame {
                 absolute: self.base.clone(),
@@ -349,13 +351,13 @@ impl Walk {
                 continue;
             }
             for (i, name) in parts.iter().enumerate() {
-                if opens_as_another(name) && !listed(&frame.absolute, name) {
+                if opens_as_another(name) && !listed(&mut listings, &frame.absolute, name) {
                     break;
                 }
                 let path = join(&frame.absolute, name.as_ref());
                 let meta = match fs::symlink_metadata(&path) {
                     Ok(m) => m,
-                    Err(e) if nothing_there(&e, &frame.absolute, name) => break,
+                    Err(e) if nothing_there(&e, &mut listings, &frame.absolute, name) => break,
                     Err(source) => {
                         self.ready.push(Err(WalkError::Io { path, source }));
                         break;
@@ -690,7 +692,7 @@ fn folder_matches(glob: Option<&Glob>, rel: &mut Vec<u8>) -> bool {
 
 /// A stat error that means no entry can be at the path, so a root walk
 /// would never list one (WALKER_SPEC §9.4).
-fn nothing_there(err: &io::Error, dir: &Path, name: &str) -> bool {
+fn nothing_there(err: &io::Error, seen: &mut Listings, dir: &Path, name: &str) -> bool {
     let kind = err.kind();
     matches!(
         kind,
@@ -698,7 +700,7 @@ fn nothing_there(err: &io::Error, dir: &Path, name: &str) -> bool {
     )
     // A path too long as a whole fails so too, though its folder lists
     // the entry.
-    || kind == io::ErrorKind::InvalidFilename && !listed(dir, name)
+    || kind == io::ErrorKind::InvalidFilename && !listed(seen, dir, name)
     // `ErrorKind::FilesystemLoop` cannot be named on stable Rust yet.
     || format!("{kind:?}") == "FilesystemLoop"
 }
@@ -761,15 +763,20 @@ fn opens_as_another(name: &str) -> bool {
     !name.is_ascii() || (cfg!(windows) && win32_rewrites(name.as_bytes()))
 }
 
+/// The names each folder lists, read once while seeding; `None` for a
+/// folder that cannot be read.
+type Listings = HashMap<PathBuf, Option<HashSet<OsString>>>;
+
 /// Is `name` in the listing of `dir` as written? A folder that cannot
 /// be read leaves it to the `lstat`.
-fn listed(dir: &Path, name: &str) -> bool {
-    match fs::read_dir(dir) {
-        Ok(entries) => entries
-            .flatten()
-            .any(|e| e.file_name().as_encoded_bytes() == name.as_bytes()),
-        Err(_) => true,
+fn listed(seen: &mut Listings, dir: &Path, name: &str) -> bool {
+    if !seen.contains_key(dir) {
+        let names = fs::read_dir(dir).ok();
+        let names = names.map(|entries| entries.flatten().map(|e| e.file_name()).collect());
+        seen.insert(dir.to_owned(), names);
     }
+    let names = seen[dir].as_ref();
+    names.is_none_or(|names| names.contains(OsStr::new(name)))
 }
 
 /// A trailing `.` or space, a device name (`NUL`, `com1`, `con.txt`), or

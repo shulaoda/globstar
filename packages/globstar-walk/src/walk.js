@@ -132,6 +132,7 @@ function prepare(patterns, optsInput) {
 }
 
 function initFromPrefixes(ctx) {
+  const listings = new Map();
   for (const bytes of ctx.matcher.staticPrefixes()) {
     let frame = { absolute: ctx.cwd, relative: "", links: [] };
     const prefix = Buffer.from(bytes).toString();
@@ -143,13 +144,13 @@ function initFromPrefixes(ctx) {
     if (parts.some((p) => p === "" || p === ".." || p === ".")) continue;
     for (let i = 0; i < parts.length && frame !== undefined; i++) {
       const name = parts[i];
-      if (opensAsAnother(name) && !listed(frame.absolute, name)) break;
+      if (opensAsAnother(name) && !listed(listings, frame.absolute, name)) break;
       const abs = withSep(frame.absolute) + name;
       let entry;
       try {
         entry = fs.lstatSync(abs);
       } catch (cause) {
-        if (nothingThere(cause, frame.absolute, name)) break;
+        if (nothingThere(cause, listings, frame.absolute, name)) break;
         throw new WalkError("Io", { path: abs, cause });
       }
       entry.name = name;
@@ -264,7 +265,7 @@ function readEachEntry(dir) {
 
 const gone = (err) => err?.code === "ENOENT" || err?.code === "ENOTDIR";
 
-function nothingThere(err, dir, name) {
+function nothingThere(err, seen, dir, name) {
   switch (err?.code) {
     case "ENOENT":
     case "ENOTDIR":
@@ -273,7 +274,7 @@ function nothingThere(err, dir, name) {
     case "ERR_INVALID_ARG_VALUE":
       return true;
     case "ENAMETOOLONG":
-      return !listed(dir, name);
+      return !listed(seen, dir, name);
     default:
       return false;
   }
@@ -351,12 +352,17 @@ function opensAsAnother(name) {
   return isNonAscii(name) || (WINDOWS && win32Rewrites(name));
 }
 
-function listed(dir, name) {
-  try {
-    return fs.readdirSync(dir).includes(name);
-  } catch {
-    return true;
+function listed(seen, dir, name) {
+  let names = seen.get(dir);
+  if (names === undefined) {
+    try {
+      names = new Set(fs.readdirSync(dir));
+    } catch {
+      names = null;
+    }
+    seen.set(dir, names);
   }
+  return names === null || names.has(name);
 }
 
 function win32Rewrites(name) {

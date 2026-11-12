@@ -357,6 +357,26 @@ await check("a seed reports a path too long to stat", async () => {
   }
 });
 
+await check("seeds in one folder list it once", async () => {
+  const files = ["é1.txt", "é2.txt", "é3.txt", "é4.txt"].map((n) => "d/" + n);
+  const root = tmpTree("seedlist", files);
+  const fsMod = (await import("node:fs")).default;
+  const real = fsMod.readdirSync;
+  let lists = 0;
+  try {
+    fsMod.readdirSync = (dir, ...rest) => {
+      if (path.resolve(dir) === path.join(root, "d")) lists++;
+      return real(dir, ...rest);
+    };
+    syncBuiltinESMExports();
+    await expectBoth(root, files, {}, files, "non-ASCII seeds");
+  } finally {
+    fsMod.readdirSync = real;
+    syncBuiltinESMExports();
+  }
+  assert.equal(lists, 2, "one listing per walk");
+});
+
 await check("a seed through a symlink knows its cycle", async () => {
   if (!symlinksOk) return;
   const root = tmpTree("seedcycle", ["a/x.txt"], { "a/link": "." });

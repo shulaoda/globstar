@@ -121,7 +121,7 @@ A child's absolute path is its parent's with one separator and the name (`join`,
 
 ## 9. Complexity
 
-The walk reads each directory it enters once per route to it, and makes one `stat` per link met with `follow_links`, one `lstat` per seed segment, and one listing per seed segment whose spelling could open another entry or whose `lstat` fails with ENAMETOOLONG. The matcher is asked at most four times per directory (`ignore` without and with the `/`, `match_dir`, and in Rust the directory patterns with the `/`) and once or twice per file. Memory is the frames found and not yet read: the depth of the tree times the fan-out in the synchronous walks, and the number of reads in flight in the asynchronous one.
+The walk reads each directory it enters once per route to it, and makes one `stat` per link met with `follow_links`, one `lstat` per seed segment, and one listing per directory that holds a seed segment whose spelling could open another entry or whose `lstat` fails with ENAMETOOLONG: the names are kept while the seeds are read. The matcher is asked at most four times per directory (`ignore` without and with the `/`, `match_dir`, and in Rust the directory patterns with the `/`) and once or twice per file. Memory is the frames found and not yet read: the depth of the tree times the fan-out in the synchronous walks, and the number of reads in flight in the asynchronous one.
 
 ## 10. Source map
 
