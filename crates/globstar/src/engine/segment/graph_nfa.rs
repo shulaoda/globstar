@@ -302,9 +302,7 @@ impl<B: Bits> Nfa<B> {
             let consumes = match &m.elems[s] {
                 Elem::Lit(lit) => m.lit_eq(lit, seg),
                 Elem::Wild(w) => m.wild_consumes(w, seg),
-                Elem::G0 | Elem::G1 => absorb_ok,
-                Elem::Join => false,
-                Elem::Piece(_) => unreachable!("pieces take the sparse NFA"),
+                _ => absorb_ok,
             };
             if consumes {
                 next.or_with(&self.after[s]);
