@@ -377,6 +377,33 @@ await check("seeds in one folder list it once", async () => {
   assert.equal(lists, 2, "one listing per walk");
 });
 
+await check("a pattern that ends in / reads no folder", async () => {
+  const root = tmpTree("dironly", ["a/x.txt", "b/c/y.txt"]);
+  const fsMod = (await import("node:fs")).default;
+  const real = { readdirSync: fsMod.readdirSync, readdir: fsMod.readdir };
+  const read = [];
+  const note = (dir) => read.push(path.relative(root, dir).replaceAll("\\", "/"));
+  try {
+    fsMod.readdirSync = (dir, ...rest) => (note(dir), real.readdirSync(dir, ...rest));
+    fsMod.readdir = (dir, ...rest) => (note(dir), real.readdir(dir, ...rest));
+    syncBuiltinESMExports();
+    await expectBoth(root, ["**/", "b/**/"], {}, [], "folders only");
+    assert.deepEqual(read, []);
+    await expectBoth(root, ["a/*.txt", "**/"], {}, ["a/x.txt"], "beside a file pattern");
+    assert.deepEqual(read, ["a", "a"]);
+  } finally {
+    fsMod.readdirSync = real.readdirSync;
+    fsMod.readdir = real.readdir;
+    syncBuiltinESMExports();
+  }
+  await throwsBoth(
+    ["{a/"],
+    { cwd: root },
+    (e) => e instanceof WalkError && e.kind === "InvalidPattern",
+  );
+  await throwsBoth(["**/"], { cwd: path.join(root, "missing") }, isIo);
+});
+
 await check("a seed through a symlink knows its cycle", async () => {
   if (!symlinksOk) return;
   const root = tmpTree("seedcycle", ["a/x.txt"], { "a/link": "." });

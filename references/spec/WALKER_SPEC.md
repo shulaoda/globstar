@@ -134,10 +134,10 @@ Patterns are scoped to `cwd`. The removal of the leading `/` keeps every static 
 
 After preprocessing the walker compiles two matchers (the Rust crate, which yields directories as well, a third for the positive patterns that end in `/`):
 
-- `positive`: the union of the positive set;
+- `positive`: the union of the positive set, without the patterns that end in `/`: such a pattern matches directories only (§3.2), so no file, and is compiled for its errors alone;
 - `ignore`: the union of the `ignore` option and the `!`-routed set, or none when both are empty.
 
-When the positive set is empty after preprocessing (an empty list, or one whose entries all route to the ignore set or reduce to nothing), the walker MUST return an empty result without reading the filesystem. `cwd` is still validated and the `ignore` set still compiled, so their errors are reported (§9).
+When the positive set is empty after preprocessing (an empty list, or one whose entries all route to the ignore set, reduce to nothing or end in `/`), the walker MUST return an empty result without reading the filesystem. `cwd` is still validated and the `ignore` set still compiled, so their errors are reported (§9).
 
 When a matcher does not compile, the walker MUST raise `InvalidPattern` (§9.2) naming the member as the caller wrote it (`!src/[z-a]`, not the body `src/[z-a]`) and the reason. When preprocessing changed the member, the reason names the text its byte offsets refer to.
 

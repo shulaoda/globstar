@@ -85,7 +85,9 @@ function prepare(patterns, optsInput) {
     (split.bangs & 1 ? negatives : positives).push({ raw, body: split.body });
   }
 
-  const matcher = compileUnion(positives, matcherOpts);
+  let matcher = compileUnion(positives, matcherOpts);
+  const files = positives.filter((p) => !p.body.endsWith("/"));
+  if (files.length < positives.length) matcher = compileUnion(files, matcherOpts);
   const ignorePatterns = [];
   for (const raw of opts.ignore) {
     checkLength(raw);
