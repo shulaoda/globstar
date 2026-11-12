@@ -263,12 +263,9 @@ function blockBetween(m, ids, g1, g2, str, midStart, split) {
     if (end === -1) end = str.length;
     const blockEnd = blockFrom(m, ids, g1 + 1, g2, str, pos, end, midEnd);
     if (blockEnd >= 0) {
-      const leftAbsorbed = pos > midStart || elemAt(elems, ids, g1).kind === EL_G0;
       const after = blockEnd + 1;
-      if (leftAbsorbed) {
-        if (dotAt < after) dotAt = firstDot(m, str, after, midEnd);
-        if (absorbs(m, elemAt(elems, ids, g2).kind, str, after, split, dotAt)) return true;
-      }
+      if (dotAt < after) dotAt = firstDot(m, str, after, midEnd);
+      if (absorbs(m, elemAt(elems, ids, g2).kind, str, after, split, dotAt)) return true;
     }
     if (end >= midEnd || (!m.dot && pos < end && str.charCodeAt(pos) === 0x2e)) return false;
     pos = end + 1;
@@ -282,10 +279,8 @@ function blockFrom(m, ids, from, to, str, pos, end, midEnd) {
   if (end >= midEnd) return -1;
   const p = run(m, ids, from + 1, to - 1, str, end + 1);
   if (p < 0) return -1;
-  const last = elemAt(elems, ids, to - 1);
-  const taken = consumeAt(m, last, str, p, false);
-  if (taken >= 0) return taken <= midEnd ? taken : -1;
-  return midEnd === str.length ? consumeAt(m, last, str, p, true) : -1;
+  const taken = consumeAt(m, elemAt(elems, ids, to - 1), str, p, false);
+  return taken <= midEnd ? taken : -1;
 }
 
 function absorbs(m, kind, str, from, split, dotAt) {

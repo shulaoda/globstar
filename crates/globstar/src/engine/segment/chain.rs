@@ -565,15 +565,12 @@ impl SegmentMatcher {
         loop {
             let end = seg_end(path, pos);
             if let Some(block_end) = self.block_from(elems, g1 + 1..g2, path, pos..end, mid_end) {
-                let left_absorbed = pos > mid_start || matches!(elems.at(g1), Elem::G0);
                 let from = block_end + 1;
-                if left_absorbed {
-                    if dot_at < from {
-                        dot_at = self.first_dot(path, from, mid_end);
-                    }
-                    if self.absorbs(elems.at(g2), path, from, split, Some(dot_at)) {
-                        return true;
-                    }
+                if dot_at < from {
+                    dot_at = self.first_dot(path, from, mid_end);
+                }
+                if self.absorbs(elems.at(g2), path, from, split, Some(dot_at)) {
+                    return true;
                 }
             }
             if end >= mid_end || (!self.dot && path[pos..end].starts_with(b".")) {
@@ -606,12 +603,8 @@ impl SegmentMatcher {
             return None;
         }
         let pos = self.run(elems, from + 1..to - 1, path, end + 1)?;
-        let last = to - 1;
-        match self.consume_at(elems, last, path, pos, false) {
-            Some(end) => (end <= mid_end).then_some(end),
-            None if mid_end == path.len() => self.consume_at(elems, last, path, pos, true),
-            None => None,
-        }
+        self.consume_at(elems, to - 1, path, pos, false)
+            .filter(|&end| end <= mid_end)
     }
 
     /// Can the globstar take the segments between `from` and `split`?
