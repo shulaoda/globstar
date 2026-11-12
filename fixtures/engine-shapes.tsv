@@ -60,3 +60,10 @@ G0 L(5) | chains 3 | nfa small	**/r2hnjeq/z	**/2tocn71/x	**/2tocn71/y
 # 2,048 literal paths of 31 bytes: with one unit per path they fill the
 # room of 65,536 exactly, and stay a literal set.
 chains 0 | literals 2048 | nfa none	{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}{a/,b/}xxxxxxxxx
+# One node per literal segment after the same nodes, however long the
+# literal: the two members under `ppp…bbbbbb` share it.
+L(2) W:pieces(3) L | chains 3 | nfa small	ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppaaaaaa/[a]*	ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppbbbbbb/[b]*	ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppbbbbbb/[c]*/x
+# `rqhg` and `u7xsqk0z` collide in the hash that finds a node again, the
+# same hash in both runtimes: the first holds the slot, and `u7xsqk0z` is
+# built once per member.
+L(3) W:pieces(3) L | chains 3 | nfa small	rqhg/[a]*	u7xsqk0z/[b]*	u7xsqk0z/[c]*/x

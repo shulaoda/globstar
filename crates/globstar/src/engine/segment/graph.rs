@@ -114,7 +114,7 @@ struct Builder<'a> {
     /// Per node, a wildcard piece's nodes, for the glue NFA.
     pieces: Vec<Vec<&'a Node>>,
     ends: Vec<u32>,
-    memo: HashMap<u64, u32, BuildHasherDefault<Fnv>>,
+    memo: HashMap<u32, u32, BuildHasherDefault<Fnv>>,
     room: usize,
     /// What suffix sets may take past four times their nodes.
     suffix_pool: usize,
@@ -457,7 +457,7 @@ impl<'a> Builder<'a> {
 
     /// A node for the literal segment `lit`, built only when it is new.
     fn emit_lit(&mut self, lit: &[u8], tails: &[u32], glued: bool) -> u32 {
-        let key = Some(Self::key_of(0, lit, tails, glued));
+        let key = Some(Self::key_of(0, Some(lit), tails, glued));
         match self.reuse(key, tails, glued) {
             Some(found) if matches!(&self.elems[found as usize], Elem::Lit(have) if **have == *lit) => {
                 found
@@ -467,13 +467,13 @@ impl<'a> Builder<'a> {
     }
 
     /// The memo's node for `key`, when `tails` are its predecessors.
-    fn reuse(&self, key: Option<u64>, tails: &[u32], glued: bool) -> Option<u32> {
+    fn reuse(&self, key: Option<u32>, tails: &[u32], glued: bool) -> Option<u32> {
         let found = *self.memo.get(&key?)?;
         let i = found as usize;
         (self.is_glued(i) == glued && self.preds_of(i) == tails).then_some(found)
     }
 
-    fn push(&mut self, elem: Elem, key: Option<u64>, tails: &[u32], glued: bool) -> u32 {
+    fn push(&mut self, elem: Elem, key: Option<u32>, tails: &[u32], glued: bool) -> u32 {
         let id = self.elems.len() as u32;
         self.elems.push(elem);
         if glued {
@@ -490,26 +490,30 @@ impl<'a> Builder<'a> {
 
     /// The reuse key of a literal, globstar or join; a wildcard is never
     /// shared.
-    fn key(elem: &Elem, tails: &[u32], glued: bool) -> Option<u64> {
-        let (tag, bytes): (u8, &[u8]) = match elem {
-            Elem::Lit(lit) => (0, lit),
-            Elem::G0 => (1, &[]),
-            Elem::G1 => (2, &[]),
-            Elem::Join => (3, &[]),
+    fn key(elem: &Elem, tails: &[u32], glued: bool) -> Option<u32> {
+        let (kind, lit): (u32, Option<&[u8]>) = match elem {
+            Elem::Lit(lit) => (0, Some(lit)),
+            Elem::G0 => (2, None),
+            Elem::G1 => (3, None),
+            Elem::Join => (4, None),
             Elem::Wild(_) | Elem::Piece(_) => return None,
         };
-        Some(Self::key_of(tag, bytes, tails, glued))
+        Some(Self::key_of(kind, lit, tails, glued))
     }
 
-    fn key_of(tag: u8, bytes: &[u8], tails: &[u32], glued: bool) -> u64 {
-        let mut h = Fnv::default();
-        h.write(&[tag]);
-        h.write(bytes);
-        h.write(&[glued as u8]);
-        for &t in tails {
-            h.write(&t.to_le_bytes());
+    /// The JS twin's hash, bit for bit: the memo keeps one node per key,
+    /// so a collision leaves the same node out of it in both.
+    fn key_of(kind: u32, lit: Option<&[u8]>, tails: &[u32], glued: bool) -> u32 {
+        let step = |h: u32, x: u32| (h ^ x).wrapping_mul(0x0100_0193);
+        let mut h = step(0x811c_9dc5, kind * 2 + glued as u32);
+        if let Some(lit) = lit {
+            h = step(h, lit.len() as u32);
+            h = lit.iter().fold(h, |h, &b| step(h, b as u32));
         }
-        h.finish()
+        h = step(h, tails.len() as u32);
+        // The start is -2 there.
+        let id = |t: u32| if t == START { u32::MAX - 1 } else { t };
+        tails.iter().fold(h, |h, &t| step(h, id(t))) >> 2
     }
 
     fn is_glued(&self, i: usize) -> bool {

@@ -245,8 +245,7 @@ function memoKey(kind, lit, tails, glued) {
   let h = Math.imul(0x811c9dc5 ^ (kind * 2 + (glued ? 1 : 0)), 0x01000193);
   if (lit !== null) {
     h = Math.imul(h ^ lit.length, 0x01000193);
-    const n = Math.min(lit.length, 64);
-    for (let i = 0; i < n; i++) h = Math.imul(h ^ lit.charCodeAt(i), 0x01000193);
+    for (let i = 0; i < lit.length; i++) h = Math.imul(h ^ lit.charCodeAt(i), 0x01000193);
   }
   h = Math.imul(h ^ tails.length, 0x01000193);
   for (let i = 0; i < tails.length; i++) h = Math.imul(h ^ tails[i], 0x01000193);
