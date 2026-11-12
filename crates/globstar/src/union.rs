@@ -2,9 +2,11 @@ use crate::parse::ast::Node;
 
 /// A literal ending segment `k` of member `i`, at node `at`, with the
 /// member's hash masked there: members alike but for that literal share it.
+/// The hash is the JS twin's, bit for bit, so a collision groups the same
+/// members in both.
 struct Entry {
     k: usize,
-    hash: u64,
+    hash: u32,
     i: usize,
     at: usize,
 }
@@ -75,8 +77,8 @@ pub(crate) fn factor_branches(branches: Vec<Node>) -> Node {
 /// The hash of a member made of literals, separators and the wildcards
 /// `*`, `?` and `**`, with a wildcard among them: the sum of its node
 /// hashes, each mixed with its position.
-fn member_hash(s: &[Node]) -> Option<u64> {
-    let mut hash = 0u64;
+fn member_hash(s: &[Node]) -> Option<u32> {
+    let mut hash = 0u32;
     let mut wild = false;
     for (at, n) in s.iter().enumerate() {
         let h = match n {
@@ -101,18 +103,17 @@ fn member_hash(s: &[Node]) -> Option<u64> {
     wild.then_some(hash)
 }
 
-fn lit_hash(lit: &[u8]) -> u64 {
-    lit.iter()
-        .fold(0xcbf2_9ce4_8422_2325 ^ lit.len() as u64, |h, &x| {
-            (h ^ x as u64).wrapping_mul(0x0100_0000_01b3)
-        })
+fn lit_hash(lit: &[u8]) -> u32 {
+    lit.iter().fold(0x811c_9dc5 ^ lit.len() as u32, |h, &x| {
+        (h ^ x as u32).wrapping_mul(0x0100_0193)
+    })
 }
 
 /// A node's hash mixed with its position: the sum over a member changes by
 /// one term when one node does.
-fn salted(hash: u64, at: usize) -> u64 {
-    let x = hash ^ (at as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    (x ^ (x >> 31)).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+fn salted(hash: u32, at: usize) -> u32 {
+    let x = hash ^ (at as u32 + 1).wrapping_mul(0x9e37_79b1);
+    (x ^ (x >> 15)).wrapping_mul(0x85eb_ca6b)
 }
 
 /// `b` is `a` but for a literal at `at`.

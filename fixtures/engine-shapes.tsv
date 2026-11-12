@@ -53,3 +53,7 @@ L(4) G0 L(3) W:affix | chains 1 | literals 3 | nfa small	src/a.ts	lib/b.ts	src/a
 literal	src/main.rs	src/main.rs
 chains 0 | literals 1 | nfa none	\a	a
 G0 W:set | chains 1 | nfa none	**/*.ts	**/*.tsx	**/*.js	**/*.jsx	**/*.md
+# `r2hnjeq` and `2tocn71` collide in the hash that groups a union's members
+# for merging, the same hash in both runtimes: the three are compared with
+# the first and left apart, where `**/2tocn71/{x,y}` would be one member.
+G0 L(5) | chains 3 | nfa small	**/r2hnjeq/z	**/2tocn71/x	**/2tocn71/y
