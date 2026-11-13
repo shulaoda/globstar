@@ -274,26 +274,19 @@ export class SegmentMatcher {
       const below = str.length === 0 || hasLiteral(this, this.below, str);
       return DirMatch.from(hasLiteral(this, set, str), below, false);
     }
-    if (str.length === 0) {
-      let all = false;
-      if (this.dot) {
-        if (nfa.kind === NFA_SPARSE) all = coversBelowSparse(this, initSparse(nfa));
-        else all = coversBelow(this, nfa.init);
-      }
-      return DirMatch.from(this.isMatch(str), true, all);
-    }
+    const root = str.length === 0;
     let matches;
     let mayBelow;
     let all;
     if (nfa.kind === NFA_SPARSE) {
-      const active = nfaRunSparse(this, str);
-      matches = sparseHas(active, nfa.accept);
-      mayBelow = sparseReach1(nfa, active);
+      const active = root ? initSparse(nfa) : nfaRunSparse(this, str);
+      matches = root ? this.isMatch(str) : sparseHas(active, nfa.accept);
+      mayBelow = root || sparseReach1(nfa, active);
       all = this.dot && mayBelow && coversBelowSparse(this, active);
     } else {
-      const active = nfaRun(this, str);
-      matches = (active & (1 << nfa.accept)) !== 0;
-      mayBelow = (active & nfa.reach1) !== 0;
+      const active = root ? nfa.init : nfaRun(this, str);
+      matches = root ? this.isMatch(str) : (active & (1 << nfa.accept)) !== 0;
+      mayBelow = root || (active & nfa.reach1) !== 0;
       all = this.dot && mayBelow && coversBelow(this, active);
     }
     return DirMatch.from(matches, mayBelow, all);
