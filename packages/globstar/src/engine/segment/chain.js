@@ -442,7 +442,7 @@ function keysOf(w, ci) {
     const lit = pieces === null ? null : longestLiteral(pieces);
     return lit === null ? null : { keys: null, infix: lit.slice(0, MAX_INFIX) };
   }
-  return p > s ? strings(K_PREFIX, prefixes) : strings(K_SUFFIX, suffixes);
+  return p >= s ? strings(K_PREFIX, prefixes) : strings(K_SUFFIX, suffixes);
 }
 
 function pieceKeys(p, back, ci, out) {

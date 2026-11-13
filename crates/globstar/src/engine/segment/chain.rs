@@ -905,7 +905,7 @@ fn keys_of(w: &Wild, ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
         (0, 0) => pieces
             .and_then(|p| p.longest_literal())
             .map(|lit| SegKeys::Infix(lit.into_iter().take(MAX_INFIX).collect())),
-        (s, p) if p > s => Some(strings(Kind::Prefix, prefixes)),
+        (s, p) if p >= s => Some(strings(Kind::Prefix, prefixes)),
         _ => Some(strings(Kind::Suffix, suffixes)),
     }
 }
