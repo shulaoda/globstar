@@ -384,14 +384,6 @@ impl SparseNfa {
         &self.succ[self.at[3 * p + from] as usize..self.at[3 * p + to] as usize]
     }
 
-    fn note_piece(&self, m: &SegmentMatcher, s: u32, entries: &mut Option<Wide>) {
-        if let Elem::Piece(entry) = m.elems[s as usize] {
-            entries
-                .get_or_insert_with(|| self.glue().set())
-                .set(entry as usize);
-        }
-    }
-
     pub(super) fn is_match(&self, m: &SegmentMatcher, path: &[u8]) -> bool {
         self.run(m, path).0.has(self.accept())
     }
@@ -527,8 +519,10 @@ impl SparseNfa {
                 for &s in self.succ(p as usize, 1, 3) {
                     if any_seg(s) {
                         self.fire(m, s, next);
-                    } else {
-                        self.note_piece(m, s, &mut entries);
+                    } else if let Elem::Piece(entry) = m.elems[s as usize] {
+                        entries
+                            .get_or_insert_with(|| self.glue().set())
+                            .set(entry as usize);
                     }
                 }
             }
