@@ -29,13 +29,8 @@ const B_START = 0;
 const B_SEP = 1;
 const B_GLUE = 2;
 
-// What one kind of expansion may take for a pattern: four units per unit
-// of its weight, at least 64 KiB. Each kind draws from a room of its own,
-// and past it keeps the pattern's form unexpanded.
 export const room = (weight) => Math.max(4 * weight, 1 << 16);
 
-// A copied token is compiled again in every copy: a copy costs this many
-// units of the room per unit of its weight.
 const COPY_COST = 4;
 
 const LINEAR_GROUPS = 16;
@@ -346,8 +341,6 @@ class Builder {
     else this.succs[tail].push(id);
   }
 
-  // Several tails pass through one join, before a node follows them or a
-  // brace copies them: every other node has one predecessor.
   gather(g) {
     if (g.tails.length < 2) return;
     dedupeTails(g);

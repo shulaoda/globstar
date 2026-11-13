@@ -25,10 +25,6 @@ export function factorBranches(branches) {
       }
     }
   }
-  // Deepest segment first: a member takes part in one merge at most, the
-  // deepest it fits, as the head or as one absorbed. One compared with a
-  // head it does not fit, which only a hash collision groups, takes part
-  // in none.
   sortEntries(entries);
   const done = new Uint8Array(seqs.length);
   const absorbed = new Uint8Array(seqs.length);

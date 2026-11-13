@@ -41,7 +41,6 @@ export function makeWild(kind, fields) {
   };
 }
 
-/** `pools.suffixPool`: what suffix sets may still take past four times their nodes. */
 export function compileWild(nodes, dot, ci, pools) {
   let idx = 0;
   while (idx < nodes.length && nodes[idx].tag === N_LITERAL) idx++;
@@ -141,7 +140,6 @@ function suffixProduct(nodes, from, pools) {
   return parts;
 }
 
-/** A bound on testing one segment, per byte of it. */
 export function wildWeight(w) {
   if (w.kind === WK_AFFIX) return 1;
   if (w.kind === WK_SUFFIXES) return w.suffixSetStr.length + 1;

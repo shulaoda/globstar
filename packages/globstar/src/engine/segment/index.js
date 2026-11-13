@@ -423,7 +423,6 @@ function afford(heads, n) {
   return true;
 }
 
-// The pattern is weighed only once its room's floor is passed.
 function within(heads, used) {
   if (used > heads.limit && !heads.weighed) {
     heads.weighed = true;
@@ -440,10 +439,6 @@ function opensSegment(node) {
 
 function dedupe(prefixes) {
   if (prefixes.length <= 1) return prefixes;
-  // In byte order a head's prefixes come before it: `top` walks down the
-  // kept ones that are prefixes of the current head (`up` links each to
-  // the one below), and the first alone may cover it, since one below
-  // would have covered that one.
   prefixes.sort();
   if (prefixes[0].length === 0) return [""];
   const kept = [];
@@ -459,6 +454,5 @@ function dedupe(prefixes) {
     top = kept.length;
     kept.push(p);
   }
-  // Stable: a length's heads stay in byte order.
   return kept.sort((a, b) => a.length - b.length);
 }

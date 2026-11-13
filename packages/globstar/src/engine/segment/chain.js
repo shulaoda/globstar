@@ -64,7 +64,6 @@ export function pathsOf(graph, ci) {
         literalPaths.push(ci ? asciiLower(joined) : joined);
         literalChars += joined.length;
       } else {
-        // A node shared by several paths weighs in each.
         for (const i of nodes) {
           const e = graph.elems[i];
           pathWeight += e.kind === EL_WILD ? wildWeight(e.wild) : 1;
@@ -557,7 +556,6 @@ export function chainIndex(literals, chains, graph, ci) {
     }
     return e.kind === EL_WILD ? keysOf(e.wild, ci) : null;
   };
-  // Chains that share a node read its keys once.
   const nodeKeys = new Map();
   for (let c = 0; c < chains.length; c++) {
     const id = c + firstChain;
