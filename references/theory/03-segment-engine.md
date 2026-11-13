@@ -30,7 +30,7 @@ Compilation is one pass per layer, each linear in the pattern; a layer that enum
 3. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (`wild.rs`, §7.5).
 4. **Chains** (`chain.rs`): the paths through the graph, while they are few and simple (§4).
 5. **Picker**: how a union tries its chains, each after its gate (`chain.rs`) or only those the chain index selects (`chain.rs`) (§5).
-6. **Graph NFA** (`graph_nfa.rs`): built unless one line serves alone (§6).
+6. **Graph NFA** (`graph_nfa.rs`): built unless one line or the literal set serves alone (§6).
 
 What a call runs depends only on what compilation kept:
 
@@ -38,18 +38,18 @@ What a call runs depends only on what compilation kept:
 | ------------------------------------ | ---------------------------------------------------------------------------------- | ------------------------- |
 | one line (a chain with ≤ 1 globstar) | the line's anchored comparisons (§4.1)                                             | read from the line (§4.4) |
 | the literal set alone                | the set, by binary search (§4.3)                                                   | read from the set (§4.3)  |
-| chains, a picker and an NFA          | the literal set, then the chains: each after its gate, or those the index selects  | the NFA (§6)              |
+| chains, a picker and an NFA          | the literal set and the chains: each chain after its gate, or what the index selects | the NFA (§6)              |
 | an NFA alone                         | the NFA                                                                            | the NFA                   |
 
 The graph keeps no chains, and the NFA answers `is_match` as well, when a brace cut a segment into pieces, when the wildcard paths weigh more than the room (§9, §11.1), when there are more than 64 of them and the chain index cannot select them (§5), when the literal paths take more bytes (one more per path) than the room, or when a path has more than two globstars, or two with nothing between them.
 
 ## 3. The graph
 
-One walk over the AST builds the graph. It keeps one *group* per distinct pair (boundary, partial segment) that reaches a point of the pattern: the nodes awaiting a successor (the group's *tails*), the boundary just crossed, and the in-segment nodes read since. Groups that agree on all three continue as one, so their continuations are the same nodes.
+One walk over the AST builds the graph. It keeps one *group* per distinct pair (boundary, partial segment) that reaches a point of the pattern: the nodes awaiting a successor (the group's *tails*), the boundary just crossed, and the in-segment nodes read since. Groups that agree on the last two continue as one, with the tails of both, so their continuations are the same nodes.
 
 ### 3.1 Braces
 
-A brace whose branches cross a separator is not multiplied out: each branch is walked from the groups before the brace, and the groups the branches leave merge again. `{a/,b/}x` is three nodes with `x` shared, and `{a/,b/}` repeated `k` times gives `2k + 1` nodes rather than `2^k` sequences. The in-segment branches of such a brace are walked as one choice (`{a,b,/}` as `{{a,b},/}`, `regroup`). A node is reused when its element and predecessors already exist, which turns a union of names into a trie. Two hash maps serve the walk: one finds a node to reuse, one finds a group by its key past the first 16 groups.
+A brace whose branches cross a separator is not multiplied out: each branch is walked from the groups before the brace, and the groups the branches leave merge again. `{a/,b/}x` is four nodes, `a`, `b`, their join (§3.3) and one `x`, and `{a/,b/}` repeated `k` times before `x` gives `3k + 1` nodes rather than `2^k` sequences. The in-segment branches of such a brace are walked as one choice (`{a,b,/}` as `{{a,b},/}`, `regroup`). A node is reused when its element and predecessors already exist, which turns a union of names into a trie. Two hash maps serve the walk: one finds a node to reuse, one finds a group by its key past the first 16 groups.
 
 A brace that crosses no separator stays inside its segment and belongs to the in-segment matcher (§7), unless it is the whole pattern: a union's members, or a pattern written as one brace, are walked as branches whatever they hold, so that the names among them join the literal set and the rest are chains of their own, each with its keys (§5), rather than one segment's choice.
 
@@ -90,16 +90,16 @@ One line with at most one globstar answers `match_dir` by the same anchored comp
 
 ## 5. Selecting a union's chains
 
-Every call passes the suffix prefilter (§13) first. The literal set is then searched, and the chains are tried in pattern order by one of two pickers:
+Every call passes the suffix prefilter (§13) first. One of two pickers then tries the literal set and the chains:
 
-- **Gates**, for at most 10 wildcard chains (`LINEAR_CHAINS`), and for up to 64 when the index cannot file them. Each chain is tried after two tests read from its ends: the path's last byte against a sketch of the bytes the chain may end with, and its first byte against a literal head's; then the last segment against the chain's last literal or affix (`ends_like`).
-- **The chain index**, for more. Each chain is filed under the literal strings one of its anchored segments must have: its last element's segment (a name, `.DS_Store`; the end of an extension, `*.log`; the start of a prefix, `._*`; a literal it holds, `*.so.*`, by its first 16 bytes), else its first element's, else the first of its block. The strings are read from the segment's compiled element: an affix's prefix or suffix, a suffix set's suffixes, the end or start of a piece-wise segment with its small classes expanded (`[Dd]ebug`, `*.py[cod]`); a brace around wildcards gives none. The literal set is filed under its paths' first segments. A key is its length and its outer four bytes, a lookup one hash probe, and a 64-bit sketch of the outer bytes skips the lookups that cannot hit. A path looks up its last segment, then its first, then the others, and walks each chain selected, without the gates; a chain no key files is tried on every call. The walk decides; the index only chooses which chains to ask, so a 600-member ignore list costs a few lookups and one or two walks. A class product is cut at 64 strings, and the entries are bounded by the room (§9): a union whose chains would file more is scanned with gates instead.
+- **Gates**, for at most 10 wildcard chains (`LINEAR_CHAINS`), and for up to 64 when the index cannot file them. The literal set is searched first; then each chain is tried, in pattern order, after two tests read from its ends: the path's last byte against a sketch of the bytes the chain may end with, and its first byte against a literal head's; then the last segment against the chain's last literal or affix (`ends_like`).
+- **The chain index**, for more. Each chain is filed under the literal strings one of its anchored segments must have: its last element's segment (a name, `.DS_Store`; the end of an extension, `*.log`; the start of a prefix, `._*`; a literal it holds, `*.so.*`, by its first 16 bytes), else its first element's, else the first of its block. The strings are read from the segment's compiled element: an affix's prefix or suffix, a suffix set's suffixes, the end or start of a piece-wise segment with its small classes expanded (`[Dd]ebug`, `*.py[cod]`); a brace around wildcards gives none. The literal set is filed under its paths' first segments, and searched when one of them is looked up. A key is its length and its outer four bytes, a lookup one hash probe, and a 64-bit sketch of the outer bytes skips the lookups that cannot hit. A path looks up its last segment, then its first, then the others, and walks each chain selected, without the gates; a chain no key files is tried on every call. The walk decides; the index only chooses which chains to ask, so a 600-member ignore list costs a few lookups and one or two walks. A class product is cut at 64 strings, and the entries are bounded by the room (§9): a union whose chains would file more is scanned with gates instead.
 
   Up to 64 chains, a step's selection is a word of bits. Past 64 the index names each chain by its id and is the only picker: a step's selections are sorted and walked once each (JS: listed once per call by a stamp), the inner segments' together, and an exact key compares the whole segment by a 32-bit hash, so names that differ only inside (`n17.js`, `n27.js`) file apart. The index is built only while no key files more than 64 chains and at most 64 go unkeyed or are searched for a literal, so that no lookup walks more than a scan of 64 would; otherwise the NFA answers. A union of 50,000 members of ten shapes keeps 5,000 chains this way and answers in microseconds, where the NFA takes a tenth of a millisecond. Chains that share an element read its strings once.
 
 ## 6. The graph NFA
 
-The NFA over the graph has one state per node and an accepting state, and it steps once per path segment: a state whose element takes the segment enters the closure precomputed for it (its successors, through a nullable `**/` or a join to theirs; a globstar keeps itself). It serves `match_dir` for every matcher but a lone line, and `is_match` when the graph keeps no chains. Every ε-edge points to a later node, so every table is built in one backward pass. Its representation is chosen by size:
+The NFA over the graph has one state per node and an accepting state, and it steps once per path segment: a state whose element takes the segment enters the closure precomputed for it (its successors, through a nullable `**/` or a join to theirs; a globstar keeps itself). It serves `match_dir` for every matcher but a lone line or a lone literal set, and `is_match` when the graph keeps no chains. Every ε-edge points to a later node, so every table is built in one backward pass. Its representation is chosen by size:
 
 | Kind     | Condition                                                                                         | Step                                           |
 | -------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
@@ -107,13 +107,13 @@ The NFA over the graph has one state per node and an accepting state, and it ste
 | `Wide`   | Rust only: rows within 4 KiB (about 170 states), no position leading to more than 48 literals     | the same over word rows                        |
 | `Sparse` | everything else, and always with pieces                                                           | per position its successors, literals sorted   |
 
-The sparse NFA keeps, per position, its successors in three parts, the literal ones sorted by literal, the nullable ones, the rest, and its active set lists states and whole positions ("every successor of `p` is entered"), so a step costs what it tests (one binary search for a position's literals) and the tables are linear in the graph. Entering a join enters its successors, as a `G0` does without staying. A step enters each position once, and each element has one position before it (§3.3), so a step tests each element at most once.
+The sparse NFA keeps, per position, its successors in three parts, the literal ones sorted by literal, the nullable ones, the rest, and its active set lists states and whole positions ("every successor of `p` is entered"), so a step costs what it tests (one binary search for a position's literals) and the tables are linear in the graph. Entering a join enters its successors, as a `G0` does without staying. A step enters each position once, and each element has one position before it (§3.3), so a step tests each element at most once; a globstar the set holds fires once more, on the dot rule alone.
 
 The prefix bit of `match_dir` is `active ∩ reach1`, where `reach1[s]` holds when some continuation of at least one segment from `s` reaches accept. The all-below bit steps the active set over wildcard-only segments until it settles (§15.4), and gives up past its cap with the safe answer (GLOB_SPEC §15.5).
 
 ## 7. In-segment matchers
 
-Each closed segment with a wildcard compiles, in `compile_wild`, to the first kind that holds it:
+Each closed segment that is not all literal compiles, in `compile_wild`, to the first kind that holds it:
 
 | Kind       | Shape                                                                                               | Match                                                           |
 | ---------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
@@ -169,7 +169,7 @@ What a layer enumerates is paid from a *room* of its own, of `max(4W, 64 KiB)` u
 | suffix scan                              | 4 suffixes                                | grouped by last byte                         |
 | kept closures                            | 128 KiB                                   | the step closes its set                      |
 | in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
-| wildcard-only cover steps                | 64                                        | all-below: `false`                           |
+| wildcard-only cover steps                | 65, one more when sparse (§15.4)          | all-below: `false`                           |
 | suffix prefilter set (`mod.rs`) | 16 branches                               | one suffix, what the branches' tails share   |
 
 ## 10. The cost of each layer
@@ -220,7 +220,7 @@ The theorem is the sum of the lemmas below, one per layer of §2.
 
 **Lemma 4 (paths).** Enumerating the paths takes `O(W)`. The chains kept weigh at most the room, `O(W)`, together.
 
-*Proof.* Every node reaches the accept state, since each node becomes a tail that a later node or the end of the pattern takes (§3), and every edge points forward; so every step of the depth-first walk lies on a path it completes. Charge each step to the first path completed below it. The steps charged to a path follow first successors from where it leaves the path before. Successors are listed in node order, and a join's first successor is the first node its group makes, which is no join, the group holding the join alone; a later join that gathers it comes after. On such a run joins and other nodes alternate at worst, and a path is charged at most twice its other nodes, plus one. A wildcard path's other nodes weigh at least their number, a literal path's number at most its bytes plus one, and the walk stops once the wildcard paths weigh more than the room together, or the literal paths take more of its bytes. ∎
+*Proof sketch.* Every edge points forward, and every node that is not a join reaches the accept state, since it becomes a tail that a later node or the end of the pattern takes (§3). A join does as well, unless it was gathered for a shadow group that then ended (§3.2): `/{,/{,a},}{,/}` leaves one such join, with no successor. A step of the depth-first walk into such a join is a dead end of that one step, and every other step lies on a path the walk completes. Charge each of those to the first path completed below it. The steps charged to a path follow first successors from where it leaves the path before. Successors are listed in node order, and a join's first successor is the first node its group makes, which is no join, the group holding the join alone; a later join that gathers it comes after. On such a run joins and other nodes alternate at worst, and a path is charged at most twice its other nodes, plus one. The dead ends are measured, not bounded by this argument: the branch that gathers such a join also makes nodes of its own under the join's predecessors, and the dead steps were under 8% of the others on 24,000 random graphs, and fewer than the paths completed on a pattern built to leave 1,023 such joins after one node (2026-11-13). A wildcard path's other nodes weigh at least their number, a literal path's number at most its bytes plus one, and the walk stops once the wildcard paths weigh more than the room together, or the literal paths take more of its bytes. ∎
 
 **Lemma 5 (pickers and NFA).** The gates, the chain index and the graph NFA take `O(W log W)` time and `O(W)` memory.
 
@@ -250,9 +250,9 @@ The bounds count each hash-table operation as `O(1)`. Three kinds of table hash 
 
 ## 12. Execution in JS
 
-The JS implementation runs the same algorithm on JS strings (`charCodeAt`, `startsWith`, `endsWith`, `indexOf`), with no allocation per call. Byte exactness holds by construction: literal comparisons and the absorption of `*` and `**` do not depend on the count of UTF-16 units, and the only counting constructs, `?` (one byte) and negated classes (one byte), read a non-ASCII segment's UTF-8 length or run on that segment's bytes, so nothing is matched twice. A pattern with a non-ASCII byte compiles to byte mode outright. The equivalence of the string and byte modes is fuzzed by `packages/globstar/tests/string-mode.mjs`.
+The JS implementation runs the same algorithm on JS strings (`charCodeAt`, `startsWith`, `endsWith`, `indexOf`). A call allocates nothing but what follows: the sets of an in-segment NFA past 32 states and of the glue NFA, and the bytes of a non-ASCII path or segment where a byte count is read. Byte exactness holds by construction: literal comparisons and the absorption of `*` and `**` do not depend on the count of UTF-16 units, and the only counting constructs, `?` (one byte) and negated classes (one byte), read a non-ASCII segment's UTF-8 length or run on that segment's bytes, so nothing is matched twice. A pattern with a non-ASCII byte compiles to byte mode outright. The equivalence of the string and byte modes is fuzzed by `packages/globstar/tests/string-mode.mjs`.
 
-Where the twins differ, they differ in representation only: JS bit sets are int32 words, so its small graph NFA and small in-segment NFA hold 32 states; it has no `Wide` graph NFA (a graph past 32 states is sparse); it finds a suffix group, however few the suffixes, by a binary search of their keys, since a typed table costs V8 more to allocate (about 200 ns) than the search saves; and a chain's gate (§5) is the path's first character and `endsWith` or `startsWith` on the last segment, in place of the sketch of last bytes, and is kept for case-sensitive matchers only.
+Where the twins differ, they differ in representation only: JS bit sets are int32 words, so its small graph NFA and small in-segment NFA hold 32 states; it has no `Wide` graph NFA (a graph past 32 states is sparse); it finds a suffix group, however few the suffixes, by a binary search of their keys, since a typed table costs V8 more to allocate (about 200 ns) than the search saves; and a chain's gate (§5) is the path's first character, then `endsWith` or `startsWith` on the last segment for a literal or an affix and the sketch of last bytes for a suffix set alone, and is kept for case-sensitive matchers only.
 
 ## 13. The suffix prefilter
 
