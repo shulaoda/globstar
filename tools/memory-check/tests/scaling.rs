@@ -30,7 +30,7 @@ fn members(n: usize, f: impl Fn(usize) -> String) -> Vec<String> {
 }
 
 /// Compiled at `k` and `4k`, each about 16 and 64 KiB.
-const BUILDS: [(&str, usize, Shape); 15] = [
+const BUILDS: [(&str, usize, Shape); 16] = [
     ("{a/,} x k", 3_200, |k| {
         one("{a/,}".repeat(k) + "x", "a/x".into())
     }),
@@ -91,6 +91,12 @@ const BUILDS: [(&str, usize, Shape); 15] = [
     }),
     ("union of k merged names", 1_000, |k| {
         (members(k, |i| format!("src/f{i}.ts")), "src/f7.ts".into())
+    }),
+    // Sixteen groups stay sixteen while each short branch joins one.
+    ("15 long branches, 5k short ones", 540, |k| {
+        let long = list(15, |i| format!("/{}{i:x}", "?".repeat(k)), ",");
+        let short = list(5 * k, |_| "/x".into(), ",");
+        one(format!("{{{long},{short}}}"), "/x".into())
     }),
 ];
 

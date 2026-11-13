@@ -790,13 +790,13 @@ impl<'a> Merged<'a> {
     #[inline(never)]
     fn add(&mut self, g: Group<'a>) {
         let n = self.groups.len();
-        if n == LINEAR_GROUPS {
-            self.index_all();
-        }
         let mut refile = false;
         let found = if n < LINEAR_GROUPS {
             self.groups.iter().position(|o| o.agrees(&g))
         } else {
+            if self.index.is_empty() {
+                self.index_all();
+            }
             let bucket = self.index.entry(self.key(&g)).or_default();
             let found = bucket
                 .iter()
