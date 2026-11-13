@@ -335,9 +335,11 @@ export function compileSegNfa(nodes, dot, ci) {
   const small = builder.kinds.length <= 32;
   const nfa = small ? new SegNfaSmall(builder, entry, dot) : new SegNfaWide(builder, entry, dot);
   const test = small ? (a, s) => (a & (1 << s)) !== 0 : bitTest;
+  const good = new Uint8Array(builder.kinds.length);
+  reach(builder, entry, good.length, false, good);
   return {
     matcher: nfa,
-    minLen: satisfiable(builder, entry) ? 0 : NEVER_LEN,
+    minLen: good[entry] ? 0 : NEVER_LEN,
     dotProtect: !dot && !takesLitDot(builder, nfa.initDotBlocked, test),
     anySeg: anySeg(builder, entry, nfa.init, test),
   };
@@ -361,18 +363,18 @@ function takesLitDot(builder, initDotBlocked, test) {
   return false;
 }
 
-function satisfiable(builder, entry) {
-  const n = builder.kinds.length;
-  const reach = new Uint8Array(n);
-  reach[entry] = 1;
-  for (let s = entry; s < n; s++) {
-    if (!reach[s]) continue;
-    const k = builder.kinds[s];
-    if (k === S_MATCH) return true;
-    if (builder.splitBs[s] !== UNSET) reach[builder.splitBs[s]] = 1;
-    if (k !== S_CLASS || !setEmpty(builder.clsRefs[s])) reach[builder.nexts[s]] = 1;
+function reach(nfa, lo, hi, exitOn, good) {
+  const { kinds, nexts, splitBs, clsRefs } = nfa;
+  const to = (s, t) => t !== UNSET && t !== s && good[t] === 1;
+  for (let s = hi - 1; s >= lo; s--) {
+    const k = kinds[s];
+    let on;
+    if (k === S_MATCH) on = true;
+    else if (k === S_EXIT) on = exitOn;
+    else if (k === S_CLASS && setEmpty(clsRefs[s])) on = false;
+    else on = to(s, nexts[s]) || to(s, splitBs[s]);
+    if (on) good[s] = 1;
   }
-  return false;
 }
 
 function closeSmall(nfa, set, block) {
@@ -742,30 +744,8 @@ export class GlueNfa {
   reach(node, exitOn, good) {
     const lo = this.spanLo[node];
     const hi = this.spanHi[node];
-    const to = (s, t) => t !== UNSET && t !== s && bitTest(good, t);
-    for (let s = hi - 1; s >= lo; s--) {
-      let on;
-      switch (this.kinds[s]) {
-        case S_EXIT:
-          on = exitOn;
-          break;
-        case S_CLASS:
-          on = !setEmpty(this.clsRefs[s]) && to(s, this.nexts[s]);
-          break;
-        case S_BYTE:
-        case S_JUMP:
-          on = to(s, this.nexts[s]);
-          break;
-        case S_ANY:
-        case S_SPLIT:
-          on = to(s, this.nexts[s]) || to(s, this.splitBs[s]);
-          break;
-        default:
-          on = false;
-      }
-      if (on) bitSet(good, s);
-    }
-    return lo < hi && bitTest(good, lo);
+    reach(this, lo, hi, exitOn, good);
+    return lo < hi && good[lo] === 1;
   }
 }
 

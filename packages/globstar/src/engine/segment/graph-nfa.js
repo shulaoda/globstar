@@ -86,7 +86,7 @@ function sparseNfa(graph, ci) {
     });
     const e = elems[i];
     if (e.kind === EL_PIECE) {
-      good ??= glue.set();
+      good ??= new Uint8Array(glue.kinds.length);
       reach1[i] = glue.reach(i, o === 1, good) && e.entry !== INNER ? 1 : 0;
     } else {
       reach1[i] = o && (elemSatisfiable(e) || e.kind === EL_JOIN) ? 1 : 0;

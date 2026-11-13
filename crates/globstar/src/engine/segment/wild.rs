@@ -3,6 +3,7 @@
 //! the in-segment NFA and the glue NFA.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use crate::engine::bytes::{affix_eq, fold};
 use crate::parse::ast::Node;
@@ -688,7 +689,9 @@ impl SegNfa {
             SegState::Class(cls, _) => can_lit_dot |= cls.has(b'.'),
             _ => {}
         });
-        let satisfiable = satisfiable::<B>(&states, entry, words);
+        let mut good = B::zero(words);
+        reach(&states, entry..n, false, &mut good);
+        let satisfiable = good.test(entry);
         let nfa = SegNfaImpl {
             states,
             init,
@@ -806,27 +809,23 @@ fn wild_lengths<B: Bits>(states: &[SegState], entry: &B) -> Vec<Lengths> {
     at
 }
 
-/// Can the entry reach `Match` through consumers some byte fires?
-fn satisfiable<B: Bits>(states: &[SegState], entry: usize, words: usize) -> bool {
-    let mut reach = B::zero(words);
-    reach.set(entry);
-    for (s, state) in states.iter().enumerate().skip(entry) {
-        if !reach.test(s) {
-            continue;
-        }
-        let (a, b) = match state {
-            SegState::Match | SegState::Exit(_) => return true,
-            SegState::Class(cls, _) if cls.is_empty() => continue,
-            SegState::Split(a, b) | SegState::Any(a, b) => (*a, *b),
-            SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Jump(n) => (*n, UNSET),
+/// Adds to `good` the states of `span` from which some segment reaches
+/// `Match`, a state of `good`, or an exit when `exit_on`: from the last
+/// state back, since every edge but a star's loop points to a later one.
+fn reach<B: Bits>(states: &[SegState], span: Range<usize>, exit_on: bool, good: &mut B) {
+    for s in span.rev() {
+        let to = |t: u32| t != UNSET && t as usize != s && good.test(t as usize);
+        let on = match &states[s] {
+            SegState::Match => true,
+            SegState::Exit(_) => exit_on,
+            SegState::Class(cls, _) if cls.is_empty() => false,
+            SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Jump(n) => to(*n),
+            SegState::Any(a, b) | SegState::Split(a, b) => to(*a) || to(*b),
         };
-        for t in [a, b] {
-            if t != UNSET {
-                reach.set(t as usize);
-            }
+        if on {
+            good.set(s);
         }
     }
-    false
 }
 
 /// Close `set` under ε-edges, keeping consumers, `Match` and `Exit`. The
@@ -1077,19 +1076,7 @@ impl GlueNfa {
     /// its entry is one. Called from the last node back.
     pub(super) fn reach(&self, node: usize, exit_on: bool, good: &mut Wide) -> bool {
         let (lo, hi) = self.spans[node];
-        for s in (lo as usize..hi as usize).rev() {
-            let to = |t: u32| t != UNSET && t as usize != s && good.test(t as usize);
-            let on = match &self.states[s] {
-                SegState::Exit(_) => exit_on,
-                SegState::Class(cls, _) if cls.is_empty() => false,
-                SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Jump(n) => to(*n),
-                SegState::Any(a, b) | SegState::Split(a, b) => to(*a) || to(*b),
-                SegState::Match => false,
-            };
-            if on {
-                good.set(s);
-            }
-        }
+        reach(&self.states, lo as usize..hi as usize, exit_on, good);
         lo < hi && good.test(lo as usize)
     }
 }
