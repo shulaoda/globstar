@@ -141,7 +141,6 @@ function sparseNfa(graph, ci) {
     reach1,
     accept,
     glue,
-    entries: null,
     scratch: null,
   };
 }
@@ -279,6 +278,7 @@ function stepSparse(m, nfa, active, next, str, s0, e0) {
   const base = nfa.n + 1;
   const absorbOk = m.dot || e0 === s0 || str.charCodeAt(s0) !== 0x2e;
   const items = active.items;
+  let entries = null;
   for (let k = 0, n = active.len; k < n; k++) {
     const item = items[k];
     if (item < base) {
@@ -299,32 +299,28 @@ function stepSparse(m, nfa, active, next, str, s0, e0) {
     }
     for (let k = nfa.otherAt[p]; k < nfa.otherAt[p + 1]; k++) {
       const s = nfa.others[k];
-      if (sparseConsumes(m, s, str, s0, e0, absorbOk)) fireSparse(m, nfa, s, next);
+      const e = m.elems[s];
+      let consumes = false;
+      switch (e.kind) {
+        case EL_LIT:
+          consumes = litEq(e.litStr, str, s0, e0, ci);
+          break;
+        case EL_WILD:
+          consumes = wildConsumes(m, e.wild, str, s0, e0);
+          break;
+        case EL_JOIN:
+          break;
+        case EL_PIECE:
+          bitSet((entries ??= nfa.glue.set()), e.entry);
+          break;
+        default:
+          consumes = absorbOk;
+      }
+      if (consumes) fireSparse(m, nfa, s, next);
     }
   }
-  const entries = nfa.entries;
   if (entries !== null) {
-    nfa.entries = null;
     nfa.glue.exits(entries, str, s0, e0, m.dot, m.byteOnly, (q) => fireSparse(m, nfa, q, next));
-  }
-}
-
-function sparseConsumes(m, s, str, s0, e0, absorbOk) {
-  const e = m.elems[s];
-  switch (e.kind) {
-    case EL_LIT:
-      return litEq(e.litStr, str, s0, e0, m.ci);
-    case EL_WILD:
-      return wildConsumes(m, e.wild, str, s0, e0);
-    case EL_JOIN:
-      return false;
-    case EL_PIECE: {
-      const nfa = m.nfa;
-      bitSet((nfa.entries ??= nfa.glue.set()), e.entry);
-      return false;
-    }
-    default:
-      return absorbOk;
   }
 }
 
