@@ -186,13 +186,25 @@ export function hasLiteral(m, literals, str) {
   return false;
 }
 
-export function dirsOf(literals) {
-  const dirs = new Set();
-  for (const path of literals) {
-    for (let i = path.indexOf("/"); i >= 0; i = path.indexOf("/", i + 1))
-      dirs.add(path.slice(0, i));
+export function anyBelow(m, literals, dir) {
+  let lo = 0;
+  let hi = literals.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (cmpBelow(literals[mid], dir, m.ci) < 0) lo = mid + 1;
+    else hi = mid;
   }
-  return [...dirs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return lo < literals.length && cmpBelow(literals[lo], dir, m.ci) === 0;
+}
+
+function cmpBelow(lit, dir, ci) {
+  const n = Math.min(lit.length, dir.length);
+  for (let i = 0; i < n; i++) {
+    const c = dir.charCodeAt(i);
+    const d = lit.charCodeAt(i) - (IS_WINDOWS_SEP && c === 0x5c ? 0x2f : fold(c, ci));
+    if (d !== 0) return d;
+  }
+  return lit.length > dir.length ? lit.charCodeAt(dir.length) - 0x2f : -1;
 }
 
 function consumeAt(m, e, str, pos, last) {

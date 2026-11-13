@@ -24,6 +24,7 @@ import {
   chainMatches,
   chainDir,
   hasLiteral,
+  anyBelow,
   R_FIRST,
   R_INNER,
   R_LAST,
@@ -31,7 +32,6 @@ import {
   probe,
   probeMany,
   probeInfix,
-  dirsOf,
 } from "./chain.js";
 import {
   anyNfa,
@@ -63,7 +63,6 @@ export class SegmentMatcher {
     const setOnly = literals !== null && chains.length === 0;
     this.elems = setOnly ? [] : graph.elems;
     this.literals = literals;
-    this.below = setOnly ? dirsOf(literals) : null;
     this.chains = exact(chains);
     this.nfa = line || setOnly ? null : anyNfa(graph, ci);
     this.index = index;
@@ -271,7 +270,7 @@ export class SegmentMatcher {
     if (nfa === null) {
       if (this.chains.length > 0) return chainDir(this, str);
       const set = this.literals;
-      const below = str.length === 0 || hasLiteral(this, this.below, str);
+      const below = str.length === 0 || anyBelow(this, set, str);
       return DirMatch.from(hasLiteral(this, set, str), below, false);
     }
     const root = str.length === 0;

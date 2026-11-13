@@ -83,6 +83,21 @@ for (const [name, ms, hit] of await onWorker(
 console.log("✓ long heads before many branches stay small");
 
 {
+  const [inside, beside, file] = await onWorker(
+    `
+    const deep = compileMatcher(["b", "m0/" + "a/".repeat(31_990) + "a"]);
+    return [deep.matchDir("m0/a"), deep.matchDir("m0/b"), deep.matchDir("b")];
+  `,
+    { maxOldGenerationSizeMb: 64 },
+  );
+  assert.ok(DirMatch.mayMatchBelow(inside) && !DirMatch.matches(inside));
+  assert.ok(!DirMatch.mayMatchBelow(beside) && !DirMatch.matches(beside));
+  assert.ok(DirMatch.matches(file) && !DirMatch.mayMatchBelow(file));
+}
+
+console.log("✓ a deep literal path keeps no list of its directories");
+
+{
   const bigUnion = (n) =>
     Array.from({ length: n }, (_, i) => {
       const [a, b] = [i % 37, i % 11];
