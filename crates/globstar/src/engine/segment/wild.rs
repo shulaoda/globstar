@@ -166,45 +166,56 @@ fn suffix_product(nodes: &[&Node], pool: &mut usize) -> Option<Vec<Vec<u8>>> {
     if let [Node::Literal(bytes)] = nodes {
         return Some(vec![bytes.clone()]);
     }
-    let mut parts: Vec<Vec<u8>> = vec![Vec::new()];
-    // Σ (part + 1) bytes, and what the nodes themselves hold.
-    let (mut size, mut source) = (1usize, 1usize);
-    let free = *pool;
-    let fits = |size: usize, source: usize| size <= source.saturating_mul(4).saturating_add(free);
+    // The parts, their Σ (part + 1) bytes, and what the nodes themselves
+    // hold: counted first, so that a product is built only once it is
+    // known to stand.
+    let (mut count, mut size, mut source) = (1usize, 1usize, 1usize);
     for node in nodes {
         match node {
             Node::Literal(bytes) => {
-                size = size.saturating_add(parts.len().saturating_mul(bytes.len()));
+                size = size.saturating_add(count.saturating_mul(bytes.len()));
                 source += bytes.len();
-                if !fits(size, source) {
+            }
+            Node::Brace(branches) => {
+                let mut branch_bytes = 0;
+                for b in branches {
+                    match b.seq() {
+                        [] => branch_bytes += 1,
+                        [Node::Literal(bytes)] => branch_bytes += bytes.len() + 1,
+                        _ => return None,
+                    }
+                }
+                if count > 1 && count * branches.len() > MAX_SUFFIX_PRODUCT {
                     return None;
                 }
+                size = (branches.len().saturating_mul(size - count))
+                    .saturating_add(count.saturating_mul(branch_bytes));
+                source += branch_bytes;
+                count *= branches.len();
+            }
+            _ => return None,
+        }
+        if size > source.saturating_mul(4).saturating_add(*pool) {
+            return None;
+        }
+    }
+    *pool -= size.saturating_sub(source.saturating_mul(4));
+    let mut parts: Vec<Vec<u8>> = vec![Vec::new()];
+    for node in nodes {
+        match node {
+            Node::Literal(bytes) => {
                 for p in parts.iter_mut() {
                     p.extend_from_slice(bytes);
                 }
             }
             Node::Brace(branches) => {
-                let mut literals = Vec::with_capacity(branches.len());
-                for b in branches {
-                    match b.seq() {
-                        [] => literals.push(&b""[..]),
-                        [Node::Literal(bytes)] => literals.push(bytes.as_slice()),
-                        _ => return None,
-                    }
-                }
-                if parts.len() > 1 && parts.len() * literals.len() > MAX_SUFFIX_PRODUCT {
-                    return None;
-                }
-                let branch_bytes: usize = literals.iter().map(|l| l.len() + 1).sum();
-                size = (literals.len().saturating_mul(size - parts.len()))
-                    .saturating_add(parts.len().saturating_mul(branch_bytes));
-                source += branch_bytes;
-                if !fits(size, source) {
-                    return None;
-                }
-                let mut next = Vec::with_capacity(parts.len() * literals.len());
+                let mut next = Vec::with_capacity(parts.len() * branches.len());
                 for p in &parts {
-                    for l in &literals {
+                    for b in branches {
+                        let l: &[u8] = match b.seq() {
+                            [Node::Literal(bytes)] => bytes,
+                            _ => &[],
+                        };
                         let mut v = Vec::with_capacity(p.len() + l.len());
                         v.extend_from_slice(p);
                         v.extend_from_slice(l);
@@ -213,10 +224,9 @@ fn suffix_product(nodes: &[&Node], pool: &mut usize) -> Option<Vec<Vec<u8>>> {
                 }
                 parts = next;
             }
-            _ => return None,
+            _ => unreachable!("counted above"),
         }
     }
-    *pool -= size.saturating_sub(source.saturating_mul(4));
     Some(parts)
 }
 

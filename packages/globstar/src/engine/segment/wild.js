@@ -104,17 +104,16 @@ function suffixProduct(nodes, from, pools) {
   if (from + 1 === nodes.length && nodes[from].tag === N_LITERAL) {
     return [nodes[from].str];
   }
-  let parts = [""];
+  const steps = [];
+  let count = 1;
   let size = 1;
   let source = 1;
-  const fits = () => size <= source * 4 + pools.suffixPool;
   for (let i = from; i < nodes.length; i++) {
     const node = nodes[i];
     if (node.tag === N_LITERAL) {
-      size += parts.length * node.str.length;
+      size += count * node.str.length;
       source += node.str.length;
-      if (!fits()) return null;
-      parts = parts.map((p) => p + node.str);
+      steps.push([node.str]);
     } else if (node.tag === N_BRACE) {
       const lits = [];
       let branchBytes = 0;
@@ -125,18 +124,23 @@ function suffixProduct(nodes, from, pools) {
         else return null;
         branchBytes += lits[lits.length - 1].length + 1;
       }
-      if (parts.length > 1 && parts.length * lits.length > MAX_SUFFIX_PRODUCT) return null;
-      size = lits.length * (size - parts.length) + parts.length * branchBytes;
+      if (count > 1 && count * lits.length > MAX_SUFFIX_PRODUCT) return null;
+      size = lits.length * (size - count) + count * branchBytes;
       source += branchBytes;
-      if (!fits()) return null;
-      const next = [];
-      for (const p of parts) for (const l of lits) next.push(p + l);
-      parts = next;
+      count *= lits.length;
+      steps.push(lits);
     } else {
       return null;
     }
+    if (size > source * 4 + pools.suffixPool) return null;
   }
   pools.suffixPool -= Math.max(0, size - source * 4);
+  let parts = [""];
+  for (const lits of steps) {
+    const next = [];
+    for (const p of parts) for (const l of lits) next.push(p + l);
+    parts = next;
+  }
   return parts;
 }
 

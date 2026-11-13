@@ -149,6 +149,27 @@ fn wildcard_lengths_cost_one_pass() {
     assert!(start.elapsed().as_secs() < 2, "{:?}", start.elapsed());
 }
 
+// A suffix product is counted before it is built: one that a class
+// after it refuses costs what one refused at once does.
+#[test]
+fn a_refused_suffix_product_is_not_built() {
+    let names: Vec<String> = (0..32).map(|i| format!("b{i}")).collect();
+    let brace = format!("{{{}}}", names.join(","));
+    let tail = "x".repeat(100);
+    let last = vec![format!("*{brace}{brace}{tail}[ab]"); 100].join("/");
+    let first = vec![format!("*[ab]{brace}{brace}{tail}"); 100].join("/");
+    let least = |pattern: &str| {
+        let once = || {
+            let start = std::time::Instant::now();
+            Glob::new(pattern).unwrap();
+            start.elapsed()
+        };
+        (0..5).map(|_| once()).min().unwrap()
+    };
+    let (last, first) = (least(&last), least(&first));
+    assert!(last < first * 2, "{last:?} against {first:?}");
+}
+
 // In bytes, not chars.
 #[test]
 fn the_length_limit_is_exact() {
