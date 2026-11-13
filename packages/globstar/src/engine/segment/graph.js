@@ -360,9 +360,7 @@ class Builder {
     for (const branch of branches) {
       for (const g of this.walk(seq(branch), groups.map(forkGroup))) mergeGroup(merged, g);
     }
-    groups = merged.groups;
-    for (const g of groups) dedupeTails(g);
-    return groups;
+    return merged.groups;
   }
 
   walk(nodes, groups) {
@@ -487,7 +485,6 @@ class Builder {
     const out = groups.filter((g) => g.tails.length > 0);
     const at = out.findIndex((g) => !g.pendingGlobstar);
     if (at > 0) out.unshift(out.splice(at, 1)[0]);
-    for (const g of out) dedupeTails(g);
     return out;
   }
 
@@ -498,6 +495,7 @@ class Builder {
       this.gather(g);
       this.link(this.emit(elem, g.tails, false), ACCEPT);
     } else if (g.state === B_GLUE && g.buf.length === 0) {
+      dedupeTails(g);
       for (const t of g.tails) this.link(t, ACCEPT);
     } else {
       this.settle(g);

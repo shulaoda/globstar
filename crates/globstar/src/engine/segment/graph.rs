@@ -569,11 +569,7 @@ impl<'a> Builder<'a> {
                 merged.add(g);
             }
         }
-        groups = merged.groups;
-        for g in &mut groups {
-            g.dedupe_tails();
-        }
-        groups
+        merged.groups
     }
 
     fn walk(&mut self, nodes: &'a [Node], mut groups: Vec<Group<'a>>) -> Vec<Group<'a>> {
@@ -712,9 +708,6 @@ impl<'a> Builder<'a> {
         if let Some(at) = groups.iter().position(|g| !g.pending_globstar) {
             groups[..=at].rotate_right(1);
         }
-        for g in groups.iter_mut() {
-            g.dedupe_tails();
-        }
     }
 
     /// A bare `**` at the end owns the rest of the path: `G0` only from
@@ -733,6 +726,7 @@ impl<'a> Builder<'a> {
             let id = self.emit(elem, &g.tails, false);
             self.end_after(id);
         } else if g.state == Boundary::Glue && g.buf.is_empty() {
+            g.dedupe_tails();
             for &t in &g.tails {
                 self.end_after(t);
             }
