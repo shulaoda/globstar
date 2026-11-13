@@ -271,7 +271,10 @@ class Builder {
   }
 
   finish(weight) {
-    for (const t of this.ends) this.link(t, ACCEPT);
+    for (const t of this.ends) {
+      const next = t === START ? this.start : this.succs[t];
+      if (next.at(-1) !== ACCEPT) next.push(ACCEPT);
+    }
     let glue = null;
     if (this.glued !== null) {
       const n = this.elems.length;
@@ -494,7 +497,6 @@ class Builder {
       this.gather(g);
       this.endAfter(this.emit(elem, g.tails, false));
     } else if (g.state === B_GLUE && g.buf.length === 0) {
-      dedupeTails(g);
       for (const t of g.tails) this.endAfter(t);
     } else {
       this.settle(g);

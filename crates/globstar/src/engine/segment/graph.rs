@@ -415,11 +415,14 @@ impl<'a> Builder<'a> {
 
     /// The predecessor lists inverted, the pattern's ends as edges to
     /// `ACCEPT`.
-    fn successors(&self) -> Edges {
+    fn successors(&mut self) -> Edges {
         let n = self.elems.len();
         let slot = |from: u32| if from == START { n } else { from as usize };
         let mut offsets = vec![0u32; n + 2];
-        for &from in self.preds.iter().chain(&self.ends) {
+        // A node that several branches end on ends the pattern once.
+        self.ends
+            .retain(|&from| std::mem::replace(&mut offsets[slot(from) + 1], 1) == 0);
+        for &from in &self.preds {
             offsets[slot(from) + 1] += 1;
         }
         for i in 0..=n {
@@ -726,7 +729,6 @@ impl<'a> Builder<'a> {
             let id = self.emit(elem, &g.tails, false);
             self.end_after(id);
         } else if g.state == Boundary::Glue && g.buf.is_empty() {
-            g.dedupe_tails();
             for &t in &g.tails {
                 self.end_after(t);
             }

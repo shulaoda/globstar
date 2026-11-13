@@ -69,7 +69,7 @@ Past the room, the walk cuts each open segment into a *piece* at the brace's edg
 
 ## 4. Chains
 
-`Graph::paths` enumerates the paths through the graph, depth first, joins omitted: a node's successors in the order the walk made them, and the end of the pattern after them (`**/a/*` before `**/a`, whichever is written first). A path of literals only joins the literal set; every other path becomes a chain whose shape is fixed by the positions of its globstars. Let `m` be a chain's elements and `n` the path's segments.
+`Graph::paths` enumerates the paths through the graph, depth first, joins omitted: a node's successors in the order the walk made them, and the end of the pattern after them (`**/a/*` before `**/a`, whichever is written first). A node ends the pattern once, however many branches end on it (`{a/**,a/**/**}` is one path). A path of literals only joins the literal set; every other path becomes a chain whose shape is fixed by the positions of its globstars. Let `m` be a chain's elements and `n` the path's segments.
 
 ### 4.1 A line: at most one globstar
 
