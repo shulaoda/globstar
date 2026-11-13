@@ -264,6 +264,7 @@ class Builder {
     this.elems = [];
     this.succs = [];
     this.start = [];
+    this.ends = [];
     this.linear = linear;
     this.memo = linear ? null : new Map();
     this.glued = null;
@@ -275,6 +276,7 @@ class Builder {
   }
 
   finish(weight) {
+    for (const t of this.ends) this.link(t, ACCEPT);
     let glue = null;
     if (this.glued !== null) {
       const n = this.elems.length;
@@ -332,6 +334,10 @@ class Builder {
       this.memo.set(key, { kind: elem.kind, lit: elem.litStr, at, glued, id });
     }
     return id;
+  }
+
+  endAfter(from) {
+    if (!this.linear) this.ends.push(from);
   }
 
   link(tail, id) {
@@ -493,13 +499,13 @@ class Builder {
     if (g.doubleStar) {
       const elem = g.state === B_START ? G0_ELEM : G1_ELEM;
       this.gather(g);
-      this.link(this.emit(elem, g.tails, false), ACCEPT);
+      this.endAfter(this.emit(elem, g.tails, false));
     } else if (g.state === B_GLUE && g.buf.length === 0) {
       dedupeTails(g);
-      for (const t of g.tails) this.link(t, ACCEPT);
+      for (const t of g.tails) this.endAfter(t);
     } else {
       this.settle(g);
-      this.link(this.segment(g, false), ACCEPT);
+      this.endAfter(this.segment(g, false));
     }
   }
 
