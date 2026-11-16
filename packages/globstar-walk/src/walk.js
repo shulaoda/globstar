@@ -69,6 +69,7 @@ function prepare(patterns, optsInput) {
 
   const list =
     typeof patterns !== "string" &&
+    !(patterns instanceof String) &&
     patterns != null &&
     typeof patterns[Symbol.iterator] === "function"
       ? [...patterns]

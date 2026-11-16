@@ -96,7 +96,7 @@ The walker has these five options and no others. In particular, there is no swit
 
 ### 4.1 Input
 
-The patterns are a string or an iterable of strings (an array, a set), read once. A string is treated as a one-element list. Each pattern and each `ignore` entry is first checked for length as written (§9.2).
+The patterns are a string or an iterable of strings (an array, a set), read once. A string is treated as a one-element list. A `String` object is neither, and is rejected as a pattern that is not a string. Each pattern and each `ignore` entry is first checked for length as written (§9.2).
 
 ### 4.2 The `!` split
 

@@ -251,6 +251,10 @@ console.log("✓ matcher options are checked");
   assert.equal(json.message, range.message);
   assert.deepEqual([json.kind, json.at, json.low, json.high], ["InvalidRange", 8, 0x7a, 0x61]);
   assert.equal(compileMatcher(new Set(["*.ts", "*.js"])).match("a.js"), true);
+  assert.throws(() => compileMatcher(new String("src/**")), {
+    name: "TypeError",
+    message: "pattern must be a string, got object",
+  });
   assert.ok(Object.isFrozen(DirMatch));
   assert.deepEqual([MAX_PATTERN_LEN, MAX_BRACE_NESTING], [65536, 32]);
 }

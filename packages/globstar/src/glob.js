@@ -16,6 +16,7 @@ export function compileMatcher(patterns, options) {
   const opts = matcherOptions(options);
   const isList =
     typeof patterns !== "string" &&
+    !(patterns instanceof String) &&
     patterns != null &&
     typeof patterns[Symbol.iterator] === "function";
   const given = isList ? [...patterns] : [patterns];

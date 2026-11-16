@@ -171,6 +171,7 @@ await check("option misuse throws clear TypeErrors", async () => {
     [["a.txt"], { cwd: root, ignore: null }],
     [[null], { cwd: root }],
     [42, { cwd: root }],
+    [new String("a.txt"), { cwd: root }],
     [["a.txt"], { cwd: root, dot: "false" }],
     [["a.txt"], { cwd: root, caseInsensitive: 1 }],
     [["a.txt"], { cwd: root, followSymlinks: null }],
