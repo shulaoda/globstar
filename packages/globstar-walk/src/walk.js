@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { compileMatcher, DirMatch, GlobError, MAX_PATTERN_LEN } from "@globstar/core";
@@ -20,14 +21,12 @@ export async function glob(patterns, options) {
       fs.readdir(frame.absolute, { withFileTypes: true }, (err, dirents) => {
         pending--;
         if (failed) return;
-        if (err) {
-          try {
-            dirents = afterReadError(err, frame.absolute);
-          } catch (e) {
-            failed = true;
-            reject(e);
-            return;
-          }
+        try {
+          dirents = listing(frame.absolute, err, dirents);
+        } catch (e) {
+          failed = true;
+          reject(e);
+          return;
         }
         if (dirents !== null) processDirents(ctx, dirents, frame, out, descendShim);
         if (pending === 0) resolve(out);
@@ -49,12 +48,14 @@ export function globSync(patterns, options) {
   while (stack.length > 0) {
     const frame = stack.pop();
     let dirents;
+    let err = null;
     try {
       dirents = fs.readdirSync(frame.absolute, { withFileTypes: true });
-    } catch (err) {
-      dirents = afterReadError(err, frame.absolute);
-      if (dirents === null) continue;
+    } catch (cause) {
+      err = cause;
     }
+    dirents = listing(frame.absolute, err, dirents);
+    if (dirents === null) continue;
     descend.length = 0;
     processDirents(ctx, dirents, frame, out, descend);
     for (let i = descend.length - 1; i >= 0; i--) stack.push(descend[i]);
@@ -179,7 +180,6 @@ function processDirents(ctx, dirents, frame, results, descend) {
     if (isSymlink && !followSymlinks) continue;
 
     const name = dirent.name;
-    if (name.includes("\uFFFD") && !exists(absHead + name)) continue;
     const childRel = relHead + name;
 
     if (ignore !== null && ignore.match(childRel)) continue;
@@ -236,22 +236,29 @@ function realpath(p) {
   }
 }
 
-function afterReadError(err, dir) {
+function listing(dir, err, dirents) {
   try {
-    if (vanishedDuringRead(err)) return readEachEntry(dir);
+    if (err === null ? dirents.some(mayNotDecode) : vanishedDuringRead(err)) {
+      return readEachEntry(dir);
+    }
   } catch (cause) {
     err = cause;
   }
+  if (err === null) return dirents;
   if (gone(err)) return null;
   throw new WalkError("Io", { path: dir, cause: err });
 }
+
+const mayNotDecode = (dirent) => dirent.name.includes("\uFFFD");
 
 const vanishedDuringRead = (err) => err?.code === "ENOENT" && err?.syscall === "lstat";
 
 function readEachEntry(dir) {
   const out = [];
   const head = withSep(dir);
-  for (const name of fs.readdirSync(dir)) {
+  for (const bytes of fs.readdirSync(dir, { encoding: "buffer" })) {
+    if (!isUtf8(bytes)) continue;
+    const name = bytes.toString();
     let entry;
     try {
       entry = fs.lstatSync(head + name);
@@ -279,15 +286,6 @@ function nothingThere(err, seen, dir, name) {
       return !listed(seen, dir, name);
     default:
       return false;
-  }
-}
-
-function exists(p) {
-  try {
-    fs.lstatSync(p);
-    return true;
-  } catch {
-    return false;
   }
 }
 

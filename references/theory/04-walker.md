@@ -87,6 +87,8 @@ child frame ← (frame / name, rel, links)
 
 The ignore test precedes the `stat` so that an ignored link is never resolved. The absolute path of an entry is built only when it is yielded or entered. The test with the trailing `/` catches, under either `dot`, every ignore entry that matches the directory's path with its `/`: one that ends in `/`, `/**` or `/*`, and `**/node_modules/**/*` as well. An ignore set that covers a subtree without matching its root so (`d/**/?*`) costs the one listing of that root, each of whose entries the ignore test then skips.
 
+The Rust walker tests a name's bytes. The JS walker's listing arrives decoded, with U+FFFD where the bytes did not decode, and that string may name another entry: `x\xff` reads as `x\uFFFD`, which a link beside it may be called. A listing that shows U+FFFD is therefore read again as bytes (`read_each_entry`, §6): a name that is not valid UTF-8 is dropped, and each of the others is typed by the `lstat` of its own name, so no entry is judged under the name of another.
+
 The soundness of the pruning test is note 03, Proposition 3: a directory skipped on `may_match_below = false` holds no match.
 
 ## 5. Scheduling
@@ -99,7 +101,7 @@ The soundness of the pruning test is note 03, Proposition 3: a directory skipped
 
 ## 6. Errors
 
-A directory read that fails is classified (`after_read_error`, WALKER_SPEC §9.3):
+A directory read that fails is classified (`listing`, WALKER_SPEC §9.3):
 
 - ENOENT or ENOTDIR: the directory its parent listed is gone, or is now a file; it is left out, as if it had gone before its parent was read. The base was validated first, so this never hides a missing base.
 - ENOENT from the `lstat` a typeless filesystem's listing makes: an entry vanished between the listing and its typing. The directory is read again by names alone (`read_each_entry`), each name typed by its own `lstat`, and a name that is gone is left out. The Rust walker meets the same case as a `NotFound` from `DirEntry::file_type` and skips that entry.
@@ -132,5 +134,5 @@ The walk reads each directory it enters once per route to it, and makes one `sta
 | `Links`, `Link`, `link_to_descend`, `opens_as_another`, `listed`, `win32_rewrites`, `nothing_there`, `gone` | `crates/globstar-walk/src/lib.rs` |
 | `WalkOptions`, `DirEntry`, `WalkError`                                                            | `options.rs`, `entry.rs`, `error.rs`   |
 | `glob`, `globSync`, `prepare`, `initFromPrefixes`, `processDirents`                               | `packages/globstar-walk/src/walk.js`   |
-| `normalizePattern`, `splitBangs`, `compileUnion`, `checkLength`, `afterReadError`, `readEachEntry` | `packages/globstar-walk/src/walk.js`  |
+| `normalizePattern`, `splitBangs`, `compileUnion`, `checkLength`, `listing`, `readEachEntry` | `packages/globstar-walk/src/walk.js`  |
 | `linkToDescend`, `realpath`, `opensAsAnother`, `listed`, `win32Rewrites`, `withSep`               | `packages/globstar-walk/src/walk.js`   |

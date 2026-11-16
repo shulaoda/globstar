@@ -507,6 +507,28 @@ await check("a name that is not UTF-8 is skipped", async () => {
   await expectBoth(root, ["*/*.txt"], {}, ["src/ok.txt"], "*/*.txt");
 });
 
+await check("a name that is not UTF-8 is not read under the name of another entry", async () => {
+  const files = ["out/secret.txt", "src/ok.txt", "src/real\uFFFD.txt", "src/d\uFFFD/in.txt"];
+  const root = tmpTree("nonutf8-twin", files);
+  const base = path.join(root, "src");
+  const kept = ["d\uFFFD/in.txt", "ok.txt", "real\uFFFD.txt"];
+  await expectBoth(base, ["**/*.txt"], {}, kept, "names that hold U+FFFD");
+  const named = (name, rest = "") =>
+    Buffer.concat([Buffer.from(`${base}/${name}`), Buffer.from([0xff]), Buffer.from(rest)]);
+  try {
+    fs.mkdirSync(named("x"));
+    fs.writeFileSync(named("x", "/in.txt"), "x");
+    fs.writeFileSync(named("k", ".txt"), "x");
+  } catch {
+    return;
+  }
+  fs.symlinkSync(path.join(root, "out"), path.join(base, "x\uFFFD"));
+  fs.symlinkSync(path.join(root, "out/secret.txt"), path.join(base, "k\uFFFD.txt"));
+  await expectBoth(base, ["**/*.txt"], { followSymlinks: false }, kept, "links dropped");
+  const linked = [...kept, "k\uFFFD.txt", "x\uFFFD/secret.txt"];
+  await expectBoth(base, ["**/*.txt"], { followSymlinks: true }, linked, "links followed");
+});
+
 await check("an entry that vanishes during a typed read is skipped", async () => {
   const root = tmpTree("vanish", ["src/a.ts", "src/b.ts"]);
   const vanished = () =>

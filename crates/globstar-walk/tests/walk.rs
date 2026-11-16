@@ -438,6 +438,47 @@ fn walker_skips_a_name_that_is_not_utf8() {
     }
 }
 
+// WALKER_SPEC §7.1: `x\xff` is not read as the link `x\u{FFFD}`, the
+// name a lossy decoding gives it.
+#[cfg(target_os = "linux")]
+#[test]
+fn walker_reads_a_name_that_is_not_utf8_under_no_other_name() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::symlink;
+    let files = [
+        "out/secret.txt",
+        "src/ok.txt",
+        "src/real\u{FFFD}.txt",
+        "src/d\u{FFFD}/in.txt",
+    ];
+    let t = TmpTree::new("nonutf8_twin", &files);
+    let base = t.root().join("src");
+    let bad = base.join(OsStr::from_bytes(b"x\xff"));
+    if fs::create_dir(&bad).is_err() {
+        return;
+    }
+    fs::File::create(bad.join("in.txt")).expect("create file");
+    fs::File::create(base.join(OsStr::from_bytes(b"k\xff.txt"))).expect("create file");
+    symlink(t.root().join("out"), base.join("x\u{FFFD}")).expect("create link");
+    symlink(t.root().join("out/secret.txt"), base.join("k\u{FFFD}.txt")).expect("create link");
+
+    let kept = ["d\u{FFFD}/in.txt", "ok.txt", "real\u{FFFD}.txt"];
+    let linked = ["k\u{FFFD}.txt", "x\u{FFFD}/secret.txt"];
+    for follow_links in [false, true] {
+        let opts = WalkOptions {
+            follow_links,
+            ..WalkOptions::new(&base)
+        };
+        let got = collect_rel(Walk::from_patterns(&["**/*.txt"], opts).unwrap(), &base);
+        let mut expected = set(&kept);
+        if follow_links {
+            expected.extend(set(&linked));
+        }
+        assert_eq!(got, expected, "follow_links: {follow_links}");
+    }
+}
+
 // A link back to its ancestor is walked once more, then caught.
 #[cfg(unix)]
 #[test]
