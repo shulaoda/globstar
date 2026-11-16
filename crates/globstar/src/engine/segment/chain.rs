@@ -11,6 +11,7 @@ use crate::engine::bytes::{cmp_folded, fold, is_sep, seg_end, seg_start};
 use super::SegmentMatcher;
 use super::bits::ByteSketch;
 use super::graph::{ACCEPT, Elem, Graph, room};
+use super::graph_nfa::AnyNfa;
 use super::wild::{Wild, WildKind};
 
 /// Wildcard chains kept without an index.
@@ -346,14 +347,16 @@ impl SegmentMatcher {
         &self,
         index: &ChainIndex,
         literals: Option<&Literals>,
+        nfa: &AnyNfa,
         path: &[u8],
     ) -> bool {
         let ci = self.case_insensitive;
-        index.any(path, ci, |id| match literals {
+        let matches = |id| match literals {
             None => self.chain_matches(&self.chains[id], path),
             Some(set) if id == 0 => set.contains(path, ci),
             Some(_) => self.chain_matches(&self.chains[id - 1], path),
-        })
+        };
+        index.any(path, ci, matches, || nfa.is_match(self, path))
     }
 
     pub(super) fn chain_matches(&self, chain: &Chain, path: &[u8]) -> bool {
@@ -805,6 +808,7 @@ pub(super) struct ChainIndex {
     slots: Box<[u32]>,
     shift: u32,
     /// 6 for a union of at most 64 chains, whose picks are bits of a word.
+    /// Past 64 the id of all ones is no chain's: it picks the NFA.
     id_bits: u32,
     /// Per role, the lookups that find something, and per lookup a sketch
     /// of the outer bytes filed.
@@ -916,7 +920,7 @@ fn strings(kind: Kind, keys: &[Key]) -> SegKeys {
 
 impl ChainIndex {
     /// `None` when the chains are few, their entries pass the key room, or
-    /// past 64 chains a call could walk more than `MAX_CHAINS` of them.
+    /// past 64 chains more than `MAX_CHAINS` of them file no key.
     pub(super) fn new(
         literals: Option<&Literals>,
         chains: &[Chain],
@@ -934,7 +938,11 @@ impl ChainIndex {
         let mut index = ChainIndex {
             slots: Box::default(),
             shift: 0,
-            id_bits: (usize::BITS - (ids - 1).leading_zeros()).max(6),
+            id_bits: if ids > MAX_CHAINS {
+                usize::BITS - ids.leading_zeros()
+            } else {
+                6
+            },
             lookups: [0; 3],
             sketch: [[0; LOOKUPS]; 3],
             infix: Box::default(),
@@ -1003,13 +1011,18 @@ impl ChainIndex {
         }
         entries.sort_unstable();
         entries.dedup();
-        if index.id_bits > 6
-            && (rest.len() + infix.len() > MAX_CHAINS
-                || entries
-                    .chunk_by(|a, b| a.0 == b.0)
-                    .any(|g| g.len() > MAX_CHAINS))
-        {
-            return None;
+        if index.id_bits > 6 {
+            if rest.len() + infix.len() > MAX_CHAINS {
+                return None;
+            }
+            // A key of more than `MAX_CHAINS` chains picks the NFA instead.
+            let nfa = (1 << index.id_bits) - 1;
+            for group in entries.chunk_by_mut(|a, b| a.0 == b.0) {
+                if group.len() > MAX_CHAINS {
+                    group.fill((group[0].0, nfa));
+                }
+            }
+            entries.dedup();
         }
         let bits = (2 * entries.len())
             .next_power_of_two()
@@ -1076,9 +1089,10 @@ impl ChainIndex {
         path: &[u8],
         ci: bool,
         mut matches: impl FnMut(usize) -> bool,
+        nfa: impl FnOnce() -> bool,
     ) -> bool {
         if self.id_bits > 6 {
-            return self.any_of_many(path, ci, matches);
+            return self.any_of_many(path, ci, matches, nfa);
         }
         let mut tried = 0u64;
         macro_rules! try_picked {
@@ -1122,12 +1136,22 @@ impl ChainIndex {
         self.rest.iter().any(|&c| matches(c as usize))
     }
 
-    /// `any` past 64 chains: each step's picks sorted and tried once.
-    fn any_of_many(&self, path: &[u8], ci: bool, mut matches: impl FnMut(usize) -> bool) -> bool {
+    /// `any` past 64 chains: each step's picks sorted and tried once, and
+    /// the NFA last when a step picked it.
+    fn any_of_many(
+        &self,
+        path: &[u8],
+        ci: bool,
+        mut matches: impl FnMut(usize) -> bool,
+        nfa: impl FnOnce() -> bool,
+    ) -> bool {
+        let nfa_id = (1 << self.id_bits) - 1;
+        let mut nfa_picked = false;
         let mut try_picked = |picked: &mut Vec<u32>| {
             picked.sort_unstable();
             picked.dedup();
-            let hit = picked.iter().any(|&c| matches(c as usize));
+            nfa_picked |= picked.last() == Some(&nfa_id);
+            let hit = picked.iter().any(|&c| c != nfa_id && matches(c as usize));
             picked.clear();
             hit
         };
@@ -1156,7 +1180,7 @@ impl ChainIndex {
             }
         }
         picked.extend_from_slice(&self.rest);
-        try_picked(&mut picked)
+        try_picked(&mut picked) || nfa_picked && nfa()
     }
 
     fn infix_picks<'a>(&'a self, last: &'a [u8], ci: bool) -> impl Iterator<Item = u32> + 'a {

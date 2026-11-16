@@ -132,7 +132,9 @@ impl SegmentMatcher {
                 route,
             }) => match route {
                 Route::Nfa => nfa.is_match(self, path),
-                Route::Index(index) => self.indexed_chain_matches(index, literals.as_deref(), path),
+                Route::Index(index) => {
+                    self.indexed_chain_matches(index, literals.as_deref(), nfa, path)
+                }
                 Route::Gates(gates) => self.any_chain_matches(gates, literals.as_deref(), path),
             },
         }

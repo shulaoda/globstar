@@ -140,6 +140,7 @@ console.log("✓ a union of many file names keeps its literal set");
 
 {
   const keyed = Array.from({ length: 5000 }, (_, i) => `d${i}/*/n${i}.js`);
+  const stems = Array.from({ length: 100 }, (_, i) => `**/abcd${i}*.js`);
   const keyless = Array.from({ length: 100 }, (_, i) => `*${i}*/**`);
   const crowded = Array.from({ length: 100 }, (_, i) => `d${i}/q${i}/n.js`);
   const product = ["{a/x,b/y}/".repeat(30) + "*.x"];
@@ -148,6 +149,8 @@ console.log("✓ a union of many file names keeps its literal set");
     "d4999/q/n4999.js",
     "d7/x/n8.js",
     "d7/n7.js",
+    "src/abcd17x.js",
+    "src/abcdef.js",
     "a17b/c",
     "x17/",
     "d7/q7/n.js",
@@ -157,6 +160,7 @@ console.log("✓ a union of many file names keeps its literal set");
   ];
   for (const [members, chains] of [
     [keyed, "| chains 5000 |"],
+    [stems, "| chains 100 |"],
     [keyless, "| chains 0 |"],
     [crowded, "chains 0 | literals 100 |"],
     [product, "| chains 0 |"],

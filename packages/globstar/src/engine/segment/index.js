@@ -238,13 +238,16 @@ export class SegmentMatcher {
     for (let i = 0; i < rest.length; i++) {
       if (ix.stamp[rest[i]] !== ix.epoch) ix.list[ix.listed++] = rest[i];
     }
-    return this._tryListed(str);
+    const nfaPicked = ix.stamp[(1 << ix.idBits) - 1] === ix.epoch;
+    return this._tryListed(str) || (nfaPicked && this._nfaMatch(str));
   }
 
   _tryListed(str) {
     const ix = this.index;
+    const nfa = (1 << ix.idBits) - 1;
     while (ix.tried < ix.listed) {
-      if (this._picked(ix.list[ix.tried++], str)) return true;
+      const id = ix.list[ix.tried++];
+      if (id !== nfa && this._picked(id, str)) return true;
     }
     return false;
   }

@@ -533,7 +533,7 @@ export function chainIndex(literals, chains, graph, ci) {
   const elems = graph.elems;
   const firstChain = literals !== null ? 1 : 0;
   const ids = chains.length + firstChain;
-  const idBits = Math.max(6, 32 - Math.clz32(ids - 1));
+  const idBits = ids > MAX_CHAINS ? 32 - Math.clz32(ids) : 6;
   const many = idBits > 6;
   const ix = {
     slots: null,
@@ -547,10 +547,10 @@ export function chainIndex(literals, chains, graph, ci) {
     restHi: 0,
     rest: [],
     picked: new Int32Array(2),
-    list: many ? new Int32Array(ids) : null,
+    list: many ? new Int32Array(1 << idBits) : null,
     listed: 0,
     tried: 0,
-    stamp: many ? new Int32Array(ids) : null,
+    stamp: many ? new Int32Array(1 << idBits) : null,
     epoch: 0,
   };
   const entries = [];
@@ -597,12 +597,13 @@ export function chainIndex(literals, chains, graph, ci) {
   entries.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   if (many) {
     if (ix.rest.length + ix.infix.length > MAX_CHAINS) return null;
-    let group = 0;
-    for (let i = 0; i < entries.length; i++) {
-      const [key, c] = entries[i];
-      if (i > 0 && entries[i - 1][0] === key) {
-        if (entries[i - 1][1] !== c && ++group > MAX_CHAINS) return null;
-      } else group = 1;
+    const nfa = (1 << idBits) - 1;
+    for (let i = 0, j = 0; i < entries.length; i = j) {
+      let group = 0;
+      for (; j < entries.length && entries[j][0] === entries[i][0]; j++) {
+        if (j === i || entries[j][1] !== entries[j - 1][1]) group++;
+      }
+      if (group > MAX_CHAINS) for (let k = i; k < j; k++) entries[k][1] = nfa;
     }
   }
   let bits = 1;

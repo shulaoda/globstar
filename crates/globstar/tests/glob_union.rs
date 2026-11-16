@@ -46,18 +46,20 @@ fn a_union_past_a_words_chains_names_each_by_id() {
     assert!(!union.is_match(b"d1/q/f.x2"));
 }
 
-// Past 64 chains the index alone picks them, while no call walks more
-// than 64 by one key or without any, and their nodes stay within four
-// times the pattern's weight; else the NFA serves.
+// Past 64 chains the index alone picks them, and a key of more than 64
+// picks the NFA. With more than 64 chains without a key, or nodes past
+// four times the pattern's weight, the NFA serves alone.
 #[test]
 fn a_union_of_many_wildcard_members_keeps_its_chains_while_indexed() {
     let keyed: Vec<String> = (0..5000).map(|i| format!("d{i}/*/n{i}.js")).collect();
+    let stems: Vec<String> = (0..100).map(|i| format!("**/abcd{i}*.js")).collect();
     let keyless: Vec<String> = (0..100).map(|i| format!("*{i}*/**")).collect();
     let crowded: Vec<String> = (0..100).map(|i| format!("d{i}/q{i}/n.js")).collect();
     let product = vec!["{a/x,b/y}/".repeat(30) + "*.x"];
     let (deep, shallow) = ("a/x/".repeat(30) + "f.x", "b/y/".repeat(29) + "f.x");
     for (members, chains) in [
         (&keyed, "| chains 5000 |"),
+        (&stems, "| chains 100 |"),
         (&keyless, "| chains 0 |"),
         (&crowded, "chains 0 | literals 100 |"),
         (&product, "| chains 0 |"),
@@ -70,6 +72,8 @@ fn a_union_of_many_wildcard_members_keeps_its_chains_while_indexed() {
             "d4999/q/n4999.js",
             "d7/x/n8.js",
             "d7/n7.js",
+            "src/abcd17x.js",
+            "src/abcdef.js",
             "a17b/c",
             "x17/",
             "d7/q7/n.js",
