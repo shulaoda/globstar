@@ -430,6 +430,7 @@ for (const [pattern, path] of [
   ["{a,b,/}".repeat(14), "abababa/bababa"],
   ["{/,a,}".repeat(20), "aa/a"],
   ["{a/,}".repeat(64), "a/a/"],
+  ["{,/{,/{,a},}}".repeat(5040), "//a"],
 ]) {
   const start = performance.now();
   const m = compileMatcher(pattern);

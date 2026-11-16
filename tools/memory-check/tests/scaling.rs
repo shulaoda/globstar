@@ -32,7 +32,7 @@ fn members(n: usize, f: impl Fn(usize) -> String) -> Vec<String> {
 }
 
 /// Compiled at `k` and `4k`, each about 16 and 64 KiB.
-const BUILDS: [(&str, usize, Shape); 16] = [
+const BUILDS: [(&str, usize, Shape); 17] = [
     ("{a/,} x k", 3_200, |k| {
         one("{a/,}".repeat(k) + "x", "a/x".into())
     }),
@@ -48,6 +48,10 @@ const BUILDS: [(&str, usize, Shape); 16] = [
     }),
     ("x{a,/} x k", 2_700, |k| {
         one("x{a,/}".repeat(k), "xa".into())
+    }),
+    // Each unit leaves joins that reach no end: the graph links none.
+    ("{,/{,/{,a},}} x k", 1_260, |k| {
+        one("{,/{,/{,a},}}".repeat(k), "//a".into())
     }),
     ("{a*,b*} x k", 2_300, |k| {
         one("{a*,b*}".repeat(k) + "c", "ac".into())

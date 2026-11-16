@@ -1611,6 +1611,23 @@ a{,b}**	ab/c	no-match
 {a/,}{**/x,**/y,z}	a/p/q/y	match
 {a/,}{**/x,**/y,z}	az	no-match
 {,}{,}**	a/b	match
+## These patterns leave the graph nodes that reach no end of the
+## pattern (theory note 03, §3.3). The graph links none of them, and
+## the answers are those of the expansions.
+/{,/{,a},}{,/}	//a	match
+/{,/{,a},}{,/}	///	match
+/{,/{,a},}{,/}	//a//	no-match
+/{,/{,a},}{,/}	/a	no-match
+{,/{,/{,a},}}{,/{,/{,a},}}x	//a//ax	match
+{,/{,/{,a},}}{,/{,/{,a},}}x	//x	match
+{,/{,/{,a},}}{,/{,/{,a},}}x	/a/x	no-match
+{a/,}{,/{,b},}{,/}c	a//b/c	match
+{a/,}{,/{,b},}{,/}c	/bc	match
+{a/,}{,/{,b},}{,/}c	a/bc	no-match
+x/{,/{,a},}{,/{,**/}}*	x//a/q/r/y	match
+x/{,/{,a},}{,/{,**/}}*	x/a/y	no-match
+**/a{,/{,/{,a},}{,/{,a},}}b	a//a//ab	match
+**/a{,/{,/{,a},}{,/{,a},}}b	q/a//b	match
 ## The `/` a `**` needs may stand outside the brace; then nothing is
 ## expanded: `**/{a,b}`, `{a,b}/**`, `{src,lib}/{**,gen}/*.ts`.
 **/{a,b}	a	match

@@ -414,7 +414,8 @@ impl<'a> Builder<'a> {
     }
 
     /// The predecessor lists inverted, the pattern's ends as edges to
-    /// `ACCEPT`.
+    /// `ACCEPT`. A node that reaches no end is left out: a join gathered
+    /// for a shadow group that then ended, and what only such nodes follow.
     fn successors(&mut self) -> Edges {
         let n = self.elems.len();
         let slot = |from: u32| if from == START { n } else { from as usize };
@@ -425,16 +426,29 @@ impl<'a> Builder<'a> {
         for &from in &self.preds {
             offsets[slot(from) + 1] += 1;
         }
+        // Successors come later, so one pass back sees each node after
+        // them: one left with none is taken from its predecessors.
+        if offsets[1..=n].contains(&0) {
+            for id in (0..n).rev() {
+                if offsets[id + 1] == 0 {
+                    for &from in self.preds_of(id) {
+                        offsets[slot(from) + 1] -= 1;
+                    }
+                }
+            }
+        }
         for i in 0..=n {
             offsets[i + 1] += offsets[i];
         }
         let mut fill = offsets.clone();
         let mut targets = vec![0u32; offsets[n + 1] as usize];
         for id in 0..=n {
-            let (froms, to) = if id < n {
+            let (froms, to) = if id == n {
+                (&self.ends[..], ACCEPT)
+            } else if offsets[id] < offsets[id + 1] {
                 (self.preds_of(id), id as u32)
             } else {
-                (&self.ends[..], ACCEPT)
+                continue;
             };
             for &from in froms {
                 let at = &mut fill[slot(from)];

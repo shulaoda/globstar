@@ -275,6 +275,11 @@ class Builder {
       const next = t === START ? this.start : this.succs[t];
       if (next.at(-1) !== ACCEPT) next.push(ACCEPT);
     }
+    if (this.succs.some((next) => next.length === 0)) {
+      const live = (next) => next.filter((t) => t === ACCEPT || this.succs[t].length > 0);
+      for (let i = this.succs.length - 1; i >= 0; i--) this.succs[i] = live(this.succs[i]);
+      this.start = live(this.start);
+    }
     let glue = null;
     if (this.glued !== null) {
       const n = this.elems.length;

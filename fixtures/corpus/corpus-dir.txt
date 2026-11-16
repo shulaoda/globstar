@@ -473,3 +473,13 @@ src/**	src	descend-all	dot=true
 !**/*.ts	src	descend-match	dot=true
 !**/*.ts	a.ts	descend	dot=true
 !**/*.ts	x/y.ts	descend	dot=true
+
+## graph.nodes.that.reach.no.end
+# The graph links no node that reaches no end of the pattern (theory
+# note 03, §3.3); the answers are those of the expansions.
+/{,/{,a},}{,/}	//a	descend-match
+/{,/{,a},}{,/}	//a/	match
+/{,/{,a},}{,/}	//b	pruned
+x/{,/{,a},}{,/{,**/}}*	x//ay	descend-all-match	dot=true
+x/{,/{,a},}{,/{,**/}}*	x/a/y	pruned
+x/{,/{,a},}{,/{,**/}}*	x	descend
