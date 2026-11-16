@@ -1137,7 +1137,8 @@ impl ChainIndex {
     }
 
     /// `any` past 64 chains: each step's picks sorted and tried once, and
-    /// the NFA last when a step picked it.
+    /// the NFA last when a step picked it. The inner segments pick as one
+    /// step, and drop their repeats whenever the picks pass twice the ids.
     fn any_of_many(
         &self,
         path: &[u8],
@@ -1176,6 +1177,9 @@ impl ChainIndex {
             while start < last_start {
                 let end = seg_end(path, start);
                 self.probe(Role::Inner, &path[start..end], ci, |c| picked.push(c));
+                if picked.len() > 2 << self.id_bits {
+                    drop_repeats(&mut picked, 1 << self.id_bits);
+                }
                 start = end + 1;
             }
         }
@@ -1238,6 +1242,13 @@ impl ChainIndex {
             }
         }
     }
+}
+
+/// Keeps the first of each id in `picked`.
+#[cold]
+fn drop_repeats(picked: &mut Vec<u32>, ids: usize) {
+    let mut seen = vec![false; ids];
+    picked.retain(|&c| !std::mem::replace(&mut seen[c as usize], true));
 }
 
 /// A role, a lookup, an exact key's length (past 255 as 255) and what it

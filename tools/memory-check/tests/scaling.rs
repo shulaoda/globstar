@@ -1,7 +1,9 @@
 //! Four times the input costs about four times as much: theory note 03,
 //! §11. A pattern four times as long may take at most five times the
 //! memory and eight times the time to compile, and a call at most eight
-//! times the time; a quadratic cost would take sixteen.
+//! times the time; a quadratic cost would take sixteen. A call on a path
+//! four times as long holds at most twice the memory: the pattern bounds
+//! it, not the path.
 
 use std::hint::black_box;
 use std::sync::atomic::Ordering::Relaxed;
@@ -133,12 +135,21 @@ const CALLS: [(&str, usize, Shape); 6] = [
 ];
 
 /// Called on a path of `k` and `4k` segments, more than the pattern's.
-const PATHS: [(&str, usize, Shape); 2] = [
+const PATHS: [(&str, usize, Shape); 3] = [
     ("**/a/ x 64, k segments", 256, |k| {
         one("**/a/".repeat(64) + "b", format!("{}c", "a/".repeat(k)))
     }),
     ("{**,a}/ x 64, k segments", 256, |k| {
         one("{**,a}/".repeat(64) + "x", format!("{}x", "a/".repeat(k)))
+    }),
+    // Every segment picks the same chains: their repeats are dropped.
+    ("128 chains under two keys, k segments", 256, |k| {
+        (
+            members(128, |i| {
+                format!("**/{}/**/{{a*,b{i}*}}", ["kabc", "k*"][i % 2])
+            }),
+            format!("{}c", "kabc/".repeat(k)),
+        )
     }),
 ];
 
@@ -170,6 +181,11 @@ fn four_times_the_input_costs_about_four_times() {
         let glob = build(&patterns);
         let (t, t4) = timed(|| calls(&glob, &path), || calls(&glob, &path4));
         assert!(t4 <= 8 * t, "{name}: a call takes {t:?}, then {t4:?}");
+        let (mem, mem4) = (held(&glob, &path), held(&glob, &path4));
+        assert!(
+            mem4 <= 2 * mem,
+            "{name}: a call holds {mem} bytes, then {mem4}"
+        );
     }
 }
 
@@ -190,6 +206,14 @@ fn memory(patterns: &[String]) -> (usize, usize) {
 fn calls(glob: &Glob, path: &str) {
     black_box(glob.is_match(black_box(path.as_bytes())));
     black_box(glob.match_dir(black_box(path.as_bytes())));
+}
+
+/// The most the calls on `path` hold at once.
+fn held(glob: &Glob, path: &str) -> usize {
+    let base = LIVE.load(Relaxed);
+    PEAK.store(base, Relaxed);
+    calls(glob, path);
+    PEAK.load(Relaxed) - base
 }
 
 /// The least time each of `a` and `b` takes, in turns.
