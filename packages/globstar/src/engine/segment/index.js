@@ -2,13 +2,9 @@ import { IS_WINDOWS_SEP, endsWithPattern, lastSepBefore, nextSep } from "../byte
 import { latin1Bytes, utf8Latin1 } from "../../utf8.js";
 import { DirMatch } from "../../dir-match.js";
 import { buildGraph, EL_LIT, EL_WILD, EL_G0, EL_JOIN, EL_PIECE, exact, survey } from "./graph.js";
+import { pathsOf, chainMatches, chainDir, hasLiteral, anyBelow } from "./chain.js";
 import {
   MAX_CHAINS,
-  pathsOf,
-  chainMatches,
-  chainDir,
-  hasLiteral,
-  anyBelow,
   R_FIRST,
   R_INNER,
   R_LAST,
@@ -16,7 +12,7 @@ import {
   probe,
   probeMany,
   probeInfix,
-} from "./chain.js";
+} from "./picker.js";
 import {
   anyNfa,
   nfaRun,

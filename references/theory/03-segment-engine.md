@@ -29,7 +29,7 @@ Compilation is one pass per layer, each linear in the pattern; a layer that enum
 2. **Literal ends** (`ends.rs`): the suffix prefilter (§13) and the static prefixes (§14), read from the AST as written.
 3. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs` and `seg_nfa.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (`seg_nfa.rs`, §7.5).
 4. **Chains** (`chain.rs`): the paths through the graph, while they are few and simple (§4).
-5. **Picker**: how a union tries its chains, each after its gate (`chain.rs`) or only those the chain index selects (`chain.rs`) (§5).
+5. **Picker** (`picker.rs`): how a union tries its chains, each after its gate or only those the chain index selects (§5).
 6. **Graph NFA** (`graph_nfa.rs`): built unless one line or the literal set serves alone (§6).
 
 What a call runs depends only on what compilation kept:
@@ -247,7 +247,7 @@ The bound is the one a simulation without backtracking cannot avoid, and the one
 
 ### 11.4 What the bounds assume
 
-The bounds count each hash-table operation as `O(1)`. Three kinds of table hash the keys a pattern decides with a hash an adversary can compute: the graph walk's node and group tables (FNV, `graph.rs`), the chain index (a multiplicative hash of a segment's outer bytes or its polynomial hash, `chain.rs`), and in JS the maps keyed by small integers. Keys chosen to collide make one operation cost up to the table's size, and compilation `O(W²)` at worst. A call's probes of the index stay within Theorem 2, since a probe reads at most the `O(W)` entries. Factoring (Lemma 1) and the static prefixes (Lemma 2) use no hash for their bounds.
+The bounds count each hash-table operation as `O(1)`. Three kinds of table hash the keys a pattern decides with a hash an adversary can compute: the graph walk's node and group tables (FNV, `graph.rs`), the chain index (a multiplicative hash of a segment's outer bytes or its polynomial hash, `picker.rs`), and in JS the maps keyed by small integers. Keys chosen to collide make one operation cost up to the table's size, and compilation `O(W²)` at worst. A call's probes of the index stay within Theorem 2, since a probe reads at most the `O(W)` entries. Factoring (Lemma 1) and the static prefixes (Lemma 2) use no hash for their bounds.
 
 `tools/memory-check/tests/scaling.rs` checks the theorems on 23 shapes, the ones that broke an earlier bound among them: four times the pattern costs at most five times the memory and eight times the time, four times the path at most eight times the time.
 
@@ -387,7 +387,8 @@ Proposition 3 is what a walker relies on when it skips a directory; Proposition 
 | `engine/segment/mod.rs`       | `engine/segment/index.js`     | the matcher: build, what a call runs (§2), `match_dir` (§15)                        |
 | `engine/segment/ends.rs`      | `engine/segment/ends.js`      | the literal ends: the prefilter's suffixes (§13), the static prefixes (§14)         |
 | `engine/segment/graph.rs`     | `engine/segment/graph.js`     | the elements (§1), the graph walk (§3)                                              |
-| `engine/segment/chain.rs`     | `engine/segment/chain.js`     | chains, gates, `match_dir` from a lone line (§4); the chain index (§5)              |
+| `engine/segment/chain.rs`     | `engine/segment/chain.js`     | chains, the literal set, `match_dir` from a lone line (§4); in JS, the gates        |
+| `engine/segment/picker.rs`    | `engine/segment/picker.js`    | the chain index (§5); in Rust, the gates                                            |
 | `engine/segment/graph_nfa.rs` | `engine/segment/graph-nfa.js` | the graph NFA and the all-below search (§6, §15.4)                                  |
 | `engine/segment/wild.rs`      | `engine/segment/wild.js`      | what a segment compiles to: affixes, suffix sets, pieces (§7)                       |
 | `engine/segment/seg_nfa.rs`   | `engine/segment/seg-nfa.js`   | the in-segment NFA (§7.3) and the glue NFA (§7.5)                                   |

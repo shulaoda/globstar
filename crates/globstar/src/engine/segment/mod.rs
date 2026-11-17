@@ -7,6 +7,7 @@ mod chain;
 mod ends;
 mod graph;
 mod graph_nfa;
+mod picker;
 mod seg_nfa;
 mod wild;
 
@@ -16,9 +17,10 @@ use crate::parse::ast::Node;
 
 use crate::engine::bytes;
 use bits::ByteSketch;
-use chain::{Chain, ChainIndex, Gate, Literals, MAX_CHAINS, Paths, Shape};
+use chain::{Chain, Literals, Paths, Shape};
 use graph::{Elem, Graph};
 use graph_nfa::{AnyNfa, any_nfa};
+use picker::{ChainIndex, Gate, MAX_CHAINS};
 use wild::WildKind;
 
 type Bytes = Box<[u8]>;

@@ -9,7 +9,7 @@ use crate::engine::bytes::{affix_eq, fold};
 use crate::parse::ast::Node;
 
 use super::bits::{ByteSet, ByteSketch};
-use super::chain::{Key, MAX_KEY_PRODUCT};
+use super::picker::{Key, MAX_KEY_PRODUCT};
 use super::seg_nfa::SegNfa;
 use super::{Bytes, SegmentMatcher};
 
