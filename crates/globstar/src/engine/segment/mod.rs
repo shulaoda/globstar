@@ -7,6 +7,7 @@ mod chain;
 mod ends;
 mod graph;
 mod graph_nfa;
+mod seg_nfa;
 mod wild;
 
 use crate::CompileOptions;

@@ -27,7 +27,7 @@ Compilation is one pass per layer, each linear in the pattern; a layer that enum
 
 1. **Parse** (note 01): the AST, a union's members factored into one body.
 2. **Literal ends** (`ends.rs`): the suffix prefilter (§13) and the static prefixes (§14), read from the AST as written.
-3. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (`wild.rs`, §7.5).
+3. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs` and `seg_nfa.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (`seg_nfa.rs`, §7.5).
 4. **Chains** (`chain.rs`): the paths through the graph, while they are few and simple (§4).
 5. **Picker**: how a union tries its chains, each after its gate (`chain.rs`) or only those the chain index selects (`chain.rs`) (§5).
 6. **Graph NFA** (`graph_nfa.rs`): built unless one line or the literal set serves alone (§6).
@@ -389,6 +389,7 @@ Proposition 3 is what a walker relies on when it skips a directory; Proposition 
 | `engine/segment/graph.rs`     | `engine/segment/graph.js`     | the elements (§1), the graph walk (§3)                                              |
 | `engine/segment/chain.rs`     | `engine/segment/chain.js`     | chains, gates, `match_dir` from a lone line (§4); the chain index (§5)              |
 | `engine/segment/graph_nfa.rs` | `engine/segment/graph-nfa.js` | the graph NFA and the all-below search (§6, §15.4)                                  |
-| `engine/segment/wild.rs`      | `engine/segment/wild.js`      | affixes, suffix sets, pieces, the in-segment NFA and the glue NFA (§7)              |
+| `engine/segment/wild.rs`      | `engine/segment/wild.js`      | what a segment compiles to: affixes, suffix sets, pieces (§7)                       |
+| `engine/segment/seg_nfa.rs`   | `engine/segment/seg-nfa.js`   | the in-segment NFA (§7.3) and the glue NFA (§7.5)                                   |
 | `engine/segment/bits.rs`      | `engine/segment/bits.js`      | bit sets, byte sets of classes; in Rust, the byte sketch                            |
 | `dir_match.rs`                | `dir-match.js`                | the six results and their three facts (§15.1)                                       |
