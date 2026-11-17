@@ -614,10 +614,10 @@ enum SegState {
     /// Takes any byte. A `?` moves to `.0`; a `*` is its own `.0` and
     /// leaves by the ε-edge `.1`. One kind keeps the hot loop at three arms.
     Any(u32, u32),
+    /// ε-edges to `.0` and `.1`; a jump leaves `.1` unset.
     Split(u32, u32),
-    Jump(u32),
-    Match,
-    /// A glued piece's segment may end here, at graph node `.0`.
+    /// The segment may end here: the in-segment NFA's last state, or a
+    /// glued piece's end at graph node `.0`.
     Exit(u32),
 }
 
@@ -658,7 +658,7 @@ impl SegNfa {
             ci,
         };
         let entry = builder.compile_nodes(nodes.iter().copied()) as usize;
-        let accept = builder.alloc(SegState::Match);
+        let accept = builder.alloc(SegState::Exit(UNSET));
         for t in std::mem::take(&mut builder.tails) {
             builder.patch(t, accept);
         }
@@ -700,7 +700,7 @@ impl SegNfa {
             _ => {}
         });
         let mut good = B::zero(words);
-        reach(&states, entry..n, false, &mut good);
+        reach(&states, entry..n, true, &mut good);
         let satisfiable = good.test(entry);
         let nfa = SegNfaImpl {
             states,
@@ -801,7 +801,6 @@ fn wild_lengths<B: Bits>(states: &[SegState], entry: &B) -> Vec<Lengths> {
         }
         let (a, b, by) = match states[s] {
             SegState::Split(a, b) => (a, b, here),
-            SegState::Jump(t) => (t, UNSET, here),
             SegState::Any(next, exit) if next as usize == s => {
                 here = here.star();
                 at[s] = here;
@@ -820,16 +819,15 @@ fn wild_lengths<B: Bits>(states: &[SegState], entry: &B) -> Vec<Lengths> {
 }
 
 /// Adds to `good` the states of `span` from which some segment reaches
-/// `Match`, a state of `good`, or an exit when `exit_on`: from the last
-/// state back, since every edge but a star's loop points to a later one.
+/// a state of `good`, or an exit when `exit_on`: from the last state
+/// back, since every edge but a star's loop points to a later one.
 fn reach<B: Bits>(states: &[SegState], span: Range<usize>, exit_on: bool, good: &mut B) {
     for s in span.rev() {
         let to = |t: u32| t != UNSET && t as usize != s && good.test(t as usize);
         let on = match &states[s] {
-            SegState::Match => true,
             SegState::Exit(_) => exit_on,
             SegState::Class(cls, _) if cls.is_empty() => false,
-            SegState::Byte(_, n) | SegState::Class(_, n) | SegState::Jump(n) => to(*n),
+            SegState::Byte(_, n) | SegState::Class(_, n) => to(*n),
             SegState::Any(a, b) | SegState::Split(a, b) => to(*a) || to(*b),
         };
         if on {
@@ -838,9 +836,9 @@ fn reach<B: Bits>(states: &[SegState], span: Range<usize>, exit_on: bool, good: 
     }
 }
 
-/// Close `set` under ε-edges, keeping consumers, `Match` and `Exit`. The
-/// word being swept stays in a register, where most edges land. `block`:
-/// the entry set of a protected leading `.`.
+/// Close `set` under ε-edges, keeping consumers and exits. The word
+/// being swept stays in a register, where most edges land. `block`: the
+/// entry set of a protected leading `.`.
 fn close<B: Bits>(states: &[SegState], set: &mut B, block: bool) {
     let words = set.words_mut();
     for w in 0..words.len() {
@@ -852,14 +850,12 @@ fn close<B: Bits>(states: &[SegState], set: &mut B, block: bool) {
             let s = w * 64 + bit.trailing_zeros() as usize;
             let (a, b, stays) = match &states[s] {
                 SegState::Split(a, b) => (*a, *b, false),
-                SegState::Jump(t) => (*t, UNSET, false),
                 SegState::Any(..) if block => (UNSET, UNSET, false),
                 SegState::Any(_, exit) if *exit != UNSET => (*exit, UNSET, true),
                 SegState::Class(cls, _) if block && cls.negated => (UNSET, UNSET, false),
                 SegState::Byte(..)
                 | SegState::Class(..)
                 | SegState::Any(..)
-                | SegState::Match
                 | SegState::Exit(_) => {
                     continue;
                 }
@@ -933,10 +929,11 @@ fn closures<B: Bits>(states: &[SegState], words: usize) -> Box<[B]> {
         let c = match &states[s] {
             SegState::Split(a, b) => {
                 let mut c = done(*a).clone();
-                c.or_with(done(*b));
+                if *b != UNSET {
+                    c.or_with(done(*b));
+                }
                 c
             }
-            SegState::Jump(t) => done(*t).clone(),
             SegState::Any(_, exit) if *exit != UNSET => {
                 let mut c = done(*exit).clone();
                 c.set(s);
@@ -999,7 +996,6 @@ impl GlueNfa {
             let exit = succ.iter().any(|&t| !glued_to(t));
             let glues = succ.iter().filter(|&&t| glued_to(t));
             let ways = usize::from(exit) + glues.clone().count();
-            // Split `k` takes leaf `k` or the rest, as a brace's do.
             let fan = builder.states.len();
             for _ in 1..ways {
                 builder.alloc(SegState::Split(UNSET, UNSET));
@@ -1009,19 +1005,11 @@ impl GlueNfa {
                 leaves.push(builder.alloc(SegState::Exit(i as u32)));
             }
             for &t in glues {
-                let s = builder.alloc(SegState::Jump(UNSET));
+                let s = builder.alloc(SegState::Split(UNSET, UNSET));
                 waiting[t as usize].push(s);
                 leaves.push(s);
             }
-            for k in 0..ways - 1 {
-                let rest = if k + 2 < ways {
-                    (fan + k + 1) as u32
-                } else {
-                    leaves[k + 1]
-                };
-                builder.states[fan + k] = SegState::Split(leaves[k], rest);
-            }
-            let fan_entry = if ways > 1 { fan as u32 } else { leaves[0] };
+            let fan_entry = builder.fan(fan, &leaves);
             for t in tails {
                 builder.patch(t, fan_entry);
             }
@@ -1105,9 +1093,24 @@ impl SegBuilder {
             SegState::Byte(_, n)
             | SegState::Class(_, n)
             | SegState::Any(n, _)
-            | SegState::Jump(n) => *n = target,
-            SegState::Split(..) | SegState::Match | SegState::Exit(_) => unreachable!(),
+            | SegState::Split(n, _) => *n = target,
+            SegState::Exit(_) => unreachable!(),
         }
+    }
+
+    /// The splits from `first` on fan out to `leaves`, split `k` to leaf
+    /// `k` or the rest. Returns the fan's entry.
+    fn fan(&mut self, first: usize, leaves: &[u32]) -> u32 {
+        let last = leaves.len() - 1;
+        for k in 0..last {
+            let rest = if k + 1 < last {
+                (first + k + 1) as u32
+            } else {
+                leaves[last]
+            };
+            self.states[first + k] = SegState::Split(leaves[k], rest);
+        }
+        if last == 0 { leaves[0] } else { first as u32 }
     }
 
     fn compile_nodes<'a>(&mut self, nodes: impl IntoIterator<Item = &'a Node>) -> u32 {
@@ -1126,7 +1129,7 @@ impl SegBuilder {
         self.tails.append(&mut pending);
         entry.unwrap_or_else(|| {
             // An empty branch: a jump that waits for what follows.
-            let s = self.alloc(SegState::Jump(UNSET));
+            let s = self.alloc(SegState::Split(UNSET, UNSET));
             self.tails.push(s);
             s
         })
@@ -1172,17 +1175,7 @@ impl SegBuilder {
                     entries.push(self.compile_nodes(branch.seq().iter()));
                     tails.append(&mut self.tails);
                 }
-                // Split `i` picks branch `i` or the rest.
-                let last = entries.len() - 1;
-                for i in 0..last {
-                    let rest = if i + 1 < last {
-                        (first + i + 1) as u32
-                    } else {
-                        entries[last]
-                    };
-                    self.states[first + i] = SegState::Split(entries[i], rest);
-                }
-                (if last == 0 { entries[0] } else { first as u32 }, tails)
+                (self.fan(first, &entries), tails)
             }
             _ => unreachable!("separator-crossing node inside a segment"),
         }

@@ -316,9 +316,7 @@ const S_BYTE = 0;
 const S_CLASS = 1;
 const S_ANY = 2;
 const S_SPLIT = 3;
-const S_JUMP = 4;
-const S_MATCH = 5;
-const S_EXIT = 6;
+const S_EXIT = 4;
 
 const UNSET = -1;
 
@@ -332,13 +330,13 @@ const LENS_TAIL = new Float64Array(LENS_SCRATCH);
 export function compileSegNfa(nodes, dot, ci) {
   const builder = new SegBuilder(ci);
   const entry = builder.compileNodes(nodes);
-  const accept = builder.alloc(S_MATCH, 0, UNSET);
+  const accept = builder.alloc(S_EXIT, 0, UNSET);
   for (const t of builder.tails) builder.patch(t, accept);
   const small = builder.kinds.length <= 32;
   const nfa = small ? new SegNfaSmall(builder, entry, dot) : new SegNfaWide(builder, entry, dot);
   const test = small ? (a, s) => (a & (1 << s)) !== 0 : bitTest;
   const good = new Uint8Array(builder.kinds.length);
-  reach(builder, entry, good.length, false, good);
+  reach(builder, entry, good.length, true, good);
   return {
     matcher: nfa,
     minLen: good[entry] ? 0 : NEVER_LEN,
@@ -371,8 +369,7 @@ function reach(nfa, lo, hi, exitOn, good) {
   for (let s = hi - 1; s >= lo; s--) {
     const k = kinds[s];
     let on;
-    if (k === S_MATCH) on = true;
-    else if (k === S_EXIT) on = exitOn;
+    if (k === S_EXIT) on = exitOn;
     else if (k === S_CLASS && setEmpty(clsRefs[s])) on = false;
     else on = to(s, nexts[s]) || to(s, splitBs[s]);
     if (on) good[s] = 1;
@@ -402,9 +399,6 @@ function closeWide(nfa, set, block) {
       if (k === S_SPLIT) {
         a = nexts[s];
         b = splitBs[s];
-        word ^= bit;
-      } else if (k === S_JUMP) {
-        a = nexts[s];
         word ^= bit;
       } else if (k === S_ANY) {
         if (block) word ^= bit;
@@ -440,9 +434,10 @@ class SegNfaSmall {
     for (let s = 0; s < n; s++) closures.push(0);
     for (let s = n - 1; s >= 0; s--) {
       const k = builder.kinds[s];
-      if (k === S_SPLIT) closures[s] = closures[builder.nexts[s]] | closures[builder.splitBs[s]];
-      else if (k === S_JUMP) closures[s] = closures[builder.nexts[s]];
-      else if (k === S_ANY && builder.nexts[s] === s) {
+      if (k === S_SPLIT) {
+        const b = builder.splitBs[s];
+        closures[s] = closures[builder.nexts[s]] | (b === UNSET ? 0 : closures[b]);
+      } else if (k === S_ANY && builder.nexts[s] === s) {
         closures[s] = (1 << s) | closures[builder.splitBs[s]];
       } else closures[s] = 1 << s;
     }
@@ -512,8 +507,6 @@ function wildLengths(nfa, lo, hi, tail) {
     if (k === S_SPLIT) {
       addLens(lo, hi, tail, nexts[s], l, h, f);
       addLens(lo, hi, tail, splitBs[s], l, h, f);
-    } else if (k === S_JUMP) {
-      addLens(lo, hi, tail, nexts[s], l, h, f);
     } else if (k === S_ANY && nexts[s] === s) {
       const least = l !== 0 ? ctz32(l) : h !== 0 ? 32 + ctz32(h) : f;
       if (least < f) f = tail[s] = least;
@@ -548,7 +541,6 @@ class SegNfaWide {
     this.clsRefs = builder.clsRefs.slice();
     const n = builder.kinds.length;
     const words = wordsFor(n);
-    this.words = words;
     this.closures = wideClosures(builder, words);
     const entrySet = (block) => {
       const set = new Int32Array(words);
@@ -639,9 +631,7 @@ function wideClosures(builder, words) {
     const k = builder.kinds[s];
     if (k === S_SPLIT) {
       copy(s, builder.nexts[s]);
-      copy(s, builder.splitBs[s]);
-    } else if (k === S_JUMP) {
-      copy(s, builder.nexts[s]);
+      if (builder.splitBs[s] !== UNSET) copy(s, builder.splitBs[s]);
     } else {
       if (k === S_ANY && builder.nexts[s] === s) copy(s, builder.splitBs[s]);
       closures[s * words + (s >>> 5)] |= 1 << (s & 31);
@@ -680,15 +670,11 @@ export class GlueNfa {
       const leaves = [];
       if (exit) leaves.push(builder.alloc(S_EXIT, 0, i));
       for (const t of glues) {
-        const s = builder.alloc(S_JUMP, 0, UNSET);
+        const s = builder.alloc(S_SPLIT, 0, UNSET);
         (waiting[t] ??= []).push(s);
         leaves.push(s);
       }
-      for (let k = 0; k + 1 < ways; k++) {
-        builder.nexts[fan + k] = leaves[k];
-        builder.splitBs[fan + k] = k + 2 < ways ? fan + k + 1 : leaves[k + 1];
-      }
-      const fanEntry = ways > 1 ? fan : leaves[0];
+      const fanEntry = builder.fan(fan, leaves);
       for (const t of tails) builder.patch(t, fanEntry);
       spanLo[i] = first;
       spanHi[i] = builder.kinds.length;
@@ -773,14 +759,22 @@ class SegBuilder {
   }
 
   patch(state, target) {
-    if (this.kinds[state] === S_SPLIT) throw new Error("patch: unreachable Split");
     if (this.kinds[state] === S_ANY && this.nexts[state] === state) this.splitBs[state] = target;
     else this.nexts[state] = target;
   }
 
+  fan(first, leaves) {
+    const last = leaves.length - 1;
+    for (let k = 0; k < last; k++) {
+      this.nexts[first + k] = leaves[k];
+      this.splitBs[first + k] = k + 1 < last ? first + k + 1 : leaves[last];
+    }
+    return last === 0 ? leaves[0] : first;
+  }
+
   compileNodes(nodes) {
     if (nodes.length === 0) {
-      const s = this.alloc(S_JUMP, 0, UNSET);
+      const s = this.alloc(S_SPLIT, 0, UNSET);
       this.tails.push(s);
       return s;
     }
@@ -833,12 +827,7 @@ class SegBuilder {
           for (const t of this.tails) tails.push(t);
           this.tails = [];
         }
-        const last = entries.length - 1;
-        for (let i = 0; i < last; i++) {
-          this.nexts[first + i] = entries[i];
-          this.splitBs[first + i] = i + 1 < last ? first + i + 1 : entries[last];
-        }
-        return [last === 0 ? entries[0] : first, tails];
+        return [this.fan(first, entries), tails];
       }
       default:
         throw new Error("separator-crossing node inside a segment");
