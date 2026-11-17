@@ -151,18 +151,13 @@ function chainOf(graph, nodes, lone, ci) {
 
 export function chainMatches(m, chain, str) {
   const ids = chain.nodes;
-  switch (chain.globstar) {
-    case NO_G:
-      return fixedRun(m, ids, 0, chainLen(m.elems, ids), str, 0);
-    default: {
-      const g = chain.globstar;
-      const midStart = run(m, ids, 0, g, str, 0);
-      if (midStart < 0) return false;
-      if (chain.g2 < 0) return tailAndGlobstar(m, ids, g, str, midStart);
-      const split = tailSplit(m, ids, chain.g2, str, midStart);
-      return split >= 0 && blockBetween(m, ids, g, chain.g2, str, midStart, split);
-    }
-  }
+  const g = chain.globstar;
+  if (g === NO_G) return fixedRun(m, ids, 0, chainLen(m.elems, ids), str, 0);
+  const midStart = run(m, ids, 0, g, str, 0);
+  if (midStart < 0) return false;
+  if (chain.g2 < 0) return tailAndGlobstar(m, ids, g, str, midStart);
+  const split = tailSplit(m, ids, chain.g2, str, midStart);
+  return split >= 0 && blockBetween(m, ids, g, chain.g2, str, midStart, split);
 }
 
 export function hasLiteral(m, literals, str) {
@@ -213,7 +208,6 @@ function consumeAt(m, e, str, pos, last) {
     const bounded = last ? end === str.length : end < str.length && isPathSep(str.charCodeAt(end));
     return bounded && affixEq(e.litStr, str, pos, m.ci) ? end : -1;
   }
-  if (e.kind !== EL_WILD) return -1;
   let end = nextSep(str, pos);
   if (end === -1) end = str.length;
   if ((end === str.length) !== last) return -1;
@@ -222,8 +216,7 @@ function consumeAt(m, e, str, pos, last) {
 
 function elemConsumes(m, e, str, s, t) {
   if (e.kind === EL_LIT) return litEq(e.litStr, str, s, t, m.ci);
-  if (e.kind === EL_WILD) return wildConsumes(m, e.wild, str, s, t);
-  return false;
+  return wildConsumes(m, e.wild, str, s, t);
 }
 
 function fixedRun(m, ids, from, to, str, pos) {

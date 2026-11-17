@@ -147,7 +147,7 @@ impl SegmentMatcher {
                 let ci = self.case_insensitive;
                 DirMatch::new(
                     set.contains(dir_path, ci),
-                    set.any_below(dir_path, ci),
+                    dir_path.is_empty() || set.any_below(dir_path, ci),
                     false,
                 )
             }

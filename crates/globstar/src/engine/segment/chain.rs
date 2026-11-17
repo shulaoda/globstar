@@ -257,9 +257,6 @@ impl Literals {
 
     /// Does a path of the set start with `dir/`?
     pub(super) fn any_below(&self, dir: &[u8], ci: bool) -> bool {
-        if dir.is_empty() {
-            return self.len() > 0;
-        }
         let (mut lo, mut hi) = (0usize, self.len());
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
