@@ -55,7 +55,7 @@ const G1_ELEM = makeElem(EL_G1, null, null);
 const JOIN_ELEM = makeElem(EL_JOIN, null, null);
 
 export function buildGraph(body, dot, ci) {
-  const union = body.tag === N_BRACE && body.branches.length > 1;
+  const union = body.tag === N_BRACE;
   const { linear: plain, weight } = survey(seq(body));
   const linear = plain && !union;
   if (!linear) {
@@ -118,16 +118,6 @@ const forkGroup = (g) =>
   makeGroup(g.tails.slice(), g.state, g.buf.slice(), g.pendingGlobstar, g.doubleStar, g.shadow);
 
 const within = (g) => g.state === B_GLUE || g.buf.length > 0;
-
-function dedupeTails(g) {
-  if (g.tails.length < 2) return;
-  g.tails.sort((a, b) => a - b);
-  let n = 1;
-  for (let i = 1; i < g.tails.length; i++) {
-    if (g.tails[i] !== g.tails[n - 1]) g.tails[n++] = g.tails[i];
-  }
-  g.tails.length = n;
-}
 
 function rebase(g, id, state) {
   g.tails.length = 0;
@@ -331,7 +321,7 @@ class Builder {
       if (this.glued === null) this.glued = [];
       this.glued[id] = 1;
     }
-    for (const t of tails) this.link(t, id);
+    for (const t of tails) (t === START ? this.start : this.succs[t]).push(id);
     if (key !== -1 && found === undefined) {
       const at = tails.length === 1 ? tails[0] : tails.slice();
       this.memo.set(key, { kind: elem.kind, lit: elem.litStr, at, glued, id });
@@ -343,19 +333,17 @@ class Builder {
     if (!this.linear) this.ends.push(from);
   }
 
-  link(tail, id) {
-    if (this.linear) return;
-    if (tail === START) this.start.push(id);
-    else this.succs[tail].push(id);
-  }
-
   gather(g) {
-    if (g.tails.length < 2) return;
-    dedupeTails(g);
-    if (g.tails.length < 2) return;
-    const id = this.emit(JOIN_ELEM, g.tails, g.state === B_GLUE);
-    g.tails.length = 0;
-    g.tails.push(id);
+    const tails = g.tails;
+    if (tails.length < 2) return;
+    tails.sort((a, b) => a - b);
+    let n = 1;
+    for (let i = 1; i < tails.length; i++) if (tails[i] !== tails[n - 1]) tails[n++] = tails[i];
+    tails.length = n;
+    if (n < 2) return;
+    const id = this.emit(JOIN_ELEM, tails, g.state === B_GLUE);
+    tails.length = 0;
+    tails.push(id);
   }
 
   choice(branches, groups) {

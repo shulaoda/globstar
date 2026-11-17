@@ -200,17 +200,16 @@ impl Graph {
         // A union's members are paths of their own, never one segment's
         // choice: the names among them make the literal set, the rest
         // their own chains.
-        let union = matches!(body, Node::Brace(members) if members.len() > 1);
-        let linear = linear && !union;
+        let linear = linear && !matches!(body, Node::Brace(_));
         if !linear {
             match &mut *body {
-                Node::Brace(members) if union => members.iter_mut().for_each(regroup),
+                Node::Brace(members) => members.iter_mut().for_each(regroup),
                 other => regroup(other),
             }
         }
         let mut builder = Builder::new(boundaries, linear, weight, dot, ci);
         let groups = match &*body {
-            Node::Brace(members) if union => builder.choice(members, vec![Group::first()]),
+            Node::Brace(members) => builder.choice(members, vec![Group::first()]),
             body => builder.walk(body.seq(), vec![Group::first()]),
         };
         for g in groups {
@@ -284,13 +283,6 @@ impl Group<'_> {
             pending_globstar: false,
             double_star: false,
             shadow: false,
-        }
-    }
-
-    fn dedupe_tails(&mut self) {
-        if self.tails.len() > 1 {
-            self.tails.sort_unstable();
-            self.tails.dedup();
         }
     }
 
@@ -557,7 +549,8 @@ impl<'a> Builder<'a> {
         if g.tails.len() < 2 {
             return;
         }
-        g.dedupe_tails();
+        g.tails.sort_unstable();
+        g.tails.dedup();
         if g.tails.len() < 2 {
             return;
         }
