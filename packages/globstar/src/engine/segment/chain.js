@@ -543,8 +543,6 @@ export function chainIndex(literals, chains, graph, ci) {
     sketchLo: new Int32Array(3 * LOOKUPS),
     sketchHi: new Int32Array(3 * LOOKUPS),
     infix: [],
-    restLo: 0,
-    restHi: 0,
     rest: [],
     picked: new Int32Array(2),
     list: many ? new Int32Array(1 << idBits) : null,
@@ -587,33 +585,26 @@ export function chainIndex(literals, chains, graph, ci) {
       }
       if (filed) break;
     }
-    if (!filed) {
-      if (many) ix.rest.push(id);
-      else if (id < 32) ix.restLo |= 1 << id;
-      else ix.restHi |= 1 << (id - 32);
-    }
+    if (!filed) ix.rest.push(id);
     if (entries.length > room(graph.weight)) return null;
   }
   entries.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  dedup(entries);
   if (many) {
     if (ix.rest.length + ix.infix.length > MAX_CHAINS) return null;
     const nfa = (1 << idBits) - 1;
     for (let i = 0, j = 0; i < entries.length; i = j) {
-      let group = 0;
-      for (; j < entries.length && entries[j][0] === entries[i][0]; j++) {
-        if (j === i || entries[j][1] !== entries[j - 1][1]) group++;
-      }
-      if (group > MAX_CHAINS) for (let k = i; k < j; k++) entries[k][1] = nfa;
+      while (j < entries.length && entries[j][0] === entries[i][0]) j++;
+      if (j - i > MAX_CHAINS) for (let k = i; k < j; k++) entries[k][1] = nfa;
     }
+    dedup(entries);
   }
   let bits = 1;
   while (1 << bits < 2 * entries.length) bits++;
   ix.bits = bits;
   const slots = new Uint32Array(1 << bits);
   const last = slots.length - 1;
-  for (let i = 0; i < entries.length; i++) {
-    const [key, c] = entries[i];
-    if (i > 0 && entries[i - 1][0] === key && entries[i - 1][1] === c) continue;
+  for (const [key, c] of entries) {
     const h = hashKey(Math.floor(key / 2 ** 32), key >>> 0);
     let at = h >>> (32 - bits);
     while (slots[at] !== 0) at = (at + 1) & last;
@@ -621,6 +612,14 @@ export function chainIndex(literals, chains, graph, ci) {
   }
   ix.slots = slots;
   return ix;
+}
+
+function dedup(entries) {
+  let n = 0;
+  for (const e of entries) {
+    if (n === 0 || e[0] !== entries[n - 1][0] || e[1] !== entries[n - 1][1]) entries[n++] = e;
+  }
+  entries.length = n;
 }
 
 function file(ix, role, kind, key, c, entries) {

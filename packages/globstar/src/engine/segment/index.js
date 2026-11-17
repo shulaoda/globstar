@@ -184,7 +184,9 @@ export class SegmentMatcher {
         if (this._tryPicked(picked[0], picked[1], str)) return true;
       }
     }
-    return this._tryPicked(ix.restLo, ix.restHi, str);
+    const rest = ix.rest;
+    for (let i = 0; i < rest.length; i++) if (this._picked(rest[i], str)) return true;
+    return false;
   }
 
   _tryPicked(lo, hi, str) {
@@ -236,9 +238,7 @@ export class SegmentMatcher {
       }
     }
     const rest = ix.rest;
-    for (let i = 0; i < rest.length; i++) {
-      if (ix.stamp[rest[i]] !== ix.epoch) ix.list[ix.listed++] = rest[i];
-    }
+    for (let i = 0; i < rest.length; i++) ix.list[ix.listed++] = rest[i];
     const nfaPicked = ix.stamp[(1 << ix.idBits) - 1] === ix.epoch;
     return this._tryListed(str) || (nfaPicked && this._nfaMatch(str));
   }
