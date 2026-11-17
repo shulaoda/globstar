@@ -54,9 +54,8 @@ const G0_ELEM = makeElem(EL_G0, null, null);
 const G1_ELEM = makeElem(EL_G1, null, null);
 const JOIN_ELEM = makeElem(EL_JOIN, null, null);
 
-export function buildGraph(body, dot, ci) {
+export function buildGraph(body, { linear: plain, weight }, dot, ci) {
   const union = body.tag === N_BRACE;
-  const { linear: plain, weight } = survey(seq(body));
   const linear = plain && !union;
   if (!linear) {
     if (union) body.branches.forEach(regroup);
@@ -70,7 +69,7 @@ export function buildGraph(body, dot, ci) {
   return builder.finish(weight);
 }
 
-function survey(nodes) {
+export function survey(nodes) {
   const out = { boundaries: 0, linear: true, weight: 0 };
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
@@ -97,7 +96,7 @@ function survey(nodes) {
   return out;
 }
 
-export function nodeWeight(node) {
+function nodeWeight(node) {
   if (node.tag === N_LITERAL) return node.str.length;
   if (node.tag === N_CLASS) return 1 + node.ranges.length;
   if (node.tag !== N_BRACE) return 1;

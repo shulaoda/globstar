@@ -15,8 +15,8 @@ import {
   EL_JOIN,
   EL_PIECE,
   exact,
-  nodeWeight,
   room,
+  survey,
 } from "./graph.js";
 import {
   MAX_CHAINS,
@@ -50,9 +50,10 @@ import { N_BRACE, N_LITERAL, N_SEPARATOR, endsInGlobstar, seq } from "../../pars
 
 export class SegmentMatcher {
   constructor(body, dot, ci, opts) {
-    const prefixes = staticPrefixes(body);
+    const counts = survey(seq(body));
+    const prefixes = staticPrefixes(body, counts.weight);
     const ends = suffixes(body);
-    const graph = buildGraph(body, dot, ci);
+    const graph = buildGraph(body, counts, dot, ci);
     let { literals, chains } = opts.forceNfa ? { literals: null, chains: [] } : pathsOf(graph, ci);
     const index = chainIndex(literals, chains, graph, ci);
     if (index === null && chains.length > MAX_CHAINS) {
@@ -351,22 +352,15 @@ function suffixSet(nodes) {
   return shared.length === 0 ? [] : [shared];
 }
 
-function staticPrefixes(body) {
+function staticPrefixes(body, weight) {
   const nodes = seq(body);
-  let heads = readAt(nodes, 0);
-  if (heads.copied > heads.limit) heads = readAt(nodes, MAX_HEAD_DEPTH);
+  let heads = readAt(nodes, 0, weight);
+  if (heads.copied > heads.limit) heads = readAt(nodes, MAX_HEAD_DEPTH, weight);
   return dedupe(heads.out);
 }
 
-function readAt(nodes, depth) {
-  const heads = {
-    root: nodes,
-    spent: 0,
-    limit: room(0),
-    weighed: false,
-    copied: 0,
-    out: [],
-  };
+function readAt(nodes, depth, weight) {
+  const heads = { spent: 0, limit: room(weight), copied: 0, out: [] };
   readHeads(heads, nodes, 0, null, "", 0, depth);
   return heads;
 }
@@ -413,26 +407,16 @@ function readHeads(heads, nodes, at, then, acc, boundary, depth) {
   }
   while (end > 0 && acc.charCodeAt(end - 1) === 0x2f) end--;
   heads.copied += acc.length;
-  if (within(heads, heads.copied)) heads.out.push(acc.slice(0, end));
+  if (heads.copied <= heads.limit) heads.out.push(acc.slice(0, end));
   else heads.out = [""];
 }
 
 const covered = (heads) => heads.out.length > 0 && heads.out[heads.out.length - 1].length === 0;
 
 function afford(heads, n) {
-  if (!within(heads, heads.spent + n)) return false;
+  if (heads.spent + n > heads.limit) return false;
   heads.spent += n;
   return true;
-}
-
-function within(heads, used) {
-  if (used > heads.limit && !heads.weighed) {
-    heads.weighed = true;
-    let weight = 0;
-    for (const node of heads.root) weight += nodeWeight(node);
-    heads.limit = room(weight);
-  }
-  return used <= heads.limit;
 }
 
 function opensSegment(node) {
