@@ -9,7 +9,7 @@ use super::bits::ByteSketch;
 use super::chain::{Chain, Literals, Shape};
 use super::graph::{Elem, Graph, room};
 use super::graph_nfa::AnyNfa;
-use super::wild::{Wild, WildKind};
+use super::wild::{Pieces, Pos, Wild, WildKind};
 
 /// Wildcard chains kept without an index.
 pub(super) const MAX_CHAINS: usize = 64;
@@ -112,7 +112,7 @@ impl SegmentMatcher {
 
 /// A product of alternatives (`[._]s[a-v][a-z]`) is cut to the nodes
 /// whose strings fit this many; a single list is kept up to the key room.
-pub(super) const MAX_KEY_PRODUCT: usize = 64;
+const MAX_KEY_PRODUCT: usize = 64;
 
 /// A key compares this many outer bytes of a segment at most; the walk
 /// checks the rest. Past 64 chains an exact key compares the whole
@@ -140,7 +140,7 @@ enum Kind {
 /// holds its last `KEY_BYTES` (the last lowest), `front` its first (the
 /// first lowest), `whole` a hash of all, `pow` `BASE` to its length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Key {
+struct Key {
     len: usize,
     back: u32,
     front: u32,
@@ -232,7 +232,7 @@ impl SegmentMatcher {
 }
 
 impl Key {
-    pub(super) const EMPTY: Key = Key {
+    const EMPTY: Key = Key {
         len: 0,
         back: 0,
         front: 0,
@@ -240,7 +240,7 @@ impl Key {
         pow: 1,
     };
 
-    pub(super) fn of(bytes: &[u8], ci: bool) -> Key {
+    fn of(bytes: &[u8], ci: bool) -> Key {
         Key {
             len: bytes.len(),
             back: pack(bytes.iter().rev().copied(), ci),
@@ -250,7 +250,7 @@ impl Key {
         }
     }
 
-    pub(super) fn then(self, next: Key) -> Key {
+    fn then(self, next: Key) -> Key {
         let back = if next.len >= KEY_BYTES {
             next.back
         } else {
@@ -303,8 +303,8 @@ fn keys_of(w: &Wild, ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
             }
         }
         WildKind::Pieces(p) => {
-            let whole = p.edge_keys(true, ci, suffixes);
-            p.edge_keys(false, ci, prefixes);
+            let whole = piece_keys(p, true, ci, suffixes);
+            piece_keys(p, false, ci, prefixes);
             if fixed && whole {
                 exact.extend_from_slice(suffixes);
             }
@@ -318,7 +318,7 @@ fn keys_of(w: &Wild, ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
     let shortest = |keys: &[Key]| keys.iter().map(|k| k.len).min().unwrap_or(0);
     match (shortest(suffixes), shortest(prefixes)) {
         (0, 0) => pieces
-            .and_then(|p| p.longest_literal())
+            .and_then(|p| longest_literal(p))
             .map(|lit| SegKeys::Infix(lit.into_iter().take(MAX_INFIX).collect())),
         (s, p) if p >= s => Some(strings(Kind::Prefix, prefixes)),
         _ => Some(strings(Kind::Suffix, suffixes)),
@@ -327,6 +327,67 @@ fn keys_of(w: &Wild, ci: bool, k: &mut KeyScratch) -> Option<SegKeys> {
 
 fn strings(kind: Kind, keys: &[Key]) -> SegKeys {
     SegKeys::Strings(keys.iter().map(|&k| (kind, k)).collect())
+}
+
+/// The strings the last piece ends with (`back`) or the first starts
+/// with, as many as fit `MAX_KEY_PRODUCT`, into `out`; whether the
+/// whole piece was taken.
+fn piece_keys(p: &Pieces, back: bool, ci: bool, out: &mut Vec<Key>) -> bool {
+    let piece = p.piece(if back { p.count() - 1 } else { 0 });
+    let join = |key: Key, next: Key| if back { next.then(key) } else { key.then(next) };
+    out.clear();
+    out.push(Key::EMPTY);
+    for k in 0..piece.len() {
+        match piece[if back { piece.len() - 1 - k } else { k }] {
+            Pos::Byte(b) => {
+                let key = Key::of(&[b], ci);
+                for o in out.iter_mut() {
+                    *o = join(*o, key);
+                }
+            }
+            Pos::Any => return false,
+            Pos::Class(c) => {
+                let set = p.class(c);
+                let mut members = [0u8; MAX_KEY_PRODUCT];
+                let mut n = 0;
+                for b in set.iter().filter(|b| !(ci && b.is_ascii_uppercase())) {
+                    if set.negated || !b.is_ascii() || n == MAX_KEY_PRODUCT {
+                        return false;
+                    }
+                    members[n] = b;
+                    n += 1;
+                }
+                if out.len() * n > MAX_KEY_PRODUCT {
+                    return false;
+                }
+                let keys = std::mem::take(out);
+                for o in keys {
+                    out.extend(members[..n].iter().map(|&b| join(o, Key::of(&[b], ci))));
+                }
+            }
+        }
+    }
+    true
+}
+
+/// The longest run of bytes within one piece, folded.
+fn longest_literal(p: &Pieces) -> Option<Vec<u8>> {
+    let mut best: &[Pos] = &[];
+    for k in 0..p.count() {
+        for run in p.piece(k).split(|p| !matches!(p, Pos::Byte(_))) {
+            if run.len() > best.len() {
+                best = run;
+            }
+        }
+    }
+    (!best.is_empty()).then(|| {
+        best.iter()
+            .map(|p| match p {
+                Pos::Byte(b) => *b,
+                _ => unreachable!("a run of bytes"),
+            })
+            .collect()
+    })
 }
 
 impl ChainIndex {
