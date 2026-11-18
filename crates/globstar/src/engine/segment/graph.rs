@@ -10,8 +10,7 @@ use crate::engine::bytes::has_escaped_sep;
 use crate::parse::ast::Node;
 
 use super::Bytes;
-use super::seg_nfa::GlueNfa;
-use super::wild::{Affix, NEVER, Wild, WildKind, compile_wild, concat_lits};
+use super::wild::{Affix, GlueNfa, NEVER, Wild, WildKind, compile_wild, concat_lits};
 
 /// The entry of an `Elem::Piece` no segment starts in.
 pub(super) const INNER: u32 = u32::MAX;

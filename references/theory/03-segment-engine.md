@@ -26,10 +26,10 @@ A pattern without a brace whose branches cross a separator is one path through t
 Compilation is one pass per layer, each linear in the pattern; a layer that enumerates pays for it from a room of its own (§9):
 
 1. **Parse** (note 01): the AST, a union's members factored into one body.
-2. **Literal ends** (`ends.rs`): the suffix prefilter (§13) and the static prefixes (§14), read from the AST as written.
-3. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs` and `seg_nfa.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (`seg_nfa.rs`, §7.5).
+2. **Literal ends** (`mod.rs`): the suffix prefilter (§13) and the static prefixes (§14), read from the AST as written.
+3. **Graph walk** (`graph.rs`): the AST to the element graph (§3). Each closed segment is compiled to its element (`wild.rs`, §7); the segments a brace cuts into pieces become one `GlueNfa` (§7.5).
 4. **Chains** (`chain.rs`): the paths through the graph, while they are few and simple (§4).
-5. **Picker** (`picker.rs`): how a union tries its chains, each after its gate or only those the chain index selects (§5).
+5. **Picker** (`chain.rs`): how a union tries its chains, each after its gate or only those the chain index selects (§5).
 6. **Graph NFA** (`graph_nfa.rs`): built unless one line or the literal set serves alone (§6).
 
 What a call runs depends only on what compilation kept:
@@ -173,7 +173,7 @@ What a layer enumerates is paid from a *room* of its own, of `max(4W, 64 KiB)` u
 | kept closures                            | 128 KiB                                   | the step closes its set                      |
 | in-segment `u64`                         | 64 states (JS 32)                         | a word slice                                 |
 | wildcard-only cover steps                | 65, one more when sparse (§15.4)          | all-below: `false`                           |
-| suffix prefilter set (`ends.rs`)         | 16 branches                               | one suffix, what the branches' tails share   |
+| suffix prefilter set (`mod.rs`)          | 16 branches                               | one suffix, what the branches' tails share   |
 
 ## 10. The cost of each layer
 
@@ -247,7 +247,7 @@ The bound is the one a simulation without backtracking cannot avoid, and the one
 
 ### 11.4 What the bounds assume
 
-The bounds count each hash-table operation as `O(1)`. Three kinds of table hash the keys a pattern decides with a hash an adversary can compute: the graph walk's node and group tables (FNV, `graph.rs`), the chain index (a multiplicative hash of a segment's outer bytes or its polynomial hash, `picker.rs`), and in JS the maps keyed by small integers. Keys chosen to collide make one operation cost up to the table's size, and compilation `O(W²)` at worst. A call's probes of the index stay within Theorem 2, since a probe reads at most the `O(W)` entries. Factoring (Lemma 1) and the static prefixes (Lemma 2) use no hash for their bounds.
+The bounds count each hash-table operation as `O(1)`. Three kinds of table hash the keys a pattern decides with a hash an adversary can compute: the graph walk's node and group tables (FNV, `graph.rs`), the chain index (a multiplicative hash of a segment's outer bytes or its polynomial hash, `chain.rs`), and in JS the maps keyed by small integers. Keys chosen to collide make one operation cost up to the table's size, and compilation `O(W²)` at worst. A call's probes of the index stay within Theorem 2, since a probe reads at most the `O(W)` entries. Factoring (Lemma 1) and the static prefixes (Lemma 2) use no hash for their bounds.
 
 `tools/memory-check/tests/scaling.rs` checks the theorems on 23 shapes, the ones that broke an earlier bound among them: four times the pattern costs at most five times the memory and eight times the time, four times the path at most eight times the time.
 
@@ -263,7 +263,7 @@ A *prefilter* for a language `L` is a predicate `A` with `A(w) = 0 ⇒ w ∉ L`;
 
 ### 13.1 Extraction
 
-`segment/ends.rs::trailing` reads the pattern's nodes right to left: a literal contributes its bytes, a separator a `/` unless it is the `/` of a `**/`, and any other node stops the reading. The bytes, reversed, are the suffix; stopping at the first other node is required, since a wildcard or a `**` can produce any bytes. The `/` after a `**` belongs to that `**/`, which absorbs zero segments as well, so the suffix of `a/**/b` is `b` and `**/b` keeps matching `b`.
+`segment/mod.rs::trailing` reads the pattern's nodes right to left: a literal contributes its bytes, a separator a `/` unless it is the `/` of a `**/`, and any other node stops the reading. The bytes, reversed, are the suffix; stopping at the first other node is required, since a wildcard or a `**` can produce any bytes. The `/` after a `**` belongs to that `**/`, which absorbs zero segments as well, so the suffix of `a/**/b` is `b` and `**/b` keeps matching `b`.
 
 When the suffix is ε and the pattern ends with a brace of at most 16 branches (`MAX_SUFFIX_SET`), `suffix_set` derives one suffix per branch: the suffix of the nodes before the brace, appended to the branch's own suffix when the branch is all literal, and the branch's own suffix alone otherwise; a branch that gives ε gives up the set. `**/*.{ts,tsx,js}` has the set `{".ts", ".tsx", ".js"}`. A brace of more than 16 branches gets one suffix, the longest its branches' own tails share (the nodes before the brace are not read), or none when they share nothing; its literal branches are grouped by the suffix set of §7.1.
 
@@ -291,7 +291,7 @@ For a pattern `P` with brace expansions `E(P)` (GLOB_SPEC §10.1), let `head(e)`
 
 ### 14.2 Extraction
 
-`segment/ends.rs::static_prefixes` reads the AST left to right, collecting bytes from literals and `/` from separators. A brace in the head is read branch by branch, each followed by what follows the brace, as a continuation rather than a copy. At the first other node (a wildcard, a `**`) the bytes are cut back to the last separator before it; a brace that the room or the depth limit stops, and whose branches all start with a separator, ends a whole segment instead. Trailing separators are dropped. Each path through the braces of the head records one head.
+`segment/mod.rs::static_prefixes` reads the AST left to right, collecting bytes from literals and `/` from separators. A brace in the head is read branch by branch, each followed by what follows the brace, as a continuation rather than a copy. At the first other node (a wildcard, a `**`) the bytes are cut back to the last separator before it; a brace that the room or the depth limit stops, and whose branches all start with a separator, ends a whole segment instead. Trailing separators are dropped. Each path through the braces of the head records one head.
 
 Re-reading the continuation once per branch is the only part that can cost more than the pattern: `{a,b}{c,d}…` doubles per brace, and a brace before a long literal re-reads it once per branch. Each byte read, each branch taken and each branch looked at for its first node therefore costs one unit of the room (§9), and braces nest at most 64 deep along one head; past either, the head ends at its last whole segment, a shorter prefix that is still sound. Recording a head costs every byte read to reach it, and these could still sum to the square of the room; past a room of such bytes the reading starts again as if at the depth limit, and the result is the one head before the first brace, which every expansion shares.
 
@@ -382,17 +382,16 @@ Proposition 3 is what a walker relies on when it skips a directory; Proposition 
 
 ## 16. Source map
 
-| Rust (`crates/globstar/src/`) | JS (`packages/globstar/src/`) | Role                                                                                |
-| ----------------------------- | ----------------------------- | ----------------------------------------------------------------------------------- |
-| `engine/segment/mod.rs`       | `engine/segment/index.js`     | the matcher: build, what a call runs (§2), `match_dir` (§15)                        |
-| `engine/segment/ends.rs`      | `engine/segment/ends.js`      | the literal ends: the prefilter's suffixes (§13), the static prefixes (§14)         |
-| `engine/segment/graph.rs`     | `engine/segment/graph.js`     | the elements (§1), the graph walk (§3)                                              |
-| `engine/segment/chain.rs`     | `engine/segment/chain.js`     | chains, the literal set, `match_dir` from a lone line (§4); in JS, the gates        |
-| `engine/segment/picker.rs`    | `engine/segment/picker.js`    | the chain index (§5); in Rust, the gates                                            |
-| `engine/segment/graph_nfa.rs` | `engine/segment/graph-nfa.js` | the graph NFA and the all-below search (§6, §15.4)                                  |
-| `engine/segment/wild.rs`      | `engine/segment/wild.js`      | what a segment compiles to: affixes, suffix sets, pieces (§7)                       |
-| `engine/segment/seg_nfa.rs`   | `engine/segment/seg-nfa.js`   | the in-segment NFA (§7.3) and the glue NFA (§7.5)                                   |
-| `engine/segment/bits.rs`      | `engine/segment/bits.js`      | bit sets, byte sets of classes; in Rust, the byte sketch                            |
-| `dir_match.rs`                | `dir-match.js`                | the six results and their three facts (§15.1)                                       |
+| Rust (`crates/globstar/src/`) | JS (`packages/globstar/src/`) | Role                                                                                                   |
+| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `engine/segment/mod.rs`       | `engine/segment/index.js`     | the matcher: build, what a call runs (§2), `match_dir` (§15); the literal ends (§13, §14)              |
+| `engine/segment/graph.rs`     | `engine/segment/graph.js`     | the elements (§1), the graph walk (§3)                                                                 |
+| `engine/segment/chain.rs`     | `engine/segment/chain.js`     | chains, the literal set, `match_dir` from a lone line (§4); the gates and the chain index (§5)         |
+| `engine/segment/graph_nfa.rs` | `engine/segment/graph-nfa.js` | the graph NFA and the all-below search (§6, §15.4)                                                     |
+| `engine/segment/wild.rs`      | `engine/segment/wild.js`      | what a segment compiles to: affixes, suffix sets, pieces, the in-segment NFA (§7); the glue NFA (§7.5) |
+| `engine/segment/bits.rs`      | `engine/segment/bits.js`      | bit sets, byte sets of classes; in Rust, the byte sketch                                               |
+| `dir_match.rs`                | `dir-match.js`                | the six results and their three facts (§15.1)                                                          |
 
-In JS two things stay where Rust has them in the picker's file. A union's call path (the gated scan, the index's walk) is methods of the matcher in `index.js`: as functions of `picker.js` the same code ran 1 to 2% slower on the bench's union rows. And a chain keeps its gate: a list of gates beside the chains cost 2 to 3% of a gated union's build.
+A file is one of the engine's main ideas, and what serves that idea alone is a part of it: the pickers are with the chains they choose, the NFA inside a segment with the other kinds a segment compiles to, the literal ends with the matcher that checks them.
+
+In JS two things are not where Rust has them. A union's call path (the gated scan, the index's walk) is methods of the matcher in `index.js`, where Rust has it in `chain.rs`: as functions beside the index the same code ran 1 to 2% slower on the bench's union rows. And a chain keeps its gate as fields of its own, where Rust has a list of gates beside the chains: the list cost 2 to 3% of a gated union's build.

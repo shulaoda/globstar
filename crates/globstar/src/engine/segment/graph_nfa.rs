@@ -7,7 +7,7 @@ use crate::engine::bytes::{cmp_folded, seg_end};
 use super::SegmentMatcher;
 use super::bits::{Bits, Wide};
 use super::graph::{ACCEPT, Edges, Elem, INNER};
-use super::seg_nfa::GlueNfa;
+use super::wild::GlueNfa;
 
 /// Wildcard-only segments `covers_below` feeds before it gives up.
 const MAX_COVER_SEGMENTS: usize = 64;
