@@ -394,3 +394,5 @@ Proposition 3 is what a walker relies on when it skips a directory; Proposition 
 | `engine/segment/seg_nfa.rs`   | `engine/segment/seg-nfa.js`   | the in-segment NFA (§7.3) and the glue NFA (§7.5)                                   |
 | `engine/segment/bits.rs`      | `engine/segment/bits.js`      | bit sets, byte sets of classes; in Rust, the byte sketch                            |
 | `dir_match.rs`                | `dir-match.js`                | the six results and their three facts (§15.1)                                       |
+
+In JS two things stay where Rust has them in the picker's file. A union's call path (the gated scan, the index's walk) is methods of the matcher in `index.js`: as functions of `picker.js` the same code ran 1 to 2% slower on the bench's union rows. And a chain keeps its gate: a list of gates beside the chains cost 2 to 3% of a gated union's build.
