@@ -1,7 +1,7 @@
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
-import { globstar } from "@globstar/core";
+import { compileMatcher, globstar } from "@globstar/core";
 import { PATTERNS, fresh, matcherBench } from "./shared.js";
 
 const DOT = { dot: true };
@@ -16,4 +16,5 @@ await matcherBench(
     ["micromatch", (p) => micro.matcher(p, DOT), (m, s) => m(s)],
   ],
   fresh,
+  ["globstar", (p) => compileMatcher(p), (m, s) => m.matchDir(s)],
 );

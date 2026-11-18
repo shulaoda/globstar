@@ -13,6 +13,14 @@ const fixture = (name) =>
     .filter((l) => l !== "" && !l.startsWith("#"));
 
 export const PATHS = fixture("bench-paths.txt");
+// The directories above PATHS, each once, in the order a walk meets them.
+export const DIRS = [];
+for (const path of PATHS) {
+  for (let at = path.indexOf("/"); at >= 0; at = path.indexOf("/", at + 1)) {
+    const dir = path.slice(0, at);
+    if (!DIRS.includes(dir)) DIRS.push(dir);
+  }
+}
 export const PATTERNS = fixture("bench-single.tsv").map((l) => {
   const [label, pattern] = l.split("\t");
   return [label, pattern];
@@ -70,7 +78,9 @@ export function assertAgree(libs, inputs, paths) {
   }
 }
 
-export async function matcherBench(header, rows, libs, freshen) {
+// `dirLib`: globstar's directory call in the shape of a `libs` entry; no
+// other library has the call.
+export async function matcherBench(header, rows, libs, freshen, dirLib) {
   if (!global.gc) {
     console.error("Run with --expose-gc");
     process.exit(1);
@@ -128,9 +138,21 @@ export async function matcherBench(header, rows, libs, freshen) {
       });
     });
   }
+
+  console.log("\n===== PHASE 3: DIRECTORY (precompiled) =====\n");
+  const [dirName, dirBuild, dirCall] = dirLib;
+  for (const [label, input] of rows) {
+    const m = dirBuild(input);
+    group(`dir: ${label}`, () => {
+      bench(dirName, function* () {
+        let i = 0;
+        yield () => do_not_optimize(dirCall(m, DIRS[i++ % DIRS.length]));
+      });
+    });
+  }
   await run({ format: "mitata" });
 
-  console.log(`\n===== PHASE 3: MEMORY (median of ${TRIALS}, B/matcher) =====\n`);
+  console.log(`\n===== PHASE 4: MEMORY (median of ${TRIALS}, B/matcher) =====\n`);
   memoryTable(header, rows, libs, (build, call, input) =>
     medianOf(TRIALS, () => trialMem(build, call, input, freshen)),
   );

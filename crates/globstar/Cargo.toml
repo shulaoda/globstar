@@ -22,5 +22,9 @@ harness = false
 name = "matcher_multi"
 harness = false
 
+[[bench]]
+name = "matcher_dir"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"

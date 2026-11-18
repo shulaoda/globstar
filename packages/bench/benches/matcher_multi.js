@@ -1,7 +1,7 @@
 import pico from "picomatch";
 import { Minimatch } from "minimatch";
 import micro from "micromatch";
-import { globstar } from "@globstar/core";
+import { compileMatcher, globstar } from "@globstar/core";
 import { PATTERN_SETS, fresh, matcherBench } from "./shared.js";
 
 function buildPerPattern(compileSingle) {
@@ -32,4 +32,5 @@ await matcherBench(
     ["micromatch", (patterns) => micro.matcher(patterns, DOT), (m, s) => m(s)],
   ],
   (patterns) => patterns.map(fresh),
+  ["globstar", (patterns) => compileMatcher(patterns), (m, s) => m.matchDir(s)],
 );

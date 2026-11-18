@@ -13,6 +13,20 @@ pub const MISS: &str = "crates/core/src/foo";
 pub static PATHS: LazyLock<Vec<&str>> =
     LazyLock::new(|| lines(include_str!("../../../../fixtures/bench-paths.txt")));
 
+/// The directories above [`PATHS`], each once, in the order a walk meets
+/// them: what `match_dir` is asked on the way to those files.
+pub static DIRS: LazyLock<Vec<&str>> = LazyLock::new(|| {
+    let mut dirs: Vec<&str> = Vec::new();
+    for path in PATHS.iter() {
+        for (at, _) in path.match_indices('/') {
+            if !dirs.contains(&&path[..at]) {
+                dirs.push(&path[..at]);
+            }
+        }
+    }
+    dirs
+});
+
 /// `(label, pattern)`.
 pub static SINGLE: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
     lines(include_str!("../../../../fixtures/bench-single.tsv"))
