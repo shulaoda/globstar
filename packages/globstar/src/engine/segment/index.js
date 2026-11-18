@@ -13,18 +13,7 @@ import {
   probeMany,
   probeInfix,
 } from "./picker.js";
-import {
-  anyNfa,
-  nfaRun,
-  nfaRunSparse,
-  initSparse,
-  sparseHas,
-  sparseReach1,
-  coversBelow,
-  coversBelowSparse,
-  NFA_SMALL,
-  NFA_SPARSE,
-} from "./graph-nfa.js";
+import { anyNfa, nfaMatches, nfaDir, NFA_SMALL } from "./graph-nfa.js";
 import { WK_AFFIX, WK_PIECES, WK_SUFFIXES } from "./wild.js";
 import { staticPrefixes, suffixes } from "./ends.js";
 import { seq } from "../../parse/ast.js";
@@ -103,7 +92,7 @@ export class SegmentMatcher {
     if (!this._prefilter(str)) return false;
     const chains = this.chains;
     if (this.literals === null && chains.length <= 1) {
-      return chains.length === 0 ? this._nfaMatch(str) : chainMatches(this, chains[0], str);
+      return chains.length === 0 ? nfaMatches(this, str) : chainMatches(this, chains[0], str);
     }
     return this._anyChainMatches(chains, str);
   }
@@ -221,7 +210,7 @@ export class SegmentMatcher {
     const rest = ix.rest;
     for (let i = 0; i < rest.length; i++) ix.list[ix.listed++] = rest[i];
     const nfaPicked = ix.stamp[(1 << ix.idBits) - 1] === ix.epoch;
-    return this._tryListed(str) || (nfaPicked && this._nfaMatch(str));
+    return this._tryListed(str) || (nfaPicked && nfaMatches(this, str));
   }
 
   _tryListed(str) {
@@ -232,12 +221,6 @@ export class SegmentMatcher {
       if (id !== nfa && this._picked(id, str)) return true;
     }
     return false;
-  }
-
-  _nfaMatch(str) {
-    const nfa = this.nfa;
-    if (nfa.kind === NFA_SPARSE) return sparseHas(nfaRunSparse(this, str), nfa.accept);
-    return (nfaRun(this, str) & (1 << nfa.accept)) !== 0;
   }
 
   _prefilter(str) {
@@ -251,28 +234,10 @@ export class SegmentMatcher {
   }
 
   _matchDir(str) {
-    const nfa = this.nfa;
-    if (nfa === null) {
-      if (this.chains.length > 0) return chainDir(this, str);
-      const set = this.literals;
-      const below = str.length === 0 || anyBelow(this, set, str);
-      return DirMatch.from(hasLiteral(this, set, str), below, false);
-    }
-    const root = str.length === 0;
-    let matches;
-    let mayBelow;
-    let all;
-    if (nfa.kind === NFA_SPARSE) {
-      const active = root ? initSparse(nfa) : nfaRunSparse(this, str);
-      matches = root ? this.isMatch(str) : sparseHas(active, nfa.accept);
-      mayBelow = root || sparseReach1(nfa, active);
-      all = this.dot && mayBelow && coversBelowSparse(this, active);
-    } else {
-      const active = root ? nfa.init : nfaRun(this, str);
-      matches = root ? this.isMatch(str) : (active & (1 << nfa.accept)) !== 0;
-      mayBelow = root || (active & nfa.reach1) !== 0;
-      all = this.dot && mayBelow && coversBelow(this, active);
-    }
-    return DirMatch.from(matches, mayBelow, all);
+    if (this.nfa !== null) return nfaDir(this, str);
+    if (this.chains.length > 0) return chainDir(this, str);
+    const set = this.literals;
+    const below = str.length === 0 || anyBelow(this, set, str);
+    return DirMatch.from(hasLiteral(this, set, str), below, false);
   }
 }

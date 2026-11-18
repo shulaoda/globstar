@@ -14,9 +14,10 @@ import {
 import { asciiLower, cmpFolded, ctz32, litEq, nextSep } from "../bytes.js";
 import { bitSet } from "./bits.js";
 import { wildConsumes } from "./wild.js";
+import { DirMatch } from "../../dir-match.js";
 
 export const NFA_SMALL = 0;
-export const NFA_SPARSE = 1;
+const NFA_SPARSE = 1;
 
 const MAX_COVER_SEGMENTS = 64;
 
@@ -145,7 +146,33 @@ function sparseNfa(graph, ci) {
   };
 }
 
-export function nfaRun(m, str) {
+export function nfaMatches(m, str) {
+  const nfa = m.nfa;
+  if (nfa.kind === NFA_SPARSE) return sparseHas(nfaRunSparse(m, str), nfa.accept);
+  return (nfaRun(m, str) & (1 << nfa.accept)) !== 0;
+}
+
+export function nfaDir(m, str) {
+  const nfa = m.nfa;
+  const root = str.length === 0;
+  let matches;
+  let mayBelow;
+  let all;
+  if (nfa.kind === NFA_SPARSE) {
+    const active = root ? initSparse(nfa) : nfaRunSparse(m, str);
+    matches = root ? m.isMatch(str) : sparseHas(active, nfa.accept);
+    mayBelow = root || sparseReach1(nfa, active);
+    all = m.dot && mayBelow && coversBelowSparse(m, active);
+  } else {
+    const active = root ? nfa.init : nfaRun(m, str);
+    matches = root ? m.isMatch(str) : (active & (1 << nfa.accept)) !== 0;
+    mayBelow = root || (active & nfa.reach1) !== 0;
+    all = m.dot && mayBelow && coversBelow(m, active);
+  }
+  return DirMatch.from(matches, mayBelow, all);
+}
+
+function nfaRun(m, str) {
   const nfa = m.nfa;
   let active = nfa.init;
   let pos = 0;
@@ -188,7 +215,7 @@ function nfaStep(m, nfa, active, str, s0, e0) {
   return next;
 }
 
-export function coversBelow(m, active) {
+function coversBelow(m, active) {
   const { after, accept } = m.nfa;
   const wild = after[accept];
   active &= wild;
@@ -225,7 +252,7 @@ function addTo(set, i) {
   return true;
 }
 
-export const sparseHas = (set, i) => set.stamp[i] === set.gen;
+const sparseHas = (set, i) => set.stamp[i] === set.gen;
 
 function enterSparse(nfa, p, next) {
   const base = nfa.n + 1;
@@ -245,14 +272,14 @@ function fireSparse(m, nfa, s, next) {
   enterSparse(nfa, s, next);
 }
 
-export function initSparse(nfa) {
+function initSparse(nfa) {
   const { a } = sparseScratch(nfa);
   clearSet(a);
   enterSparse(nfa, nfa.n, a);
   return a;
 }
 
-export function nfaRunSparse(m, str) {
+function nfaRunSparse(m, str) {
   const nfa = m.nfa;
   const scratch = sparseScratch(nfa);
   let active = initSparse(nfa);
@@ -324,12 +351,12 @@ function stepSparse(m, nfa, active, next, str, s0, e0) {
   }
 }
 
-export function sparseReach1(nfa, set) {
+function sparseReach1(nfa, set) {
   for (let k = 0; k < set.len; k++) if (nfa.reach1[set.items[k]]) return true;
   return false;
 }
 
-export function coversBelowSparse(m, active) {
+function coversBelowSparse(m, active) {
   const nfa = m.nfa;
   const scratch = sparseScratch(nfa);
   let next = active === scratch.a ? scratch.b : scratch.a;
