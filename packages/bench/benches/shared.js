@@ -8,11 +8,11 @@ const TRIALS = 5;
 const PEAK_TRIALS = 9;
 
 const fixture = (name) =>
-  readFileSync(new URL(`../../../fixtures/${name}`, import.meta.url), "utf8")
+  readFileSync(new URL(`../../../fixtures/bench/${name}`, import.meta.url), "utf8")
     .split("\n")
     .filter((l) => l !== "" && !l.startsWith("#"));
 
-export const PATHS = fixture("bench-paths.txt");
+export const PATHS = fixture("paths.txt");
 // The directories above PATHS, each once, in the order a walk meets them.
 export const DIRS = [];
 for (const path of PATHS) {
@@ -21,26 +21,26 @@ for (const path of PATHS) {
     if (!DIRS.includes(dir)) DIRS.push(dir);
   }
 }
-export const PATTERNS = fixture("bench-single.tsv").map((l) => {
+export const PATTERNS = fixture("single.tsv").map((l) => {
   const [label, pattern] = l.split("\t");
   return [label, pattern];
 });
 export const PATTERN_SETS = [
-  ...fixture("bench-sets.tsv").map((l) => {
+  ...fixture("sets.tsv").map((l) => {
     const [label, ...patterns] = l.split("\t");
     return [label, patterns];
   }),
-  ["ignore-list-40", fixture("bench-ignore-list.txt")],
-  ["file-list-100", fixture("bench-file-list.txt")],
-  ["gitignore-89", fixture("bench-gitignore-list.txt")],
+  ["ignore-list-40", fixture("ignore-list.txt")],
+  ["file-list-100", fixture("file-list.txt")],
+  ["gitignore-89", fixture("gitignore-list.txt")],
 ];
 const ALL_CASES = [
   ...new Set([...PATTERNS.map(([, p]) => p), ...PATTERN_SETS.flatMap(([, ps]) => ps)]),
 ];
 PATTERN_SETS.push(
-  ["global-586", fixture("bench-gitignore-global.txt")],
-  ["openssl-500", fixture("bench-gitignore-openssl.txt")],
-  ["joomla-705", fixture("bench-gitignore-joomla.txt")],
+  ["global-586", fixture("gitignore-global.txt")],
+  ["openssl-500", fixture("gitignore-openssl.txt")],
+  ["joomla-705", fixture("gitignore-joomla.txt")],
   ["all-cases", ALL_CASES],
 );
 

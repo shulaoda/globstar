@@ -11,7 +11,7 @@ pub const MISS: &str = "crates/core/src/foo";
 
 /// The 11 paths the match benches answer.
 pub static PATHS: LazyLock<Vec<&str>> =
-    LazyLock::new(|| lines(include_str!("../../../../fixtures/bench-paths.txt")));
+    LazyLock::new(|| lines(include_str!("../../../../fixtures/bench/paths.txt")));
 
 /// The directories above [`PATHS`], each once, in the order a walk meets
 /// them: what `match_dir` is asked on the way to those files.
@@ -29,7 +29,7 @@ pub static DIRS: LazyLock<Vec<&str>> = LazyLock::new(|| {
 
 /// `(label, pattern)`.
 pub static SINGLE: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
-    lines(include_str!("../../../../fixtures/bench-single.tsv"))
+    lines(include_str!("../../../../fixtures/bench/single.tsv"))
         .into_iter()
         .map(|l| l.split_once('\t').expect("label<TAB>pattern"))
         .collect()
@@ -39,7 +39,7 @@ pub static SINGLE: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
 /// real `.gitignore` sets, and `all-cases`, every pattern of the bench but
 /// those three in one union.
 pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
-    let mut out: Vec<_> = lines(include_str!("../../../../fixtures/bench-sets.tsv"))
+    let mut out: Vec<_> = lines(include_str!("../../../../fixtures/bench/sets.tsv"))
         .into_iter()
         .map(|l| {
             let mut cols = l.split('\t');
@@ -48,16 +48,16 @@ pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
         .collect();
     out.push((
         "ignore-list-40",
-        lines(include_str!("../../../../fixtures/bench-ignore-list.txt")),
+        lines(include_str!("../../../../fixtures/bench/ignore-list.txt")),
     ));
     out.push((
         "file-list-100",
-        lines(include_str!("../../../../fixtures/bench-file-list.txt")),
+        lines(include_str!("../../../../fixtures/bench/file-list.txt")),
     ));
     out.push((
         "gitignore-89",
         lines(include_str!(
-            "../../../../fixtures/bench-gitignore-list.txt"
+            "../../../../fixtures/bench/gitignore-list.txt"
         )),
     ));
     let mut all: Vec<&str> = Vec::new();
@@ -73,19 +73,19 @@ pub fn sets() -> Vec<(&'static str, Vec<&'static str>)> {
     out.push((
         "global-586",
         lines(include_str!(
-            "../../../../fixtures/bench-gitignore-global.txt"
+            "../../../../fixtures/bench/gitignore-global.txt"
         )),
     ));
     out.push((
         "openssl-500",
         lines(include_str!(
-            "../../../../fixtures/bench-gitignore-openssl.txt"
+            "../../../../fixtures/bench/gitignore-openssl.txt"
         )),
     ));
     out.push((
         "joomla-705",
         lines(include_str!(
-            "../../../../fixtures/bench-gitignore-joomla.txt"
+            "../../../../fixtures/bench/gitignore-joomla.txt"
         )),
     ));
     out.push(("all-cases", all));

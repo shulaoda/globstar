@@ -13,7 +13,7 @@ wax = "0.7"
 globstar-walk = { path = "../../crates/globstar-walk" }
 
 # Single-pattern memory: globstar vs globset / wax, on the rows of
-# `fixtures/bench-single.tsv`.
+# `fixtures/bench/single.tsv`.
 [[bin]]
 name = "matcher-single-memory"
 path = "src/matcher_single_memory.rs"
