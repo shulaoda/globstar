@@ -9,7 +9,8 @@
 // every path a pattern matches lies under one of its static prefixes.
 // Half the union and prefix cases are variants of one member, and their
 // paths instances of a member with one segment swapped, which is where
-// factoring merges.
+// factoring merges. One union case in ten is an ignore list of 20 to 400
+// members, which is where the chain index picks.
 //
 //   node scripts/fuzz.mjs                         # 50k mixed cases, seed 1
 //   node scripts/fuzz.mjs --seed 99 --count 200000
@@ -20,6 +21,7 @@
 //   node scripts/fuzz.mjs --mode un               # union is_match on the NFA
 //   node scripts/fuzz.mjs --mode ud               # union match_dir
 //   node scripts/fuzz.mjs --mode s                # static_prefixes
+//   node scripts/fuzz.mjs --mode big              # ignore lists only (u, un, ud)
 //   node scripts/fuzz.mjs --seeds 1-20 --count 50000   # a seed sweep (nightly)
 
 import { spawnSync } from "node:child_process";
@@ -47,7 +49,8 @@ const int = (name, value) => {
 const COUNT = int("--count", argVal("--count", "50000"));
 if (COUNT === 0) usage("--count 0 tests nothing");
 const MODE = argVal("--mode", "all");
-if (!["all", "m", "n", "d", "u", "un", "ud", "s"].includes(MODE)) usage(`unknown --mode ${MODE}`);
+if (!["all", "m", "n", "d", "u", "un", "ud", "s", "big"].includes(MODE))
+  usage(`unknown --mode ${MODE}`);
 const MAX_SAMPLES = int("--max-samples", argVal("--max-samples", "30"));
 const SEEDS = (() => {
   const range = argVal("--seeds", null);
@@ -252,7 +255,7 @@ function propertyFailure(c) {
   let union;
   let members;
   try {
-    union = compileMatcher(c.patterns, opts);
+    union = compileMatcher(c.patterns, { ...opts, __engine: NFA.has(c.cmd) ? "nfa" : undefined });
     members = c.patterns.map((p) => compileMatcher(p, opts));
   } catch {
     return null;
@@ -260,7 +263,7 @@ function propertyFailure(c) {
   const paths = c.cmd === "s" ? c.sample : [c.input];
   for (const path of paths) {
     const any = members.some((m) => m.match(path));
-    if (c.cmd === "u" && union.match(path) !== any)
+    if ((c.cmd === "u" || c.cmd === "un") && union.match(path) !== any)
       return `union ${!any} on ${JSON.stringify(path)}`;
     if (c.cmd === "ud" && DirMatch.matches(union.matchDir(path)) !== any) {
       return `union matchDir exact ${!any} on ${JSON.stringify(path)}`;
@@ -356,10 +359,98 @@ function makeGen(seed) {
     return out.join("/");
   };
 
+  // An ignore list: members of the shapes real lists hold, over few names
+  // and extensions, so that many of them share a key of the chain index;
+  // `*/?/*` has no key at all. One list in seven may hold a member no
+  // chain walks.
+  const NAMES = ["a", "b", "ab", "lib", "src", "tmp", "log", "bin", "A", "Lib", ".git", ".x", "é"];
+  const EXTS = ["o", "a", "so", "log", "tmp", "ts", "tsx", "d", "so.1", "tar.gz", "O"];
+  const name = () =>
+    chance(0.5) ? pick(NAMES) : pick(NAMES) + pick(["", "-", "_", "."]) + pick(NAMES);
+  const ext = () => pick(EXTS);
+  const MEMBERS = [
+    () => name(),
+    () => `${name()}/${name()}`,
+    () => `${name()}/${name()}/${name()}.${ext()}`,
+    () => `**/${name()}`,
+    () => `**/${name()}.${ext()}`,
+    () => `*.${ext()}`,
+    () => `**/*.${ext()}`,
+    () => `${name()}/**/*.${ext()}`,
+    () => `*.{${ext()},${ext()},${ext()}}`,
+    () => `${name()}/**`,
+    () => `**/${name()}/**`,
+    () => `${name()}/**/${name()}/**`,
+    () => `**/${name()}/${name()}/**`,
+    () => `**/{${name()},${name()}}/**`,
+    () => `**/${name()}/*.${ext()}`,
+    () => `**/${name()}/**/*.${ext()}`,
+    () => `${name()}/*/${name()}`,
+    () => `${name()}/**/${name()}`,
+    () => `${name()}*`,
+    () => `**/${name()}*`,
+    () => "._*",
+    () => `**/*.${ext()}.*`,
+    () => `**/*${pick(["-", "_", "."])}*.${ext()}`,
+    () => `*-[0-9]*.${ext()}`,
+    () => `**/${name()}?${name()}`,
+    () => "*.[oa]",
+    () => `[._]${name()}[a-c]*`,
+    () => "*/?/*",
+  ];
+  const ODD_MEMBERS = [
+    () => `**/${name()}/**/${name()}/**/${name()}`,
+    () => `{${name()},${name()}}*{.${ext()},.${ext()}?}`,
+  ];
+  const genList = () => {
+    const odd = chance(0.15);
+    const size = pick([20, 40, 70, 90, 130, 200, 300, 400]);
+    return Array.from({ length: size }, () =>
+      odd && chance(0.02) ? pick(ODD_MEMBERS)() : pick(MEMBERS)(),
+    );
+  };
+  // An instance of a list member: its wildcards filled, a class at its
+  // first byte, a brace at one of its branches.
+  const fill = (pattern) =>
+    pattern.replace(/\*\*\/?|[*?]|\[[^\]]*\]|\{[^}]*\}/g, (token) => {
+      if (token === "**/")
+        return Array.from({ length: randint(0, 3) }, () => name() + "/").join("");
+      if (token === "**") return Array.from({ length: randint(1, 3) }, name).join("/");
+      if (token === "*") return pick(["", "q", "qx", "0", "a-1b", "x.y", ".h"]);
+      if (token === "?") return pick(["a", "-", "Q"]);
+      if (token[0] === "[") return token[1];
+      return fill(pick(token.slice(1, -1).split(",")));
+    });
+  // A path for a list: an instance of one member or names at random, at
+  // times with one segment changed, added, dropped or made the last, or
+  // in upper case.
+  const listPath = (patterns) => {
+    const segs = chance(0.75)
+      ? fill(pick(patterns)).split("/")
+      : Array.from({ length: randint(1, 5) }, name);
+    if (chance(0.4)) {
+      const k = randint(0, segs.length - 1);
+      const how = randint(0, 5);
+      if (how === 0) segs[k] = name();
+      else if (how === 1) segs.splice(k, 0, name());
+      else if (how === 2) segs.splice(k, 1);
+      else if (how === 3) segs.splice(k + 1);
+      else if (how === 4) segs[k] += pick(["x", ".", "~", ".o"]);
+      else segs[k] = pick([".", "_"]) + segs[k];
+    }
+    const path = segs.join("/");
+    return chance(0.1) ? path.toUpperCase() : path;
+  };
+
   // Union members are stripped of `!`: Rust rejects a negated member and
   // JS accepts it, so raw equality cannot compare them.
   return () => {
-    const cmd = MODE === "all" ? pick(["m", "m", "m", "n", "d", "d", "u", "un", "ud", "s"]) : MODE;
+    const cmd =
+      MODE === "big"
+        ? pick(["u", "un", "ud"])
+        : MODE === "all"
+          ? pick(["m", "m", "m", "n", "d", "d", "u", "un", "ud", "s"])
+          : MODE;
     const dot = chance(0.5);
     const ci = chance(0.5);
     const scale = chance(0.05) ? 4 : 1;
@@ -373,6 +464,10 @@ function makeGen(seed) {
       const patterns =
         k === 1 ? [genPattern(10)] : Array.from({ length: k }, () => stripBang(genPattern(6)));
       return { cmd, dot, ci, patterns };
+    }
+    if (UNION.has(cmd) && (MODE === "big" || chance(0.1))) {
+      const patterns = genList();
+      return { cmd, dot, ci, input: listPath(patterns), patterns };
     }
     if (UNION.has(cmd) && chance(0.5)) {
       const variants = genVariants();
