@@ -470,7 +470,7 @@ fn walker_reads_a_name_that_is_not_utf8_under_no_other_name() {
             follow_links,
             ..WalkOptions::new(&base)
         };
-        let got = collect_rel(Walk::from_patterns(&["**/*.txt"], opts).unwrap(), &base);
+        let got = collect_rel(Walk::from_patterns(["**/*.txt"], opts).unwrap(), &base);
         let mut expected = set(&kept);
         if follow_links {
             expected.extend(set(&linked));
